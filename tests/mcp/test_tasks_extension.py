@@ -76,6 +76,8 @@ async def test_tasks_extension_cancel_task(test_db: DataStore) -> None:
     assert updated_task.error is not None
     err = updated_task.error
     assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "none", False)
+    assert err["type"] == "https://gflow-cli.dev/errors/cancelled"
+    assert "status" not in err  # no invented HTTP status (was 499)
 
 
 @pytest.mark.asyncio

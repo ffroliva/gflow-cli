@@ -22,8 +22,9 @@ same members, and the worker queue persists the same members for a queued task.
 | `next_action` | yes | What a caller should do (values below) |
 | `operation_id` | no | The local job or media id, when one exists, so a follow-up can find it |
 | `retry_after` | no | Seconds to wait, when Flow said so and `next_action` is `retry_after` |
+| `completed_media_ids` | no | A partial `video chain`: the media ids of the links Flow made and billed |
 
-`charged`, `next_action`, `operation_id` and `retry_after` were added in
+`charged`, `next_action`, `operation_id`, `retry_after` and `completed_media_ids` were added in
 [#1201](https://github.com/ffroliva/gflow-cli/issues/1201). They are additive: no
 existing member changed.
 
@@ -37,7 +38,8 @@ exactly what these runs can leave behind
 ([#1159](https://github.com/ffroliva/gflow-cli/issues/1159),
 [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): a failed generation reads
 `maybe` / `reconcile`, and an extend or chain that completed at least one segment or
-link reads `yes` / `reconcile`.
+link reads `yes` / `reconcile`. An extend that spent credits reads `yes` even when no
+segment finished, with the submitted segment's media id as `operation_id`.
 
 ### `charged`
 
@@ -69,9 +71,9 @@ turns it off reads `reconcile` when the class says Flow may have billed, otherwi
 submit and are retryable by default: `TransportTimeoutError`, `NetworkError`,
 `WafRejectionError`, `BrowserSessionClosedError`, `FlowAppError`, `FlowAgentUiError`.
 Every raise site gflow knows to come after a submit overrides them to `reconcile`
-(`retryable: false`): the labs video poll timeout, the flow.google.com post-submit
-timeouts, the agent-only composer's refusals, and a failed download of a finished
-clip. So a `retry` that reaches you comes from a site gflow treats as before the
+(`retryable: false`): the labs `t2v`/`i2v`/`r2v` and `video extend` poll timeouts, the
+flow.google.com post-submit timeouts, the agent-only composer's refusals, and a failed
+download of a finished clip. So a `retry` that reaches you comes from a site gflow treats as before the
 submit. `maybe` still says gflow cannot prove it: a scheduler that runs paid
 generations unattended should check the project before a second paid attempt.
 
@@ -88,14 +90,21 @@ place today:
   reads `charged: yes`, `next_action: reconcile`, with the clip's media id as
   `operation_id`. The same class raised by the free recovery (`gflow data download`,
   MCP `gflow_download_media`) keeps the default `no` / `retry`.
-- The labs video poll timing out after the submit reads `maybe` / `reconcile`, with the
-  media id as `operation_id`.
+- A labs video poll timing out after the submit reads `maybe` / `reconcile`, with the
+  media id as `operation_id`. That covers both the `t2v`/`i2v`/`r2v` poll (which used to
+  surface as an unclassified `UnexpectedError`) and the `video extend` poll.
+- A video Flow reports failed reads `maybe` / `reconcile`, with its media id as
+  `operation_id`, on the worker queue as on the CLI.
 - A failed write of a generated asset to disk or a bucket (`ConfigurationError`) reads
   `maybe` / `reconcile`: the asset is in the Flow project.
-- `video chain`: any error after at least one link completed reads `yes` /
-  `reconcile`; `ChainPartialError` reads `yes` only when it carries completed links.
-- `video extend --output`: a render failure after billed segments reads `yes` /
-  `reconcile`, and its hint points at the free re-render, `gflow scene create --output`.
+- `video chain`: a typed error after at least one link completed keeps its class and
+  reads `yes` / `reconcile`, with the last completed link's media id as `operation_id`.
+  An untyped one is wrapped in `ChainPartialError`. `ChainPartialError` reads `yes` only
+  when it carries completed links, and lists them in `completed_media_ids`.
+- `video extend --output`: any failure while rendering billed segments (reading the
+  scene back or the render itself) reads `yes` / `reconcile`. Its hint is the free
+  re-render as a command that runs: `gflow scene create --project <id> <clip refs>
+  --output <path>`.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 
@@ -175,11 +184,14 @@ members. They have no exit code of their own.
 | `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |
+| `https://gflow-cli.dev/errors/cancelled` | MCP and worker, a task cancelled before any submit | — | `no` | `none` |
 
 An unclassified CLI failure (`UnexpectedError`) reads `maybe` / `none` too. Every
 error `gflow_auth_status` returns reads `charged: no`, including its dead-session
-`auth-expired`. A task cancelled before it ran reads `no` / `none`, and a task that
-ended without a recorded error reads `maybe` / `reconcile`.
+`auth-expired`. A task that ended without a recorded error reads `maybe` / `reconcile`.
+A task cancelled after a submit was attempted is `indeterminate-outcome`, still
+`reconcile`, because Flow may have made it. None of the worker's documents carries an
+HTTP `status`: no HTTP call failed.
 
 `tests/test_problem_details_extensions.py` fails when a `type` is missing here or a row
 disagrees with what the code emits.

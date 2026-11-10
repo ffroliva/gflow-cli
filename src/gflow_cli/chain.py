@@ -247,6 +247,7 @@ async def _generate_link(
     req: GenerateVideoRequest,
     index: int,
     completed_paths: list[Path],
+    completed_media_ids: list[str],
     on_link_started: LinkStartedHook | None,
     on_link_failed: LinkFailedHook | None,
 ) -> VideoResult:
@@ -256,12 +257,16 @@ async def _generate_link(
         return await client.generate_video(req=req, on_started=link_on_started)
     except Exception as exc:
         _notify_link_failed(on_link_failed, req, exc)
-        if not isinstance(exc, WireFormatError | WafRejectionError):
+        wrap = isinstance(exc, WireFormatError | WafRejectionError) or (
+            completed_paths and not isinstance(exc, GFlowError)
+        )
+        if not wrap:
             if completed_paths and isinstance(exc, GFlowError):
                 # #1201: links 0..k are billed whatever this link's own class says.
                 exc.charged = "yes"
                 exc.next_action = "reconcile"
                 exc.retryable = False
+                exc.operation_id = completed_media_ids[-1]
             raise
         _log.warning(
             "chain_link_aborted",
@@ -272,6 +277,7 @@ async def _generate_link(
         raise ChainPartialError(
             detail=f"chain aborted at link {index}: {exc}",
             partial_results=list(completed_paths),
+            completed_media_ids=list(completed_media_ids),
             cause=exc,
         ) from exc
 
@@ -394,13 +400,18 @@ async def run_chain(
             req=req,
             index=index,
             completed_paths=completed_paths,
+            completed_media_ids=[r.media_id for r in results],
             on_link_started=on_link_started,
             on_link_failed=on_link_failed,
         )
 
         if result.local_path is None:
             msg = f"link {index} returned no local_path (download failed)"
-            exc = ChainPartialError(detail=msg, partial_results=list(completed_paths))
+            exc = ChainPartialError(
+                detail=msg,
+                partial_results=list(completed_paths),
+                completed_media_ids=[r.media_id for r in results],
+            )
             # #341: this abort path must also reach the failure hook, else the
             # link's STARTED catalog row is stranded and the abort is invisible
             # to `gflow data list errors`.

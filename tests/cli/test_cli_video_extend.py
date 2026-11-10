@@ -922,4 +922,83 @@ async def test_a_render_failure_after_billed_segments_points_at_the_free_rerende
         )
     pd = info.value.to_problem_details()
     assert (pd["charged"], pd["next_action"]) == ("yes", "reconcile")
-    assert "gflow scene create --output" in pd["remediation_hint"]
+    assert f"gflow scene create --project {PROJECT}" in pd["remediation_hint"]
+
+
+@pytest.mark.asyncio
+async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
+    _patched_client: _FakeClient,
+    _chain_spy: dict[str, Any],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1201 review: credits were spent, so `yes`, even with no completed segment."""
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import TransportTimeoutError
+
+    _chain_spy["_result"] = ExtendChainResult(
+        scene_id="s",
+        completed_media_ids=[],
+        credits_spent=10,
+        error=TransportTimeoutError("poll", operation_id="seg-1"),
+    )
+    with pytest.raises(SystemExit):
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=1,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=None,
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=True,
+            recorder=None,
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
+    assert payload["operation_id"] == "seg-1"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scene_read_before_the_render_is_reconciled_with_a_runnable_hint(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1201 review: every step of the render after billed segments is covered, and
+    the hint is a `gflow scene create` command that actually runs."""
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import NetworkError
+
+    async def _boom(_scene_id: str, *, project_id: str) -> Any:
+        raise NetworkError("scene read failed")
+
+    _patched_client.get_scene_workflows = _boom  # type: ignore[method-assign]
+    _chain_spy["_emit"] = [
+        ExtendStarted(media_id="m1", workflow_id="wf-seg-1", model_key="k", unit_cost=10)
+    ]
+    with pytest.raises(NetworkError) as info:
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=1,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("yes", "reconcile")
+    hint = pd["remediation_hint"]
+    assert f"gflow scene create --project {PROJECT}" in hint
+    assert "wf-seg-1" in hint

@@ -441,7 +441,12 @@ class FlowWorker:
                             if result.status.failure_reasons
                             else result.status.error_message or "Unknown reason"
                         )
-                        raise GFlowError(f"Video generation failed: {reasons}")
+                        raise GFlowError(
+                            f"Video generation failed: {reasons}",
+                            # #1201: Flow took the submit; same answer as CLI video_result.
+                            next_action="reconcile",
+                            operation_id=flow_media_id or None,
+                        )
                 except Exception as exc:
                     logger.warning("Failed during video generation or recording", exc_info=exc)
                     raise

@@ -234,6 +234,7 @@ def _hand_built_envelopes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> li
         tools._bad_param("Bad", "bad")["error"],  # pyright: ignore[reportPrivateUsage]
         _recovery_error("indeterminate", "crash"),
         _recovery_error("failed", "crash"),
+        _recovery_error("failed", "cancelled"),
     ]
     for exc in (NoProfilesError(), NoDefaultProfileError(["a", "b"])):
 
@@ -259,6 +260,7 @@ _EXPECTED_HAND_BUILT = {
     "https://gflow-cli.dev/errors/bad-parameter": ("no", "fix_input"),
     "https://gflow-cli.dev/errors/indeterminate-outcome": ("maybe", "reconcile"),
     "https://gflow-cli.dev/errors/daemon-recovery": ("no", "retry"),
+    "https://gflow-cli.dev/errors/cancelled": ("no", "none"),
     "https://gflow-cli.dev/errors/no-profile": ("no", "reauth"),
     "https://gflow-cli.dev/errors/no-default-profile": ("no", "fix_input"),
 }
@@ -271,6 +273,7 @@ def test_hand_built_envelopes_carry_the_members_and_their_doc_rows(
     envelopes = _hand_built_envelopes(monkeypatch, tmp_path)
     assert {e["type"] for e in envelopes} == set(_EXPECTED_HAND_BUILT)
     for env in envelopes:
+        assert env.get("type"), env
         got = (env.get("charged"), env.get("next_action"))
         assert got == _EXPECTED_HAND_BUILT[env["type"]], env["type"]
         assert env["retryable"] is (env["next_action"] in RETRY_ACTIONS), env["type"]

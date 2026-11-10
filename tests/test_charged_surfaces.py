@@ -170,3 +170,76 @@ def test_the_task_reply_fallback_carries_the_members(tmp_path: Path) -> None:
         )
     err = task_payload("p", "t1", db)["error"]
     assert (err["charged"], err["next_action"], err["retryable"]) == ("maybe", "reconcile", False)
+
+
+def _billed_then(exc: BaseException, done: Path) -> MagicMock:
+    calls = 0
+
+    async def _gen(*, req: GenerateVideoRequest, **_: Any) -> VideoResult:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            done.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+            return VideoResult(
+                status=VideoStatus(media_id="m0", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+                local_path=done,
+            )
+        raise exc
+
+    client = MagicMock()
+    client.generate_video = AsyncMock(side_effect=_gen)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_a_crash_after_billed_links_keeps_them(tmp_path: Path) -> None:
+    """#1201 review: a non-GFlowError at link k is wrapped, with the billed ids."""
+    from gflow_cli.errors import ChainPartialError
+
+    client = _billed_then(RuntimeError("boom"), tmp_path / "link0.mp4")
+    with pytest.raises(ChainPartialError) as info:
+        await run_chain(
+            client=client,
+            links=[ChainLinkSpec(prompt="a"), ChainLinkSpec(prompt="b")],
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_extract,
+        )
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("yes", "reconcile")
+    assert pd["completed_media_ids"] == ["m0"]
+    assert isinstance(info.value.__cause__, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_a_typed_error_after_billed_links_names_them(tmp_path: Path) -> None:
+    client = _billed_then(InsufficientCreditsError("short"), tmp_path / "link0.mp4")
+    with pytest.raises(InsufficientCreditsError) as info:
+        await run_chain(
+            client=client,
+            links=[ChainLinkSpec(prompt="a"), ChainLinkSpec(prompt="b")],
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_extract,
+        )
+    assert info.value.to_problem_details()["operation_id"] == "m0"
+
+
+def test_a_cancel_never_says_retry_whatever_the_phase() -> None:
+    """#1201 review: a cancel at `claimed` (pre-submit) read retry; a user cancel is none."""
+    from gflow_cli.worker.queue import _recovery_error  # pyright: ignore[reportPrivateUsage]
+
+    err = _recovery_error("failed", "cancelled")
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "none", False)
+    assert err["type"] == "https://gflow-cli.dev/errors/cancelled"
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"), [("indeterminate", "crash"), ("failed", "crash"), ("failed", "cancelled")]
+)
+def test_recovery_envelopes_invent_no_http_status(status: str, reason: str) -> None:
+    from gflow_cli.worker.queue import _recovery_error  # pyright: ignore[reportPrivateUsage]
+
+    err = _recovery_error(status, reason)
+    assert err["type"].startswith("https://gflow-cli.dev/errors/")
+    assert "status" not in err

@@ -107,6 +107,7 @@ class ProblemDetails(TypedDict, total=False):
     next_action: NextAction  # gflow extension (#1201) — always present, agrees with retryable
     operation_id: str  # gflow extension (#1201) — local job / media id, when one exists
     retry_after: float  # gflow extension (#1201) — seconds, with next_action retry_after
+    completed_media_ids: list[str]  # gflow extension (#1201) — a partial chain's billed links
 
 
 class GFlowError(Exception):
@@ -1535,6 +1536,7 @@ class ChainPartialError(GFlowError):
         route: str = "",
         remediation_hint: str | None = None,
         partial_results: list[Path] | None = None,
+        completed_media_ids: list[str] | None = None,
         cause: Exception | None = None,
     ) -> None:
         super().__init__(
@@ -1546,8 +1548,17 @@ class ChainPartialError(GFlowError):
         )
         self.partial_results: list[Path] = partial_results if partial_results is not None else []
         self.cause = cause
+        #: Media ids of the links Flow made and billed: the handle to reconcile them.
+        self.completed_media_ids: list[str] = list(completed_media_ids or [])
         if self.partial_results:
             self.charged = "yes"
+
+    def to_problem_details(self) -> ProblemDetails:
+        pd = super().to_problem_details()
+        ids: list[str] | None = getattr(self, "completed_media_ids", None)
+        if ids:
+            pd["completed_media_ids"] = ids
+        return pd
 
 
 class ChainManifestError(ConfigurationError):

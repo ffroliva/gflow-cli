@@ -1135,3 +1135,33 @@ async def test_worker_relocates_output_file_across_filesystems(
     assert out_file.read_bytes() == b"clip"
     assert not src.exists()
     worker.close()
+
+
+@pytest.mark.asyncio
+async def test_a_flow_failed_video_reads_like_the_cli(temp_db: DataStore) -> None:
+    """#1201: the queue row says what CLI `video_result` says for the same outcome."""
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2v-flow-failed",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "a crane", "aspect": "16:9"},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-v", title="T")
+    fake_client.generate_video.return_value = VideoResult(
+        status=VideoStatus(media_id="media-f", status="MEDIA_GENERATION_STATUS_FAILED"),
+        local_path=None,
+        project_id="project-v",
+        flow_operation_id="op-f",
+    )
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    updated = repo.get_task("task-t2v-flow-failed")
+    assert updated is not None and updated.error is not None
+    err = updated.error
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("maybe", "reconcile", False)
+    assert err["operation_id"] == "media-f"
+    worker.close()
