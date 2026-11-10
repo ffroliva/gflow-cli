@@ -35,6 +35,17 @@ Pre-registered reading (written before the arms ran):
 |  | <50% | not a fingerprint |
 | D. any of the above with fewer than 2 builds recovered | — | **unmeasured**; settles nothing |
 
+Amended after run 1 (the table above is unchanged): run 1 got HTTP 404 on the 20260903 and
+20260909 URLs and 200 on 20260929, whose 6.7 MB bundle held no ``{K:"id",`` descriptor at all.
+By hand, its ids sit in a constructor, ``new _.Gx("as29s",_.Mx,HWa,[_.dm,!0,_.cm,
+"/FlowService.GetMedia"])``, which names the backend method. Run 2 parses that shape too, adds
+the flag and the method path as candidates, and sends the old page's exact URL once as a
+control when the module-swapped URL 404s.
+
+Amended after run 2: its constructor regex matched only 37 of the 219 ``new _.Gx("`` calls
+(the args can hold inline classes), so its "230 ids added" was a parser artifact and is
+discarded. Run 3 finds each constructor's options array by its method path instead.
+
 Fingerprint candidates (D): the descriptor's field-key tuple, its boolean flag value, its
 response-class reference (a minified name), the variable it is assigned to, its feature module,
 its previous and next descriptor ids in bundle order, and the quoted non-id literals within 400
@@ -82,37 +93,89 @@ def with_modules(script_url: str, modules: list[str]) -> str:
 
 
 def learn_key(text: str, known: tuple[str, ...]) -> str | None:
-    """The object key that holds the id, learned from where the catalogued ids sit."""
+    """How the ids are held, learned from where the catalogued ids sit.
+
+    Two shapes are recognised: an object key, ``{Wa:"id",...}`` (returned as ``Wa``), and a
+    constructor, ``new _.Gx("id",...,[...,"/Service.Method"])`` (returned as ``new _.Gx``).
+    The constructor shape was added after the first run met it on the 20260929 build.
+    """
     keys: Counter[str] = Counter()
     for rpc in known:
         keys.update(re.findall(rf'\{{({_KEY}):"{rpc}",', text))
+        keys.update(f"new _.{c}" for c in re.findall(rf'new _\.([\w$]+)\("{rpc}",', text))
     return keys.most_common(1)[0][0] if keys else None
 
 
+_CTOR_RE = re.compile(r'(?:([\w$.]+)=)?new _\.([\w$]+)\("([A-Za-z0-9]{4,7})",')
+#: The options array that closes a constructor descriptor; the args before it can hold
+#: inline classes, so the array is found by its method path, not by bracket counting.
+_OPTS_RE = re.compile(r'\[([^\[\]]*?"(/[A-Z]\w*\.[A-Z]\w*)"[^\[\]]*)\]\)')
+
+
+def _ctor_descriptors(text: str) -> list[dict[str, object]]:
+    """Every ``new _.X("id",...,[...,"/Service.Method"])``, whichever constructor X is
+    (20260929 had ``Gx`` for unary and ``Hx`` for server-streaming methods)."""
+    out: list[dict[str, object]] = []
+    for m in _CTOR_RE.finditer(text):
+        opts = _OPTS_RE.search(text, m.end(), m.end() + 1200)
+        nxt = _CTOR_RE.search(text, m.end())
+        if not opts or (nxt and nxt.start() < opts.start()):
+            continue  # not a descriptor: no method path before the next constructor
+        flag = re.search(r"!([01])", opts.group(1))
+        out.append(
+            {
+                "id": m.group(3),
+                "var": m.group(1),
+                "ctor": m.group(2),
+                "field_keys": ["ctor", "options"],
+                "fields": {"ctor": m.group(2), "options": opts.group(1)},
+                "flag": flag.group(1) if flag else None,
+                "method": opts.group(2),
+                "marked": None,
+                "literals": _literals(text, m.start(), opts.end()),
+            }
+        )
+    return out
+
+
+def _literals(text: str, start: int, end: int) -> list[str]:
+    window = text[max(0, start - 400) : end + 400]
+    return sorted({s for s in _LIT_RE.findall(window) if not _ID_RE.match(s)})
+
+
 def descriptors(text: str, key: str) -> list[dict[str, object]]:
+    if key.startswith("new _."):
+        out = _ctor_descriptors(text)
+    else:
+        out = _object_descriptors(text, key)
+    for i, d in enumerate(out):
+        d["prev"] = out[i - 1]["id"] if i else None
+        d["next"] = out[i + 1]["id"] if i + 1 < len(out) else None
+    return out
+
+
+def _object_descriptors(text: str, key: str) -> list[dict[str, object]]:
     pat = re.compile(
         rf'([\w$.]+)=\{{{re.escape(key)}:"([A-Za-z0-9]{{4,7}})"((?:,{_KEY}:[^,{{}}]*)*)\}}'
     )
     out: list[dict[str, object]] = []
     for m in pat.finditer(text):
         fields = re.findall(rf",({_KEY}):([^,{{}}]*)", m.group(3))
-        window = text[max(0, m.start() - 400) : m.end() + 400]
-        lits = sorted({s for s in _LIT_RE.findall(window) if not _ID_RE.match(s)})
+        flag = next((v[1] for _, v in fields if v in ("!0", "!1")), None)
         out.append(
             {
                 "id": m.group(2),
                 "var": m.group(1),
                 "field_keys": [k for k, _ in fields],
                 "fields": dict(fields),
+                "flag": flag,
+                "method": None,
                 "marked": bool(
                     re.match(r"[;,]\s*[\w$.]+\[[\w$.]+\]=!0", text[m.end() : m.end() + 40])
                 ),
-                "literals": lits,
+                "literals": _literals(text, m.start(), m.end()),
             }
         )
-    for i, d in enumerate(out):
-        d["prev"] = out[i - 1]["id"] if i else None
-        d["next"] = out[i + 1]["id"] if i + 1 < len(out) else None
     return out
 
 
@@ -124,6 +187,10 @@ def measure(build: str, script_url: str, known: tuple[str, ...], out: Path) -> d
         mods = ["XRV0Af", "wO1vlb"]
         status, text = get(with_modules(script_url, mods))
     rec.update(modules=mods, status=status, bytes=len(text))
+    if status != 200:
+        # Control: the exact URL the old page sent. A 404 here too means the build is gone,
+        # not that a module name moved.
+        rec["control_status"] = get(script_url)[0]
     key = learn_key(text, known) if status == 200 else None
     rec["key"] = key
     if not key:
@@ -141,6 +208,7 @@ def measure(build: str, script_url: str, known: tuple[str, ...], out: Path) -> d
         d["module"] = ",".join(placement.get(str(d["id"]), [])) or None
     rec.update(module_status=statuses, descriptors=descs)
     rec["known_found"] = sorted(k for k in known if re.search(rf"""["']{k}["']""", text))
+    rec["method_paths"] = sorted(set(re.findall(r'"(/[A-Z]\w*\.[A-Z]\w*)"', text)))
     out.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", build)
     (out / f"{safe}.js").write_text(text, encoding="utf-8")
@@ -208,6 +276,12 @@ def compare(a: dict[str, object], b: dict[str, object], known: tuple[str, ...]) 
     print(f"  field-key shapes: {dict(shape_a)} -> {dict(shape_b)}")
     print(f"  same field_keys {same('field_keys')} · var {same('var')} · module {same('module')}")
     print(f"  same prev {same('prev')} · next {same('next')} · marked {same('marked')}")
+    print(f"  same flag (!0/!1) {same('flag')} · same method {same('method')}")
+    paths_b = set(b.get("method_paths", []))
+    with_path = [i for i in common if da[i].get("method")]
+    kept = sum(da[i]["method"] in paths_b for i in with_path)
+    print(f"  old method path still a string in new bundle: {kept}/{len(with_path)}")
+    print(f"  method-path strings: {len(a.get('method_paths', []))} -> {len(paths_b)}")
     for pos in range(4):
         print(f"  same field #{pos + 1} value {field_pos(pos)}")
 
@@ -242,7 +316,8 @@ def main() -> None:
         print(
             f"   {build}: k={rec['k']} status={rec['status']} bytes={rec['bytes']} "
             f"key={rec['key']} descriptors={ndesc} distinct={distinct} "
-            f"modules={rec.get('module_status')} known={found}/{len(known)}"
+            f"modules={rec.get('module_status')} known={found}/{len(known)} "
+            f"control={rec.get('control_status')}"
         )
         if ndesc:
             recs.append(rec)
