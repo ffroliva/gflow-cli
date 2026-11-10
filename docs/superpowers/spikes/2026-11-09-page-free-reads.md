@@ -31,10 +31,11 @@ Three probes, each with its readings written into the script's docstring before 
 3. **No browser at all.** Cookies read from the profile's SQLite jar (`browser_cookie3`), the
    `at` token (`SNlM0e`), `f.sid` (`FdrFJe`) and `bl` (`cfb2h`) scraped from a plain `httpx`
    GET of `flow.google.com/`, and each read rpc built from catalog ids. The `as29s` reply was
-   decoded with gflow's own `batchexecute.generation_record`; that decoder needs a
-   generation-shaped record, so the `Zzl0ze` and `nzlxg` rows below record the HTTP status
-   and what the frame held. Controls on the `as29s` and `nzlxg` calls: a junk `at`, and no
-   cookies (`Zzl0ze` got none; see its row). Run against two clips.
+   decoded with gflow's own `batchexecute.generation_record`. The `Zzl0ze` reply was checked
+   for naming the catalog's workflow id, and the `nzlxg` reply for its HTTP status and frame
+   (a balance reply holds no generation record, so that decoder cannot read it). Controls (a
+   junk `at`, and no cookies) are recorded for `as29s` and `nzlxg`; the `Zzl0ze` control
+   results were not recorded. Run against two clips.
 
 ## Observed
 
@@ -75,7 +76,7 @@ jar, `at` scraped from the shell. No browser launched in this probe.
 |---|---|---|---|---|
 | `as29s` (clip status) | `["<workflow_id>"]` | **200**, a generation record with status, signed video URL and `size_bytes` (2/2 clips) | 400 | 401 |
 | `as29s` | `["<media_id>"]` | 200, **no** frame: the argument is the workflow id | — | — |
-| `Zzl0ze` (project listing) | `["projects/<project_id>",null,null,null,[1]]` | **200**, lists the catalog's clip | not run | not run |
+| `Zzl0ze` (project listing) | `["projects/<project_id>",null,null,null,[1]]` | **200**, lists the catalog's clip | not recorded | not recorded |
 | `nzlxg` (credits) | `[]` | **200** | 400 | 401 |
 
 | download | result |
