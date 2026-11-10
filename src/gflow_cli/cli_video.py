@@ -2301,6 +2301,11 @@ async def _extend_session(  # noqa: PLR0913
             # succeeded + media_id + local_path + request.mode. Extend-specific
             # fields ride alongside.
             last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
+            # #1201: a failed run read by status alone would hide billed segments.
+            outcome: dict[str, str] = {}
+            if result.aborted or result.error is not None:
+                charged = "yes" if result.completed_media_ids else "maybe"
+                outcome = {"charged": charged, "next_action": "reconcile"}
             payload.update(
                 {
                     "status": "ok" if not result.aborted and result.error is None else "fail",
@@ -2313,15 +2318,7 @@ async def _extend_session(  # noqa: PLR0913
                     ),
                     "succeeded": not result.aborted and result.error is None,
                     "local_path": rendered,
-                    # #1201: a failed run read by status alone would hide billed segments.
-                    **(
-                        {}
-                        if not result.aborted and result.error is None
-                        else {
-                            "charged": "yes" if result.completed_media_ids else "maybe",
-                            "next_action": "reconcile",
-                        }
-                    ),
+                    **outcome,
                     "failure_reasons": [],
                     "error_message": str(result.error) if result.error is not None else None,
                     "request": {
