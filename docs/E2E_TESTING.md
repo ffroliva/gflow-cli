@@ -357,7 +357,7 @@ title.
 | Outcome | Meaning | Action |
 |---|---|---|
 | `OK` | every catalogued id is present. An id found only in the shell's base bundle is listed as "not in the feature modules", never as gone | none |
-| `ID-GONE` | the bundle parsed (it holds descriptors) and catalogued ids are missing from it, even if all of them are | the named ids were renamed or removed: update their rows |
+| `ID-GONE` | the bundle parsed (it holds descriptors) and catalogued ids are missing from it, even if all of them are | the named ids are missing from the four modules. First load a project page (the spike's `--page` arm) to rule out an id that moved to another module; if it is still absent, it was renamed or removed: update its row |
 | `MODULES-CHANGED` | the feature-module bundle answered 404 | the feature module names moved; relearn them from a project page (the spike's `--page` arm). Says nothing about any single id |
 | `PARSE-CHANGED` | the bundle answered 200 with no `{Xa:"…"}` descriptor | the bundle format changed; the descriptor pattern needs re-deriving. Never reads as `OK` |
 | `INCONCLUSIVE` | nothing was measured: offline, a shell or bundle HTTP error other than a bundle 404 (429, 5xx), a redirect to a page without the app, no build label, a catalog that lost rows or has no `live` row, or the 120 s budget ran out | none; says nothing about Flow |
