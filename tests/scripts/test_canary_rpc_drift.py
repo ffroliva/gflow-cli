@@ -95,6 +95,17 @@ def test_a_renamed_descriptor_key_still_parses() -> None:
     assert drift.inventory == ("YhhmEf", "Zzl0ze", "as29s", "other1")
 
 
+def test_ids_held_in_another_shape_are_parse_changed_not_ok() -> None:
+    # Build 20260929.10_p1 held ids in a constructor; unrelated {xc:"…",} objects must not be
+    # taken for the descriptor list (measured: the old fallback read OK with 1 "descriptor").
+    bundle = ";".join(
+        f'var c{i}=new _.Gx("{rpc}",_.Mx,H,[_.dm,!0,_.cm,"/FlowService.GetMedia"])'
+        for i, rpc in enumerate(_IDS)
+    )
+    drift = assess(_IDS, _SHELL, 200, bundle + ';var z={xc:"noise1",y:2}')
+    assert drift.state == PARSE_CHANGED
+
+
 def test_one_id_gone_is_named_and_is_not_a_module_change() -> None:
     drift = assess(_IDS, _SHELL, 200, _bundle("YhhmEf", "Zzl0ze", "other1"))
     assert drift.state == ID_GONE
