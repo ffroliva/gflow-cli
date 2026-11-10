@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `video r2v` with `--ref`. Each then is that verb: the same options, output and exit codes,
   and `--json` adds `"mode": "<resolved>"`. A frame and a `--ref` together, or an option
   the resolved verb does not take, is a usage error (exit 2) naming the mode verb, never a
-  guess. The mode verbs stay, nothing is deprecated, and the MCP tools are unchanged: they
+  guess, and so is `--end-frame` without `--initial-frame`. The mode verbs stay, nothing is deprecated, and the MCP tools are unchanged: they
   already take the mode (#1193).
 
 ### Fixed

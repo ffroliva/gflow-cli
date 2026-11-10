@@ -315,9 +315,22 @@ gflow video gen "slow pan left" --initial-frame hero.png    # video i2v
 gflow video gen "knight walks forward" --ref armor.png      # video r2v
 ```
 
-- An option the resolved verb does not take is a usage error (exit 2), not silently
-  dropped: `image gen --ref a.png --stdin` names `image i2i`, and `video gen --ref a.png
-  --ui-mode classic` names `video r2v`.
+- The resolved verb parses the arguments itself, so its defaults, limits, environment
+  variables and checks apply exactly as on a direct call. An option it does not take is
+  its own usage error (exit 2), followed by a line naming the verb the bridge picked:
+
+  ```text
+  $ gflow image gen "a cat" --ref a.png --stdin
+  Error: No such option '--stdin'.
+  `gflow image gen` resolved to `gflow image i2i` (--ref was given).
+
+  $ gflow video gen "a knight" --ref a.png --ui-mode classic
+  Error: No such option '--ui-mode'.
+  `gflow video gen` resolved to `gflow video r2v` (--ref was given).
+
+  $ gflow video gen "a knight" --end-frame a.png
+  Error: --end-frame needs --initial-frame (that is `gflow video i2v`).
+  ```
 - A character by id (`--reference-entity`) without `--ref` is passed to `video t2v`
   unchanged, with whatever `video t2v` does with it on the host Flow serves (see that
   section); with a frame it is a usage error, because `video i2v` takes none.

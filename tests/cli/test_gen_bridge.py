@@ -36,22 +36,42 @@ def png(tmp_path: Path) -> Path:
 
 @pytest.mark.parametrize(("refs", "mode"), [(False, "t2i"), (True, "i2i")])
 def test_image_routing_table(refs: bool, mode: str) -> None:
-    assert resolve_image_mode(refs=refs) == mode
+    command, why = resolve_image_mode(refs=refs)
+    assert command.name == mode
+    assert why
 
 
 @pytest.mark.parametrize(
-    ("frames", "refs", "mode"),
-    [(False, False, "t2v"), (True, False, "i2v"), (False, True, "r2v")],
+    ("initial", "end", "refs", "mode"),
+    [
+        (False, False, False, "t2v"),
+        (True, False, False, "i2v"),
+        (True, True, False, "i2v"),
+        (False, False, True, "r2v"),
+    ],
 )
-def test_video_routing_table(frames: bool, refs: bool, mode: str) -> None:
-    assert resolve_video_mode(frames=frames, refs=refs) == mode
+def test_video_routing_table(initial: bool, end: bool, refs: bool, mode: str) -> None:
+    command, why = resolve_video_mode(initial=initial, end=end, refs=refs)
+    assert command.name == mode
+    assert why
 
 
-def test_video_frames_and_refs_is_ambiguous_and_names_the_mode_verbs() -> None:
+@pytest.mark.parametrize(
+    ("initial", "end", "refs", "needles"),
+    [
+        (True, False, True, ["video i2v", "video r2v"]),
+        (True, True, True, ["video i2v", "video r2v"]),
+        (False, True, True, ["video i2v", "video r2v"]),
+        (False, True, False, ["--end-frame needs --initial-frame"]),
+    ],
+)
+def test_video_routing_usage_errors(
+    initial: bool, end: bool, refs: bool, needles: list[str]
+) -> None:
     with pytest.raises(click.UsageError) as exc:
-        resolve_video_mode(frames=True, refs=True)
-    assert "video i2v" in exc.value.message
-    assert "video r2v" in exc.value.message
+        resolve_video_mode(initial=initial, end=end, refs=refs)
+    for needle in needles:
+        assert needle in exc.value.message
 
 
 # ------------------------------------------------------- usage errors through the CLI
@@ -64,20 +84,13 @@ def _usage_error(args: list[str]) -> str:
 
 
 @pytest.mark.parametrize(
-    ("extra", "flag"),
-    [
-        (["--prompts-file", "p.txt"], "--prompts-file"),
-        (["--stdin"], "--stdin"),
-        (["--fail-fast"], "--continue-on-error"),
-        (["--jitter", "1-2"], "--jitter"),
-    ],
+    "extra",
+    [["--prompts-file", "p.txt"], ["--stdin"], ["--fail-fast"], ["--jitter", "1-2"]],
 )
-def test_image_t2i_only_option_with_ref_is_a_usage_error(
-    extra: list[str], flag: str, png: Path
-) -> None:
+def test_image_t2i_only_option_with_ref_is_a_usage_error(extra: list[str], png: Path) -> None:
     out = _usage_error(["image", "gen", "a cat", "--ref", str(png), *extra])
-    assert flag in out
-    assert "image i2i" in out
+    assert f"No such option '{extra[0]}'" in out
+    assert "`gflow image i2i`" in out
 
 
 def test_image_several_prompts_with_ref_is_a_usage_error(png: Path) -> None:
@@ -88,7 +101,6 @@ def test_image_several_prompts_with_ref_is_a_usage_error(png: Path) -> None:
 @pytest.mark.parametrize(
     ("args", "flag", "mode"),
     [
-        (["--initial-frame", "{png}", "--ref", "{png}"], "", ""),
         (["--initial-frame", "{png}", "--reference-entity", "abc"], "--reference-entity", "i2v"),
         (
             ["--initial-frame", "{png}", "--reference-entity-name", "Bob"],
@@ -103,12 +115,48 @@ def test_video_mode_only_inputs_on_the_wrong_mode(
 ) -> None:
     argv = ["video", "gen", "a knight", *(a.replace("{png}", str(png)) for a in args)]
     out = _usage_error(argv)
-    if flag:
-        assert flag in out
-        assert f"video {mode}" in out
-    else:  # ambiguity: names both mode verbs
-        assert "video i2v" in out
-        assert "video r2v" in out
+    assert f"No such option '{flag}'" in out
+    assert f"`gflow video {mode}`" in out
+
+
+def test_video_frame_and_ref_is_ambiguous(png: Path) -> None:
+    argv = ["video", "gen", "a knight", "--initial-frame", str(png), "--ref", str(png)]
+    out = _usage_error(argv)
+    assert "video i2v" in out
+    assert "video r2v" in out
+
+
+def test_video_end_frame_alone_is_a_usage_error(png: Path) -> None:
+    out = _usage_error(["video", "gen", "a knight", "--end-frame", str(png)])
+    assert "--end-frame needs --initial-frame" in out
+
+
+# Every usage-error example docs/USAGE.md shows, with the message it promises.
+_DOCUMENTED = [
+    ('gflow image gen "a cat" --ref a.png --stdin', ["No such option '--stdin'", "image i2i"]),
+    (
+        'gflow video gen "a knight" --ref a.png --ui-mode classic',
+        ["No such option '--ui-mode'", "video r2v"],
+    ),
+    ('gflow video gen "a knight" --end-frame a.png', ["--end-frame needs --initial-frame"]),
+]
+
+
+@pytest.mark.parametrize(("example", "needles"), _DOCUMENTED)
+def test_documented_usage_errors_say_what_the_docs_say(
+    example: str, needles: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shlex
+
+    usage = (Path(__file__).parents[2] / "docs" / "USAGE.md").read_text(encoding="utf-8")
+    assert example in usage, "the example is no longer in docs/USAGE.md"
+    for needle in needles:
+        assert needle in usage
+    (tmp_path / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.chdir(tmp_path)
+    out = _usage_error(shlex.split(example)[1:])
+    for needle in needles:
+        assert needle in out
 
 
 # ------------------------------------------------------------------------------ help
@@ -126,6 +174,47 @@ def test_video_gen_help_names_its_mode_verbs() -> None:
     assert result.exit_code == 0
     for verb in ("video t2v", "video i2v", "video r2v"):
         assert verb in result.output
+
+
+def _flat_help(args: list[str]) -> str:
+    result = CliRunner().invoke(main, [*args, "--help"], terminal_width=200)
+    assert result.exit_code == 0
+    return " ".join(result.output.split())
+
+
+@pytest.mark.parametrize("group", ["image", "video"])
+def test_gen_help_defers_defaults_and_limits_to_the_resolved_verb(group: str) -> None:
+    assert "defaults and limits are the resolved verb's" in _flat_help([group, "gen"])
+
+
+def test_image_gen_help_does_not_reuse_mode_only_wording() -> None:
+    text = _flat_help(["image", "gen"])
+    assert "use `gflow image t2i` instead" not in text
+    assert "Single-prompt only" not in text
+
+
+def test_video_gen_help_does_not_promise_t2vs_model_default() -> None:
+    assert "Omit to use Flow's current default" not in _flat_help(["video", "gen"])
+
+
+def test_same_named_options_agree_across_bridged_verbs() -> None:
+    """The bridge parses once with the first verb's copy of an option: they must agree."""
+    from gflow_cli.cli_image import i2i, t2i
+    from gflow_cli.cli_video import i2v, r2v, t2v
+
+    def shape(param: click.Parameter) -> dict[str, Any]:
+        info = param.to_info_dict()
+        for key in ("help", "default", "required", "show_default"):
+            info.pop(key, None)
+        return {**info, "callback": param.callback, "envvar": param.envvar}
+
+    for verbs in ((t2i, i2i), (t2v, i2v, r2v)):
+        seen: dict[str, dict[str, Any]] = {}
+        for verb in verbs:
+            for param in verb.params:
+                if isinstance(param, click.Option) and param.name is not None:
+                    first = seen.setdefault(param.name, shape(param))
+                    assert shape(param) == first, f"{verb.name} --{param.name} drifted"
 
 
 # ---------------------------------------- same arguments reach the resolved mode runner
@@ -185,7 +274,7 @@ def test_video_gen_forwards_the_same_arguments(
     ("extra", "mode"), [([], "t2i"), (["--ref", _UUID], "i2i")], ids=["t2i", "i2i"]
 )
 def test_image_gen_json_adds_the_resolved_mode(extra: list[str], mode: str, tmp_path: Path) -> None:
-    from tests.cli.test_cli_image import _make_generated_image, _make_t2i_client
+    from tests.cli.fakes import _make_generated_image, _make_t2i_client
 
     client = _make_t2i_client(images=[_make_generated_image(media_name=f"m-{mode}")])
     with (
@@ -202,7 +291,7 @@ def test_image_gen_json_adds_the_resolved_mode(extra: list[str], mode: str, tmp_
 
 
 def test_mode_verb_json_has_no_top_level_mode(tmp_path: Path) -> None:
-    from tests.cli.test_cli_image import _make_generated_image, _make_t2i_client
+    from tests.cli.fakes import _make_generated_image, _make_t2i_client
 
     client = _make_t2i_client(images=[_make_generated_image(media_name="m1")])
     with (
@@ -213,13 +302,14 @@ def test_mode_verb_json_has_no_top_level_mode(tmp_path: Path) -> None:
         result = CliRunner().invoke(
             main, ["image", "t2i", "a cat", "--json", "--out", str(tmp_path)]
         )
+    assert result.exit_code == 0, result.output
     assert "mode" not in json.loads(result.stdout)
 
 
 def test_video_gen_json_adds_the_resolved_mode(tmp_path: Path) -> None:
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.video import VideoResult, VideoStarted, VideoStatus
-    from tests.cli.test_cli_video import FakeVideoRecorder
+    from tests.cli.fakes import FakeVideoRecorder
 
     stub = VideoResult(
         status=VideoStatus(media_id="m1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
@@ -299,6 +389,7 @@ def test_video_gen_keeps_where_project_name_came_from(
     [
         (["video", "gen", "x", "--initial-frame", "{png}", "--ref", "{png}"], ["i2v", "r2v"]),
         (["image", "gen", "x", "--ref", "{png}", "--stdin"], ["image i2i", "--stdin"]),
+        (["video", "gen", "x", "--end-frame", "{png}"], ["--end-frame needs --initial-frame"]),
         (["video", "gen", "x", "--ref", "{png}", "--ui-mode", "classic"], ["video r2v"]),
     ],
 )
@@ -322,3 +413,17 @@ def test_entrypoint_usage_errors_exit_2_before_any_browser(
     assert proc.returncode == 2, proc.stderr
     for name in names:
         assert name in proc.stderr
+
+
+def test_emit_adds_the_mode_a_bridge_recorded(capsys: pytest.CaptureFixture[str]) -> None:
+    """One chokepoint: every --json document printed under a bridge carries the mode."""
+    from gflow_cli import json_output
+
+    with click.Context(click.Command("x")) as ctx:
+        json_output.emit({"status": "ok"})
+        plain = json.loads(capsys.readouterr().out)
+        ctx.meta[json_output.BRIDGE_MODE_META] = "i2v"
+        json_output.emit({"status": "ok"})
+        bridged = json.loads(capsys.readouterr().out)
+    assert "mode" not in plain
+    assert bridged == {"status": "ok", "mode": "i2v"}

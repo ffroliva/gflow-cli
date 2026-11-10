@@ -16,18 +16,18 @@ from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
+    BridgeCommand,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
     bridge_params,
     default_project,
-    invoke_bridged,
+    run_bridged,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
     tool_option,
-    with_bridge_mode,
 )
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
@@ -404,11 +404,7 @@ async def _generate_and_report(
         recorder.close()
 
     if as_json:
-        json_output.emit(
-            with_bridge_mode(
-                json_output.video_result(command=command, request=request, result=result)
-            )
-        )
+        json_output.emit(json_output.video_result(command=command, request=request, result=result))
         if not result.status.succeeded:
             raise SystemExit(1)
         return
@@ -2626,29 +2622,30 @@ async def _run_video_upscale(
         console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
 
 
-def resolve_video_mode(*, frames: bool, refs: bool) -> str:
+def resolve_video_mode(*, initial: bool, end: bool, refs: bool) -> tuple[click.Command, str]:
     """Routing table for `video gen` (#1193): frames -> i2v, --ref -> r2v, neither -> t2v.
 
-    Frames and refs together is not a guess we make: it is a usage error naming both verbs.
+    A frame and refs together, or an end frame without a start, is a usage error, never a
+    guess.
     """
-    if frames and refs:
+    if (initial or end) and refs:
         msg = (
             "A frame (--initial-frame/--end-frame) and --ref were both given: that is either "
             "`gflow video i2v` (animate a frame) or `gflow video r2v` (reference images), "
             "not both. Call the mode verb you mean."
         )
         raise click.UsageError(msg)
-    if frames:
-        return "i2v"
-    return "r2v" if refs else "t2v"
-
-
-_VIDEO_MODES = {"t2v": t2v, "i2v": i2v, "r2v": r2v}
-_VIDEO_WHY = {"t2v": "no frame and no --ref", "i2v": "a frame was given", "r2v": "--ref was given"}
+    if end and not initial:
+        msg = "--end-frame needs --initial-frame (that is `gflow video i2v`)."
+        raise click.UsageError(msg)
+    if initial:
+        return i2v, "--initial-frame was given"
+    return (r2v, "--ref was given") if refs else (t2v, "no frame and no --ref")
 
 
 @video.command(
     "gen",
+    cls=BridgeCommand,
     short_help="Generate a video; picks t2v, i2v or r2v from the inputs.",
     help=(
         "Generate a video without naming the mode: a bridge verb that resolves to a "
@@ -2659,10 +2656,12 @@ _VIDEO_WHY = {"t2v": "no frame and no --ref", "i2v": "a frame was given", "r2v":
         "  PROMPT                                -> gflow video t2v\n"
         "  PROMPT --initial-frame F [--end-frame E] -> gflow video i2v\n"
         "  PROMPT --ref IMAGE                    -> gflow video r2v\n\n"
-        "A frame AND --ref is ambiguous and a usage error (exit 2), as is an option the "
-        "resolved verb does not take. A character by id (--reference-entity) without "
-        "--ref is passed to `video t2v` unchanged. The mode verbs stay; use them when you "
-        "want the mode fixed.\n\n"
+        "The options below are the union of the three verbs; their defaults and limits "
+        "are the resolved verb's (see its --help). A frame AND --ref, --end-frame without "
+        "--initial-frame, or an option the resolved verb does not take is a usage error "
+        "(exit 2). A character by id (--reference-entity) without --ref is passed to "
+        "`video t2v` unchanged. The mode verbs stay; use them when you want the mode "
+        "fixed.\n\n"
         "\b\n"
         "Examples:\n"
         '  gflow video gen "a golden sunset over mountains"\n'
@@ -2674,9 +2673,24 @@ _VIDEO_WHY = {"t2v": "no frame and no --ref", "i2v": "a frame was given", "r2v":
 @click.pass_context
 def gen(ctx: click.Context, prompt: str, **values: Any) -> None:
     """Route to `video t2v`, `video i2v` or `video r2v` (#1193)."""
-    frames = values["initial_frame"] is not None or values["end_frame"] is not None
-    mode = resolve_video_mode(frames=frames, refs=bool(values["refs"]))
-    invoke_bridged(ctx, _VIDEO_MODES[mode], values, fixed={"prompt": prompt}, why=_VIDEO_WHY[mode])
+    mode, why = resolve_video_mode(
+        initial=values["initial_frame"] is not None,
+        end=values["end_frame"] is not None,
+        refs=bool(values["refs"]),
+    )
+    run_bridged(ctx, mode, why)
 
 
-gen.params = bridge_params(gen.params, t2v, i2v, r2v, exclude=("end_image_deprecated",))
+gen.params = bridge_params(
+    gen.params,
+    t2v,
+    i2v,
+    r2v,
+    exclude=("end_image_deprecated",),
+    help_for={
+        "model": (
+            "Video model. Omit for the resolved verb's default (`video i2v` uses "
+            "veo-lite; see each verb's --help)."
+        ),
+    },
+)

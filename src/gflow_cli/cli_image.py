@@ -30,18 +30,18 @@ from rich.table import Table
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _FLOW_ID_RE,
+    BridgeCommand,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
     bridge_params,
     default_project,
-    invoke_bridged,
+    run_bridged,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
     tool_option,
-    with_bridge_mode,
 )
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
@@ -1470,14 +1470,12 @@ async def _run_t2i(
 
             if as_json:
                 json_output.emit(
-                    with_bridge_mode(
-                        json_output.image_result(
-                            command="image t2i",
-                            project_id=project.project_id,
-                            model=req.model.value,
-                            images=images,
-                            saved_paths=saved_paths,
-                        )
+                    json_output.image_result(
+                        command="image t2i",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
                     ),
                 )
             else:
@@ -2020,15 +2018,13 @@ async def _run_i2i(
 
             if as_json:
                 json_output.emit(
-                    with_bridge_mode(
-                        json_output.image_result(
-                            command="image i2i",
-                            project_id=project.project_id,
-                            model=req.model.value,
-                            images=images,
-                            saved_paths=saved_paths,
-                            ref_count=n_refs,
-                        )
+                    json_output.image_result(
+                        command="image i2i",
+                        project_id=project.project_id,
+                        model=req.model.value,
+                        images=images,
+                        saved_paths=saved_paths,
+                        ref_count=n_refs,
                     ),
                 )
             else:
@@ -2084,13 +2080,14 @@ def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
     console.print(table)
 
 
-def resolve_image_mode(*, refs: bool) -> str:
+def resolve_image_mode(*, refs: bool) -> tuple[click.Command, str]:
     """Routing table for `image gen` (#1193): a reference image makes it i2i."""
-    return "i2i" if refs else "t2i"
+    return (i2i, "--ref was given") if refs else (t2i, "no --ref")
 
 
 @image.command(
     "gen",
+    cls=BridgeCommand,
     short_help="Generate image(s); picks t2i or i2i from the inputs.",
     help=(
         "Generate image(s) without naming the mode: a bridge verb that resolves to a "
@@ -2100,8 +2097,10 @@ def resolve_image_mode(*, refs: bool) -> str:
         "Resolves to:\n"
         "  PROMPT...            -> gflow image t2i\n"
         "  PROMPT --ref IMAGE   -> gflow image i2i\n\n"
-        "An option the resolved verb does not take is a usage error (exit 2). "
-        "The mode verbs stay; use them when you want the mode fixed.\n\n"
+        "The options below are the union of both verbs; their defaults and limits are "
+        "the resolved verb's (see its --help). An option the resolved verb does not take "
+        "is a usage error (exit 2). The mode verbs stay; use them when you want the "
+        "mode fixed.\n\n"
         "\b\n"
         "Examples:\n"
         '  gflow image gen "a serene mountain lake at dawn"\n'
@@ -2112,14 +2111,29 @@ def resolve_image_mode(*, refs: bool) -> str:
 @click.pass_context
 def gen(ctx: click.Context, prompts: tuple[str, ...], **values: Any) -> None:
     """Route to `image t2i` or `image i2i` (#1193)."""
-    mode = resolve_image_mode(refs=bool(values["refs"]))
-    if mode == "t2i":
-        invoke_bridged(ctx, t2i, values, fixed={"prompts": prompts}, why="no --ref")
-        return
-    if len(prompts) != 1:
+    mode, why = resolve_image_mode(refs=bool(values["refs"]))
+    if mode is i2i and len(prompts) != 1:
         msg = f"`gflow image i2i` (picked by --ref) takes one PROMPT; got {len(prompts)}."
         raise click.UsageError(msg, ctx=ctx)
-    invoke_bridged(ctx, i2i, values, fixed={"prompt": prompts[0]}, why="--ref was given")
+    run_bridged(ctx, mode, why)
 
 
-gen.params = bridge_params(gen.params, t2i, i2i)
+gen.params = bridge_params(
+    gen.params,
+    t2i,
+    i2i,
+    help_for={
+        "refs": (
+            "Reference image: a local path (auto-uploaded) or the media UUID of an "
+            "uploaded asset. Repeatable. Giving one resolves to `image i2i`."
+        ),
+        "reference_entities": (
+            "Flow CHARACTER entity id to reference for consistency (repeatable). The "
+            "entity must live in the --project you target."
+        ),
+        "ui_mode": (
+            "Which Flow UI arm to require: 'classic', 'agentic' (needed for -i) or "
+            "'auto' (default). Overrides GFLOW_CLI_UI_MODE."
+        ),
+    },
+)
