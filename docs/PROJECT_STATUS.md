@@ -4,6 +4,26 @@
 
 ## Current release
 
+**v0.97.0 — alpha.** Credit balances without a browser, and Chrome closes promptly.
+
+**Credits without a browser (#1229).** `gflow credits user`, `credits list` and the MCP
+`gflow_get_credits` tool now ask flow.google.com for the balance directly with the profile's saved
+session: two HTTP requests, no Chrome. Measured on the release tree: 2.4–2.9 s per read (p50 2.7 s),
+against about 10.7 s through the browser. When the direct read cannot answer (signed out, a
+network error, an unexpected reply) the browser read runs as before; when Flow throttles the
+account nothing falls back. `GFLOW_CLI_WIRE_READS=0` turns it off; it is off by default on macOS
+and behind any proxy. The account-risk note is in KNOWN_ISSUES.
+
+**Wire health.** `gflow doctor` (`auth.wire_read`) and the MCP `gflow_auth_status` tool (`wire`)
+report whether the direct read works, with Flow's build label.
+
+**Fixed.** Closing Chrome no longer waits out the 30 s close timeout on Windows (#1140, #1233);
+no gflow process logs an httpx request URL; `video extend` reports the model it ran with (#1180).
+
+Full ledger: [LIVE_VERIFICATION_v0.97.0](LIVE_VERIFICATION_v0.97.0.md).
+
+<details><summary>v0.96.1 — Omni 1.2 start+end, refused video submits not billed</summary>
+
 **v0.96.1 — alpha.** Omni 1.2 start+end frames, and refused video submits are no longer billed.
 
 **Fixed (#1178, by @Eighty20Digital).** `video i2v --model omni-1.2-flash --end-frame` is no longer
@@ -14,6 +34,8 @@ Flow bills nothing; before, the check only saw requests already sent. An Omni 1.
 start-only clip (reporter's measurement on a Google AI plan).
 
 Full ledger: [LIVE_VERIFICATION_v0.96.1](LIVE_VERIFICATION_v0.96.1.md).
+
+</details>
 
 <details><summary>v0.96.0 — Omni 1.2 Flash, Omni r2v lengths, agent-only reload</summary>
 
@@ -814,6 +836,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Credits read without a browser, wire health in `doctor` and `gflow_auth_status`, Chrome close no longer waits 30 s, `video extend` reports its model, no httpx request URL logged (#1229, #1140, #1180) | ✅ done (v0.97.0) |
 | Omni 1.2 start+end, video submits refused before they are billed, 10s end-frame cap (#1178) | ✅ done (v0.96.1) |
 | Omni 1.2 Flash 3–15s (#1168), Omni r2v 4/6/10s (#1167), agent-only composer reload (#1142) | ✅ done (v0.96.0) |
 | Weekly usage reports after a one-time notice, EU/EEA consent, `gflow telemetry on\|off` (#1164) | ✅ done (v0.95.0) |

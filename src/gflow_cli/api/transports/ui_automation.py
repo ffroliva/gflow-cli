@@ -1091,6 +1091,7 @@ class UiAutomationTransport(VideoGenerationMixin):
             from gflow_cli.browser_manager import (
                 browser_proxy_kwargs,
                 channel_for_profile,
+                disable_features_args,
                 ensure_profile_engine_compatible,
                 window_position_args,
             )
@@ -1117,6 +1118,7 @@ class UiAutomationTransport(VideoGenerationMixin):
                     "--password-store=basic",
                     "--disable-dev-shm-usage",
                     *window_position_args(get_settings().browser_window_position),
+                    *disable_features_args(),
                 ],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )

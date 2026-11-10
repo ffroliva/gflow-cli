@@ -340,8 +340,45 @@ re-syncs dependencies, so a lockfile bump on `develop` cannot masquerade as a
 
 Publishing uses your already-authenticated local `gh` — **no new secrets or
 tokens**. Published content is sanitized for a public repo: SHA, pass/fail
-counts, duration, failure class, and failing test *names* only — never raw logs,
-profile paths, prompts, or signed URLs.
+counts, duration, failure class, and failing test *names*, plus the `RPC-DRIFT`
+section's Flow build label, RPC ids and counts — never raw logs, profile paths,
+prompts, URLs, or anything else from the served JavaScript.
+
+## RPC drift check (#1218)
+
+Every canary comment ends with an `RPC-DRIFT` section. It checks that each id in
+[FLOW_WIRE_RPCS.md](FLOW_WIRE_RPCS.md) is still in the JavaScript flow.google.com serves.
+It fetches the public shell with **no cookies and no browser**, swaps the shell's
+`/_/js/` module list for the four feature modules, and looks for each id as a quoted
+literal. No RPC is sent, so billed submits are covered at $0. It needs no profile, so it
+runs on `AUTH-EXPIRED` and `DEFERRED` nights too. It never changes the run's state or
+title.
+
+| Outcome | Meaning | Action |
+|---|---|---|
+| `OK` | every catalogued id is present. An id found only in the shell's base bundle is listed as "not in the feature modules", never as gone | none |
+| `ID-GONE` | the bundle parsed (it holds descriptors) and catalogued ids are missing from it, even if all of them are | the named ids are missing from the four modules. First load a project page (the spike's `--page` arm) to rule out an id that moved to another module; if it is still absent, it was renamed or removed: update its row |
+| `MODULES-CHANGED` | the feature-module bundle answered 404 | the feature module names moved; relearn them from a project page (the spike's `--page` arm). Says nothing about any single id |
+| `PARSE-CHANGED` | the bundle answered 200 with no `{Xa:"…"}` descriptor | the bundle format changed; the descriptor pattern needs re-deriving. Never reads as `OK` |
+| `INCONCLUSIVE` | nothing was measured: offline, a shell or bundle HTTP error other than a bundle 404 (429, 5xx), a redirect to a page without the app, no build label, a catalog that lost rows or has no `live` row, or the 120 s budget ran out | none; says nothing about Flow |
+
+One renamed module cannot pass for a missing id. On 2026-11-10 the server answered the
+four modules plus one unknown name with HTTP 404 for the whole bundle, not a bundle
+with that module left out, so any module rename reads `MODULES-CHANGED`.
+
+**Per-build archive (S3, #1223).** On the first real nightly run that sees a build label,
+the check writes `tmp/rpc-inventory/<build>.json`: the build's full `{Xa:"<id>"}`
+descriptor list, the modules used, and the ids added and removed since the previous
+first-seen build. The comment carries the same diff. The archive is local and gitignored.
+Only `OK` and `ID-GONE` runs are archived and an existing build's file is never
+overwritten, so a module-rename night leaves no file and its date is in the canary
+comments. A failed write is named in the section's reason. A `--dry-run` and a standalone
+`rpc_drift.py` run show the diff but write nothing, so they cannot use up a new build's diff
+before a published comment reports it. A hand-run `run_canary.py --issue N` is a real run:
+it archives the build and publishes the diff to that issue itself. Only rows whose `Status` is `live` (any case) are checked.
+
+Run it alone, $0, writing nothing: `uv run python scripts/canary/rpc_drift.py`. The
+comment publishes only the build label, ids and counts, and an error by its class name.
 
 ## Selector drift check (#563, moved to the canary in #1083)
 
@@ -391,6 +428,7 @@ tests/
     ├── test_migrated_selector_drift_e2e.py # [e2e, e2e_auth] registry vs flow.google.com — 0 credits
     ├── test_auth_renew_e2e.py            # [e2e, e2e_auth] `gflow auth renew` leaf — 0 credits
     ├── test_credits_refresh_e2e.py       # [e2e, e2e_auth] `--refresh` on CLI + MCP — 0 credits
+    ├── test_credits_wire_bdd.py          # [e2e, e2e_auth] credits read with no browser, fallback (#1229) — 0 credits
     ├── test_transports_e2e.py            # [e2e, e2e_{auth,image,batch,video}]
     ├── test_image_batch_e2e.py           # [e2e, e2e_batch]
     ├── test_video_t2v_e2e.py             # [e2e, e2e_video]

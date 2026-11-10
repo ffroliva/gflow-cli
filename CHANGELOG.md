@@ -23,12 +23,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Usage telemetry recorded the wrong command after a root flag ([#1209](https://github.com/ffroliva/gflow-cli/issues/1209)).**
   `gflow -v auth list` counted as `gflow`, because a flag was treated as taking a value.
+
+## [0.97.0] — 2026-11-10
+
+### Added
+
+- **`gflow credits` reads the balance without starting a browser when the saved session is
+  accepted.** `credits user`, `credits list` and the MCP `gflow_get_credits` tool now ask
+  flow.google.com for the balance directly, with the profile's saved cookies: two HTTP
+  requests and no Chrome. When that fails (signed out, a network error, an unexpected reply)
+  they read it in the browser as before; with Chrome open on the profile both reads fail and
+  report the profile in use (exit 11, close Chrome and retry). When Flow throttles the account
+  (HTTP 429 or 503) nothing falls back to the browser, which would send the same requests:
+  `credits user` exits 4 or 6, and `credits list` records the error for that profile. `GFLOW_CLI_WIRE_READS=0` turns the
+  direct read off; it is off by default on macOS and while any proxy is configured
+  (`GFLOW_CLI_BROWSER_PROXY`, or an environment/system proxy). The direct read uses the saved
+  Google session outside Chrome; what that risks and what is still unmeasured is in
+  KNOWN_ISSUES (#1229).
+
+- **`gflow doctor` and the MCP `gflow_auth_status` tool report whether that direct read works.**
+  Doctor's new `auth.wire_read` check (default profile) and the tool's new `wire` field (on every session result) give
+  `accepted` with Flow's build label, or the reason credit reads use the browser
+  (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …).
+  Each sends one GET and one POST to flow.google.com unless the direct read is off. The check
+  is informational: it never changes doctor's exit code. When Flow is throttling the account,
+  `gflow_auth_status` skips its browser probe and returns `status: throttled` with
+  `retry_after` (#1229).
+
+### Fixed
+
+- **No gflow process logs an httpx request URL any more.** Starting the MCP server set Python
+  logging to INFO, at which httpx writes every request's full URL to stderr; MCP clients keep
+  that output. The `httpx` and `httpcore` loggers are now held at WARNING in every gflow
+  process (#1229).
+
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**
   The page now orders the extension with an Omni key (`macaron_cookie_extend_4s`, measured
   2026-11-08) that gflow's key search did not match. The key is now read from its slot in the
   request, so a word in the prompt can no longer pass for it. The page also no longer creates
   a scene before the extend. The extend e2e contract follows the new wire, and the guard that refuses an
   extend of the wrong clip is unchanged (#1180).
+- **Closing Chrome no longer waits out the 30 s close timeout on Windows.** Chrome's
+  shutdown waited on its OneDrive-folder check (`CloudSyncedFolderChecker`), which never
+  answered on an affected machine, so every browser-backed command (for example `gflow credits
+  user`) paid about 30 s after its work was done. Headless real Chrome waited too. gflow now
+  turns that feature off in every Chrome it launches. Playwright passes its own `--disable-features` list and Chrome
+  keeps only the last one, so gflow sends a single switch that carries Playwright's list plus
+  its own. If a Playwright release moves that list where gflow cannot read it, the switch is
+  left out and the close is slow again rather than wrong (#1140, #1233).
 
 ## [0.96.1] — 2026-11-08
 
@@ -6927,7 +6969,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...HEAD
+[0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0
