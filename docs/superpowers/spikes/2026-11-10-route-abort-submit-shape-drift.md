@@ -34,7 +34,7 @@ reCAPTCHA token; nothing is emulated and nothing is sent that the page did not s
 
 Billing guard:
 
-1. A context route on every `batchexecute` aborts the request when any billed id
+1. A context route on every `batchexecute` aborts the request when any guarded id
    (`YhhmEf eb1hJf MZZa6b nprQif ogiZ0b fZytfe SPrCad p0UkFb`) is in the URL `rpcids`, heads
    any `f.req` frame, or appears anywhere in the URL or decoded body. It also aborts,
    fail-closed, a POST whose id does not resolve or whose body does not decode (gzip is
@@ -42,7 +42,7 @@ Billing guard:
 2. `Route.continue_` is wrapped with the same predicate. A page route takes precedence over
    a context route, and `_guard_image_submit` (`migrated_composer.py:1402`) ends in
    `continue_()`, so a reference-carrying image submit would bypass (1). i2i was not run.
-3. A tripwire: a response to any request carrying a billed id is a leak and stops the run.
+3. A tripwire: a response to any request carrying a guarded id is a leak and stops the run.
 4. `gflow credits user` read between paths with no browser open; any change stops it.
 
 The predicate was self-tested offline before any browser opened: a URL-only id, a body-only
@@ -68,12 +68,12 @@ the page sent on load resolved to a free id.
 | t2v (`veo_3_1_lite`, portrait) | `YhhmEf` | 3/3 | `97b4e08cc0790271` ×3 | 14.2, 13.1, 13.1 | URL and body |
 | i2v (`veo_3_1_lite`, portrait, local start frame) | `eb1hJf` | 3/3 | `2ed406289469bcf1` ×3 | 22.3, 21.0, 19.0 | URL and body |
 | image upscale 2K | `SPrCad` | 3/3 | `402e517f0d9c5709` ×3 | 10.6, 10.0, 10.1 | URL and body |
-| video extend | `fZytfe` | **0/7, unmeasured** | none | 35 to 45 | never sent |
+| video extend | `fZytfe` | **0/8, unmeasured** | none | 35 to 45 | never sent |
 | video upscale 1080p | `p0UkFb` | **0/4, unmeasured** | none | 5.7 | never sent |
 
 Every captured request was a single frame with query keys
 `_reqid bl f.sid hl rpcids rt source-path` and form fields `at f.req`. No run captured an
-unexpected rpc, no request was aborted fail-closed, and no billed request got a response.
+unexpected rpc, no request was aborted fail-closed, and no guarded request got a response.
 Credits: **40 before, 40 after**, unchanged at every read in between.
 
 The four shapes are recorded in
@@ -82,7 +82,8 @@ The four shapes are recorded in
 **Extend, unmeasured.** On three clips (two `veo_3_1_lite`, one `omni_1_2_flash`) the clip
 editor's extend menu item (`keyboard_double_arrow_right`) never became clickable, so the
 page never built `fZytfe`. The first run on the first clip raised `TransportTimeoutError`
-instead of the click timeout: that is the misleading `Zzl0ze` message #1244 describes. The
+instead of the click timeout; only the class was recorded, so whether it carried the
+misleading `Zzl0ze` message #1244 describes was not captured. The
 repo's own $0 e2e, `test_e2e_extend_submit_contract_at_zero_cost`, fails the same way on the
 untouched `develop` tree on this profile (35.9 s, click timeout on the same locator), so the
 miss is not the spike's. This is #1244: the item is disabled on this account, cause not
@@ -91,15 +92,16 @@ off-limits for this run.
 
 **Video upscale, unmeasured.** `upscale_video_migrated` raised `UpscaleUnavailableError`
 ("1080p video option is not available or disabled on this account") before any click, on
-the same clip all four times. The page never built `p0UkFb`.
+the same clip all four times. The page never built `p0UkFb`. The menu was not inspected, so
+whether the item was absent or disabled, and why, was not observed; only one clip was tried.
 
 ## Verdict against the pre-registered reading
 
 - **t2i, t2v, i2v, image upscale: stable.** Each captured its expected rpc 3/3, the three
   fingerprints were identical, and credits did not move. They can join the canary.
-- **Extend and video upscale: unmeasured, not passed.** Both are blocked on this profile
-  by Flow disabling the menu item, which is a named external blocker (the account), not a
-  result about the wire.
+- **Extend and video upscale: unmeasured, not passed.** Extend is blocked on this account
+  by a disabled menu item (#1244, three clips). Video upscale was refused by gflow's own
+  availability check on one clip, cause not observed. Neither is a result about the wire.
 - `MZZa6b` (r2v) and `nprQif` (start+end) were not in this spike's set and were not run.
   i2i was deliberately not run, because its production page route ends in `continue_()`.
 
@@ -107,7 +109,7 @@ the same clip all four times. The page never built `p0UkFb`.
 
 - **Run time.** About 15 s per run for t2i and t2v, 20 s for i2v, 10 s for image upscale,
   each with a fresh browser: about 1 minute for one run of the four. A `gflow credits` read
-  between paths took about 5 s here (the direct read, no browser), so reading before,
+  between paths took about 5 s here, so reading before,
   between and after keeps one nightly pass under 2 minutes.
 - **reCAPTCHA.** The page mints its own token for each submit it builds. That is at least
   one mint per night for each of t2i and t2v, whose `Needs reCAPTCHA` is `yes` in the table.
@@ -129,13 +131,17 @@ the same clip all four times. The page never built `p0UkFb`.
   otherwise make the key, and the hash, flap.
 - **Billing safety is the job's, not the driver's.** The guard has to sit at the context
   route and at `Route.continue_`, matching URL and body. A URL-only predicate billed two
-  clips on 2026-11-08 (memory: `omni12-submit-rpc-rides-the-body-only`).
+  clips on 2026-11-08 ([Omni 1.2 interpolation spike](2026-11-08-omni12-interpolation-key.md)).
 
 ## Not measured
 
 - Stability across nights and across builds: all twelve captured runs were within one hour
   on one build.
-- Whether a real shape change is caught live. The detector control is offline only.
+- Whether a real shape change is caught live. The detector control is offline only, though
+  the t2v and i2v skeletons differ by one slot group (the start frame) and the key, so the
+  fingerprint does separate two real shapes.
+- The response tripwire never fired and was never shown able to fire. Credits back it up
+  for the video paths; for t2i (image quota, no credits) it is the only leak evidence.
 - `fZytfe` and `p0UkFb` shapes (blocked), `MZZa6b`, `nprQif`, and i2i.
 - Mint counts per path.
 - `UPPER` strings without an underscore (the image model name `NARWHAL`) fold into `S`, so

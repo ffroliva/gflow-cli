@@ -57,7 +57,7 @@ Code paths are relative to `src/gflow_cli/`.
 ## Request shape fingerprints (#1228)
 
 The table records response shapes only. These are the first recorded request shapes, taken
-by letting the page build a billed submit and aborting it before it left the browser, at $0
+by letting the page build a submit and aborting it before it left the browser, at $0
 ([route-abort spike](superpowers/spikes/2026-11-10-route-abort-submit-shape-drift.md)). A
 fingerprint keeps structure only: `N` null, `I` int, `U` UUID, `S` any other string, and
 `K:` a model key with its digits masked to `9`. It never keeps a value, an id, a token or a
@@ -73,8 +73,10 @@ fields `at f.req`.
 | `eb1hJf` | i2v, `veo_3_1_lite`, portrait, local start frame | `2ed406289469bcf1` | `[[[["N","N",[[["S"]]]],"K:veo_9_9_i9v_lite","I","N",["N","U","N","N","N",["N","N","I","I"]],["N","N","N","N","U","U"]]],["N","I","N","N","N","U","N","N","N","N",["S","I"]],["U","I"]]` |
 | `SPrCad` | image upscale, 2K | `402e517f0d9c5709` | `["U","I",["N","I","N","N","N","U","N","N","N","N",["S","I"]]]` |
 
-`fZytfe` (extend) and `p0UkFb` (video upscale) were not reached on that account: Flow
-disabled both menu items (#1244 for extend). `MZZa6b` and `nprQif` were not driven.
+`fZytfe` (extend) and `p0UkFb` (video upscale) were not reached on that account: the extend
+menu item stayed disabled on three clips (#1244), and the video upscale was refused with
+`UpscaleUnavailableError` before any click, cause not observed. `MZZa6b` and `nprQif` were
+not driven.
 
 ## Keeping this table current
 
