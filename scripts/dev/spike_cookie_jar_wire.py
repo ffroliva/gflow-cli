@@ -44,7 +44,15 @@ Pre-registered readings (written before run 1)
 Prints and writes NO cookie value, `at`, f.sid, bl value or id: only names, domains, counts,
 statuses, booleans, and "parsed: yes/no" for the balance.
 
-Usage: uv run python scripts/dev/spike_cookie_jar_wire.py [profile]   (default denon82)
+Re-run mode, added after run 1 and before run 2. In run 1 another agent's e2e suite was using
+the same profile. The profile lease prevents overlapping Chrome sessions, but it does not stop a
+foreign session from running in the gaps between this script's phases. `--q34` skips the Q1
+ablation, takes the snapshot and one baseline read, then runs Q2-Q4. It records UTC timestamps
+for every lease hand-over, so the gaps where a foreign session could slip in are bounded and
+visible. Pre-registered reading for run 2: if the stale snapshot fails here while it passed in
+run 1, the run-1 Q4 pass is not reproducible and Q4 is unmeasured, not passed.
+
+Usage: uv run python scripts/dev/spike_cookie_jar_wire.py [profile] [--q34]   (default denon82)
 """
 
 # ruff: noqa: E501  (the pre-registered readings table is wider than 100 columns)
@@ -100,6 +108,10 @@ TRIAL_CAP = 40
 GAP_S = 1.1
 _last_call = [0.0]
 _trials = [0]
+
+
+def now() -> str:
+    return time.strftime("%H:%M:%S", time.gmtime())
 
 
 def redact(msg: str) -> str:
@@ -430,6 +442,7 @@ async def phase_q2(pdir: Path, cookie_file: Path, key_file: Path, old: list[Any]
             await page.wait_for_load_state("networkidle", timeout=20_000)
         except Exception:  # noqa: BLE001 - idle is best effort
             rep["networkidle_timeout"] = True
+        rep["chrome_opened_utc"] = now()
         await asyncio.sleep(20)
         rep["chrome_running"] = True
         rep["probes"] = await asyncio.to_thread(disk_probes, cookie_file, key_file)
@@ -455,7 +468,7 @@ async def phase_q2(pdir: Path, cookie_file: Path, key_file: Path, old: list[Any]
     return rep
 
 
-def main(profile: str) -> int:
+def main(profile: str, *, q34_only: bool = False) -> int:
     pdir = resolve_profile_dir(profile)
     cookie_file, key_file = get_cookies_path(pdir), pdir / "Local State"
     try:
@@ -472,16 +485,26 @@ def main(profile: str) -> int:
         }
     }
     # Q1 + Q5 under the profile lease: no Chrome can start on the profile meanwhile.
+    tl: dict[str, str] = {}
+    out["timeline_utc"] = tl
     with ProfileLease(pdir):
+        tl["lease1_acquired"] = now()
         meta_before = metadata(cookie_file)
         out["q5_prefix_counts_google"] = prefix_counts(meta_before)
-        out["q1"], old, _ = phase_q1(cookie_file, key_file)
+        if q34_only:
+            old = read_jar(cookie_file, key_file)
+            out["q34_baseline_with_snapshot"] = wire_read(sent_to_flow(old))
+        else:
+            out["q1"], old, _ = phase_q1(cookie_file, key_file)
+        tl["lease1_released"] = now()
     if not old:
         print(json.dumps(out, indent=1))
         return 1
     out["q2"] = asyncio.run(phase_q2(pdir, cookie_file, key_file, sent_to_flow(old)))
+    tl["chrome_closed"] = now()
     time.sleep(3)  # let Chrome flush and release the file
     with ProfileLease(pdir):
+        tl["lease2_acquired"] = now()
         meta_after = metadata(cookie_file)
         fresh = read_jar(cookie_file, key_file)
         out["q3_metadata_diff"] = meta_diff(meta_before, meta_after)
@@ -490,12 +513,15 @@ def main(profile: str) -> int:
         )
         out["q4_wire_stale_snapshot"] = wire_read(sent_to_flow(old))
         out["q3_wire_fresh_jar"] = wire_read(sent_to_flow(fresh))
+        tl["lease2_released"] = now()
     out["total_trials"] = _trials[0]
+    dest = OUT.with_name("cookie_jar_wire_q34.json") if q34_only else OUT
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(json.dumps(out, indent=1))
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "denon82"))
+    args = [a for a in sys.argv[1:] if a != "--q34"]
+    raise SystemExit(main(args[0] if args else "denon82", q34_only="--q34" in sys.argv))
