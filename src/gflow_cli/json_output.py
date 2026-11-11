@@ -26,11 +26,16 @@ if TYPE_CHECKING:
     from gflow_cli.services.doctor import DoctorReport
 
 
+def dumps(payload: dict[str, Any]) -> str:
+    """The one ``--json`` serialization; MCP resources that mirror a command reuse it."""
+    return json.dumps(payload, indent=2)
+
+
 def emit(payload: dict[str, Any]) -> None:
     """Print *payload* as indented JSON on stdout (the only side effect here)."""
     import click
 
-    click.echo(json.dumps(payload, indent=2))
+    click.echo(dumps(payload))
 
 
 def exit_code_for(exc: GFlowError) -> int:
