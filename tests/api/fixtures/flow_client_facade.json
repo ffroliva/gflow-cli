@@ -284,8 +284,8 @@
    ],
    "files_written": [],
    "result": {
-    "message": "replace() should be called on dataclass instances",
-    "raise": "TypeError"
+    "message": "FlowApiClient.transport is None — call generate_image inside 'async with client'",
+    "raise": "RuntimeError"
    },
    "traffic": [
     {

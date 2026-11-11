@@ -32,6 +32,7 @@ import structlog
 import gflow_cli.api.client as client_mod
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
+from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.image_upscale import TargetResolution
 from gflow_cli.api.scene import ConcatInput, SceneWorkflow, SceneWorkflowMetadata
 from gflow_cli.config import Settings
@@ -354,7 +355,7 @@ def _cases(tmp: Path) -> list[tuple[str, str, dict[str, Any]]]:
         ("generation", "poll_video_status", {"media_id": MEDIA, "project_id": PROJECT, **poll}),
         ("generation", "download_video", {"media_id": MEDIA, "out_path": tmp / "v.mp4"}),
         ("generation", "download_image", {"image": _image(), "out_path": tmp / "i.png"}),
-        ("generation", "generate_image", {"req": None}),
+        ("generation", "generate_image", {"req": GenerateImageRequest(prompt="a lighthouse")}),
         ("generation", "generate_video", {"req": None}),
         (
             "media_edit",
