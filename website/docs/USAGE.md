@@ -1980,9 +1980,11 @@ use. When set:
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
   `duration`, `count`, `seed`).
 - On failure, the command still emits a JSON payload — an RFC 9457
-  problem-details object including a `retryable` flag (true for WAF /
-  rate-limit / network / timeout) that a worker scheduler can key its
-  retry-vs-absorb decision off, plus `charged` (`no` / `maybe` / `yes`) and
+  problem-details object including a `retryable` flag that a worker scheduler
+  can key its retry-vs-absorb decision off (by default true for WAF /
+  rate-limit / network / timeout, but read the emitted value: a video poll that
+  times out after the submit reads `false` with `next_action: "reconcile"`), plus
+  `charged` (`no` / `maybe` / `yes`) and
   `next_action` (#1201) — and exits with the same non-zero code as the Rich path.
   Every `type`, its exit code and those defaults: [ERRORS.md](ERRORS.md).
 - One exception: a `video t2v/i2v/r2v` that Flow accepted and then reported

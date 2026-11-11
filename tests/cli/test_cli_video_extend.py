@@ -1002,3 +1002,58 @@ async def test_a_failed_scene_read_before_the_render_is_reconciled_with_a_runnab
     hint = pd["remediation_hint"]
     assert f"gflow scene create --project {PROJECT}" in hint
     assert "wf-seg-1" in hint
+
+
+@pytest.mark.asyncio
+async def test_the_free_rerender_names_only_confirmed_segments_and_the_profile(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1208 review: a segment whose poll failed is not confirmed, so the recovery
+    command must not render it; and the command must reach the run's own profile."""
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import SceneConcatError
+
+    async def _boom(_inputs: Any, *, out_path: Any) -> Any:
+        raise SceneConcatError("render failed")
+
+    _patched_client.concatenate_scene = _boom  # type: ignore[method-assign]
+    _chain_spy["_emit"] = [
+        ExtendStarted(media_id="m1", workflow_id="wf-seg-1", model_key="k", unit_cost=10),
+        ExtendStarted(media_id="m2", workflow_id="wf-seg-2", model_key="k", unit_cost=10),
+    ]
+    _chain_spy["_result"] = ExtendChainResult(
+        scene_id="s", completed_media_ids=["m1"], credits_spent=20
+    )
+    with pytest.raises(SceneConcatError) as info:
+        await _extend_session(
+            profile_name="other-account",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a", "b"),
+            segments=2,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    hint = info.value.to_problem_details()["remediation_hint"]
+    assert "wf-seg-1" in hint
+    assert "wf-seg-2" not in hint
+    assert "--profile other-account" in hint
+
+
+def test_a_resumed_rerender_keeps_the_instruction_out_of_the_command() -> None:
+    """#1208 review: prose inside the command made it fail in a shell."""
+    from gflow_cli.cli_video import _free_rerender_hint
+
+    hint = _free_rerender_hint("proj", "p", ["wf-1"], resumed=True)
+    command, _, rest = hint.partition("--output <path>")
+    assert command.startswith("gflow scene create --project proj --profile p wf-1")
+    assert "(" not in command
+    assert "earlier clips" in rest

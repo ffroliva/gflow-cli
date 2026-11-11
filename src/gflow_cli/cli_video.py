@@ -1133,11 +1133,18 @@ async def _run_chain(
     console.print(f"[dim]Stitch into one file with `gflow scene` (chain_id {chain_id}).[/dim]")
 
 
-def _free_rerender_hint(project_id: str, clips: list[str], *, resumed: bool) -> str:
+def _free_rerender_hint(project_id: str, profile: str, clips: list[str], *, resumed: bool) -> str:
     """The `gflow scene create` command that renders this extend run without credits."""
     refs = " ".join(clips) if clips else "<clip-workflow-id> ..."
-    earlier = " (put the scene's earlier clips first)" if resumed else ""
-    return f"gflow scene create --project {project_id} {refs} --output <path>{earlier}"
+    command = (
+        f"gflow scene create --project {project_id} --profile {profile} {refs} --output <path>"
+    )
+    if resumed:
+        return (
+            f"{command}. This run resumed a scene: put its earlier clips before these, in "
+            "the order and with the trims `gflow scene show` lists."
+        )
+    return command
 
 
 def _chain_json(
@@ -2220,6 +2227,8 @@ async def _extend_session(  # noqa: PLR0913
 
         submitted_count = 0
         spent_so_far = 0
+        # media id -> workflow id of each submitted segment; only confirmed ones get rendered.
+        submitted_clips: dict[str, str] = {}
 
         def _on_submitted(started: Any) -> None:
             # Update BEFORE the ~2 min poll: a Ctrl+C during that wait must
@@ -2228,7 +2237,7 @@ async def _extend_session(  # noqa: PLR0913
             submitted_count += 1
             spent_so_far += started.unit_cost or 0
             if started.workflow_id:
-                scene_clips.append(started.workflow_id)
+                submitted_clips[started.media_id] = started.workflow_id
             set_interrupt_context(
                 credits_spent=spent_so_far,
                 resume_id=target_scene,
@@ -2275,7 +2284,10 @@ async def _extend_session(  # noqa: PLR0913
         # Render even a partial chain: those segments are generated and billed,
         # and discarding them because the run did not finish wastes real money.
         # The scene holds the source clip too, so even N=1 renders source + extension.
-        rerender = _free_rerender_hint(project_id, scene_clips, resumed=bool(scene_id))
+        confirmed = [submitted_clips[m] for m in result.completed_media_ids if m in submitted_clips]
+        rerender = _free_rerender_hint(
+            project_id, profile_name, scene_clips + confirmed, resumed=bool(scene_id)
+        )
         if output_file is not None and result.completed_media_ids:
             try:
                 scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
