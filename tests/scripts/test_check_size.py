@@ -110,5 +110,57 @@ def test_update_baseline_refuses_while_violations_exist(tmp_path: Path) -> None:
     assert baseline_file.read_text(encoding="utf-8") == "{}"
 
 
-def test_repo_tree_passes_its_own_baseline() -> None:
-    assert cs.violations(cs.measure_all(), cs.load_baseline()) == []
+def test_a_noqa_comment_does_not_hide_an_offender(tmp_path: Path) -> None:
+    func = _complex_func("hidden", 12).replace("def hidden(x):", "def hidden(x):  # noqa: C901")
+    _write(tmp_path, "nq.py", func)
+    assert cs.violations(_scan(tmp_path), {}) == [
+        "C901:src/gflow_cli/nq.py::hidden: 13 > 10 (new; not in the baseline)"
+    ]
+
+
+def test_a_file_that_does_not_parse_is_skipped_not_a_crash(tmp_path: Path) -> None:
+    _write(tmp_path, "broken.py", "def f(:\n")
+    assert cs.violations(_scan(tmp_path), {}) == []
+
+
+def test_a_file_of_exactly_the_limit_passes(tmp_path: Path) -> None:
+    _write(tmp_path, "edge.py", "x = 0\n" * cs.LIMIT_FILE)
+    assert _scan(tmp_path)["file:src/gflow_cli/edge.py"].value == cs.LIMIT_FILE
+    assert cs.violations(_scan(tmp_path), {}) == []
+
+
+def test_nested_classes_with_the_same_name_get_separate_keys(tmp_path: Path) -> None:
+    inner = _cls("Meta", 0, extra_lines=3).replace("\n", "\n    ")
+    _write(tmp_path, "nest.py", f"class A:\n    {inner}\nclass B:\n    {inner}\n")
+    keys = {k for k in _scan(tmp_path) if k.startswith("class-lines")}
+    assert {"class-lines:src/gflow_cli/nest.py::A.Meta"} <= keys
+    assert {"class-lines:src/gflow_cli/nest.py::B.Meta"} <= keys
+
+
+def test_a_moved_offender_carries_its_baseline_entry(tmp_path: Path) -> None:
+    _write(tmp_path, "new_home.py", _complex_func("legacy", 12))
+    baseline = {"C901:src/gflow_cli/old_home.py::legacy": 13}
+    current = _scan(tmp_path)
+    assert cs.violations(current, baseline) == []
+    assert cs.ratcheted(current, baseline) == {"C901:src/gflow_cli/new_home.py::legacy": 13}
+
+
+def test_a_moved_offender_that_grew_fails(tmp_path: Path) -> None:
+    _write(tmp_path, "new_home.py", _complex_func("legacy", 14))
+    baseline = {"C901:src/gflow_cli/old_home.py::legacy": 13}
+    assert cs.violations(_scan(tmp_path), baseline) == [
+        "C901:src/gflow_cli/new_home.py::legacy: 15 > 10 (new; not in the baseline)"
+    ]
+
+
+def test_base_ref_check_rejects_a_hand_raised_or_added_entry_but_allows_a_move() -> None:
+    base = {"C901:a.py::f": 12, "C901:a.py::g": 14}
+    assert cs.escalations({"C901:a.py::f": 13, "C901:a.py::g": 14}, base) == [
+        "C901:a.py::f: raised 12 -> 13 by hand"
+    ]
+    assert cs.escalations({**base, "C901:a.py::h": 11}, base) == ["C901:a.py::h: added by hand"]
+    moved = {"C901:a.py::f": 12, "C901:b.py::g": 14}
+    assert cs.escalations(moved, base) == []
+    assert cs.escalations({"C901:a.py::f": 12, "C901:b.py::g": 15}, base) == [
+        "C901:b.py::g: added by hand"
+    ]

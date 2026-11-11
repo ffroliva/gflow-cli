@@ -5,20 +5,27 @@ docs/ARCHITECTURE.md says an oversized module should be split. Nothing enforced 
 classes grew past 2,600 lines. A class that large carries several responsibilities.
 
 Metrics, for every .py file under src/gflow_cli:
-    file:<rel>                  lines in the file           <= LIMIT_FILE
-    class-lines:<rel>::<Class>  lines in the class          <= LIMIT_CLASS
-    C901:<rel>::<qualname>      cyclomatic complexity       ruff, threshold in pyproject.toml
-    PLR0915:<rel>::<qualname>   statements in a function    ruff, threshold in pyproject.toml
-    PLR0904:<rel>::<Class>      public methods in a class   ruff, threshold in pyproject.toml
+    file:<rel>                     lines in the file           <= LIMIT_FILE
+    class-lines:<rel>::<qualname>  lines in the class          <= LIMIT_CLASS
+    C901:<rel>::<qualname>         cyclomatic complexity       ruff, threshold in pyproject.toml
+    PLR0915:<rel>::<qualname>      statements in a function    ruff, threshold in pyproject.toml
+    PLR0904:<rel>::<qualname>      public methods in a class   ruff, threshold in pyproject.toml
 
 Existing offenders are recorded in scripts/ci/size_baseline.json. That baseline is a RATCHET:
 an offender may stay at its recorded value or shrink, never grow, and anything not in the
-baseline must be within its limit. `--update-baseline` can only lower or drop entries, so the
-baseline cannot be used to wave a new violation through.
+baseline must be within its limit. `# noqa` does not exempt anything here.
+
+A pure move keeps its entry: when an entry's key disappears and an offender with the same
+rule and name appears in another file at the same value or lower, the entry follows it.
+
+`--update-baseline` only lowers, drops or re-keys (moves) entries. `--base-ref REF` (CI) also
+fails if the committed baseline adds an entry or raises a value compared with REF's copy, so
+the file cannot be hand-edited to wave a violation through.
 
 Usage:
-    check_size.py                    check the tree (CI, pre-commit, /gflow:check)
-    check_size.py --update-baseline  lower or drop entries that improved
+    check_size.py                    check the tree (pre-commit, /gflow:check)
+    check_size.py --base-ref REF     the same, plus the hand-edit check against REF (CI)
+    check_size.py --update-baseline  lower, drop or re-key entries that improved or moved
 Exit 0 clean, 1 violation.
 """
 
@@ -77,16 +84,22 @@ def _parse(path: Path) -> tuple[str, ast.Module | None]:
         return src, None  # a file that does not parse is ruff's and pytest's problem
 
 
+def _put(out: dict[str, Measure], key: str, value: int, limit: int) -> None:
+    out[key] = Measure(max(out[key].value if key in out else 0, value), limit)
+
+
 def measure_lines(path: Path, root: Path = REPO) -> dict[str, Measure]:
-    """``file:<rel>`` and ``class-lines:<rel>::<Class>`` for one file."""
+    """``file:<rel>`` and ``class-lines:<rel>::<qualname>`` for one file."""
     rel = path.relative_to(root).as_posix()
     src, tree = _parse(path)
-    out = {f"file:{rel}": Measure(src.count("\n") + 1, LIMIT_FILE)}
-    for node in ast.walk(tree) if tree else ():
+    out = {f"file:{rel}": Measure(len(src.splitlines()), LIMIT_FILE)}
+    if tree is None:
+        return out
+    names = _qualnames(tree)
+    for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
-            key = f"class-lines:{rel}::{node.name}"
             span = (node.end_lineno or node.lineno) - node.lineno + 1
-            out[key] = Measure(max(out[key].value if key in out else 0, span), LIMIT_CLASS)
+            _put(out, f"class-lines:{rel}::{names[node.lineno]}", span, LIMIT_CLASS)
     return out
 
 
@@ -95,24 +108,27 @@ def measure_ruff(src: Path, root: Path = REPO) -> dict[str, Measure]:
     threshold, and its message carries both numbers: ``... (13 > 10)``."""
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter, no shell
         [sys.executable, "-m", "ruff", "check", "--preview", "--select", RUFF_RULES,
-         "--config", str(PYPROJECT), "--output-format", "json", "--exit-zero", "--no-cache",
-         str(src)],
-        capture_output=True, text=True, encoding="utf-8", check=True,
+         "--ignore-noqa", "--config", str(PYPROJECT), "--output-format", "json",
+         "--exit-zero", "--no-cache", str(src)],
+        capture_output=True, text=True, encoding="utf-8", check=False,
     )  # fmt: skip
+    if proc.returncode != 0:
+        raise RuntimeError(f"ruff failed ({proc.returncode}): {proc.stderr.strip()}")
     out: dict[str, Measure] = {}
     names: dict[Path, dict[int, str]] = {}
     for diag in json.loads(proc.stdout):
-        path = Path(diag["filename"]).resolve()
+        if not diag.get("code"):
+            continue  # a syntax error: not a size metric, and ruff check reports it anyway
         numbers = _RUFF_NUMBERS.search(diag["message"])
         if numbers is None:
             raise RuntimeError(f"unexpected ruff message: {diag['message']!r}")
+        path = Path(diag["filename"]).resolve()
         if path not in names:
             tree = _parse(path)[1]
             names[path] = _qualnames(tree) if tree else {}
         row = diag["location"]["row"]
         key = f"{diag['code']}:{path.relative_to(root).as_posix()}::{names[path].get(row, row)}"
-        value, limit = int(numbers[1]), int(numbers[2])
-        out[key] = Measure(max(out[key].value if key in out else 0, value), limit)
+        _put(out, key, int(numbers[1]), int(numbers[2]))
     return out
 
 
@@ -129,7 +145,41 @@ def load_baseline(path: Path = BASELINE) -> dict[str, int]:
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
+def _identity(key: str) -> tuple[str, str] | None:
+    """(rule, last name segment) for a moved-entry match; file entries never move."""
+    kind, _, rest = key.partition(":")
+    _, sep, qual = rest.partition("::")
+    return (kind, qual.rsplit(".", 1)[-1]) if sep else None
+
+
+def _moves(new: dict[str, int], old: dict[str, int]) -> dict[str, str]:
+    """new key -> old key, for entries whose old key is gone and that reappear under another
+    path with the same rule and name, at the old value or lower. Ambiguous matches don't move."""
+    gone: dict[tuple[str, str], list[str]] = {}
+    for k in old:
+        ident = _identity(k)
+        if k not in new and ident:
+            gone.setdefault(ident, []).append(k)
+    out: dict[str, str] = {}
+    for k, v in new.items():
+        ident = _identity(k)
+        candidates = gone.get(ident, []) if k not in old and ident else []
+        if len(candidates) == 1 and v <= old[candidates[0]]:
+            out[k] = candidates[0]
+    return out
+
+
+def _carried(current: dict[str, Measure], baseline: dict[str, int]) -> dict[str, int]:
+    """The baseline with moved entries re-keyed to where their offender now lives."""
+    over = {k: m.value for k, m in current.items() if m.value > m.limit}
+    out = dict(baseline)
+    for new, old in _moves(over, baseline).items():
+        out[new] = out.pop(old)
+    return out
+
+
 def violations(current: dict[str, Measure], baseline: dict[str, int]) -> list[str]:
+    baseline = _carried(current, baseline)
     bad: list[str] = []
     for key, (value, limit) in sorted(current.items()):
         if value <= limit:
@@ -148,9 +198,32 @@ def ratcheted(current: dict[str, Measure], baseline: dict[str, int]) -> dict[str
     """Baseline after a ratchet step: keep entries still over the limit, at the lower value."""
     return {
         k: min(v, current[k].value)
-        for k, v in sorted(baseline.items())
+        for k, v in sorted(_carried(current, baseline).items())
         if k in current and current[k].value > current[k].limit
     }
+
+
+def escalations(head: dict[str, int], base: dict[str, int]) -> list[str]:
+    """Entries the committed baseline adds or raises compared with ``base`` (moves excepted)."""
+    moved = _moves(head, base)
+    bad: list[str] = []
+    for key, value in sorted(head.items()):
+        if key in base and value > base[key]:
+            bad.append(f"{key}: raised {base[key]} -> {value} by hand")
+        elif key not in base and key not in moved:
+            bad.append(f"{key}: added by hand")
+    return bad
+
+
+def base_baseline(ref: str) -> dict[str, int] | None:
+    rel = BASELINE.relative_to(REPO).as_posix()
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        ["git", "show", f"{ref}:{rel}"],  # noqa: S607 - git from PATH, as every CI step uses it
+        capture_output=True, text=True, encoding="utf-8", check=False, cwd=REPO,
+    )  # fmt: skip
+    if proc.returncode != 0:
+        return None  # no baseline on the base yet: the PR that introduces it
+    return json.loads(proc.stdout)
 
 
 def update_baseline(src: Path = SRC, root: Path = REPO, path: Path = BASELINE) -> int:
@@ -160,7 +233,9 @@ def update_baseline(src: Path = SRC, root: Path = REPO, path: Path = BASELINE) -
     if bad:
         print("\n".join(["cannot update the baseline while there are violations:", *bad]))
         return 1
-    path.write_text(json.dumps(ratcheted(current, baseline), indent=1) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(ratcheted(current, baseline), indent=1) + "\n", encoding="utf-8", newline="\n"
+    )
     print(f"baseline lowered: {path.name}")
     return 0
 
@@ -174,10 +249,17 @@ ADVICE = (
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--update-baseline", action="store_true")
-    if ap.parse_args(argv).update_baseline:
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--update-baseline", action="store_true")
+    mode.add_argument("--base-ref", metavar="REF")
+    args = ap.parse_args(argv)
+    if args.update_baseline:
         return update_baseline()
-    bad = violations(measure_all(), load_baseline())
+    baseline = load_baseline()
+    bad = violations(measure_all(), baseline)
+    base = base_baseline(args.base_ref) if args.base_ref else None
+    if base is not None:
+        bad += escalations(baseline, base)
     if bad:
         print("\n".join(["SIZE GATE FAILED:", *bad, ADVICE]), file=sys.stderr)
         return 1
