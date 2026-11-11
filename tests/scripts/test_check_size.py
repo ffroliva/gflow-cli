@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.ci import check_size as cs
 
 
@@ -186,3 +188,8 @@ def test_base_ref_check_rejects_a_hand_raised_or_added_entry_but_allows_a_move()
     assert cs.escalations({"C901:a.py::f": 12, "C901:b.py::g": 15}, base) == [
         "C901:b.py::g: added by hand"
     ]
+
+
+def test_an_unknown_base_ref_fails_loudly_instead_of_skipping_the_check() -> None:
+    with pytest.raises(SystemExit, match="not a commit"):
+        cs.base_baseline("no-such-ref-1249")

@@ -224,11 +224,15 @@ def escalations(head: dict[str, int], base: dict[str, int]) -> list[str]:
 
 
 def base_baseline(ref: str) -> dict[str, int] | None:
-    rel = BASELINE.relative_to(REPO).as_posix()
-    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
-        ["git", "show", f"{ref}:{rel}"],  # noqa: S607 - git from PATH, as every CI step uses it
-        capture_output=True, text=True, encoding="utf-8", check=False, cwd=REPO,
-    )  # fmt: skip
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["git", *args],  # noqa: S607 - git from PATH, as every CI step uses it
+            capture_output=True, text=True, encoding="utf-8", check=False, cwd=REPO,
+        )  # fmt: skip
+
+    if git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").returncode != 0:
+        raise SystemExit(f"--base-ref {ref!r} is not a commit here (fetch it first)")
+    proc = git("show", f"{ref}:{BASELINE.relative_to(REPO).as_posix()}")
     if proc.returncode != 0:
         return None  # no baseline on the base yet: the PR that introduces it
     return json.loads(proc.stdout)
