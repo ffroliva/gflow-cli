@@ -179,39 +179,41 @@ async def main() -> None:
             print(json.dumps({"cleanup_ok": await delete_all_spike_projects(w)}))
             return
 
-        title = f"{PREFIX}{secrets.token_hex(3)}"
-        r = await w.call("jHPbke", ["projects/*", [None, [title]], [None, 22]])
-        pid = r["frame"][0] if r["has_frame"] and r["frame"] else None
-        _, read_title = await title_of(w, pid) if pid else (None, None)
-        listed = any(p == pid and t == title for p, t in await listing(w))
-        report(
-            "jHPbke create",
-            r,
-            project=short(pid),
-            ngNC2_title_match=read_title == title,
-            in_UpteDb=listed,
-        )
-        if not pid:
+        # Cleanup runs however the create-to-rename flow ends, so no spike project is left.
+        try:
+            title = f"{PREFIX}{secrets.token_hex(3)}"
+            r = await w.call("jHPbke", ["projects/*", [None, [title]], [None, 22]])
+            frame = r["frame"]
+            pid = frame[0] if r["has_frame"] and isinstance(frame, list) and frame else None
+            _, read_title = await title_of(w, pid) if pid else (None, None)
+            listed = any(p == pid and t == title for p, t in await listing(w))
+            report(
+                "jHPbke create",
+                r,
+                project=short(pid),
+                ngNC2_title_match=read_title == title,
+                in_UpteDb=listed,
+            )
+            if not pid:
+                return
+
+            new_title = f"{title}-renamed"
+            r = await w.call(
+                "o8DA4",
+                [f"projects/{pid}", [new_title], [["project_title"]], [None, 22]],
+                f"/project/{pid}",
+            )
+            _, read_title = await title_of(w, pid)
+            listed = any(p == pid and t == new_title for p, t in await listing(w))
+            report(
+                "o8DA4 rename",
+                r,
+                reply_title_match=(r["frame"] or [None])[0] == new_title,
+                ngNC2_title_match=read_title == new_title,
+                in_UpteDb=listed,
+            )
+        finally:
             print(json.dumps({"cleanup_ok": await delete_all_spike_projects(w)}))
-            return
-
-        new_title = f"{title}-renamed"
-        r = await w.call(
-            "o8DA4",
-            [f"projects/{pid}", [new_title], [["project_title"]], [None, 22]],
-            f"/project/{pid}",
-        )
-        _, read_title = await title_of(w, pid)
-        listed = any(p == pid and t == new_title for p, t in await listing(w))
-        report(
-            "o8DA4 rename",
-            r,
-            reply_title_match=(r["frame"] or [None])[0] == new_title,
-            ngNC2_title_match=read_title == new_title,
-            in_UpteDb=listed,
-        )
-
-        print(json.dumps({"cleanup_ok": await delete_all_spike_projects(w)}))
 
 
 if __name__ == "__main__":
