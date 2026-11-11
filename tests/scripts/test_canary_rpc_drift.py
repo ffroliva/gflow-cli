@@ -50,7 +50,7 @@ def test_catalog_ids_come_from_the_wire_table() -> None:
     ids = catalog_ids(doc)
     assert {"YhhmEf", "as29s", "nzlxg", "p0UkFb"} <= set(ids)
     # The "seen but unused" list below the table is not catalogued.
-    assert "UpteDb" not in ids
+    assert "eAenfb" not in ids
 
 
 def test_only_live_rows_are_checked() -> None:
