@@ -342,6 +342,23 @@ git push origin --delete chore/release-v<NEW_VERSION>
 > preserves it. (The release workflow already ran from the tag push in step 13 —
 > this PR is to bring the bump commit + integration history onto `main`.)
 
+**14b. Confirm `main` itself is green after the merge. A green release PR does not prove it.**
+The push to `main` runs its own CI and its own SonarCloud analysis, and both can fail where
+the PR passed:
+
+```bash
+gh run list --branch main --workflow ci.yml --limit 1 --json conclusion,headSha
+```
+
+- The run must be for the merge commit and conclude `success`. `startup_failure` with 0 jobs
+  means CI never ran: re-run it (`gh run rerun <id>`). This happened on the v0.97.0 merge, and
+  nobody noticed until the README badge turned red the next day.
+- Then run `/gflow:sonar main`. It must report the gate OK. On 2026-11-10 main went red while
+  the release PR and develop were both green: SonarSource updated its built-in Python
+  profile that afternoon, and main's new-code window, which had no project version, had
+  covered everything since 2026-05-16. CI now sends `sonar.projectVersion`, so the window
+  restarts at each release. A red gate here is still a STOP before announcing the release.
+
 **15. Back-merge `main` into `develop`.**
 
 After the release PR is merged, bring the bump commit back to `develop` so branches stay aligned.

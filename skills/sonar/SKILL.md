@@ -13,7 +13,14 @@ gate verdict. This command answers one question: **is the SonarCloud gate green
 (zero new issues) for this PR, and if not, exactly what must be fixed?**
 
 `$ARGUMENTS` is the PR number. If empty, resolve it from the current branch
-(`gh pr view --json number -q .number`).
+(`gh pr view --json number -q .number`). **`main` or `develop`** means the branch gate:
+swap `&pullRequest=<N>` for `&branch=<name>` in every call below, and look for the CI run
+with `gh run list --branch <name> --workflow ci.yml --limit 1`. A branch can go red with
+no code change: if the last analysis has a `QUALITY_PROFILE` event
+(`GET /api/project_analyses/search?project=ffroliva_gflow-cli&branch=<name>`), SonarSource
+changed the rules, and the new issues sit on unchanged code. Mark an issue false positive
+only when the code is provably valid (2026-11-11: 55 x S6663 on `sqlite3.Row["col"]`), via
+`POST /api/issues/bulk_change` with `do_transition=falsepositive` and the reason in `comment`.
 
 Project: key `ffroliva_gflow-cli`, org `ffroliva-github` (see `sonar-project.properties`).
 The CI scan sets `sonar.qualitygate.wait=true`, so a **green `SonarCloud analysis`
