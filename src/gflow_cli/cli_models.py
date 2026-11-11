@@ -1,15 +1,16 @@
-"""`gflow models` — enumerate the image + video models the CLI accepts.
+"""`gflow models` (list/show) — enumerate the image + video models the CLI accepts.
 
 The catalog is assembled from the `Model` / `VideoModel` enums, their alias
 maps, and the per-model reference caps, so it can never drift from what the
 generation commands actually accept. ``--json`` emits it machine-readably (the
 shape a UI populates model pickers + reference-slot counts from); otherwise a
-Rich table is printed.
+Rich table is printed. Bare `gflow models` is `gflow models list`; `gflow models
+show <id>` prints one catalog entry, the same object `gflow_list_models` carries.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -18,6 +19,7 @@ from rich.table import Table
 from gflow_cli import json_output
 from gflow_cli.api import image as image_api
 from gflow_cli.api import video as video_api
+from gflow_cli.docs_catalog import closest_matches
 from gflow_cli.image_batch import ALLOWED_MODELS as _IMAGE_CLI_MODELS
 
 console = Console()
@@ -70,6 +72,7 @@ def build_catalog() -> dict[str, Any]:
             "aliases": [a for a in _VIDEO_CLI_MODELS if video_api.VideoModel.from_cli(a) is m],
             "ref_cap": video_api.reference_cap_for(m),  # applies to r2v
             "max_duration": video_api.max_duration_for(m),
+            "durations": list(video_api.duration_choices_for(m)),
         }
         for m in video_api.VideoModel
     ]
@@ -89,20 +92,122 @@ def build_catalog() -> dict[str, Any]:
     }
 
 
-@click.command("models")
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Machine-readable JSON catalog instead of a table.",
+_json_flag = click.option(
+    "--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table."
 )
-def models(as_json: bool) -> None:
+
+
+@click.group("models", invoke_without_command=True)
+@_json_flag
+@click.pass_context
+def models(ctx: click.Context, as_json: bool) -> None:
+    """List the image + video models, their aliases, and reference caps.
+
+    Bare `gflow models` is `gflow models list`.
+    """
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(models_list)
+
+
+@models.command("list")
+@_json_flag
+@click.pass_context
+def models_list(ctx: click.Context, as_json: bool) -> None:
     """List the image + video models, their aliases, and reference caps."""
     catalog = build_catalog()
-    if as_json:
+    if as_json or _group_json(ctx):
         json_output.emit(catalog)
         return
     _render_catalog(catalog)
+
+
+@models.command("show")
+@click.argument("model_id")
+@_json_flag
+@click.pass_context
+def models_show(ctx: click.Context, model_id: str, as_json: bool) -> None:
+    """Show one model by name or any spelling `--model` accepts."""
+    catalog = build_catalog()
+    kind, entry = find_model(catalog, model_id)
+    if as_json or _group_json(ctx):
+        json_output.emit(entry)
+        return
+    _render_model(catalog, kind, entry)
+
+
+def _group_json(ctx: click.Context) -> bool:
+    """`gflow models --json show X` must not print a table to a script expecting JSON."""
+    return bool(ctx.parent and ctx.parent.params.get("as_json"))
+
+
+def _resolve(model_id: str) -> tuple[str, str] | None:
+    """(kind, model name) via the generate commands' own alias resolution, or None."""
+    for kind, from_cli in (
+        ("image", image_api.Model.from_cli),
+        ("video", video_api.VideoModel.from_cli),
+    ):
+        try:
+            model = from_cli(model_id)
+        except ValueError:
+            continue
+        if model is not None:
+            return kind, model.value
+    return None
+
+
+def find_model(catalog: dict[str, Any], model_id: str) -> tuple[str, dict[str, Any]]:
+    """The catalog entry for *model_id*: its name or any spelling `--model` accepts.
+
+    Raises a usage error (exit 2) naming the closest models, one id each, when nothing
+    matches.
+    """
+    hit = _resolve(model_id)
+    if hit is not None:
+        kind, name = hit
+        return kind, next(m for m in catalog[kind]["models"] if m["name"] == name)
+    owner = {
+        ident.lower(): (ident, m["name"])
+        for kind in ("image", "video")
+        for m in catalog[kind]["models"]
+        for ident in (m["name"], *m["aliases"])
+    }
+    seen: dict[str, str] = {}  # model name -> the first id that suggested it
+    for near in closest_matches(model_id.strip().lower(), list(owner), n=len(owner)):
+        ident, name = owner[near]
+        seen.setdefault(name, ident)
+    suggestions = list(seen.values())[:3]
+    hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+    raise click.UsageError(f"no model named {model_id!r}.{hint} See `gflow models list`.")
+
+
+#: The `list` table's column names, so `show` reads the same.
+_LABELS = {
+    "name": "model",
+    "label": "Flow name",
+    "aliases": "aliases",
+    "ref_cap": "ref cap",
+    "default": "default",
+    "max_duration": "max dur (s)",
+    "durations": "durations (s)",
+}
+
+
+def _cell(value: Any) -> str:
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in cast(list[object], value))
+    return str(value)
+
+
+def _render_model(catalog: dict[str, Any], kind: str, entry: dict[str, Any]) -> None:
+    table = Table(title=f"{kind} model {entry['name']}", show_header=False)
+    table.add_column("field", style="bold")
+    table.add_column("value", overflow="fold")
+    for key, value in entry.items():
+        table.add_row(_LABELS.get(key, key), _cell(value))
+    table.add_row("aspects", ", ".join(a["ratio"] for a in catalog[kind]["aspects"]))
+    console.print(table)
 
 
 def _render_catalog(catalog: dict[str, Any]) -> None:

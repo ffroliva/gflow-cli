@@ -16,10 +16,14 @@ expect a change. Nightly tracking of the ids against the served app is issue #12
 
 **"In served JS"** means the id was found as a literal string in the JavaScript
 flow.google.com serves. That check needs no cookies, no browser and no RPC call, so it
-covers billed submits without spending anything. The last check ran on build
+covers billed submits without spending anything. The first check ran on build
 `boq_labs-ai-sandbox-frontend_20261108.05_p0` and found all 17 ids, with 0 of 200 random
-controls matching. The method is in the
-[served-JS spike](superpowers/spikes/2026-11-10-rpc-ids-in-served-javascript.md). Being
+controls matching. The last, on 2026-11-10, found all 17 on `…_20261110.00_p0` and on
+the older `…_20260929.10_p1` ([churn spike](superpowers/spikes/2026-11-10-rpc-descriptor-churn.md)). The method is in the
+[served-JS spike](superpowers/spikes/2026-11-10-rpc-ids-in-served-javascript.md). The 11
+rows added by the [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) were
+found the same way on build `boq_labs-ai-sandbox-frontend_20261110.00_p0`. On that build the
+descriptors read `{Wa:"<id>", …}` rather than `{Xa:"<id>", …}`. Being
 present in the JavaScript doesn't prove the payload shape is unchanged. Payload shape is
 checked by the e2e tests.
 
@@ -42,15 +46,26 @@ a run that sent it cost nothing.
 | `jwpduf` | Status poll for a generation record; also polls a 1080p video export | None: the page sends it on its own fixed 5 s timer | no | unknown | `[null, N, [[<record>]]]`; status `2` running, `3` done | `STATUS_RPCS`, `api/transports/migrated_composer.py:230`; `_EXPORT_RPCIDS`, `api/transports/migrated_video_upscale.py:54` | no | 2026-09-05 | 2026-11-04 | live | - | yes (2026-11-10) | [wire spike](superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md), [poll timer spike](superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md), [r2v spike](superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md) ($0 run), [lost reply spike](superpowers/spikes/2026-11-04-t2v-lost-submit-reply.md) |
 | `as29s` | Result read for one clip: status, signed video URL and size, keyed by workflow id | None: the page sends it after `jwpduf` reports done, and when a clip's page loads (`api/transports/migrated_recover.py:12`) | no | no (page-free read with cookies and `at`) | The bare generation record with signed `flow-content.google` URLs | `STATUS_RPCS`, `api/transports/migrated_composer.py:230` | yes (2026-11-09) | 2026-09-05 | 2026-11-09 | live | - | yes (2026-11-10) | [wire spike](superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md), [r2v spike](superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md) ($0 run), [thumbnail spike](superpowers/spikes/2026-11-05-clip-url-is-a-thumbnail.md); page-free: PR #1205 spike doc `2026-11-09-page-free-reads.md` |
 | `Zzl0ze` | Project listing: every generation record in the project, queued ones included | Project page load | no | no (page-free read with cookies and `at`) | List of the project's generation records | `LISTING_RPC`, `api/transports/migrated_composer.py:116` | yes (2026-11-09) | 2026-09-08 | 2026-11-09 | live | - | yes (2026-11-10) | [queue spike](superpowers/spikes/2026-09-08-migrated-queue-is-readable-on-zzl0ze.md), [lost submit spike](superpowers/spikes/2026-10-27-lost-video-submit-recovery.md); page-free: PR #1205 spike doc `2026-11-09-page-free-reads.md` |
-| `maseQ` | Local file upload into the project | Toolbar `add` menu, `upload` item, file chooser | no | unknown | `[<media id>, <project id>, …]` | `UPLOAD_RPC`, `api/transports/migrated_composer.py:231` | no | 2026-09-05 | 2026-10-27 | live | - | yes (2026-11-10) | [frames spike](superpowers/spikes/2026-09-05-migrated-frames-attach.md) ($0 run), [upload spike](superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md), [lost submit spike](superpowers/spikes/2026-10-27-lost-video-submit-recovery.md) |
-| `jHPbke` | Create a project | Projects page floating `add` button | no | no (captured `f.req` has no token slot) | `[<project uuid>, [<title>]]` | `CREATE_PROJECT_RPC`, `api/transports/migrated_composer.py:4282` | no | 2026-09-17 | 2026-09-17 | live | - | yes (2026-11-10) | [project spike](superpowers/spikes/2026-09-17-project-create-on-flow-google-com.md), [v0.78.0](LIVE_VERIFICATION_v0.78.0.md) |
-| `o8DA4` | Rename a project | Edit the title in the project header, then Enter | no | no (captured `f.req` has no token slot) | `[<title>]` | `RENAME_PROJECT_RPC`, `api/transports/migrated_composer.py:4284` | no | 2026-09-17 | 2026-09-17 | live | - | yes (2026-11-10) | [project spike](superpowers/spikes/2026-09-17-project-create-on-flow-google-com.md), [v0.78.0](LIVE_VERIFICATION_v0.78.0.md) |
+| `maseQ` | Local file upload into the project | Toolbar `add` menu, `upload` item, file chooser (on the 2026-11-10 run a rights dialog came first, see `JJH6Ub`) | no | the app's frame carries a token at `[0][10][0]`, sent right after the page's `recaptcha/enterprise/reload`; enforcement is unmeasured | `[<media id>, <project id>, …]` | `UPLOAD_RPC`, `api/transports/migrated_composer.py:231` | no (not sent: the frame carries a page-minted token) | 2026-09-05 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md), [direct writes spike](superpowers/spikes/2026-11-10-direct-project-writes.md), [frames spike](superpowers/spikes/2026-09-05-migrated-frames-attach.md) ($0 run), [upload spike](superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md), [lost submit spike](superpowers/spikes/2026-10-27-lost-video-submit-recovery.md) |
+| `jHPbke` | Create a project | Projects page floating `add` button | no | no (captured `f.req` has no token slot) | `[<project uuid>, [<title>]]` | `CREATE_PROJECT_RPC`, `api/transports/migrated_composer.py:4282` | yes (2026-11-10, a direct write) | 2026-09-17 | 2026-11-10 | live | - | yes (2026-11-10) | [direct writes spike](superpowers/spikes/2026-11-10-direct-project-writes.md), [project spike](superpowers/spikes/2026-09-17-project-create-on-flow-google-com.md), [v0.78.0](LIVE_VERIFICATION_v0.78.0.md) |
+| `o8DA4` | Rename a project | Edit the title in the project header, then Enter | no | no (captured `f.req` has no token slot) | `[<title>]` | `RENAME_PROJECT_RPC`, `api/transports/migrated_composer.py:4284` | yes (2026-11-10, a direct write) | 2026-09-17 | 2026-11-10 | live | - | yes (2026-11-10) | [direct writes spike](superpowers/spikes/2026-11-10-direct-project-writes.md), [project spike](superpowers/spikes/2026-09-17-project-create-on-flow-google-com.md), [v0.78.0](LIVE_VERIFICATION_v0.78.0.md) |
 | `nzlxg` | Credit balance and its daily refresh time | Page load | no | no (page-free read with cookies and `at`) | Balance at `[0]`, refresh time at `[6][0]` | `CREDITS_RPC`, `api/transports/migrated_composer.py:4570` (browser read); `_ALLOWED_RPCIDS`, `api/flow_wire.py:51` (read directly by `gflow credits` / `gflow_get_credits` with the profile's saved cookies, falling back to the browser read, #1229) | yes (2026-11-09) | 2026-09-05 | 2026-11-09 | live | - | yes (2026-11-10) | [wire spike](superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md) (first seen), [balance spike](superpowers/spikes/2026-10-22-credits-balance-on-nzlxg.md), [v0.87.1](LIVE_VERIFICATION_v0.87.1.md); page-free: PR #1205 spike doc `2026-11-09-page-free-reads.md` |
 | `fZytfe` | Video extend submit | Extend prompt box submit on a clip | yes | yes (token in `f.req`) | unknown | `EXTEND_SUBMIT_RPC`, `api/transports/migrated_extend.py:67` | no | 2026-09-19 | 2026-11-08 | live | - | yes (2026-11-10) | [extend wire spike](superpowers/spikes/2026-09-19-migrated-video-extend-wire.md), [extend UI spike](superpowers/spikes/2026-10-17-migrated-extend-ui-path.md), [Omni extend spike](superpowers/spikes/2026-11-08-extend-no-scene-create-omni-key.md) |
 | `rqZuUc` | Create a scene from a clip's media id, sent before an extend | Extend submit on a clip (not sent on the 2026-11-08 run) | no | no (captured body has no token slot) | Scene record `[<scene id>, "<title>", …]` with one clip | `SCENE_CREATE_RPC`, `api/transports/migrated_extend.py:68` | no | 2026-10-17 | 2026-10-17 | live | - | yes (2026-11-10) | [extend UI spike](superpowers/spikes/2026-10-17-migrated-extend-ui-path.md) ($0), [v0.86.0](LIVE_VERIFICATION_v0.86.0.md), [Omni extend spike](superpowers/spikes/2026-11-08-extend-no-scene-create-omni-key.md) |
 | `uwAyfb` | Scene read, sent before the extend submit on the 2026-10-17 path; the 2026-11-08 extend submit went out without it | Extend submit on a clip, after `rqZuUc` (not sent on the 2026-11-08 run) | no | no (captured body has no token slot) | The scene's clips and the project's generation records | none (named in the docstring, `api/transports/migrated_extend.py:11`) | no | 2026-10-17 | 2026-10-17 | live | - | yes (2026-11-10) | [extend UI spike](superpowers/spikes/2026-10-17-migrated-extend-ui-path.md) ($0), [Omni extend spike](superpowers/spikes/2026-11-08-extend-no-scene-create-omni-key.md) |
 | `SPrCad` | 2K image upscale | Image download menu, `2K` item | no | unknown | `[[<metadata>], "<base64 JPEG>"]` | `UPSCALE_RPCID`, `api/transports/migrated_upscale.py:37` | no | 2026-09-30 | 2026-10-22 | live | - | yes (2026-11-10) | [upscale spike](superpowers/spikes/2026-09-30-migrated-upscale-wire.md), [lost body spike](superpowers/spikes/2026-10-22-image-upscale-lost-body.md), [v0.87.1](LIVE_VERIFICATION_v0.87.1.md) |
 | `p0UkFb` | 1080p video export submit; `jwpduf` then polls `<media id>_upsampled` | Video download menu, `1080p` item | no | unknown | unknown | `_EXPORT_RPCIDS`, `api/transports/migrated_video_upscale.py:54` | no | 2026-09-30 | 2026-09-30 | live | - | yes (2026-11-10) | [upscale spike](superpowers/spikes/2026-09-30-migrated-upscale-wire.md) (0 credits, 1 observation) |
+| `QI2zvc` | Delete a project | Project card `delete` icon on the projects page, then confirm | no | no (direct call with cookies and `at`) | `[]` | - | yes (2026-11-10, a direct write) | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md), [direct writes spike](superpowers/spikes/2026-11-10-direct-project-writes.md) |
+| `UpteDb` | Project listing (21 per page). It is also the `@` picker's server-side asset search | Projects page load; after a project create; the `@` picker | no | no (direct call with cookies and `at`) | `[[[<project id>, [<title>, null, [<ts>], …]], …], …]` | - | yes (2026-11-10) | 2026-09-05 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md), [direct writes spike](superpowers/spikes/2026-11-10-direct-project-writes.md), [frames spike](superpowers/spikes/2026-09-05-migrated-frames-attach.md) |
+| `ngNC2` | Read one project: id and title | Project page load | no | no (direct call with cookies and `at`) | `[<project id>, [<title>, <thumbnail media id>?]]` | - | yes (2026-11-10) | 2026-09-08 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md), [direct writes spike](superpowers/spikes/2026-11-10-direct-project-writes.md) |
+| `pGCYOe` | Candidate: move a clip to the trash (a field-mask update on the media; seen, not sent) | Clip page `delete` icon | unknown (seen, not sent) | unknown | not sent | - | no | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `QZasKb` | First call after the 270p GIF download click (seen, not sent; gflow's GIF path names no rpc) | Clip page `download` menu, GIF item | unknown (seen, not sent) | unknown | not sent | - | no | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `C4BZMd` | First call of a character create | Characters page: describe, then `arrow_forward` | unknown (seen, not sent) | unknown | not sent | - | no | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `DA4VGb` | Save the user setting `is_agent_mode_toggled` | Composer Agent chip | unknown (seen, not sent) | unknown | not sent | - | no | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `Kcr7Ub` | Save the project setting `agent_toggle_state` | Composer Agent chip | unknown (seen, not sent) | unknown | not sent | - | no | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `JJH6Ub` | Sent when the upload-rights dialog is confirmed (`[14, <s>]`); candidate reading: dismiss notice N, which `NfrxTb [N]` checks | Upload-rights dialog, confirm button | no | no | `[]` | - | no | 2026-11-10 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `HTrJv` | Model catalog: model keys, display names, per-tier capabilities | Project page load | no | unknown | Model keys with display names and capability lists | - | no | 2026-09-08 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
+| `tRARke` | Community tools list | Project page load | no | unknown | `[[["community-<uuid>", -1, <name>, …, "applets/community-<uuid>", …], …]]` | - | no | 2026-09-08 | 2026-11-10 | live | - | yes (2026-11-10) | [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md) |
 
 Code paths are relative to `src/gflow_cli/`.
 
@@ -63,23 +78,55 @@ Code paths are relative to `src/gflow_cli/`.
 | Every night | Check every id in this table against the served JS with no cookies and no browser, record the build label, and archive the build's full descriptor list with what changed since the last build | the canary's `RPC-DRIFT` section (`scripts/canary/rpc_drift.py`, #1218); see [E2E_TESTING.md](E2E_TESTING.md#rpc-drift-check-1218) |
 | `RPC-DRIFT` reports `ID-GONE` | First confirm with a page load (the served-JS spike's arm 2) that the id did not move to a module outside the four. If it is still absent, set `Status` to `gone` or `renamed -> X`, fill `Renamed from` on the new row, and update `Last verified` | a maintainer, from the canary comment. The canary never edits this file. |
 
-The served app holds about 261 ids in the RPC descriptor shape (`{Xa:"<id>", …}`). This
+The served app holds about 267 ids in the RPC descriptor shape (`{Wa:"<id>",hb:…,Za:!0,Xa:…,kb:…}`
+on build `20261110.00_p0`; the key was `Xa` on `20261108.05_p0`). The key and the other field
+names are minified and change between builds, so nothing should hard-code them. This
 table and the list below cover the ones gflow has a reason to know.
+
+### Backend method of each id (build `20260929.10_p1`)
+
+Until at least build `20260929.10_p1`, each descriptor named its backend method, as in
+`new _.Gx("as29s",…,[…,"/FlowService.GetMedia"])`. Build `20261110.00_p0` carries none of
+the 222 method paths. The names below come from the old bundle, which gstatic still served
+on 2026-11-10 ([churn spike](superpowers/spikes/2026-11-10-rpc-descriptor-churn.md)). They
+are what each id meant on that build. Nothing in the current bundle confirms them, but
+all 17 ids are unchanged.
+
+| Backend method (20260929) | RPC id |
+|---|---|
+| `/VideoFxService.BatchAsyncGenerateVideoText` | `YhhmEf` |
+| `/VideoFxService.BatchAsyncGenerateVideoStartImage` | `eb1hJf` |
+| `/VideoFxService.BatchAsyncGenerateVideoReferenceImages` | `MZZa6b` |
+| `/VideoFxService.BatchAsyncGenerateVideoStartAndEndImage` | `nprQif` |
+| `/VideoFxService.BatchAsyncGenerateVideoExtendVideo` | `fZytfe` |
+| `/VideoFxService.BatchAsyncGenerateVideoUpsampleVideo` | `p0UkFb` |
+| `/VideoFxService.BatchCheckAsyncVideoGenerationStatus` | `jwpduf` |
+| `/VideoFxService.GetCredits` | `nzlxg` |
+| `/FlowService.BatchGenerateImages` | `ogiZ0b` |
+| `/FlowService.UpsampleImage` | `SPrCad` |
+| `/FlowService.UploadImage` | `maseQ` |
+| `/FlowService.GetMedia` | `as29s` |
+| `/FlowService.GetProjectContents` | `Zzl0ze` |
+| `/FlowService.CreateScene` | `rqZuUc` |
+| `/FlowService.GetSceneWorkflows` | `uwAyfb` |
+| `/AiSandbox.CreateProject` | `jHPbke` |
+| `/AiSandbox.UpdateProjectInfo` | `o8DA4` |
 
 ## Ids seen on the wire that gflow does not use
 
 These appear in spike captures. gflow sends none of them and reads none of them, so they
 have no row above.
 
-- With a role a spike measured: `UpteDb` (the `@` picker's server-side asset search,
-  [frames spike](superpowers/spikes/2026-09-05-migrated-frames-attach.md)), `eAenfb` (the
+- With a role a spike measured: `eAenfb` (the
   composer's Format prompt rewrite, [format spike](superpowers/spikes/2026-09-07-format-click-is-not-a-format.md)),
   `WuwhI` (carries the prompt after a submit and replies `[]`,
   [wire spike](superpowers/spikes/2026-09-05-migrated-host-wire-protocol.md)), `DTaVef`
   (sent while the editor is idle, [r2v spike](superpowers/spikes/2026-09-05-migrated-r2v-attach-surface.md)),
   `o30O0e` (a page-load reply that carried the account email in one run,
   [session spike](superpowers/spikes/2026-10-22-labs-session-oracle-gone.md)).
-- With no measured role: `tRARke`, `HTrJv`, `yBhWQ`, `mrlkwd`, `qJcgMc`, `ve2Lsc`,
-  `NfrxTb`, `Yizz8d`, `cPZSdc`, `KV2T2d`, `LPzVkd`, `ngNC2`
+- Seen with a role in the [RPC map spike](superpowers/spikes/2026-11-10-rpc-map-ui-actions.md):
+  `yBhWQ` (model families and their availability, project load), `ve2Lsc` (`[null,
+  ["REGION"]]`, project load), `NfrxTb` (`[N]`; on page load `[16]` and `[17]` answered `[true]`; candidate: whether notice N was dismissed).
+- With no measured role: `mrlkwd`, `qJcgMc`, `Yizz8d`, `cPZSdc`, `KV2T2d`, `LPzVkd`, `xI9TVb`
   ([queue spike](superpowers/spikes/2026-09-08-migrated-queue-is-readable-on-zzl0ze.md),
   [upload spike](superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md)).
