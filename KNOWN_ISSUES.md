@@ -817,7 +817,7 @@ disproven the "bearer header" hypothesis for `create_project`.
   host.
 - Files: `src/gflow_cli/api/transports/experimental/evaluate_fetch.py`
   (`generate_images`, `_generate_images_inner`, `_handle_response`,
-  `refresh_auth`) and `src/gflow_cli/api/client.py` (`_drive_image_generation`).
+  `refresh_auth`) and `src/gflow_cli/api/_flow_generation.py` (`_drive_image_generation`, split out of `client.py` in #1249).
 
 **Workaround:** none known. Image generation against the live API does not
 currently succeed via the e2e transport path.
