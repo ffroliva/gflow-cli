@@ -351,8 +351,9 @@ gh run list --branch main --workflow ci.yml --limit 1 --json conclusion,headSha
 ```
 
 - The run must be for the merge commit and conclude `success`. `startup_failure` with 0 jobs
-  means CI never ran: re-run it (`gh run rerun <id>`). This happened on the v0.97.0 merge, and
-  nobody noticed until the README badge turned red the next day.
+  means CI never ran. `gh run rerun` cannot recover it (it failed the same way again), so start
+  a fresh run with `gh workflow run ci.yml --ref main` and watch that one. This happened on the
+  v0.97.0 merge, and nobody noticed until the README badge turned red the next day.
 - Then run `/gflow:sonar main`. It must report the gate OK. On 2026-11-10 main went red while
   the release PR and develop were both green: SonarSource updated its built-in Python
   profile that afternoon, and main's new-code window, which had no project version, had

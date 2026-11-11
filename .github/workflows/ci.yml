@@ -4,6 +4,9 @@ on:
   push:
     branches: [develop, main]
   pull_request:
+  # A run that ends in startup_failure cannot be re-run (measured 2026-11-11 on the v0.97.0
+  # merge). This lets a fresh run be started on main: gh workflow run ci.yml --ref main
+  workflow_dispatch:
 
 # Least-privilege default token for every job (OpenSSF Scorecard:
 # Token-Permissions). Jobs that need more elevate per-job below.
