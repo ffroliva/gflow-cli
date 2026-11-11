@@ -359,7 +359,7 @@ title.
 | `OK` | every catalogued id is present. An id found only in the shell's base bundle is listed as "not in the feature modules", never as gone | none |
 | `ID-GONE` | the bundle parsed (it holds descriptors) and catalogued ids are missing from it, even if all of them are | the named ids are missing from the four modules. First load a project page (the spike's `--page` arm) to rule out an id that moved to another module; if it is still absent, it was renamed or removed: update its row |
 | `MODULES-CHANGED` | the feature-module bundle answered 404 | the feature module names moved; relearn them from a project page (the spike's `--page` arm). Says nothing about any single id |
-| `PARSE-CHANGED` | the bundle answered 200 with no `{Xa:"…"}` descriptor | the bundle format changed; the descriptor pattern needs re-deriving. Never reads as `OK` |
+| `PARSE-CHANGED` | the bundle answered 200 with no `{<key>:"<id>",…}` descriptor. The key is a minified name the check learns from where the catalogued ids sit (build `20261110.00_p0` renamed it `Xa` to `Wa`), so only a change of shape reads here: the 20260929 build held its ids in a constructor, `new _.Gx("<id>",…)`, which this check does not parse | the bundle format changed; the descriptor pattern needs re-deriving ([#1223 spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-10-rpc-descriptor-churn.md)). Never reads as `OK` |
 | `INCONCLUSIVE` | nothing was measured: offline, a shell or bundle HTTP error other than a bundle 404 (429, 5xx), a redirect to a page without the app, no build label, a catalog that lost rows or has no `live` row, or the 120 s budget ran out | none; says nothing about Flow |
 
 One renamed module cannot pass for a missing id. On 2026-11-10 the server answered the
@@ -367,8 +367,8 @@ four modules plus one unknown name with HTTP 404 for the whole bundle, not a bun
 with that module left out, so any module rename reads `MODULES-CHANGED`.
 
 **Per-build archive (S3, #1223).** On the first real nightly run that sees a build label,
-the check writes `tmp/rpc-inventory/<build>.json`: the build's full `{Xa:"<id>"}`
-descriptor list, the modules used, and the ids added and removed since the previous
+the check writes `tmp/rpc-inventory/<build>.json`: the build's full
+descriptor id list, the modules used, and the ids added and removed since the previous
 first-seen build. The comment carries the same diff. The archive is local and gitignored.
 Only `OK` and `ID-GONE` runs are archived and an existing build's file is never
 overwritten, so a module-rename night leaves no file and its date is in the canary
