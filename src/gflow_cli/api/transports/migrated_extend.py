@@ -414,6 +414,7 @@ def _confirm_editor(page: Page, *, project_id: str, media_id: str) -> None:
                 "not the editor — nothing was clicked or submitted"
             ),
             retryable=False,
+            charged="no",
         )
 
 

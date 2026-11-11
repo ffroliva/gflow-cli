@@ -537,6 +537,8 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     assert payload["succeeded"] is False
     assert payload["media_id"] == "m1"
     assert payload["request"]["mode"] == "extend"
+    # #1201: a billed segment exists, so the document says so (#1159 / #1178 class).
+    assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
 
 
 # --------------------------------------------------------------------------
@@ -706,6 +708,8 @@ async def test_the_migrated_session_reports_one_video_result(
         assert info.value.code != 0
     payload = json.loads(capsys.readouterr().out)  # exactly one document
     assert payload["succeeded"] is done
+    if not done:  # #1201: the clip was submitted, so its outcome needs settling
+        assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
     assert payload["media_id"] == "new-media"
     assert payload["request"]["mode"] == "extend"
     assert payload["scene_id"] == SCENE
@@ -886,3 +890,170 @@ def test_segments_defaults_to_one_per_prompt(
     assert result.exit_code == 0, result.output
     assert seen["segments"] == 2
     assert seen["prompts"] == ("the wave recedes", "the gull lands")
+
+
+@pytest.mark.asyncio
+async def test_a_render_failure_after_billed_segments_points_at_the_free_rerender(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1201 review: the segments are billed; the render is the part that failed."""
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import SceneConcatError
+
+    async def _boom(_inputs: Any, *, out_path: Any) -> Any:
+        raise SceneConcatError("render failed")
+
+    _patched_client.concatenate_scene = _boom  # type: ignore[method-assign]
+    with pytest.raises(SceneConcatError) as info:
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=1,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("yes", "reconcile")
+    assert f"gflow scene create --project {PROJECT}" in pd["remediation_hint"]
+
+
+@pytest.mark.asyncio
+async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
+    _patched_client: _FakeClient,
+    _chain_spy: dict[str, Any],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1201 review: credits were spent, so `yes`, even with no completed segment."""
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import TransportTimeoutError
+
+    _chain_spy["_result"] = ExtendChainResult(
+        scene_id="s",
+        completed_media_ids=[],
+        credits_spent=10,
+        error=TransportTimeoutError("poll", operation_id="seg-1"),
+    )
+    with pytest.raises(SystemExit):
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=1,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=None,
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=True,
+            recorder=None,
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
+    assert payload["operation_id"] == "seg-1"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scene_read_before_the_render_is_reconciled_with_a_runnable_hint(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1201 review: every step of the render after billed segments is covered, and
+    the hint is a `gflow scene create` command that actually runs."""
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import NetworkError
+
+    async def _boom(_scene_id: str, *, project_id: str) -> Any:
+        raise NetworkError("scene read failed")
+
+    _patched_client.get_scene_workflows = _boom  # type: ignore[method-assign]
+    _chain_spy["_emit"] = [
+        ExtendStarted(media_id="m1", workflow_id="wf-seg-1", model_key="k", unit_cost=10)
+    ]
+    with pytest.raises(NetworkError) as info:
+        await _extend_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a",),
+            segments=1,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    pd = info.value.to_problem_details()
+    assert (pd["charged"], pd["next_action"]) == ("yes", "reconcile")
+    hint = pd["remediation_hint"]
+    assert f"gflow scene create --project {PROJECT}" in hint
+    assert "wf-seg-1" in hint
+
+
+@pytest.mark.asyncio
+async def test_the_free_rerender_names_only_confirmed_segments_and_the_profile(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1208 review: a segment whose poll failed is not confirmed, so the recovery
+    command must not render it; and the command must reach the run's own profile."""
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import SceneConcatError
+
+    async def _boom(_inputs: Any, *, out_path: Any) -> Any:
+        raise SceneConcatError("render failed")
+
+    _patched_client.concatenate_scene = _boom  # type: ignore[method-assign]
+    _chain_spy["_emit"] = [
+        ExtendStarted(media_id="m1", workflow_id="wf-seg-1", model_key="k", unit_cost=10),
+        ExtendStarted(media_id="m2", workflow_id="wf-seg-2", model_key="k", unit_cost=10),
+    ]
+    _chain_spy["_result"] = ExtendChainResult(
+        scene_id="s", completed_media_ids=["m1"], credits_spent=20
+    )
+    with pytest.raises(SceneConcatError) as info:
+        await _extend_session(
+            profile_name="other-account",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a", "b"),
+            segments=2,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    hint = info.value.to_problem_details()["remediation_hint"]
+    assert "wf-seg-1" in hint
+    assert "wf-seg-2" not in hint
+    assert "--profile other-account" in hint
+
+
+def test_a_resumed_rerender_keeps_the_instruction_out_of_the_command() -> None:
+    """#1208 review: prose inside the command made it fail in a shell."""
+    from gflow_cli.cli_video import _free_rerender_hint
+
+    hint = _free_rerender_hint("proj", "p", ["wf-1"], resumed=True)
+    command, _, rest = hint.partition("--output <path>")
+    assert command.startswith("gflow scene create --project proj --profile p wf-1")
+    assert "(" not in command
+    assert "earlier clips" in rest

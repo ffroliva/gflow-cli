@@ -26,7 +26,7 @@ from mcp.types import (
 
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
-from gflow_cli.worker.queue import QueueRepository, QueueTask
+from gflow_cli.worker.queue import CANCELLED_ERROR, QueueRepository, QueueTask
 
 log = structlog.get_logger()
 
@@ -168,12 +168,7 @@ class TasksExtension(Extension):
             repo.update_task_status(
                 task_id,
                 "failed",
-                error={
-                    "title": "Cancelled",
-                    "status": 499,
-                    "detail": "Cancelled before it ran.",
-                    "reason": "cancelled",
-                },
+                error=dict(CANCELLED_ERROR),
                 only_from=("pending",),
             )
         return {}  # SEP-2663: an empty acknowledgement; tasks/get reads the outcome

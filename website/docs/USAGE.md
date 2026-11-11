@@ -1980,10 +1980,18 @@ use. When set:
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
   `duration`, `count`, `seed`).
 - On failure, the command still emits a JSON payload — an RFC 9457
-  problem-details object including a `retryable` flag (true for WAF /
-  rate-limit / network / timeout) that a worker scheduler can key its
-  retry-vs-absorb decision off — and exits with the same non-zero code as the
-  Rich path.
+  problem-details object including a `retryable` flag that a worker scheduler
+  can key its retry-vs-absorb decision off (by default true for WAF /
+  rate-limit / network / timeout, but read the emitted value: a video poll that
+  times out after the submit reads `false` with `next_action: "reconcile"`), plus
+  `charged` (`no` / `maybe` / `yes`) and
+  `next_action` (#1201) — and exits with the same non-zero code as the Rich path.
+  Every `type`, its exit code and those defaults: [ERRORS.md](ERRORS.md).
+- One exception: a `video t2v/i2v/r2v` that Flow accepted and then reported
+  failed emits the `VideoResult` above with `status: "fail"`, not a
+  problem-details object. It has no `type` or `retryable`; it carries
+  `charged: "maybe"`, `next_action: "reconcile"` and the clip's media id as
+  `operation_id` at the top level.
 
 The data-layer recorder fires regardless of `--json`, so audit history is
 independent of the output channel.
@@ -2258,7 +2266,9 @@ GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ## Exit codes
 
 Phase 4 (v0.4.0a1+) maps every `GFlowError` subclass to a stable exit code so
-shell scripts can branch on the failure mode without parsing stderr.
+shell scripts can branch on the failure mode without parsing stderr. With `--json`, the
+envelope also says whether Flow may have billed and what to do next; see
+[ERRORS.md](ERRORS.md).
 
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|

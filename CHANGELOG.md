@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Error envelopes say whether Flow may have billed, and what to do next.** Every
+  `--json` error, MCP error result and failed worker-queue task now carries `charged`
+  (`no` / `maybe` / `yes`) and `next_action` (`retry`, `retry_after`, `wait`, `reauth`,
+  `fix_input`, `reconcile` or `none`), plus `operation_id` when an id exists. Each error
+  class declares its defaults, and raise sites that know better override them: a failed
+  download of a billed clip, an extend render or chain link failing after billed work, and
+  a labs poll timeout after submit read `reconcile`. The result-shaped `--json` failures
+  (`video t2v`/`i2v`/`r2v`, `video extend`, a partial `video chain`) and the envelopes the
+  MCP server and worker build by hand carry them too. `retryable` is unchanged and always
+  agrees with `next_action`; a rate limit also reports its `retry_after` seconds. Every `type` URI, its exit code and its defaults are listed in
+  [docs/ERRORS.md](docs/ERRORS.md) (#1201).
 - **`gflow capabilities [--json]` and the MCP resource `capabilities://self`** declare what
   gflow can drive, so an agent can plan instead of learning by failing (#1197). One value per
   key (`yes`/`no`/`partial`/`unknown`), with a note on every `partial`: `cancel.server` and

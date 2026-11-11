@@ -1221,7 +1221,8 @@ class VideoGenerationMixin:
         If Flow stops polling (a backgrounded tab can throttle its timers) the
         captured list stops growing; after `stall_nudge_s` with no new capture
         this brings the page to the foreground ONCE and keeps waiting (spec
-        §5.5). Raises `TimeoutError` only at the hard `timeout_s` deadline.
+        §5.5). Raises `TransportTimeoutError` (``maybe``/``reconcile``, with the media id)
+        only at the hard `timeout_s` deadline: the submit already happened (#1201).
         """
         deadline = time.monotonic() + timeout_s
         last_status: str | None = None
@@ -1252,9 +1253,8 @@ class VideoGenerationMixin:
             f"no terminal status for {media_name!r} within {timeout_s:.0f}s — "
             f"{seen_count} status response(s) seen, last status: {last_status}. {cause}."
         )
-        raise TimeoutError(
-            msg,
-        )
+        # #1201: this runs after the submit, so the clip may still finish and bill.
+        raise TransportTimeoutError(msg, next_action="reconcile", operation_id=media_name)
 
     def _clip_dir(self, out_dir: Path | None) -> Path:
         """Where a downloaded clip goes on either host: per-call, then the client's

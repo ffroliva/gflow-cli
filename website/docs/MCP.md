@@ -233,6 +233,14 @@ cannot drift. On a captured failure the envelope also carries a remote-safe
 `incident` object (`{id, capture_status}` only — never a local path); see
 [DEBUGGING § Automatic incident bundles](DEBUGGING.md#automatic-incident-bundles).
 
+The envelope also carries **`charged`** (`no` / `maybe` / `yes`: whether Flow may have
+billed) and **`next_action`** (`retry`, `retry_after`, `wait`, `reauth`, `fix_input`,
+`reconcile`, `none`), plus `operation_id` when an id exists ([#1201](https://github.com/ffroliva/gflow-cli/issues/1201)).
+`next_action` always agrees with `retryable`: a billed clip's failed download reads
+`charged: yes`, `next_action: reconcile`, with its media id as `operation_id`. Envelopes
+the server builds by hand (bad parameter, no profile, an interrupted task) carry them too. Every `type`,
+its exit code and its defaults are listed in [ERRORS.md](ERRORS.md).
+
 Every tool routes through one error funnel. **Unexpected (non-gflow) exceptions
 are masked**: the client sees only the exception class name
 (`"Unexpected RuntimeError; details were logged server-side."`, `status: 500`,

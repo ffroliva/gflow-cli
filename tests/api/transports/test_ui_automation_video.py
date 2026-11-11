@@ -186,10 +186,13 @@ class TestPollVideoStatus:
     @pytest.mark.asyncio
     async def test_timeout_raises(self) -> None:
         page = MagicMock()
-        with pytest.raises(TimeoutError, match="no terminal status"):
+        with pytest.raises(TransportTimeoutError, match="no terminal status") as info:
             await VideoGenerationMixin._poll_video_status(
                 page, [], "m", timeout_s=0.2, poll_interval_s=0.05
             )
+        # #1201: this is the labs t2v/i2v poll, after the submit: settle it, don't re-run.
+        pd = info.value.to_problem_details()
+        assert (pd["charged"], pd["next_action"], pd["operation_id"]) == ("maybe", "reconcile", "m")
 
     @pytest.mark.asyncio
     async def test_401_response_raises_auth_expired_error_immediately(self) -> None:

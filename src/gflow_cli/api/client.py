@@ -2452,7 +2452,10 @@ class FlowApiClient:
             if time.monotonic() >= deadline:
                 raise TransportTimeoutError(
                     f"video {media_id} did not finish within {timeout_s:.0f}s "
-                    f"(last status: {status.status})"
+                    f"(last status: {status.status})",
+                    # #1201: submitted, so it may still finish and bill; find it first.
+                    next_action="reconcile",
+                    operation_id=media_id,
                 )
             await asyncio.sleep(interval)
 
@@ -2488,7 +2491,8 @@ class FlowApiClient:
                 )
             if time.monotonic() >= deadline:
                 raise TransportTimeoutError(
-                    f"scene concatenation did not finish within {timeout_s:.0f}s"
+                    f"scene concatenation did not finish within {timeout_s:.0f}s",
+                    charged="no",  # a scene render spends no credits
                 )
             await asyncio.sleep(poll_interval)
 
@@ -2570,7 +2574,8 @@ class FlowApiClient:
 
         # Write via the same storage_uri-aware path as download_image.
         target = self._write_target(out_path)
-        await write_asset_async(target, video_bytes)
+        # #1201: a scene render spends no credits, so a failed write is just a path to fix.
+        await write_asset_async(target, video_bytes, charged="no", next_action="fix_input")
         return target
 
     def served_route(self, *, prefer_migrated: bool) -> str:

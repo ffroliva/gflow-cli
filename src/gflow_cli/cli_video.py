@@ -43,7 +43,13 @@ from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import ConfigurationError, DataStoreError, FlowApiError, GFlowError
+from gflow_cli.errors import (
+    ConfigurationError,
+    DataStoreError,
+    FlowApiError,
+    GFlowError,
+    SceneConcatError,
+)
 from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
@@ -918,6 +924,7 @@ async def _execute_chain_links(
                     results=results,
                     partial=True,
                     completed_paths=completed_paths,
+                    error=exc,
                 )
             )
             _sys.exit(json_output.exit_code_for(exc))
@@ -1126,15 +1133,36 @@ async def _run_chain(
     console.print(f"[dim]Stitch into one file with `gflow scene` (chain_id {chain_id}).[/dim]")
 
 
+def _free_rerender_hint(project_id: str, profile: str, clips: list[str], *, resumed: bool) -> str:
+    """The `gflow scene create` command that renders this extend run without credits."""
+    refs = " ".join(clips) if clips else "<clip-workflow-id> ..."
+    command = (
+        f"gflow scene create --project {project_id} --profile {profile} {refs} --output <path>"
+    )
+    if resumed:
+        return (
+            f"{command}. This run resumed a scene: put its earlier clips before these, in "
+            "the order and with the trims `gflow scene show` lists."
+        )
+    return command
+
+
 def _chain_json(
     *,
     chain_id: str,
     results: list[Any],
     partial: bool,
     completed_paths: list[Path],
+    error: GFlowError | None = None,
 ) -> dict[str, Any]:
     """Machine-readable chain result payload."""
+    members = (
+        {"charged": error.charged, "next_action": error.resolved_next_action()}
+        if error is not None
+        else {}
+    )
     return {
+        **members,
         "status": "fail" if partial else "ok",
         "command": "video chain",
         "chain_id": chain_id,
@@ -2062,6 +2090,8 @@ def _migrated_extend_payload(
         "aborted": not ok,
         "profile": profile_name,
         "host": "flow.google.com",
+        # #1201: the extension was submitted; on failure its outcome needs settling.
+        **({} if ok else {"charged": "maybe", "next_action": "reconcile"}),
         "request": {
             "model": outcome.model_key,
             "mode": "extend",
@@ -2177,6 +2207,8 @@ async def _extend_session(  # noqa: PLR0913
                         f"  resuming    : scene has {len(clips)} clip(s), "
                         f"continuing from {source_media}"
                     )
+        # The clip refs `gflow scene create` needs to re-render this run for free (#1201).
+        scene_clips: list[str] = []
         if not target_scene:
             workflow_id = video_extend.workflow_id_for_media(listing, media_id)
             if not workflow_id:
@@ -2187,6 +2219,7 @@ async def _extend_session(  # noqa: PLR0913
                 raise ConfigurationError(msg)
             scene = await client.create_scene(project_id=project_id, workflow_ids=[workflow_id])
             target_scene = scene.scene_id
+            scene_clips.append(workflow_id)
 
         # Publish the resume handle BEFORE the first submit, so an interrupt at
         # any point has something to report rather than only on a clean failure.
@@ -2194,6 +2227,8 @@ async def _extend_session(  # noqa: PLR0913
 
         submitted_count = 0
         spent_so_far = 0
+        # media id -> workflow id of each submitted segment; only confirmed ones get rendered.
+        submitted_clips: dict[str, str] = {}
 
         def _on_submitted(started: Any) -> None:
             # Update BEFORE the ~2 min poll: a Ctrl+C during that wait must
@@ -2201,6 +2236,8 @@ async def _extend_session(  # noqa: PLR0913
             nonlocal submitted_count, spent_so_far
             submitted_count += 1
             spent_so_far += started.unit_cost or 0
+            if started.workflow_id:
+                submitted_clips[started.media_id] = started.workflow_id
             set_interrupt_context(
                 credits_spent=spent_so_far,
                 resume_id=target_scene,
@@ -2247,16 +2284,35 @@ async def _extend_session(  # noqa: PLR0913
         # Render even a partial chain: those segments are generated and billed,
         # and discarding them because the run did not finish wastes real money.
         # The scene holds the source clip too, so even N=1 renders source + extension.
+        confirmed = [submitted_clips[m] for m in result.completed_media_ids if m in submitted_clips]
+        rerender = _free_rerender_hint(
+            project_id, profile_name, scene_clips + confirmed, resumed=bool(scene_id)
+        )
         if output_file is not None and result.completed_media_ids:
-            scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
-            # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
-            # endTime parses to 0s and would render a zero-length clip) and
-            # raises on a missing media_id instead of silently dropping a paid
-            # segment. cli_scene.py uses it for the identical job.
-            inputs = list(scene_state.to_concat_inputs())
-            if not as_json:
-                console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
-            await client.concatenate_scene(inputs, out_path=output_file)
+            try:
+                scene_state = await client.get_scene_workflows(target_scene, project_id=project_id)
+                # Scene.to_concat_inputs owns the end_time>0 fallback (an omitted
+                # endTime parses to 0s and would render a zero-length clip) and
+                # raises on a missing media_id instead of silently dropping a paid
+                # segment. cli_scene.py uses it for the identical job.
+                inputs = list(scene_state.to_concat_inputs())
+                if not as_json:
+                    console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
+                await client.concatenate_scene(inputs, out_path=output_file)
+            except (GFlowError, ValueError) as exc:
+                # #1201: the segments are billed; only the render failed, and it is free.
+                billed = exc if isinstance(exc, GFlowError) else SceneConcatError(str(exc))
+                billed.charged = "yes"
+                billed.next_action = "reconcile"
+                billed.retryable = False
+                billed.remediation_hint = (
+                    f"The {len(result.completed_media_ids)} segment(s) are billed and in "
+                    f"scene {target_scene}. Render them again without spending credits: "
+                    f"{rerender}"
+                )
+                if billed is exc:
+                    raise
+                raise billed from exc
             rendered = str(output_file)
 
         payload: dict[str, Any] = {
@@ -2279,6 +2335,15 @@ async def _extend_session(  # noqa: PLR0913
             # succeeded + media_id + local_path + request.mode. Extend-specific
             # fields ride alongside.
             last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
+            # #1201: a failed run read by status alone would hide billed segments.
+            outcome: dict[str, str] = {}
+            if result.aborted or result.error is not None:
+                # Credits spent means a segment was accepted and billed, finished or not.
+                billed = bool(result.completed_media_ids) or result.credits_spent > 0
+                outcome = {"charged": "yes" if billed else "maybe", "next_action": "reconcile"}
+                operation_id = getattr(result.error, "operation_id", "")
+                if operation_id:
+                    outcome["operation_id"] = operation_id
             payload.update(
                 {
                     "status": "ok" if not result.aborted and result.error is None else "fail",
@@ -2291,6 +2356,7 @@ async def _extend_session(  # noqa: PLR0913
                     ),
                     "succeeded": not result.aborted and result.error is None,
                     "local_path": rendered,
+                    **outcome,
                     "failure_reasons": [],
                     "error_message": str(result.error) if result.error is not None else None,
                     "request": {
@@ -2317,7 +2383,7 @@ async def _extend_session(  # noqa: PLR0913
             if rendered:
                 console.print(f"  wrote: {rendered}")
             elif result.completed_media_ids:
-                console.print("  render one file: gflow scene create --output <path>")
+                console.print(f"  render one file: {rerender}")
 
         # A chain that abandoned paid work must not exit 0 and look complete.
         if result.error is not None:
