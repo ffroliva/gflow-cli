@@ -61,7 +61,7 @@ OK, ID_GONE, MODULES_CHANGED, INCONCLUSIVE = "OK", "ID-GONE", "MODULES-CHANGED",
 PARSE_CHANGED = "PARSE-CHANGED"
 
 #: ``{<key>:"<id>",`` — the key is minified and was renamed Xa -> Wa by one build (#1224).
-_DESC_RE = re.compile(r'\{([A-Za-z$_]{1,3}):"([A-Za-z0-9]{4,7})",')
+_DESC_RE = re.compile(r'\{([A-Za-z$_][\w$]{0,2}):"([A-Za-z0-9]{4,7})",')
 _SCRIPT_RE = re.compile(r'<script[^>]+src="([^"]*/_/js/[^"]*)"')
 _BL_RE = re.compile(r'"cfb2h":"([^"]*)"')
 #: The row pattern `tests/test_flow_wire_rpcs_catalog.py` counts; every such row is parsed.

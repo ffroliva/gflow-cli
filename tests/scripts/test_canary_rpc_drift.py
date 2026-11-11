@@ -83,11 +83,13 @@ def test_every_catalogued_id_present_is_ok() -> None:
     assert drift.inventory == ("YhhmEf", "Zzl0ze", "as29s", "other1")
 
 
-def test_a_renamed_descriptor_key_still_parses() -> None:
+@pytest.mark.parametrize("key", ["Wa", "W1", "$a"])
+def test_a_renamed_descriptor_key_still_parses(key: str) -> None:
     # Build 20261110.00_p0 renamed the id key Xa -> Wa (#1224): the minified key is not a
-    # contract, so the check learns it from the bundle instead of hard-coding it.
+    # contract, so the check learns it from the bundle instead of hard-coding it. A minified
+    # name may carry a digit after its first character.
     bundle = ";".join(
-        f'var b{i}={{Wa:"{rpc}",hb:void 0,Za:!0,Xa:_.tC,kb:_.GDa}};b{i}[_.QB]=!0'
+        f'var b{i}={{{key}:"{rpc}",hb:void 0,Za:!0,Xa:_.tC,kb:_.GDa}};b{i}[_.QB]=!0'
         for i, rpc in enumerate((*_IDS, "other1"))
     )
     drift = assess(_IDS, _SHELL, 200, bundle + ';var z={De:"noise1",x:1}')
