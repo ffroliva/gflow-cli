@@ -107,8 +107,8 @@ E2E: not applicable (tests only).
 - [x] wiring mutation run (mutmut does not run on Windows): each chain base, facade base and re-export removed in turn
 
 ### Task 3.10 - e2e on denon82
-- [ ] `agentctl join` + `lease browser-session`
-- [ ] `pytest -m "e2e_auth or e2e_image"` and `tests/e2e/test_credits_mcp_e2e.py`, results pasted
+- [x] `agentctl join` + `lease browser-session`
+- [x] `pytest -m "e2e_auth or e2e_image"` and `tests/e2e/test_credits_mcp_e2e.py`, results pasted in #1254 (17 failures, the same on develop; 1 regression found and fixed)
 
 ## G7 - wave 2 plan
 - [x] `docs/superpowers/plans/2026-11-11-1249-wave2-god-classes/PLAN.md` (not implemented)
