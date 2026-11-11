@@ -1,0 +1,630 @@
+{
+ "calls": {
+  "characters.create_entity": {
+   "events": [
+    "post_json"
+   ],
+   "result": {
+    "message": "Unexpected response shape from Flow: createEntity returned no entityId; keys=[]",
+    "raise": "WireFormatError"
+   },
+   "traffic": [
+    {
+     "data": {
+      "json": {
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001"
+      }
+     },
+     "headers": [
+      "content-type",
+      "origin",
+      "referer"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://labs.google/fx/api/trpc/flow.createEntity",
+     "verb": "POST"
+    }
+   ]
+  },
+  "characters.delete_characters": {
+   "events": [
+    "post_json",
+    "character.entities_deleted"
+   ],
+   "result": {
+    "ok": "None"
+   },
+   "traffic": [
+    {
+     "data": {
+      "entityIds": [
+       "e1"
+      ],
+      "projectId": "0b5e0b5e-0000-4000-8000-000000000001"
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flow:batchDeleteAssets",
+     "verb": "POST"
+    }
+   ]
+  },
+  "characters.get_character": {
+   "events": [
+    "get_json",
+    "character.list_fetched"
+   ],
+   "result": {
+    "message": "Configuration error: character not found: 'Kael'",
+    "raise": "ConfigurationError"
+   },
+   "traffic": [
+    {
+     "data": null,
+     "headers": [
+      "origin",
+      "referer"
+     ],
+     "kwargs": [
+      "headers",
+      "timeout"
+     ],
+     "url": "https://labs.google/fx/api/trpc/flow.projectInitialData?input=%7B%22json%22%3A%7B%22projectId%22%3A%220b5e0b5e-0000-4000-8000-000000000001%22%7D%7D",
+     "verb": "GET"
+    }
+   ]
+  },
+  "characters.list_characters": {
+   "events": [
+    "get_json",
+    "character.list_fetched"
+   ],
+   "result": {
+    "ok": "[]"
+   },
+   "traffic": [
+    {
+     "data": null,
+     "headers": [
+      "origin",
+      "referer"
+     ],
+     "kwargs": [
+      "headers",
+      "timeout"
+     ],
+     "url": "https://labs.google/fx/api/trpc/flow.projectInitialData?input=%7B%22json%22%3A%7B%22projectId%22%3A%220b5e0b5e-0000-4000-8000-000000000001%22%7D%7D",
+     "verb": "GET"
+    }
+   ]
+  },
+  "characters.patch_entity": {
+   "events": [
+    "patch_json",
+    "character.entity_patched"
+   ],
+   "result": {
+    "ok": "None"
+   },
+   "traffic": [
+    {
+     "data": {
+      "entity": {
+       "entityId": "e1",
+       "entityInfo": {
+        "characterInfo": {
+         "imageReferences": [
+          {
+           "workflowId": "w1"
+          }
+         ]
+        },
+        "displayName": "Kael"
+       },
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001"
+      },
+      "updateMask": "entityInfo.displayName,entityInfo.characterInfo.imageReferences"
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flow/entities",
+     "verb": "PATCH"
+    }
+   ]
+  },
+  "generation.download_image": {
+   "events": [],
+   "result": {
+    "ok": "Path('<TMP>/i.png')"
+   },
+   "traffic": [
+    {
+     "data": null,
+     "headers": [],
+     "kwargs": [
+      "max_redirects",
+      "timeout"
+     ],
+     "url": "https://flow-content.google/image/m1",
+     "verb": "GET"
+    }
+   ]
+  },
+  "generation.download_video": {
+   "events": [],
+   "result": {
+    "ok": "Path('<TMP>/v.mp4')"
+   },
+   "traffic": [
+    {
+     "data": null,
+     "headers": [],
+     "kwargs": [
+      "max_redirects",
+      "timeout"
+     ],
+     "url": "https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=0b5e0b5e-0000-4000-8000-0000000000aa",
+     "verb": "GET"
+    }
+   ]
+  },
+  "generation.poll_video_status": {
+   "events": [
+    "post_json"
+   ],
+   "result": {
+    "message": "status response has no media[] array",
+    "raise": "ValueError"
+   },
+   "traffic": [
+    {
+     "data": {
+      "media": [
+       {
+        "name": "0b5e0b5e-0000-4000-8000-0000000000aa",
+        "projectId": "0b5e0b5e-0000-4000-8000-000000000001"
+       }
+      ]
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus",
+     "verb": "POST"
+    }
+   ]
+  },
+  "media_edit.extend_video": {
+   "events": [
+    "extend_model_resolved",
+    "post_json"
+   ],
+   "result": {
+    "message": "generate response carries no media[0].name: 'media'",
+    "raise": "ValueError"
+   },
+   "traffic": [
+    {
+     "data": {
+      "clientContext": {
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001",
+       "recaptchaContext": {
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB",
+        "token": "recaptcha-test"
+       },
+       "sessionId": "<epoch-ms>",
+       "tool": "PINHOLE",
+       "userPaygateTier": "PAYGATE_TIER_ONE"
+      },
+      "mediaGenerationContext": {
+       "audioFailurePreference": "RETURN_SILENCED_VIDEOS",
+       "batchId": "<uuid4>",
+       "sceneContext": {
+        "position": 0,
+        "sceneId": "0b5e0b5e-0000-4000-8000-0000000000bb"
+       }
+      },
+      "requests": [
+       {
+        "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        "metadata": {
+         "sceneId": "0b5e0b5e-0000-4000-8000-0000000000bb"
+        },
+        "textInput": {
+         "structuredPrompt": {
+          "parts": [
+           {
+            "text": "go"
+           }
+          ]
+         }
+        },
+        "videoInput": {
+         "endFrameIndex": 24,
+         "mediaId": "0b5e0b5e-0000-4000-8000-0000000000aa",
+         "startFrameIndex": 1
+        },
+        "videoModelKey": "veo_3_1_extension_lite"
+       }
+      ],
+      "useV2ModelConfig": true
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoExtendVideo",
+     "verb": "POST"
+    }
+   ]
+  },
+  "media_edit.upsample_image": {
+   "events": [
+    "image.upscale_started",
+    "post_json"
+   ],
+   "result": {
+    "message": "Unexpected response shape from Flow: upsampleImage response missing encodedImage",
+    "raise": "WireFormatError"
+   },
+   "traffic": [
+    {
+     "data": {
+      "clientContext": {
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001",
+       "recaptchaContext": {
+        "applicationType": "RECAPTCHA_APPLICATION_TYPE_WEB",
+        "token": "recaptcha-test"
+       },
+       "sessionId": "<epoch-ms>",
+       "tool": "PINHOLE",
+       "userPaygateTier": "PAYGATE_TIER_ONE"
+      },
+      "mediaId": "0b5e0b5e-0000-4000-8000-0000000000aa",
+      "targetResolution": "UPSAMPLE_IMAGE_RESOLUTION_2K"
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flow/upsampleImage",
+     "verb": "POST"
+    }
+   ]
+  },
+  "workspace.archive_workflow": {
+   "events": [
+    "patch_json"
+   ],
+   "result": {
+    "ok": "None"
+   },
+   "traffic": [
+    {
+     "data": {
+      "updateMask": "metadata.archived",
+      "workflow": {
+       "metadata": {
+        "archived": true
+       },
+       "name": "w1",
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001"
+      }
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flowWorkflows/w1",
+     "verb": "PATCH"
+    }
+   ]
+  },
+  "workspace.commit_workflow": {
+   "events": [
+    "patch_json"
+   ],
+   "result": {
+    "ok": "None"
+   },
+   "traffic": [
+    {
+     "data": {
+      "updateMask": "metadata.primaryMediaId",
+      "workflow": {
+       "metadata": {
+        "primaryMediaId": "m1"
+       },
+       "name": "w1",
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001"
+      }
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flowWorkflows/w1",
+     "verb": "PATCH"
+    }
+   ]
+  },
+  "workspace.create_project": {
+   "events": [
+    "post_json"
+   ],
+   "result": {
+    "message": "unexpected createProject response shape: 'result'",
+    "raise": "ValueError"
+   },
+   "traffic": [
+    {
+     "data": {
+      "json": {
+       "projectTitle": "first title",
+       "toolName": "PINHOLE"
+      }
+     },
+     "headers": [
+      "content-type",
+      "origin",
+      "referer"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://labs.google/fx/api/trpc/project.createProject",
+     "verb": "POST"
+    }
+   ]
+  },
+  "workspace.create_scene": {
+   "events": [
+    "post_json"
+   ],
+   "result": {
+    "message": "unexpected create-scene response shape: 'scene'",
+    "raise": "ValueError"
+   },
+   "traffic": [
+    {
+     "data": {
+      "workflowIds": [
+       "w1"
+      ]
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flow/projects/0b5e0b5e-0000-4000-8000-000000000001/scenes",
+     "verb": "POST"
+    }
+   ]
+  },
+  "workspace.get_agent_info": {
+   "events": [
+    "get_json"
+   ],
+   "result": {
+    "ok": "ProjectBrief(enabled=False, cards=(), agent_toggle_state=None)"
+   },
+   "traffic": [
+    {
+     "data": null,
+     "headers": [
+      "origin",
+      "referer"
+     ],
+     "kwargs": [
+      "headers",
+      "timeout"
+     ],
+     "url": "https://labs.google/fx/api/trpc/flow.projectInitialData?input=%7B%22json%22%3A%7B%22projectId%22%3A%220b5e0b5e-0000-4000-8000-000000000001%22%7D%7D",
+     "verb": "GET"
+    }
+   ]
+  },
+  "workspace.get_scene_workflows": {
+   "events": [
+    "get_json"
+   ],
+   "result": {
+    "ok": "Scene(scene_id='0b5e0b5e-0000-4000-8000-0000000000bb', project_id='0b5e0b5e-0000-4000-8000-000000000001', workflows=())"
+   },
+   "traffic": [
+    {
+     "data": null,
+     "headers": [
+      "authorization",
+      "origin"
+     ],
+     "kwargs": [
+      "headers",
+      "timeout"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/flow/scene/0b5e0b5e-0000-4000-8000-0000000000bb/workflows?sceneId=0b5e0b5e-0000-4000-8000-0000000000bb&projectId=0b5e0b5e-0000-4000-8000-000000000001",
+     "verb": "GET"
+    }
+   ]
+  },
+  "workspace.patch_agent_info": {
+   "events": [
+    "patch_json"
+   ],
+   "result": {
+    "ok": "{}"
+   },
+   "traffic": [
+    {
+     "data": {
+      "projectBrief": {
+       "enabled": true
+      }
+     },
+     "headers": [
+      "authorization",
+      "content-type",
+      "origin"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://aisandbox-pa.googleapis.com/v1/projects/0b5e0b5e-0000-4000-8000-000000000001/agentInfo?updateMask=project_brief.enabled",
+     "verb": "PATCH"
+    }
+   ]
+  },
+  "workspace.rename_project": {
+   "events": [
+    "post_json"
+   ],
+   "result": {
+    "ok": "{'result': {'data': {'json': {}}}}"
+   },
+   "traffic": [
+    {
+     "data": {
+      "json": {
+       "projectId": "0b5e0b5e-0000-4000-8000-000000000001",
+       "projectTitle": "second title"
+      }
+     },
+     "headers": [
+      "content-type",
+      "origin",
+      "referer"
+     ],
+     "kwargs": [
+      "data",
+      "headers"
+     ],
+     "url": "https://labs.google/fx/api/trpc/project.renameProject",
+     "verb": "POST"
+    }
+   ]
+  }
+ },
+ "methods": {
+  "__aenter__": "async (self) -> 'Self'",
+  "__aexit__": "async (self, *exc: 'object') -> 'None'",
+  "__init__": "sync (self, profile_dir: 'Path', *, headless: 'bool' = False, settings: 'Settings | None' = None, transport: 'FlowTransportStrategy | str | None' = None, out_dir: 'Path | None' = None) -> 'None'",
+  "_checkin_page": "sync (self, page: 'Page') -> 'None'",
+  "_checkout_page": "async (self) -> 'Page'",
+  "_fetch_access_token": "async (self) -> 'tuple[str, float]'",
+  "_get_json": "async (self, url: 'str', *, route_name: 'str | None' = None) -> 'Any'",
+  "_handle_account_chooser": "async (self, page: 'Page') -> 'bool'",
+  "_launch_persistent_context": "async (self, kwargs: 'JsonObject') -> 'BrowserContext'",
+  "_log_and_guard_launch": "sync (self, kwargs: 'dict[str, Any]') -> 'None'",
+  "_mint_recaptcha_token": "async (self, action: 'str') -> 'str'",
+  "_patch_json": "async (self, url: 'str', body: 'JsonObject', *, route_name: 'str | None' = None) -> 'Any'",
+  "_persistent_context_kwargs": "sync (self) -> 'JsonObject'",
+  "_post_json": "async (self, url: 'str', body: 'JsonObject', *, content_type: 'str' = 'text/plain;charset=UTF-8', route_name: 'str | None' = None) -> 'Any'",
+  "_preread_flow_session_cookies": "async (self) -> 'None'",
+  "_resolve_account_locale": "async (self, page: 'Any', *, settle: 'bool' = True) -> 'tuple[str | None, str | None]'",
+  "_run_with_retry": "async (self, attempt: 'Any', *, route: 'str') -> 'Any'",
+  "archive_workflow": "async (self, workflow_id: 'str', project_id: 'str') -> 'None'",
+  "capability_listing": "async (self, project_id: 'str') -> 'JsonObject'",
+  "commit_workflow": "async (self, workflow_id: 'str', *, project_id: 'str', primary_media_id: 'str') -> 'None'",
+  "concatenate_scene": "async (self, inputs: 'list[ConcatInput]', *, out_path: 'Path', poll_interval: 'float' = 3.0, timeout_s: 'float' = 180.0) -> 'AnyPath'",
+  "create_entity": "async (self, project_id: 'str') -> 'str'",
+  "create_project": "async (self, title: 'str | None' = None) -> 'ProjectInfo'",
+  "create_scene": "async (self, *, project_id: 'str', workflow_ids: 'list[str]') -> 'Scene'",
+  "delete_characters": "async (self, project_id: 'str', entity_ids: 'list[str]') -> 'None'",
+  "download": "async (self, name_or_url: 'str', out_path: 'Path') -> 'Path'",
+  "download_image": "async (self, image: 'GeneratedImage', out_path: 'Path') -> 'AnyPath'",
+  "download_video": "async (self, media_id: 'str', out_path: 'Path') -> 'Path'",
+  "extend_video": "async (self, *, media_id: 'str', project_id: 'str', scene_id: 'str', position: 'int', prompt: 'str', aspect: 'str' = '16:9', seed: 'int | None' = None, recaptcha_action: 'str' = 'VIDEO_GENERATION') -> 'ExtendStarted'",
+  "extend_video_migrated": "async (self, *, media_id: 'str', project_id: 'str', prompt: 'str', aspect: 'str | None', out_path: 'Path', on_started: 'ExtendStartedCallback | None' = None, poll_timeout_s: 'float' = 900.0) -> 'tuple[ExtendOutcome, AnyPath | None]'",
+  "fetch_project_listing": "async (self, project_id: 'str') -> 'JsonObject'",
+  "generate_character_image": "async (self, *, project_id: 'str', entity_id: 'str', req: 'CharacterImageRequest', image_reference_index: 'int' = 0, locale: 'str | None' = None, format_prompt: 'bool' = False) -> 'tuple[str, str, AnyPath | None]'",
+  "generate_image": "async (self, *, project_id: 'str | None' = None, req: 'GenerateImageRequest', recaptcha_action: 'str' = 'imageGeneration', on_checkpoint: 'GenerationCheckpointObserver | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'GeneratedImage'",
+  "generate_images_batch": "async (self, *, project_id: 'str | None' = None, req: 'GenerateImageRequest', count: 'int' = 1, recaptcha_action: 'str' = 'imageGeneration', on_checkpoint: 'GenerationCheckpointObserver | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]'",
+  "generate_video": "async (self, *, req: 'GenerateVideoRequest', project_id: 'str | None' = None, out_dir: 'Path | None' = None, poll_timeout_s: 'float' = 600.0, download: 'bool' = True, on_started: 'VideoStartedCallback | None' = None, on_checkpoint: 'GenerationCheckpointObserver | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'VideoResult'",
+  "get_agent_info": "async (self, project_id: 'str') -> 'ProjectBrief'",
+  "get_character": "async (self, project_id: 'str', *, entity_id: 'str | None' = None, name: 'str | None' = None) -> 'Character'",
+  "get_credits": "async (self) -> 'CreditsInfo'",
+  "get_scene_workflows": "async (self, scene_id: 'str', *, project_id: 'str') -> 'Scene'",
+  "health_check": "async (self) -> 'bool'",
+  "list_characters": "async (self, project_id: 'str') -> 'list[Character]'",
+  "page": "property",
+  "patch_agent_info": "async (self, project_id: 'str', *, enabled: 'bool | None' = None, cards: 'tuple[AgentInstruction, ...] | None' = None) -> 'JsonObject'",
+  "patch_entity": "async (self, *, project_id: 'str', entity_id: 'str', display_name: 'str', workflow_ids: 'list[str]', voice: 'str | None' = None, personality: 'str | None' = None) -> 'None'",
+  "poll_video_status": "async (self, media_id: 'str', *, project_id: 'str', initial_delay_s: 'float' = 90.0, poll_interval: 'float' = 10.0, timeout_s: 'float' = 900.0) -> 'VideoStatus'",
+  "rename_project": "async (self, project_id: 'str', new_title: 'str') -> 'JsonObject'",
+  "served_route": "sync (self, *, prefer_migrated: 'bool') -> 'str'",
+  "update_scene_workflows": "async (self, *, scene_id: 'str', project_id: 'str', workflows: 'list[SceneWorkflow]') -> 'None'",
+  "upload_image": "async (self, project_id: 'str', image_path: 'Path') -> 'AssetInfo'",
+  "upload_reference": "async (self, project_id: 'str', path: 'Path') -> 'ImageRef'",
+  "upload_reference_in_place": "async (self, project_id: 'str', path: 'Path') -> 'ImageRef | None'",
+  "upsample_image": "async (self, *, media_id: 'str', project_id: 'str', target_resolution: 'TargetResolution', out_path: 'Path', recaptcha_action: 'str' = 'IMAGE_GENERATION') -> 'AnyPath'",
+  "upsample_video": "async (self, *, media_id: 'str', project_id: 'str', scale: 'str' = '1080p', out_path: 'Path') -> 'AnyPath'"
+ },
+ "module_names": {
+  "FlowApiClient": "type",
+  "FlowApiError": "type",
+  "MAX_CONCAT_B64_LEN": "int",
+  "MAX_IMAGE_BYTES": "int",
+  "MAX_UPSAMPLE_B64_LEN": "int",
+  "ProfileLease": "type",
+  "_AISANDBOX_CONTENT_TYPE": "str",
+  "_default_project_title": "function",
+  "_extract_provider_error_message": "function",
+  "_is_profile_access_denied": "function",
+  "_is_supported_image_header": "function",
+  "_is_target_closed": "function",
+  "_raise_for_non_retryable": "function",
+  "_storage_key_from_path": "function",
+  "_unwrap_trpc": "function",
+  "validate_image_file": "function"
+ }
+}
