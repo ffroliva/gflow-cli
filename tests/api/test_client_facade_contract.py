@@ -391,10 +391,15 @@ def _cases(tmp: Path) -> list[tuple[str, str, dict[str, Any]]]:
     ]
 
 
+_DEFAULT_TITLE = re.compile(r"gflow-cli [A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} [AP]M")
+
+
 def _normalise(value: Any, tmp: Path) -> Any:
     text = json.dumps(value, default=repr, sort_keys=True, ensure_ascii=False)
     for form in (str(tmp), tmp.as_posix(), json.dumps(str(tmp), ensure_ascii=False)[1:-1]):
         text = text.replace(form, "<TMP>")
+    # generate_image without a project names one after the clock; pin the shape, not the minute
+    text = _DEFAULT_TITLE.sub("gflow-cli <Mon D, HH:MM AM>", text)
     # a result repr names the platform's Path class; the contract is the path, not the OS
     return json.loads(text.replace("WindowsPath(", "Path(").replace("PosixPath(", "Path("))
 
