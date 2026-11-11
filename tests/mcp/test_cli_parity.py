@@ -34,10 +34,9 @@ import inspect
 import re
 from typing import Any
 
-import click
-
 from gflow_cli.cli import main
 from gflow_cli.mcp import tools as mcp_tools
+from tests.mcp._cli_tree import cli_leaves
 
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
@@ -52,7 +51,9 @@ CLI_TO_MCP: dict[str, str] = {
     "video t2v": "gflow_generate_video",  # mode="t2v"
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
-    "models": "gflow_list_models",
+    "models": "gflow_list_models",  # bare `gflow models` is `models list` (#1196)
+    "models list": "gflow_list_models",
+    "models show": "gflow_list_models",  # the catalog carries every model's show detail
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
     "auth status": "gflow_auth_status",
@@ -94,6 +95,10 @@ _MCP_EXEMPT: dict[str, str] = {
         "long-running billed chain; not worker-enqueued, and its cost "
         "confirmation has no MCP equivalent (#481)"
     ),
+    # Not a gap: the twin is a resource, not a tool (a document an agent reads before
+    # planning, like gflow://docs/*). tests/mcp/test_capabilities.py holds the two
+    # surfaces to the same JSON document (#1197).
+    "capabilities": "twin is the MCP resource capabilities://self (same document, #1197)",
     "auth": "interactive session management — needs a human browser login flow",
     "auth list": "interactive session management",
     "auth login": "interactive session management",
@@ -169,20 +174,7 @@ _MCP_EXEMPT: dict[str, str] = {
 
 def _cli_leaves() -> set[str]:
     """Every invokable CLI path: plain commands + invoke_without_command groups."""
-    leaves: set[str] = set()
-
-    def _walk(group: click.Group, prefix: str) -> None:
-        for name, cmd in group.commands.items():
-            path = f"{prefix}{name}"
-            if isinstance(cmd, click.Group):
-                if cmd.invoke_without_command:
-                    leaves.add(path)
-                _walk(cmd, f"{path} ")
-            else:
-                leaves.add(path)
-
-    _walk(main, "")
-    return leaves
+    return cli_leaves(main)
 
 
 def test_every_cli_leaf_has_an_mcp_decision() -> None:
@@ -255,6 +247,9 @@ _OPTION_EXEMPT: dict[str, str] = {
     "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
     "instructions apply:file": "reads a local file; the tool takes the text directly",
     "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
+    "models show:model_id": (
+        "coarse mapping — gflow_list_models returns every model; the id is its filter (#1196)"
+    ),
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
 }
 

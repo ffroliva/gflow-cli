@@ -1898,8 +1898,11 @@ Print the image and video model catalog — the source of truth for what
 `--json` for a single machine-readable object.
 
 ```text
-gflow models [OPTIONS]
+gflow models [list] [--json]
+gflow models show MODEL_ID [--json]
 ```
+
+Bare `gflow models` is an alias of `gflow models list`: same options, same output.
 
 Per model the catalog reports: `name`, `label` (image models: the name Flow's
 model menu shows, read on English accounts, such as `Nano Banana Pro`; display
@@ -1918,12 +1921,44 @@ gflow models
 
 # Machine-readable catalog for a worker / model picker
 gflow models --json
+
+# One model's limits: aliases, ref cap, durations (video) or Flow name (image), aspects
+gflow models show omni-flash
+
+# The same object gflow_list_models carries for that model (#1196)
+gflow models show NARWHAL --json
+```
+
+`show` takes a model's `name` or any spelling the generation commands' `--model`
+resolves (`omni-flash`, `Omni Flash`, `veo_lite`, `NARWHAL`, ...). Its `--json`
+emits that model's catalog entry exactly as `gflow_list_models` returns it, so a
+script reading one model needs no list parsing. Video entries carry `durations`,
+the clip lengths `--duration` accepts for that model (Veo: 4, 6, 8; Omni Flash
+adds 10), next to `max_duration`. The table view adds the model's section aspects
+for context. An unknown id exits 2 and names up to three closest models. That is
+a Click usage error: the message goes to stderr and stdout stays empty, even with
+`--json`. The catalog does not carry per-model generation modes or host
+availability, so `show` does not report them.
+
+## `gflow capabilities`
+
+Declare what this gflow can drive: one value per capability (`yes`, `no`,
+`partial`, `unknown`), with a note on every `partial`. It makes no call to Flow and
+opens no browser; the only input is `GFLOW_CLI_FLOW_HOST`, and `host` reports that
+setting. MCP clients read the same document from the resource `capabilities://self`
+(except on a no-spend server, where generation is `no`)
+([#1197](https://github.com/ffroliva/gflow-cli/issues/1197)). Every key's meaning:
+[CAPABILITIES.md](CAPABILITIES.md).
+
+```bash
+gflow capabilities          # table
+gflow capabilities --json   # {"schema": 1, "adapter": ..., "host": ..., "capabilities": {...}, "notes": {...}}
 ```
 
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
+`r2v`), `auth list`, `gflow models`, `gflow capabilities`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)
