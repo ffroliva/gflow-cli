@@ -2,19 +2,27 @@
 
 Pinned BEFORE the class is split, so the split can prove it changed nothing a caller sees:
 
-* the method set and every signature, public and the private helpers tests patch;
-* every name other modules import from ``gflow_cli.api.client``;
-* for one call per responsibility: the HTTP traffic it sends (verb, URL, body, header
-  names - never header values), its result or exception, and the log events it emits.
+* the method set and every signature, public and the private helpers tests patch, and the
+  instance attributes ``__init__`` sets;
+* every name other code reads from ``gflow_cli.api.client``, with its value or signature;
+* for calls across every responsibility of the class: the HTTP traffic (verb, URL, body,
+  header values with the bearer token redacted, other request options), the result or the
+  exception with its problem details, the files written, and the log events with fields.
 
-The expected values live in ``fixtures/flow_client_facade.json`` and were recorded on
-develop at b7fc3b3f. A change to that file is a behaviour change and must be justified.
+The expected values live in ``fixtures/flow_client_facade.json``, recorded on develop at
+b7fc3b3f. A change to that file is a behaviour change and must be justified. Re-record it
+(same hermetic setup as the tests) with:
+
+    RECORD_FACADE_CONTRACT=1 uv run pytest tests/api/test_client_facade_contract.py -k record
 """
 
 from __future__ import annotations
 
+import base64
 import inspect
 import json
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +33,11 @@ import gflow_cli.api.client as client_mod
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image_upscale import TargetResolution
+from gflow_cli.api.scene import ConcatInput, SceneWorkflow, SceneWorkflowMetadata
 from gflow_cli.config import Settings
 
 FIXTURE = Path(__file__).parent / "fixtures" / "flow_client_facade.json"
+LISTING = Path(__file__).parent / "fixtures" / "project_initial_data_extend_models.json"
 
 # Private helpers that tests patch on the instance or the class. Moved code must keep calling
 # them through ``self`` (see docs/superpowers/plans/2026-11-11-1249-split-god-classes).
@@ -48,7 +58,8 @@ PATCHED_PRIVATE = (
     "_run_with_retry",
 )
 
-# Names imported from gflow_cli.api.client by src/, tests/ and scripts/ (grep, 2026-11-11).
+# Names read from gflow_cli.api.client by src/, tests/ and scripts/: imported, or read off the
+# module object (grep, 2026-11-11).
 MODULE_NAMES = (
     "FlowApiClient",
     "FlowApiError",
@@ -56,6 +67,7 @@ MODULE_NAMES = (
     "MAX_IMAGE_BYTES",
     "MAX_UPSAMPLE_B64_LEN",
     "ProfileLease",
+    "WafRejectionError",
     "_AISANDBOX_CONTENT_TYPE",
     "_default_project_title",
     "_extract_provider_error_message",
@@ -65,14 +77,98 @@ MODULE_NAMES = (
     "_raise_for_non_retryable",
     "_storage_key_from_path",
     "_unwrap_trpc",
+    "async_playwright",
     "validate_image_file",
 )
 
-_TRPC_EMPTY = '{"result":{"data":{"json":{}}}}'
+# Settings tests may set on purpose, kept (conftest pins them); every other GFLOW_CLI_* is removed
+# so a developer's environment cannot change the outcome.
+_KEEP_ENV = {
+    "GFLOW_CLI_HOME",
+    "GFLOW_CLI_DB_PATH",
+    "GFLOW_CLI_UPDATE_CHECK",
+    "GFLOW_CLI_TELEMETRY",
+    "GFLOW_CLI_WIRE_READS",
+}
+
 PROJECT = "0b5e0b5e-0000-4000-8000-000000000001"  # UUID-shaped: some routes validate it
 MEDIA = "0b5e0b5e-0000-4000-8000-0000000000aa"
 SCENE = "0b5e0b5e-0000-4000-8000-0000000000bb"
-LISTING = Path(__file__).parent / "fixtures" / "project_initial_data_extend_models.json"
+MP4_HEAD = bytes([0, 0, 0, 24]) + b"ftypmp42" + bytes(16)
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
+)
+
+
+def _trpc(payload: dict[str, Any]) -> str:
+    return json.dumps({"result": {"data": {"json": payload}}})
+
+
+# (verb, URL fragment) -> a reply shaped like Flow's, so success parsing is pinned too.
+# Anything else gets an empty tRPC envelope.
+_REPLIES: list[tuple[str, str, str]] = [
+    (
+        "POST",
+        "project.createProject",
+        _trpc({"result": {"projectId": PROJECT, "projectInfo": {"projectTitle": "first title"}}}),
+    ),
+    ("POST", f"/projects/{PROJECT}/scenes", json.dumps({"scene": {"sceneId": SCENE}})),
+    ("POST", "flow.createEntity", _trpc({"entityId": "e1"})),
+    (
+        "POST",
+        "batchCheckAsyncVideoGenerationStatus",
+        json.dumps(
+            {
+                "media": [
+                    {
+                        "name": MEDIA,
+                        "mediaMetadata": {
+                            "mediaStatus": {
+                                "mediaGenerationStatus": "MEDIA_GENERATION_STATUS_FAILED"
+                            }
+                        },
+                    }
+                ]
+            }
+        ),
+    ),
+    (
+        "POST",
+        "upsampleImage",
+        json.dumps({"encodedImage": base64.b64encode(PNG_1PX).decode()}),
+    ),
+    ("POST", "ExtendVideo", json.dumps({"media": [{"name": MEDIA}]})),
+    (
+        "POST",
+        "uploadImage",
+        json.dumps(
+            {
+                "media": {
+                    "name": MEDIA,
+                    "projectId": PROJECT,
+                    "workflowId": "w1",
+                    "image": {"dimensions": {"width": 1, "height": 1}},
+                },
+                "workflow": {"metadata": {"displayName": "in.png"}},
+            }
+        ),
+    ),
+    (
+        "POST",
+        "CheckConcatenationStatus",
+        json.dumps(
+            {
+                "status": "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                "encodedVideo": base64.b64encode(MP4_HEAD).decode(),
+            }
+        ),
+    ),
+]
+_TRPC_EMPTY = _trpc({})
+
+
+def _reply(verb: str, url: str) -> str:
+    return next((body for v, frag, body in _REPLIES if v == verb and frag in url), _TRPC_EMPTY)
 
 
 def _describe(obj: Any) -> str:
@@ -88,33 +184,60 @@ def method_contract() -> dict[str, str]:
     return {n: _describe(inspect.getattr_static(FlowApiClient, n)) for n in sorted(set(names))}
 
 
+def _describe_name(obj: Any) -> str:
+    """A moved function keeps its signature; a class or module keeps its identity; a constant
+    keeps its value. ``__module__`` of a moved function is allowed to change."""
+    if inspect.isclass(obj) or inspect.ismodule(obj):
+        return f"{type(obj).__name__} {getattr(obj, '__module__', '')}.{obj.__name__}"
+    if inspect.isfunction(obj):
+        return f"function {obj.__name__}{inspect.signature(obj)}"
+    return f"{type(obj).__name__} {obj!r}"
+
+
+def names_contract() -> dict[str, str]:
+    return {n: _describe_name(getattr(client_mod, n)) for n in MODULE_NAMES}
+
+
 class _Resp:
     def __init__(self, text: str, url: str) -> None:
         self.url = url
         self.status = 200
-        self.ok = True
-        self.headers: dict[str, str] = {}
         self._text = text
 
     async def text(self) -> str:
         return self._text
 
-    async def json(self) -> Any:
-        return json.loads(self._text)
-
     async def body(self) -> bytes:
         return self._text.encode()
 
 
-# Per-request values Flow expects to differ on every call: a fresh uuid4 and an epoch-ms stamp.
-_VOLATILE = {"batchId": "<uuid4>", "sessionId": "<epoch-ms>"}
+# Per-request values Flow expects to differ on every call. Their SHAPE is pinned, not their value.
+_VOLATILE = {
+    "batchId": (
+        re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"),
+        "<uuid4>",
+    ),
+    "sessionId": (re.compile(r";\d{13}"), "<;epoch-ms>"),
+}
 
 
 def _scrub(value: Any) -> Any:
     if isinstance(value, dict):
-        return {k: _VOLATILE.get(k) or _scrub(v) for k, v in value.items()}  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        out: dict[str, Any] = {}
+        for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
+            shape = _VOLATILE.get(k)  # pyright: ignore[reportUnknownArgumentType]
+            if shape and isinstance(v, str) and shape[0].fullmatch(v):
+                out[k] = shape[1]
+            else:
+                out[k] = _scrub(v)
+        return out
     if isinstance(value, list):
         return [_scrub(v) for v in value]  # pyright: ignore[reportUnknownVariableType]
+    if isinstance(value, str):  # a body logged as (possibly truncated) text
+        for key, (shape, label) in _VOLATILE.items():
+            # the log line may be cut mid-value, so match a prefix; parsed bodies get the full check
+            loose = shape.pattern.replace("{13}", "{1,13}").replace("{12}", "{1,12}")
+            value = re.sub(f'("{key}": "){loose}', rf"\g<1>{label}", value)
     return value
 
 
@@ -124,7 +247,14 @@ def _body(data: Any) -> Any:
     try:
         return _scrub(json.loads(data))
     except json.JSONDecodeError:
-        return data
+        return _scrub(data)
+
+
+def _headers(headers: dict[str, str] | None) -> dict[str, str]:
+    return {
+        k: ("<redacted>" if k.lower() in {"authorization", "cookie"} else v)
+        for k, v in (headers or {}).items()
+    }
 
 
 class _Request:
@@ -132,16 +262,17 @@ class _Request:
         self.log: list[dict[str, Any]] = []
 
     def _record(self, verb: str, url: str, kw: dict[str, Any]) -> _Resp:
+        options = {k: v for k, v in kw.items() if k not in ("data", "headers")}
         self.log.append(
             {
                 "verb": verb,
                 "url": url,
                 "data": _body(kw.get("data")),
-                "headers": sorted(kw.get("headers") or {}),
-                "kwargs": sorted(kw),
+                "headers": _headers(kw.get("headers")),
+                "options": options,
             }
         )
-        return _Resp(_TRPC_EMPTY, url)
+        return _Resp(_reply(verb, url), url)
 
     async def get(self, url: str, **kw: Any) -> _Resp:
         return self._record("GET", url, kw)
@@ -160,13 +291,30 @@ class _Page:
         self.request = _Request()
 
 
+def _image() -> GeneratedImage:
+    return GeneratedImage(
+        media_name="m1",
+        workflow_id="w1",
+        seed=1,
+        prompt="p",
+        model_name_type=None,
+        aspect_ratio="IMAGE_ASPECT_RATIO_SQUARE",
+        fife_url="https://flow-content.google/image/m1",
+        dimensions=(1, 1),
+    )
+
+
 def _cases(tmp: Path) -> list[tuple[str, str, dict[str, Any]]]:
-    """(responsibility, method, kwargs): one or more calls per surface of the class."""
+    """(responsibility, method, kwargs): calls across every surface of the class."""
+    png = tmp / "in.png"
+    png.write_bytes(PNG_1PX)
+    poll = {"initial_delay_s": 0, "poll_interval": 0, "timeout_s": 0}
     return [
         ("workspace", "create_project", {"title": "first title"}),
         ("workspace", "rename_project", {"project_id": PROJECT, "new_title": "second title"}),
         ("workspace", "patch_agent_info", {"project_id": PROJECT, "enabled": True}),
         ("workspace", "get_agent_info", {"project_id": PROJECT}),
+        ("workspace", "upload_image", {"project_id": PROJECT, "image_path": png}),
         ("workspace", "archive_workflow", {"workflow_id": "w1", "project_id": PROJECT}),
         (
             "workspace",
@@ -174,36 +322,37 @@ def _cases(tmp: Path) -> list[tuple[str, str, dict[str, Any]]]:
             {"workflow_id": "w1", "project_id": PROJECT, "primary_media_id": "m1"},
         ),
         ("workspace", "create_scene", {"project_id": PROJECT, "workflow_ids": ["w1"]}),
+        (
+            "workspace",
+            "update_scene_workflows",
+            {
+                "scene_id": SCENE,
+                "project_id": PROJECT,
+                "workflows": [
+                    SceneWorkflow(
+                        workflow_id="w1",
+                        metadata=SceneWorkflowMetadata(
+                            position=0, start_time=0.0, end_time=8.0, total_duration=8.0
+                        ),
+                    )
+                ],
+            },
+        ),
         ("workspace", "get_scene_workflows", {"scene_id": SCENE, "project_id": PROJECT}),
         (
-            "generation",
-            "poll_video_status",
+            "workspace",
+            "concatenate_scene",
             {
-                "media_id": MEDIA,
-                "project_id": PROJECT,
-                "initial_delay_s": 0,
+                "inputs": [ConcatInput(media_id=MEDIA, length=8.0, start=0.0, end=8.0)],
+                "out_path": tmp / "concat.mp4",
                 "poll_interval": 0,
-                "timeout_s": 0,
             },
         ),
+        ("generation", "poll_video_status", {"media_id": MEDIA, "project_id": PROJECT, **poll}),
         ("generation", "download_video", {"media_id": MEDIA, "out_path": tmp / "v.mp4"}),
-        (
-            "generation",
-            "download_image",
-            {
-                "image": GeneratedImage(
-                    media_name="m1",
-                    workflow_id="w1",
-                    seed=1,
-                    prompt="p",
-                    model_name_type=None,
-                    aspect_ratio="IMAGE_ASPECT_RATIO_SQUARE",
-                    fife_url="https://flow-content.google/image/m1",
-                    dimensions=(1, 1),
-                ),
-                "out_path": tmp / "i.png",
-            },
-        ),
+        ("generation", "download_image", {"image": _image(), "out_path": tmp / "i.png"}),
+        ("generation", "generate_image", {"req": None}),
+        ("generation", "generate_video", {"req": None}),
         (
             "media_edit",
             "extend_video",
@@ -243,15 +392,33 @@ def _cases(tmp: Path) -> list[tuple[str, str, dict[str, Any]]]:
 
 
 def _normalise(value: Any, tmp: Path) -> Any:
-    text = json.dumps(value, default=repr, sort_keys=True)
-    for form in (str(tmp), tmp.as_posix(), json.dumps(str(tmp))[1:-1]):
+    text = json.dumps(value, default=repr, sort_keys=True, ensure_ascii=False)
+    for form in (str(tmp), tmp.as_posix(), json.dumps(str(tmp), ensure_ascii=False)[1:-1]):
         text = text.replace(form, "<TMP>")
     # a result repr names the platform's Path class; the contract is the path, not the OS
     return json.loads(text.replace("WindowsPath(", "Path(").replace("PosixPath(", "Path("))
 
 
+def _outcome(exc: Exception) -> dict[str, Any]:
+    out: dict[str, Any] = {"raise": type(exc).__name__, "message": str(exc)}
+    problem = getattr(exc, "to_problem_details", None)
+    if callable(problem):
+        out["problem"] = problem()
+    return out
+
+
+def _files(tmp: Path) -> list[str]:
+    return sorted(
+        f"{p.relative_to(tmp).as_posix()}:{p.stat().st_size}" for p in tmp.rglob("*") if p.is_file()
+    )
+
+
+def _client(tmp: Path) -> FlowApiClient:
+    return FlowApiClient(tmp / "profile", settings=Settings(_env_file=None))  # pyright: ignore[reportCallIssue]
+
+
 async def traffic_contract(tmp: Path) -> dict[str, Any]:
-    client = FlowApiClient(tmp / "profile", settings=Settings(_env_file=None))  # pyright: ignore[reportCallIssue]
+    client = _client(tmp)
     page = _Page()
     client._page = page  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
     client._page_queue = None  # pyright: ignore[reportPrivateUsage]
@@ -270,25 +437,39 @@ async def traffic_contract(tmp: Path) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for surface, name, kwargs in _cases(tmp):
         page.request.log.clear()
+        before = set(_files(tmp))
         with structlog.testing.capture_logs() as events:
             try:
                 result: Any = {"ok": repr(await getattr(client, name)(**kwargs))}
             except Exception as exc:  # noqa: BLE001 - the exception IS the observed outcome
-                result = {"raise": type(exc).__name__, "message": str(exc)}
+                result = _outcome(exc)
         out[f"{surface}.{name}"] = {
             "traffic": page.request.log[:],
             "result": result,
-            "events": [e["event"] for e in events],
+            "files_written": [f for f in _files(tmp) if f not in before],
+            "events": [{k: _body(v) for k, v in e.items()} for e in events],
         }
     return _normalise(out, tmp)
+
+
+def instance_attributes(tmp: Path) -> list[str]:
+    return sorted(vars(_client(tmp)))
 
 
 async def snapshot(tmp: Path) -> dict[str, Any]:
     return {
         "methods": method_contract(),
-        "module_names": {n: type(getattr(client_mod, n)).__name__ for n in MODULE_NAMES},
+        "instance_attributes": instance_attributes(tmp),
+        "module_names": names_contract(),
         "calls": await traffic_contract(tmp),
     }
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in list(os.environ):
+        if key.startswith("GFLOW_CLI_") and key not in _KEEP_ENV:
+            monkeypatch.delenv(key)
 
 
 @pytest.fixture(scope="module")
@@ -300,11 +481,12 @@ def test_method_set_and_signatures_are_unchanged(expected: dict[str, Any]) -> No
     assert method_contract() == expected["methods"]
 
 
-def test_every_imported_name_is_still_importable_from_the_old_path(
-    expected: dict[str, Any],
-) -> None:
-    got = {n: type(getattr(client_mod, n)).__name__ for n in MODULE_NAMES}
-    assert got == expected["module_names"]
+def test_instance_attributes_are_unchanged(expected: dict[str, Any], tmp_path: Path) -> None:
+    assert instance_attributes(tmp_path) == expected["instance_attributes"]
+
+
+def test_every_name_read_from_the_old_path_is_still_there(expected: dict[str, Any]) -> None:
+    assert names_contract() == expected["module_names"]
 
 
 async def test_facade_calls_send_the_same_traffic_and_return_the_same_outcome(
@@ -314,3 +496,9 @@ async def test_facade_calls_send_the_same_traffic_and_return_the_same_outcome(
     assert list(got) == list(expected["calls"])
     for key in got:
         assert got[key] == expected["calls"][key], key
+
+
+@pytest.mark.skipif(not os.environ.get("RECORD_FACADE_CONTRACT"), reason="re-records on request")
+async def test_record_the_fixture(tmp_path: Path) -> None:
+    text = json.dumps(await snapshot(tmp_path), indent=1, sort_keys=True, ensure_ascii=False)
+    FIXTURE.write_text(text + "\n", encoding="utf-8", newline="\n")
