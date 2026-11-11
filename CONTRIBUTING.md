@@ -277,7 +277,7 @@ gate blocks this.
        result = await mock_client.new_route(...)
        assert result.some_field
    ```
-3. **Implement** in `src/gflow_cli/api/client.py` (and add helpers under `src/gflow_cli/api/` as needed) until green.
+3. **Implement** in the `FlowApiClient` surface the route belongs to (`src/gflow_cli/api/_flow_workspace.py`, `_flow_generation.py`, `_flow_media_edit.py` or `_flow_characters.py`; see docs/ARCHITECTURE.md) until green. The size gate stops any of them growing past its limit.
 4. **Add a `live` test** that runs the real flow end-to-end (skipped in CI by default).
 5. **Update `CHANGELOG.md`** under `[Unreleased] → Added`.
 6. **Document** the route in the README's Architecture section if it's a new capability.

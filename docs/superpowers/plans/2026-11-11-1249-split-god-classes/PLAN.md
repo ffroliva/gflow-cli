@@ -42,8 +42,8 @@ src/gflow_cli/api/
   _flow_characters.py  CharacterSurface(MediaEditSurface): entity CRUD, character image
 ```
 
-Exact method-to-module assignment is computed by `scripts/dev/split_flow_client.py` (the
-lever) from the AST and is listed in the PR.
+Exact method-to-module assignment was computed by a one-shot lever (AST spans, kept out of the
+repo) and is listed in the PR.
 
 ---
 
@@ -55,7 +55,8 @@ lever) from the AST and is listed in the PR.
 ### Task 1.2 - gate tests first (red), then the gate
 - [x] `tests/scripts/test_check_size.py`: new oversized file fails; new oversized class fails;
       new ruff C901/PLR0915/PLR0904 offender fails; baselined offender may stay or shrink, not
-      grow; `ratcheted` lowers/drops, never adds; repo passes its own baseline
+      grow; `ratcheted` lowers/drops, never adds (the repo-passes-its-baseline test was dropped in
+      review: the CI step runs exactly that)
 - [x] see the ruff tests fail (no ruff support yet)
 - [x] `scripts/ci/check_size.py`: ruff JSON metrics keyed `CODE:<rel>::<qualname>`
 - [x] thresholds set once in `pyproject.toml` (mccabe 10, pylint statements 50, public 20)

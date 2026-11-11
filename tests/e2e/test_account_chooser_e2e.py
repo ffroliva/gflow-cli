@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 from playwright.async_api import Route, async_playwright
 
-from gflow_cli.api import client as client_module
+from gflow_cli.api import _flow_bootstrap as client_module
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.errors import FlowAccountChooserError
 from gflow_cli.profile_store import ACCOUNT_FILE

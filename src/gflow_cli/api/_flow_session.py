@@ -5,8 +5,6 @@ Split out of ``client.py`` (#1249); ``FlowApiClient`` composes it. Method
 bodies are unchanged.
 """
 
-# pyright: reportPrivateUsage=false
-
 from __future__ import annotations
 
 import asyncio

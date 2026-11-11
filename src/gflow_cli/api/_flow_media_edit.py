@@ -4,8 +4,6 @@ Split out of ``client.py`` (#1249); ``FlowApiClient`` composes it. Method
 bodies are unchanged.
 """
 
-# pyright: reportPrivateUsage=false
-
 from __future__ import annotations
 
 import base64
@@ -44,8 +42,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
-from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace
-from gflow_cli.api._flow_session import JsonObject, _make_instance
+from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace  # pyright: ignore[reportPrivateUsage]
+from gflow_cli.api._flow_session import JsonObject, _make_instance  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
 

@@ -4,8 +4,6 @@ Split out of ``client.py`` (#1249); ``FlowApiClient`` composes it. Method
 bodies are unchanged.
 """
 
-# pyright: reportPrivateUsage=false
-
 from __future__ import annotations
 
 import json
@@ -16,8 +14,8 @@ import structlog
 
 from gflow_cli.api import routes
 from gflow_cli.api._flow_media_edit import MediaEditSurface
-from gflow_cli.api._flow_session import _APPLICATION_JSON, JsonObject
-from gflow_cli.api._flow_workspace import _unwrap_trpc
+from gflow_cli.api._flow_session import _APPLICATION_JSON, JsonObject  # pyright: ignore[reportPrivateUsage]
+from gflow_cli.api._flow_workspace import _unwrap_trpc  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
 from gflow_cli.api.dto import (
     GeneratedImage,

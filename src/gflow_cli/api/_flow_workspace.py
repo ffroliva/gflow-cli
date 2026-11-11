@@ -4,8 +4,6 @@ Split out of ``client.py`` (#1249); ``FlowApiClient`` composes it. Method
 bodies are unchanged.
 """
 
-# pyright: reportPrivateUsage=false
-
 from __future__ import annotations
 
 import asyncio
@@ -41,12 +39,12 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.image import AgentInstruction, ImageRef, ProjectBrief
 from gflow_cli.api._flow_session import (
-    _APPLICATION_JSON,
+    _APPLICATION_JSON,  # pyright: ignore[reportPrivateUsage]
     FlowSession,
     JsonObject,
-    _build_wire_format_discovery,
-    _make_instance,
-    _raise_for_non_retryable,
+    _build_wire_format_discovery,  # pyright: ignore[reportPrivateUsage]
+    _make_instance,  # pyright: ignore[reportPrivateUsage]
+    _raise_for_non_retryable,  # pyright: ignore[reportPrivateUsage]
 )
 
 logger = structlog.get_logger(__name__)
