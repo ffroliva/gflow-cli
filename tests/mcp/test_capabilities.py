@@ -85,6 +85,8 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "mcp run": None,
     "mcp setup": None,
     "models": None,
+    "models list": None,
+    "models show": None,
     "movie template": None,
     "project create": None,
     "project list": None,
