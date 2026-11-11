@@ -223,4 +223,6 @@ def video_result(
     if not st.succeeded:
         # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
         payload.update(charged="maybe", next_action="reconcile")
+        if st.media_id:
+            payload["operation_id"] = st.media_id
     return payload

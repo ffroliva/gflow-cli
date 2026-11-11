@@ -1985,6 +1985,11 @@ use. When set:
   retry-vs-absorb decision off, plus `charged` (`no` / `maybe` / `yes`) and
   `next_action` (#1201) — and exits with the same non-zero code as the Rich path.
   Every `type`, its exit code and those defaults: [ERRORS.md](ERRORS.md).
+- One exception: a `video t2v/i2v/r2v` that Flow accepted and then reported
+  failed emits the `VideoResult` above with `status: "fail"`, not a
+  problem-details object. It has no `type` or `retryable`; it carries
+  `charged: "maybe"`, `next_action: "reconcile"` and the clip's media id as
+  `operation_id` at the top level.
 
 The data-layer recorder fires regardless of `--json`, so audit history is
 independent of the output channel.
