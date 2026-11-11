@@ -44,6 +44,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 - Cross-module communication goes through public interfaces, never private internals.
 - Modules don't share global mutable state. Configuration is read-only at the boundary (`Settings`).
 - When a module file grows past 400 lines, prefer extraction to a sub-package over inline growth.
+- **Enforced (#1249):** `scripts/ci/check_size.py` fails a file over 2,000 lines, a class over 1,000 lines, and any ruff `C901` (complexity over 10), `PLR0915` (over 50 statements) or `PLR0904` (over 20 public methods) hit, with the thresholds set once in `pyproject.toml`. The line limits are loose on purpose (a tight one forces wrappers and extra hops) and are tightened one step at a time. Existing offenders sit in `scripts/ci/size_baseline.json`, a ratchet that can only shrink (`--update-baseline` lowers, drops or moves entries, never adds or raises them; `# noqa` exempts nothing). A function moved to another file keeps its entry when its value did not grow. CI also runs `--base-ref`, which fails a hand edit that adds or raises an entry. It runs in `/gflow:check`, as a pre-commit hook, and as a CI step.
 
 **Phase 4 module additions (in v0.4.0a1):**
 

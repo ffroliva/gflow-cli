@@ -204,6 +204,7 @@ sweep that no command below can check. The mechanical subset it runs, in order:
 
 ```bash
 uv run python scripts/ci/check_repo_hygiene.py        # artefact + path hygiene
+uv run python scripts/ci/check_size.py                # file/class size + complexity ratchet
 uv run python scripts/ci/check_doc_links.py           # internal Markdown links
 uv run python scripts/ci/check_website_docs_pii.py    # no private identifiers in website/docs
 uv run python scripts/ci/generate_website_docs.py --check  # website mirror in sync
@@ -244,7 +245,7 @@ contributor is blocked for lacking the plugin.
 
 ### SonarCloud quality gate
 
-On top of the ten gates, CI runs a **SonarCloud** analysis whose quality gate must be
+On top of the eleven gates, CI runs a **SonarCloud** analysis whose quality gate must be
 **green** before a PR is merge-ready — the target is **zero new issues** on changed code
 (new bugs, vulnerabilities, and code smells = 0; coverage of new lines ≥ 80%; security
 hotspots reviewed = 100%). The local `--cov-fail-under=80` gate already pre-empts the
