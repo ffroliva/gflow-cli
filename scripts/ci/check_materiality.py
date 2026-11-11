@@ -36,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 MATERIAL_PATHS: list[str] = [
     "src/gflow_cli/api/transports/",
     "src/gflow_cli/api/client.py",  # Bearer/access-token/SAPISID client (backtest: 3 fixes)
+    "src/gflow_cli/api/_flow_",  # what client.py held before #1249 split it (token, mint)
     "src/gflow_cli/api/_sapisidhash.py",  # SAPISID hash primitive — auth credential
     "src/gflow_cli/auth/",
     "src/gflow_cli/data/",
