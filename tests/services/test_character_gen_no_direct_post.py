@@ -36,7 +36,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import gflow_cli.api.client as client_mod
+import gflow_cli.api._flow_characters as client_mod
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage

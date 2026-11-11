@@ -9,7 +9,7 @@ bodies are unchanged.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 import structlog
@@ -17,6 +17,7 @@ from playwright.async_api import Page
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api import routes
+from gflow_cli.api._flow_session import FlowSession
 from gflow_cli.api.transports._common import (
     await_url_settled,
     flow_host_kind,
@@ -34,10 +35,6 @@ from gflow_cli.profile_store import (
     write_account_locale,
 )
 from gflow_cli.redaction import redact_sensitive_text
-
-if TYPE_CHECKING:
-    pass
-from gflow_cli.api._flow_session import FlowSession
 
 logger = structlog.get_logger(__name__)
 
