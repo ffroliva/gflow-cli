@@ -106,7 +106,10 @@ def _trpc(payload: dict[str, Any]) -> str:
 
 # (verb, URL fragment) -> a reply shaped like Flow's, so success parsing is pinned too.
 # Anything else gets an empty tRPC envelope.
-_REPLIES: list[tuple[str, str, str]] = [
+_REPLIES: list[tuple[str, str, str | bytes]] = [
+    ("GET", "flow-content.google/image/", PNG_1PX),
+    ("GET", "media.getMediaUrlRedirect", MP4_HEAD),
+    ("POST", ":runVideoFxConcatenation", json.dumps({"operation": {"name": "op-1"}})),
     (
         "POST",
         "project.createProject",
@@ -167,7 +170,7 @@ _REPLIES: list[tuple[str, str, str]] = [
 _TRPC_EMPTY = _trpc({})
 
 
-def _reply(verb: str, url: str) -> str:
+def _reply(verb: str, url: str) -> str | bytes:
     return next((body for v, frag, body in _REPLIES if v == verb and frag in url), _TRPC_EMPTY)
 
 
@@ -199,16 +202,16 @@ def names_contract() -> dict[str, str]:
 
 
 class _Resp:
-    def __init__(self, text: str, url: str) -> None:
+    def __init__(self, payload: str | bytes, url: str) -> None:
         self.url = url
         self.status = 200
-        self._text = text
+        self._payload = payload if isinstance(payload, bytes) else payload.encode()
 
     async def text(self) -> str:
-        return self._text
+        return self._payload.decode("utf-8", errors="replace")
 
     async def body(self) -> bytes:
-        return self._text.encode()
+        return self._payload
 
 
 # Per-request values Flow expects to differ on every call. Their SHAPE is pinned, not their value.

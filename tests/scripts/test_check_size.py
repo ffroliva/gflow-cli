@@ -153,6 +153,28 @@ def test_a_moved_offender_that_grew_fails(tmp_path: Path) -> None:
     ]
 
 
+def test_two_offenders_cannot_share_one_moved_entry(tmp_path: Path) -> None:
+    _write(tmp_path, "a.py", _complex_func("run", 11))
+    _write(tmp_path, "b.py", _complex_func("run", 12))
+    baseline = {"C901:src/gflow_cli/old.py::run": 15}
+    bad = cs.violations(_scan(tmp_path), baseline)
+    assert len(bad) == 2
+    assert all("(new; not in the baseline)" in v for v in bad)
+    assert cs.escalations({"C901:a.py::run": 12, "C901:b.py::run": 13}, {"C901:o.py::run": 15}) == [
+        "C901:a.py::run: added by hand",
+        "C901:b.py::run: added by hand",
+    ]
+
+
+def test_a_class_that_still_exists_under_the_limit_lends_no_allowance(tmp_path: Path) -> None:
+    _write(tmp_path, "old.py", _complex_func("legacy", 4))
+    _write(tmp_path, "new.py", _complex_func("legacy", 12))
+    baseline = {"C901:src/gflow_cli/old.py::legacy": 15}
+    assert cs.violations(_scan(tmp_path), baseline) == [
+        "C901:src/gflow_cli/new.py::legacy: 13 > 10 (new; not in the baseline)"
+    ]
+
+
 def test_base_ref_check_rejects_a_hand_raised_or_added_entry_but_allows_a_move() -> None:
     base = {"C901:a.py::f": 12, "C901:a.py::g": 14}
     assert cs.escalations({"C901:a.py::f": 13, "C901:a.py::g": 14}, base) == [
