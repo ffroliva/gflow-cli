@@ -190,8 +190,14 @@ jobs:
       - name: Repo hygiene (no artefacts, no hardcoded paths, version lockstep)
         run: uv run --no-sync python scripts/ci/check_repo_hygiene.py
 
+      # --base-ref also fails a hand edit that adds or raises a baseline entry. The checkout
+      # is shallow, so fetch the base branch's tip first.
       - name: Size gate (file/class length + ruff complexity ratchet, #1249)
-        run: uv run --no-sync python scripts/ci/check_size.py
+        env:
+          BASE_REF: ${{ github.base_ref || 'develop' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          uv run --no-sync python scripts/ci/check_size.py --base-ref FETCH_HEAD
 
       - name: Documentation links
         run: uv run python scripts/ci/check_doc_links.py
