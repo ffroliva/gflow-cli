@@ -207,6 +207,16 @@ ignore = ["S101", "S110", "S112"]
 # skills/ ships runnable helper tools alongside each SKILL.md; a CLI helper prints.
 "skills/**" = ["T20"]
 
+# Size/complexity thresholds read by scripts/ci/check_size.py, which runs C901, PLR0915 and
+# PLR0904 on src/ against a shrink-only baseline (#1249). They are not in `select` above:
+# 56 existing offenders would fail `ruff check` until they are split.
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-statements = 50
+max-public-methods = 20
+
 [tool.pyright]
 include = ["src", "tests"]
 strict = ["src/gflow_cli"]
