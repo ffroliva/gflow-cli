@@ -96,6 +96,8 @@ def measure_lines(path: Path, root: Path = REPO) -> dict[str, Measure]:
     if tree is None:
         return out
     names = _qualnames(tree)
+    for qual in names.values():  # existence only: tells a moved unit from a shrunk one
+        out[f"unit:{rel}::{qual}"] = Measure(0, 0)
     for node in ast.walk(tree):
         if isinstance(node, ast.ClassDef):
             span = (node.end_lineno or node.lineno) - node.lineno + 1
@@ -152,28 +154,34 @@ def _identity(key: str) -> tuple[str, str] | None:
     return (kind, qual.rsplit(".", 1)[-1]) if sep else None
 
 
-def _moves(new: dict[str, int], old: dict[str, int]) -> dict[str, str]:
-    """new key -> old key, for entries whose old key is gone and that reappear under another
-    path with the same rule and name, at the old value or lower. Ambiguous matches don't move."""
+def _unit(key: str) -> str:
+    return "unit:" + key.partition(":")[2]
+
+
+def _moves(new: dict[str, int], old: dict[str, int], present: set[str]) -> dict[str, str]:
+    """new key -> old key, for an old entry whose unit is gone from ``present`` and that
+    reappears under another path with the same rule and name, at the old value or lower.
+    A move needs exactly one candidate on each side; anything ambiguous does not move."""
     gone: dict[tuple[str, str], list[str]] = {}
     for k in old:
         ident = _identity(k)
-        if k not in new and ident:
+        if ident and k not in present:
             gone.setdefault(ident, []).append(k)
-    out: dict[str, str] = {}
+    claims: dict[str, list[str]] = {}
     for k, v in new.items():
         ident = _identity(k)
-        candidates = gone.get(ident, []) if k not in old and ident else []
+        candidates = gone.get(ident, []) if ident and k not in old else []
         if len(candidates) == 1 and v <= old[candidates[0]]:
-            out[k] = candidates[0]
-    return out
+            claims.setdefault(candidates[0], []).append(k)
+    return {news[0]: o for o, news in claims.items() if len(news) == 1}
 
 
 def _carried(current: dict[str, Measure], baseline: dict[str, int]) -> dict[str, int]:
     """The baseline with moved entries re-keyed to where their offender now lives."""
     over = {k: m.value for k, m in current.items() if m.value > m.limit}
+    present = {k for k in baseline if _unit(k) in current}
     out = dict(baseline)
-    for new, old in _moves(over, baseline).items():
+    for new, old in _moves(over, baseline, present).items():
         out[new] = out.pop(old)
     return out
 
@@ -205,7 +213,7 @@ def ratcheted(current: dict[str, Measure], baseline: dict[str, int]) -> dict[str
 
 def escalations(head: dict[str, int], base: dict[str, int]) -> list[str]:
     """Entries the committed baseline adds or raises compared with ``base`` (moves excepted)."""
-    moved = _moves(head, base)
+    moved = _moves(head, base, set(head))
     bad: list[str] = []
     for key, value in sorted(head.items()):
         if key in base and value > base[key]:
