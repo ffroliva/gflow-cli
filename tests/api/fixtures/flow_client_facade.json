@@ -229,7 +229,7 @@
   "generation.download_image": {
    "events": [],
    "files_written": [
-    "i.png:34"
+    "i.png:70"
    ],
    "result": {
     "ok": "Path('<TMP>/i.png')"
@@ -250,7 +250,7 @@
   "generation.download_video": {
    "events": [],
    "files_written": [
-    "v.mp4:34"
+    "v.mp4:28"
    ],
    "result": {
     "ok": "Path('<TMP>/v.mp4')"
@@ -619,7 +619,9 @@
     },
     {
      "body": {
-      "operation": null
+      "operation": {
+       "name": "op-1"
+      }
      },
      "event": "post_json",
      "log_level": "debug",
@@ -660,7 +662,9 @@
     },
     {
      "data": {
-      "operation": null
+      "operation": {
+       "name": "op-1"
+      }
      },
      "headers": {
       "authorization": "<redacted>",
