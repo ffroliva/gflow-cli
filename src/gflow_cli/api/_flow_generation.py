@@ -39,7 +39,7 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     CONTENT_SAFETY_REASONS,
     ContentPolicyError,
-    FlowApiError,  # re-exported via gflow_cli.api.__init__
+    FlowApiError,
     FlowHostMigratedError,
     NetworkError,
     TransportTimeoutError,
