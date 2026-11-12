@@ -106,11 +106,9 @@ class TestStdoutRedirection:
         class MockStderr:
             buffer = io.BytesIO()
 
-        # Patch sys streams and modules to pretend we are not in pytest
         with (
             patch("sys.stdout", mock_stdout),
             patch("sys.stderr", MockStderr()),
-            patch("sys.modules", {}),
             patch("gflow_cli.mcp.server.io.TextIOWrapper") as mock_wrapper,
         ):
             _redirect_stdout_to_stderr()

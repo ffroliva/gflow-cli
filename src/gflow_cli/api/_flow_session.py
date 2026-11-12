@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright
 
+from gflow_cli.api._engine import retryable_engine_errors
 from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
@@ -319,6 +320,21 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
         )
 
 
+def _billed_not_resent(cause: str, route: str, status: int | None = None) -> NetworkError:
+    """A billed POST failed after it may have reached Flow: reconcile, never resend."""
+    return NetworkError(
+        detail=f"{cause}; not resent",
+        status=status,
+        route=route,
+        next_action="reconcile",
+        remediation_hint=(
+            "Flow may have accepted this billed request before the error, "
+            "so gflow did not resend it. Check the project in Flow for the "
+            "new clip or image before running the command again."
+        ),
+    )
+
+
 def _redact_for_log(body_str: str) -> str:
     """Replace any reCAPTCHA token in a JSON request body with ``<redacted>``.
 
@@ -580,7 +596,9 @@ class FlowSession:
         """Shared failure boundary for client entry points: map a closed
         Playwright target to the typed retryable error, stage the incident
         bundle while the page is alive, and re-raise (design §6.2 step 5)."""
-        if _is_target_closed(e):
+        # A billed POST's reconcile error names the closed target in its detail; re-wrapping
+        # it as the retryable close would invite a re-bill (#1274, CodeRabbit on #1278).
+        if _is_target_closed(e) and getattr(e, "next_action", None) != "reconcile":
             wrapped = BrowserSessionClosedError()
             await self._capture_incident(wrapped, phase=phase)
             raise wrapped from e
@@ -804,8 +822,10 @@ class FlowSession:
         """POST a JSON body with retry + typed-error classification.
 
         ``billed=True`` for a POST that spends credits with a single-use reCAPTCHA
-        token in its body (#1260): it is sent once. A 5xx can arrive after Flow took
-        the job, so it raises ``NetworkError`` with ``next_action="reconcile"``.
+        token in its body (#1260): it is sent once. A 5xx, or a timeout / reset /
+        closed browser on the POST itself (#1274), can arrive after Flow took the
+        job, so it raises ``NetworkError`` with ``next_action="reconcile"``. An
+        engine error before the POST (e.g. the token fetch) surfaces unchanged.
 
         aisandbox-pa requires text/plain content-type (not application/json)
         — see samples/captured/*.json. The tRPC host on labs.google accepts
@@ -836,7 +856,17 @@ class FlowSession:
                         url=url,
                         headers=_redact_headers_for_log(headers),
                     )
-                return await page.request.post(url, data=body_str, headers=headers)
+                try:
+                    return await page.request.post(url, data=body_str, headers=headers)
+                except retryable_engine_errors() as exc:
+                    if not billed:
+                        raise
+                    # A timeout or reset on the POST can come after Flow took the job
+                    # (#1274). First line only: keeps Playwright's call log out.
+                    cause = str(exc).partition("\n")[0]
+                    raise _billed_not_resent(
+                        f"{type(exc).__name__} on a billed request ({cause})", route
+                    ) from exc
             finally:
                 self._checkin_page(page)
 
@@ -939,6 +969,10 @@ class FlowSession:
         Non-retryable 4xx fallthrough is classified outside this helper via
         ``_raise_for_non_retryable`` to keep retry-vs-classify concerns
         separate.
+
+        ``billed=True`` (#1260) makes one attempt, and a 5xx raises the reconcile
+        ``NetworkError``. Engine errors (timeout, reset) pass through unchanged here:
+        only ``_post_json`` knows whether the POST itself was sent (#1274).
         """
         response: Any = None
         async for retrying in post_with_retry(max_attempts=1 if billed else MAX_ATTEMPTS):
@@ -955,16 +989,8 @@ class FlowSession:
                     if billed:
                         # Flow may have taken the job before failing; resending the
                         # same single-use token would re-bill or be refused (#1260).
-                        raise NetworkError(
-                            detail=f"HTTP {response.status} on a billed request; not resent",
-                            status=response.status,
-                            route=route,
-                            next_action="reconcile",
-                            remediation_hint=(
-                                "Flow may have accepted this billed request before the error, "
-                                "so gflow did not resend it. Check the project in Flow for the "
-                                "new clip or image before running the command again."
-                            ),
+                        raise _billed_not_resent(
+                            f"HTTP {response.status} on a billed request", route, response.status
                         )
                     raise NetworkError(
                         detail=f"HTTP {response.status}",
