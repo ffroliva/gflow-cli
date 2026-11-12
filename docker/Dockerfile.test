@@ -1,6 +1,6 @@
 # Runs gflow's OWN offline suite inside the container, on the image's interpreter.
 # This is what turns "CI does not test 3.14" from a caveat into a measurement.
-FROM python:3.14-slim
+FROM python:3.15-slim
 ENV PYTHONUNBUFFERED=1 PYTHONUTF8=1 GFLOW_CLI_UPDATE_CHECK=false UV_LINK_MODE=copy
 RUN apt-get update && apt-get install -y --no-install-recommends \
       xvfb xauth ca-certificates curl gnupg git \
