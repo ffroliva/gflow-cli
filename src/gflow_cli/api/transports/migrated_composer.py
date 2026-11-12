@@ -36,7 +36,6 @@ import json
 import mimetypes
 import re
 import time
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -108,6 +107,19 @@ if TYPE_CHECKING:
     # Stores a finished clip's bytes under its media id and returns where they went —
     # the transport's one writer for both hosts, so a cloud storage_uri holds here too (#1003).
     ClipSaver = Callable[[str, bytes], Awaitable[Path]]
+
+from gflow_cli.api.transports.migrated_existing_refs import (
+    heal_catalog as _heal_catalog,
+)
+from gflow_cli.api.transports.migrated_existing_refs import (
+    picker_query as _picker_query,
+)
+from gflow_cli.api.transports.migrated_existing_refs import (
+    refreshed_from_picker,
+)
+from gflow_cli.api.transports.migrated_existing_refs import (
+    require_appended as _require_appended,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -294,8 +306,6 @@ EXISTING_REF_RELOAD_PAUSE_S = 5.0
 ARROW_SETTLE_MS = 3500
 #: Pause between ArrowDowns on the way to a character option; only the last one settles.
 ARROW_STEP_MS = 150
-#: Flow writes captions with its own model; they reach the composer by typing.
-_CAPTION_MAX = 120
 
 
 async def _visible_model_picker(page: Page, pane: Any, *, what: str) -> Any:
@@ -325,52 +335,6 @@ async def _visible_model_picker(page: Page, pane: Any, *, what: str) -> Any:
             ),
         ) from None
     return button
-
-
-def _require_appended(before: list[dict[str, str]], chips: list[dict[str, str]]) -> None:
-    """Refuse a mention that did not land after every chip already in the prompt (#997).
-
-    A count cannot see a chip inserted mid-prompt; the earlier chips staying a prefix can.
-    shortcut: chips that read identically (same caption and kind) cannot be told apart.
-    Retryability is the class default, unmeasured for this condition (Bug Lane).
-    """
-    if chips[: len(before)] != before:
-        raise ReferenceNotFoundError(
-            detail=(
-                f"migrated host: a reference attached out of order — it did not land after "
-                f"the {len(before)} reference(s) already in the prompt, so the prompt is no "
-                "longer the one requested. Refusing to submit"
-            ),
-            # The chip WAS found, so the class default ("not in the picker") would mislead.
-            remediation_hint=(
-                "The reference was found but attached out of order, so nothing was "
-                "submitted. Re-run the command; if it repeats, report it with the "
-                "number of references and your window size."
-            ),
-        )
-
-
-def _picker_query(ref: ImageRef) -> str:
-    """The search text for an existing image: its Flow caption, only if safe to type.
-
-    A newline would press Enter mid-query and ``@`` opens a nested mention. Rather than
-    search a string other than the caption, refuse (SCENARIO #18, #19).
-    """
-    caption = ref.display_name
-    if (
-        not caption.strip()
-        or "@" in caption
-        # Control, format (zero-width, direction marks) and line/paragraph separators.
-        or any(unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} for ch in caption)
-        or len(caption) > _CAPTION_MAX
-    ):
-        raise ReferenceNotFoundError(
-            detail=(
-                f"migrated host: image {ref.name} has no caption that can be searched "
-                f"safely ({len(caption)} chars), so it cannot be referenced in place"
-            ),
-        )
-    return caption.strip()
 
 
 #: The Ingredients sub-mode holds references; Frames holds the i2v chips.
@@ -1429,6 +1393,39 @@ def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
     )
 
 
+async def _select_resolution(page: Page, pane: Any, resolution: str) -> None:
+    """Select 360p or 720p on models that offer a resolution control (Omni Flash)."""
+    radios = pane.locator(RADIO)
+    matches = radios.filter(has_text=re.compile(re.escape(resolution)))
+    target = matches.first
+    if not await target.count():
+        groups = await pane.locator(RADIOGROUP).count()
+        raise ConfigurationError(
+            detail=(
+                f"the migrated Flow host renders no resolution control offering {resolution!r} "
+                f"for this account and model ({groups} option groups shown)"
+            ),
+            remediation_hint=(
+                "Drop --resolution to accept Flow's default, or use a model whose "
+                "settings pane shows a resolution row (Omni 1.1 Flash)."
+            ),
+        )
+    if await target.get_attribute("aria-checked") == "true":
+        log.info("migrated.resolution_already_selected", resolution=resolution)
+        return
+    await target.click(timeout=4000)
+    await asyncio.sleep(0.2)
+    if await matches.first.get_attribute("aria-checked") == "true":
+        log.info("migrated.resolution_selected", resolution=resolution)
+        return
+    raise UiSelectorDriftError(
+        detail=(
+            f"migrated host: the resolution radio {resolution!r} did not become aria-checked "
+            f"after the click (host=migrated)"
+        ),
+    )
+
+
 class MigratedComposer:
     """Settings → prompt → submit → observe, against the migrated editor."""
 
@@ -1878,7 +1875,7 @@ class MigratedComposer:
                 else:
                     await self._pin_r2v_duration(page, pane)
             if request.resolution is not None:
-                await self._select_resolution(page, pane, request.resolution)
+                await _select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
             log.info(
                 "migrated.settings_applied",
@@ -2192,38 +2189,6 @@ class MigratedComposer:
         raise UiSelectorDriftError(
             detail=(
                 f"migrated host: the '{axis}' radio {wanted!r} did not become aria-checked "
-                f"after the click (host=migrated)"
-            ),
-        )
-
-    async def _select_resolution(self, page: Page, pane: Any, resolution: str) -> None:
-        """Select 360p or 720p on models that offer a resolution control (Omni Flash)."""
-        radios = pane.locator(RADIO)
-        matches = radios.filter(has_text=re.compile(re.escape(resolution)))
-        target = matches.first
-        if not await target.count():
-            groups = await pane.locator(RADIOGROUP).count()
-            raise ConfigurationError(
-                detail=(
-                    f"the migrated Flow host renders no resolution control offering {resolution!r} "
-                    f"for this account and model ({groups} option groups shown)"
-                ),
-                remediation_hint=(
-                    "Drop --resolution to accept Flow's default, or use a model whose "
-                    "settings pane shows a resolution row (Omni 1.1 Flash)."
-                ),
-            )
-        if await target.get_attribute("aria-checked") == "true":
-            log.info("migrated.resolution_already_selected", resolution=resolution)
-            return
-        await target.click(timeout=4000)
-        await asyncio.sleep(0.2)
-        if await matches.first.get_attribute("aria-checked") == "true":
-            log.info("migrated.resolution_selected", resolution=resolution)
-            return
-        raise UiSelectorDriftError(
-            detail=(
-                f"migrated host: the resolution radio {resolution!r} did not become aria-checked "
                 f"after the click (host=migrated)"
             ),
         )
@@ -2593,23 +2558,44 @@ class MigratedComposer:
             page.remove_listener("request", on_request)
 
     async def reference_existing(
-        self, page: Page, project_id: str, request: GenerateImageRequest
+        self,
+        page: Page,
+        project_id: str,
+        request: GenerateImageRequest,
+        *,
+        name_resolver: Callable[[str], str | None] | None = None,
     ) -> tuple[str, ...]:
         """Apply the image settings and mention ``request.refs`` in place, reloading on a miss.
 
         A just-generated image can be missing from this page load's grid or picker
         search and present after a reload (measured twice, live e2e 2026-10-01). A reload
         resets the settings and the composer, so each attempt redoes all three steps.
+
+        #546 on this host: the picker is searched by the catalog's caption, which goes
+        stale when the image is renamed in Flow. The labs listing the resolver reads is
+        retired here, so the first miss with a grid tile reads the current captions from
+        the page itself (``refreshed_from_picker``) and the reload that follows retries
+        with them; the reload also clears the stale ``@query`` text. A caption found this
+        way is handed to ``name_resolver`` after the attach, when it can persist one.
+        Cached name = optimization; listing = truth; UUID = identity.
         """
-        for ref in request.refs:
+        refs = request.refs
+        for ref in refs:
             _picker_query(ref)  # an unusable caption is refused before any reload
+        stale = {ref.name: ref.display_name for ref in refs}
         deadline = time.monotonic() + EXISTING_REF_WAIT_S
+        look_up = True
         while True:
             try:
-                tokens = await self.await_existing_references(page, request.refs)
+                tokens = await self.await_existing_references(page, refs)
                 await self.apply_image_settings(page, request)
-                return await self.attach_existing_references(page, request.refs, tokens)
+                media_ids = await self.attach_existing_references(page, refs, tokens)
+                await _heal_catalog(name_resolver, refs, stale)
+                return media_ids
             except ReferenceNotFoundError:
+                if look_up:  # one look, spent only when a tile could be matched
+                    found = await refreshed_from_picker(self, page, refs)
+                    look_up, refs = found is None, found or refs
                 if time.monotonic() >= deadline:
                     raise
             log.info("migrated.existing_reference_reload")
@@ -4195,8 +4181,13 @@ async def run_images(
     *,
     project_id: str | None,
     out_dir: Path | None = None,
+    name_resolver: Callable[[str], str | None] | None = None,
 ) -> list[GeneratedImage]:
-    """Drive supported image requests through the migrated project composer."""
+    """Drive supported image requests through the migrated project composer.
+
+    ``name_resolver`` (#546) heals a reference whose catalog caption went stale; see
+    :meth:`MigratedComposer.reference_existing`.
+    """
     from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
 
     unported = _unported_image_form(request)
@@ -4230,7 +4221,9 @@ async def run_images(
     if request.refs:
         # Images already in this project (a manifest's `batch:N`, #913): referenced in
         # place, never re-uploaded. Finding them may reload, so settings are applied there.
-        reference_ids = await composer.reference_existing(page, pid, request)
+        reference_ids = await composer.reference_existing(
+            page, pid, request, name_resolver=name_resolver
+        )
     else:
         await composer.apply_image_settings(page, request)
     if request.ref_paths:
