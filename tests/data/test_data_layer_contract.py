@@ -18,6 +18,7 @@ to that file is a behaviour change and must be justified. Re-record it with:
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import json
@@ -61,11 +62,8 @@ def member_contract(cls: type) -> dict[str, str]:
     return out
 
 
-def names_contract() -> dict[str, list[str]]:
-    """Every name another module imports from the two modules still resolves there."""
-    pattern = re.compile(
-        r"from gflow_cli\.data\.(repository|recorder) import \(?([^)]+?)\)?$", re.M
-    )
+def imported_names() -> dict[str, list[str]]:
+    """Every name another file imports from the two modules (parsed: multi-line imports count)."""
     root = Path(__file__).resolve().parents[2]
     found: dict[str, set[str]] = {"repository": set(), "recorder": set()}
     for path in [
@@ -73,15 +71,25 @@ def names_contract() -> dict[str, list[str]]:
         *root.glob("tests/**/*.py"),
         *root.glob("scripts/**/*.py"),
     ]:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        for mod, names in pattern.findall(text):
-            for name in names.replace("\n", ",").split(","):
-                name = name.split(" as ")[0].strip().strip("()")
-                if name and not name.startswith("#"):
-                    found[mod].add(name)
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module in (
+                "gflow_cli.data.repository",
+                "gflow_cli.data.recorder",
+            ):
+                found[node.module.rsplit(".", 1)[1]].update(a.name for a in node.names)
+    return {mod: sorted(names) for mod, names in found.items()}
+
+
+def names_contract() -> dict[str, list[str]]:
+    """The imported names, and whether each still resolves at the old path (all must)."""
     modules = {"repository": repository_mod, "recorder": recorder_mod}
     return {
-        mod: sorted(n for n in names if hasattr(modules[mod], n)) for mod, names in found.items()
+        mod: [f"{n} {'ok' if hasattr(modules[mod], n) else 'MISSING'}" for n in names]
+        for mod, names in imported_names().items()
     }
 
 

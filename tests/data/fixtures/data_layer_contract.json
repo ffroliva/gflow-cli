@@ -71,13 +71,15 @@
  },
  "module_names": {
   "recorder": [
-   "OperationRecorder",
-   "escalate_asset_collision",
-   "record_failed_operation_safe"
+   "OperationRecorder ok",
+   "_classify_failure ok",
+   "escalate_asset_collision ok",
+   "record_failed_operation_safe ok",
+   "record_undownloaded_images_safe ok"
   ],
   "repository": [
-   "DataRepository",
-   "verified_local_path"
+   "DataRepository ok",
+   "verified_local_path ok"
   ]
  },
  "outcomes": {
