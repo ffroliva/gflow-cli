@@ -56,7 +56,6 @@
  "class-lines:src/gflow_cli/api/transports/migrated_composer.py::MigratedComposer": 2612,
  "class-lines:src/gflow_cli/api/transports/ui_automation.py::UiAutomationTransport": 3517,
  "class-lines:src/gflow_cli/api/transports/ui_automation_video.py::VideoGenerationMixin": 3278,
- "class-lines:src/gflow_cli/data/recorder.py::OperationRecorder": 1190,
  "file:src/gflow_cli/api/transports/migrated_composer.py": 4634,
  "file:src/gflow_cli/api/transports/ui_automation.py": 4441,
  "file:src/gflow_cli/api/transports/ui_automation_video.py": 4190,
