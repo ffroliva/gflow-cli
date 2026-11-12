@@ -433,16 +433,15 @@ class FlowSession:
         # contention can produce a metadata-only incident without Chrome.
         self._recorder: IncidentRecorder | None = None
         self._recorder_handlers: list[tuple[Any, str, Any]] = []
-        # Per-worker Page pool (Phase 4 T2). All Pages live inside ONE
+        # Per-worker Page pool. All Pages live inside ONE
         # persistent BrowserContext and therefore SHARE cookies + auth state
         # at the Context level — this is intentional and matches Playwright's
         # per-worker-Page recommendation. If per-user isolation is ever
         # needed, separate Contexts (one per user) would be required.
         self._pages: list[Page] = []
         self._page_queue: asyncio.Queue[Page] | None = None
-        # Back-compat: existing callers in this module still reach for
-        # ``self._page``. T3 rewires them to ``_checkout_page()`` /
-        # ``_checkin_page()`` and this alias goes away.
+        # The first pool Page. Code across the surfaces still reads ``self._page``
+        # directly rather than ``_checkout_page()`` / ``_checkin_page()``.
         self._page: Page | None = None
         # issue #222: Flow cookies read from the profile BEFORE the headed
         # generation context launches, used to seed that context if it cannot
