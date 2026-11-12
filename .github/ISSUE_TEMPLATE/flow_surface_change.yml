@@ -52,12 +52,13 @@ body:
     attributes:
       label: Redacted HAR summary (optional)
       description: |
-        Only the output of `python scripts/dev/har-spike/extract_har_summary.py <capture>.har --host <host>`. **Never attach a raw HAR** — it carries cookies, Bearer tokens and prompts.
+        Only the output of `python scripts/dev/har-spike/extract_har_summary.py <capture>.har`. Keep its default `--host aisandbox-pa.googleapis.com` (the API host); passing the served host drops the API requests. **Never attach a raw HAR** — it carries cookies, Bearer tokens and prompts.
+        The summary does not redact every prompt (text under keys like `text` passes through), so review it and remove any prompt text before posting.
       render: text
   - type: checkboxes
     id: redaction
     attributes:
       label: Redaction
       options:
-        - label: I attached no raw HAR or incident bundle, and removed tokens, cookies, signed URLs and account emails.
+        - label: I attached no raw HAR or incident bundle, and removed tokens, cookies, signed URLs, account emails and prompt text.
           required: true

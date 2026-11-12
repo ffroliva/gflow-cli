@@ -76,7 +76,7 @@ body:
     id: problem
     attributes:
       label: Exit code and problem details
-      description: Re-run with `--json` and paste the exit code (3-39) and the RFC 9457 problem-details JSON, including `charged` and `next_action`.
+      description: Paste the exit code (3-39) and the RFC 9457 problem-details JSON, including `charged` and `next_action`, from the `--json` output you already have. Do not re-run a paid generation to collect it. If `charged` is `yes` or `maybe`, follow `next_action` first; a billed clip that failed to download is recovered with `gflow data download <media-id>`.
       render: json
   - type: textarea
     id: doctor
