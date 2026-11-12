@@ -86,9 +86,6 @@ from gflow_cli.api.transports._video_common import (
     ENTITY_ATTACH_DRIFT_HINT as ENTITY_ATTACH_DRIFT_HINT,
 )
 from gflow_cli.api.transports._video_common import (
-    FRAME_SLOT_BY_LABEL as FRAME_SLOT_BY_LABEL,
-)
-from gflow_cli.api.transports._video_common import (
     FRAME_SLOTS_STRUCT as FRAME_SLOTS_STRUCT,
 )
 from gflow_cli.api.transports._video_common import (
@@ -159,9 +156,6 @@ from gflow_cli.api.transports._video_common import (
 )
 from gflow_cli.api.transports._video_common import (
     UPLOAD_MEDIA_BUTTON as UPLOAD_MEDIA_BUTTON,
-)
-from gflow_cli.api.transports._video_common import (
-    UPLOAD_MEDIA_BUTTON_TEXT as UPLOAD_MEDIA_BUTTON_TEXT,
 )
 from gflow_cli.api.transports._video_common import (
     VIDEO_ASPECT_TAB_SELECTORS as VIDEO_ASPECT_TAB_SELECTORS,

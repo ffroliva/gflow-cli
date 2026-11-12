@@ -32,7 +32,6 @@ from gflow_cli.api.transports._video_common import (
     REMOTE_PICKER_CLOSE_TIMEOUT_S,
     UPLOAD_IMAGE_ROUTE,
     UPLOAD_MEDIA_BUTTON,
-    UPLOAD_MEDIA_BUTTON_TEXT,
     _capture_debug_screenshot,
     _capture_picker_dom_dump,
     _upload_rejection_message,
@@ -165,21 +164,17 @@ class ReferenceAttachMixin(PickerProjectMixin):
 
         page.on("response", on_response)
         try:
-            # Tier 1 = locale-agnostic icon selector (primary, every locale).
-            # Tier 2 = the original English-text selector (#50) — catches an
-            # icon-ligature change on an English profile. If BOTH miss, fail loud
-            # with a screenshot. Short per-tier timeouts so two misses can't add
-            # up to the silent ~34s hang that #56 was about.
+            # The locale-agnostic icon selector is the only anchor (#1273). On a
+            # miss, fail loud with a screenshot; short timeouts so it cannot
+            # become the silent ~34s hang that #56 was about.
             chooser = None
             last_err: Exception | None = None
-            for sel in (UPLOAD_MEDIA_BUTTON, UPLOAD_MEDIA_BUTTON_TEXT):
-                try:
-                    async with page.expect_file_chooser(timeout=8000) as fc_info:
-                        await page.locator(sel).first.click(timeout=4000)
-                    chooser = await fc_info.value
-                    break
-                except Exception as e:
-                    last_err = e
+            try:
+                async with page.expect_file_chooser(timeout=8000) as fc_info:
+                    await page.locator(UPLOAD_MEDIA_BUTTON).first.click(timeout=4000)
+                chooser = await fc_info.value
+            except Exception as e:
+                last_err = e
             if chooser is None:
                 shot = await _capture_debug_screenshot(
                     page,
@@ -187,14 +182,10 @@ class ReferenceAttachMixin(PickerProjectMixin):
                     f"debug_upload_no_chooser_{log_label}.png",
                 )
                 msg = (
-                    f"Neither the icon nor the text 'Upload media' selector opened a file "
-                    f"chooser for {log_label!r} — Google likely changed the media dialog "
-                    f"(issue #56). Workaround: set the CHROME BROWSER "
-                    f"PROFILE's language to English (chrome://settings/languages). NOTE: "
-                    f"this is the Chrome PROFILE language, NOT the Google ACCOUNT language "
-                    f"— changing only the Google account language does NOT work, because "
-                    f"Flow follows the Chrome profile locale (and the --lang=en-US launch "
-                    f"arg cannot override an already-configured profile)."
+                    f"The 'upload' icon button did not open a file chooser for "
+                    f"{log_label!r} — Google likely changed the media dialog (issue #56). "
+                    f"Report it with the screenshot at "
+                    f"https://github.com/ffroliva/gflow-cli/issues."
                     f"{screenshot_clause(shot)}"
                 )
                 raise RuntimeError(
@@ -669,13 +660,15 @@ class ReferenceAttachMixin(PickerProjectMixin):
         screenshot_name: str,
     ) -> Locator:
         """Probe the include-action selector tiers IN ORDER; return the first
-        visible match.
+        tier that matches exactly ONE element, visible.
 
         Issue #170: a single localized has-text selector broke every
         non-Portuguese account. Tiers are probed sequentially (not flattened
         into one comma list — comma lists resolve in DOM order, not tier
-        priority) and the matched tier is logged so a dead locale-free tier
-        silently carried by the text fallback stays observable.
+        priority) and the matched tier is logged. A tier matching several
+        elements is a miss, never a click on `.first` (#1273): the structural
+        include tier means "the lone iconless button", and two of them means
+        Flow changed the dialog.
 
         On exhaustion: capture a screenshot, press Escape twice (context menu
         + picker dialog — a Page must never return to the pool with an open
@@ -685,11 +678,21 @@ class ReferenceAttachMixin(PickerProjectMixin):
         """
         last_exc: Exception | None = None
         for tier, selector in zip(tier_names, tiers, strict=True):
-            loc = page.locator(selector).first
+            matches = page.locator(selector)
+            loc = matches.first
             try:
                 await loc.wait_for(state="visible", timeout=4000)
             except Exception as e:  # noqa: BLE001 — try the next tier
                 last_exc = e
+                continue
+            count = await matches.count()
+            if count != 1:
+                log.warning(
+                    "ui_automation_video.include_selector_ambiguous",
+                    surface=surface,
+                    tier=tier,
+                    count=count,
+                )
                 continue
             log.info(
                 "ui_automation_video.include_selector_tier",
@@ -702,10 +705,9 @@ class ReferenceAttachMixin(PickerProjectMixin):
         await page.keyboard.press("Escape")
         raise TransportTimeoutError(
             f"{detail} include action did not appear (no selector tier "
-            f"matched on surface {surface!r}).{screenshot_clause(shot)}",
+            f"matched exactly one element on surface {surface!r}).{screenshot_clause(shot)}",
             remediation_hint=(
-                "Flow's resource picker may have changed, or your account's "
-                "UI language is not yet covered by the selector fallbacks. "
+                "Flow's resource picker may have changed. "
                 "Report the visible menu/button captions (plus the screenshot) "
                 "at https://github.com/ffroliva/gflow-cli/issues."
             ),
