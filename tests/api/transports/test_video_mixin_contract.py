@@ -15,7 +15,8 @@ Pinned BEFORE the split, so the split can prove it moved code and changed nothin
 
 Behaviour (DOM calls, traffic, outcomes) stays pinned by the existing transport suites, which
 drive the transport against fake pages. The expected values live in
-``fixtures/video_mixin_contract.json``, recorded on develop at 4143e83c. A change to that file
+``fixtures/video_mixin_contract.json``, first recorded on develop at 4143e83c; each later re-record
+names its reason in the commit. A change to that file
 is a behaviour change and must be justified. Re-record it with:
 
     RECORD_VIDEO_MIXIN_CONTRACT=1 uv run pytest -k record
