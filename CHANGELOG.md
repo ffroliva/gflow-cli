@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An image submit is never resent with the same reCAPTCHA token ([#1275](https://github.com/ffroliva/gflow-cli/issues/1275)).**
+  On a transport that sends gflow's own reCAPTCHA token (the HTTP transports, not Flow's page),
+  a failed image submit was retried up to three times with the same single-use token. A 5xx
+  can arrive after Flow took the job, so a resend was refused for the spent token or spent the
+  daily image quota twice. The submit is now sent once on every transport. A server error,
+  timeout (including the transport's own submit timeout), connection reset or closed browser
+  exits 6 with `charged: maybe`, `next_action: reconcile` and a hint to check the project in
+  Flow; a closed browser on these transports used to exit 15. A 429 is no longer retried
+  either: it exits 4 with its `retry_after`, since the daily quota does not clear in seconds.
+  An auth refresh after a 401 still resends once, because a 401 is refused before anything is
+  made. The Flow-page path (#1010) is unchanged; polls and downloads still retry.
+
 - **A timeout or connection reset on a billed extend or upscale asks you to check Flow ([#1274](https://github.com/ffroliva/gflow-cli/issues/1274)).**
   A Playwright timeout or connection reset while `gflow video extend` or `gflow image upscale`
   (or the `gflow_upscale_image` MCP tool; `video extend` has no MCP tool) sent its billed
