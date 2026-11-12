@@ -24,6 +24,7 @@ import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model, reference_cap_for
+from tests.e2e.conftest import skip_labs_composer_check
 
 pytestmark = pytest.mark.e2e
 
@@ -105,6 +106,7 @@ async def test_e2e_i2i_at_cap_nano2_succeeds(
     # `cap` refs. If only N < cap fire, Flow silently truncated and our cap
     # value is too generous — bumping `reference_cap_for(NARWHAL)` would
     # invite re-introduction of the bug this PR closes.
+    skip_labs_composer_check(install_log_capture.entries, "reference_attached")
     attached = [
         e
         for e in install_log_capture.entries

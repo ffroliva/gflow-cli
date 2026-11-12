@@ -196,6 +196,17 @@ def skip_on_migrated_host(
     return wrapper
 
 
+def skip_labs_composer_check(entries: list[dict[str, object]], check: str) -> None:
+    """Skip a check on an event only the labs composer logs, when Flow served flow.google.com.
+
+    Call it AFTER the host-neutral assertions (an image came back, the count matched) and
+    right before an assertion on a ``ui_automation*`` event. On flow.google.com the migrated
+    composer runs instead and logs ``migrated.*``; the checks above already passed there.
+    """
+    if any(str(e.get("event", "")).startswith("migrated.") for e in entries):
+        pytest.skip(f"{check} is logged only by the labs composer; Flow served flow.google.com")
+
+
 # --- /about landing: a missing precondition, not a failure (#888) --------------------
 
 #: The phrase `api/transports/_common.py::raise_if_known_landing` puts in the
