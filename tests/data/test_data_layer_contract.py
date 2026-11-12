@@ -47,6 +47,7 @@ SCENARIO_FILES = (
     "tests.data.test_null_columns_stay_null",
 )
 _TS = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(\+00:00|Z)?")
+_DRIVE = re.compile(r"\b[A-Za-z]:[\\/]")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
@@ -100,7 +101,7 @@ def _normalise(value: Any, tmp: str) -> Any:
         return value
     value = value.replace(tmp, "<tmp>").replace(tmp.replace("\\", "/"), "<tmp>")
     value = value.replace(json.dumps(tmp)[1:-1], "<tmp>")  # JSON-escaped paths in metadata
-    if "<tmp>" in value:  # the rest of a temp path: one separator, so Windows and POSIX agree
+    if "<tmp>" in value or _DRIVE.search(value):  # a path: one separator on every OS
         value = value.replace("\\\\", "/").replace("\\", "/")
     return _UUID.sub("<uuid>", _TS.sub("<ts>", value))
 
