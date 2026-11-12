@@ -4,6 +4,8 @@
 
 `gflow capabilities [--json]` (and the MCP resource `capabilities://self`, the same document except on a no-spend server) declares, with no call to Flow, what gflow can drive: `yes`/`no`/`partial`/`unknown` per key (`generate.image`, `generate.video`, `submit.no_wait`, `status`, `wait`, `download`, `upload`, `abort.local`, `cancel.server`, `idempotent_submit`, `reconcile`, `credits.balance`), with a note on every `partial`; `cancel.server` and `idempotent_submit` are `no` (#1197, docs/CAPABILITIES.md).
 
+`gflow models list|show` lists the image and video models gflow can drive, with aliases, durations and reference caps (no call to Flow). Every error envelope (CLI `--json`, MCP) carries `charged` (`yes`/`no`/`maybe`) and `next_action` (`retry`, `reauth`, `reconcile`, ...); a billed request or an image submit is sent once and never resent, so `reconcile` means check the project in Flow first. Details: [docs/ERRORS.md](docs/ERRORS.md), [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+
 Credit inspection is exposed through `gflow credits user|list` and the `gflow_get_credits` MCP
 tool. It reads the balance flow.google.com itself loads (the number in Flow's account menu,
 #795): directly, with no browser, when Flow accepts the profile's saved session, otherwise in

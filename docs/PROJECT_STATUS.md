@@ -4,6 +4,32 @@
 
 ## Current release
 
+**v0.98.0 — alpha.** Errors say whether Flow may have billed, billed requests are never resent, and
+gflow reports what it can do and which models exist.
+
+**Errors that say whether you were charged (#1201).** Every error envelope carries `charged`
+(`yes` / `no` / `maybe`) and `next_action` (for example `retry`, `reauth`, `reconcile`), so a
+script or an agent knows what happened and what to do next.
+
+**Sent once, never resent (#1260, #1274, #1275).** A billed `video extend` or `image upscale`
+request, and an image submit on the HTTP transports, are sent once. After a server error, a
+timeout or a connection reset, gflow exits 6 with `charged: maybe`, `next_action: reconcile` and a
+hint to check the project in Flow, instead of resending a single-use reCAPTCHA token.
+
+**What gflow can do, and which models exist.** `gflow capabilities` and the MCP resource
+`capabilities://self` (#1197) answer yes / no / partial per capability with no call to Flow;
+`gflow models list` / `show` (#1196) list the image and video models with their aliases,
+durations and reference caps.
+
+**Fixed.** A renamed image heals on flow.google.com too (#546); classic-editor selectors no longer
+depend on the UI language, and an ambiguous include button fails loudly instead of being clicked
+(#1273). Internally, `VideoGenerationMixin` is split into single-purpose parts with no behaviour
+change (#1249 wave 2).
+
+Full ledger: [LIVE_VERIFICATION_v0.98.0](LIVE_VERIFICATION_v0.98.0.md).
+
+<details><summary>v0.97.0 — credit balances without a browser, Chrome closes promptly</summary>
+
 **v0.97.0 — alpha.** Credit balances without a browser, and Chrome closes promptly.
 
 **Credits without a browser (#1229).** `gflow credits user`, `credits list` and the MCP
@@ -21,6 +47,8 @@ report whether the direct read works, with Flow's build label.
 no gflow process logs an httpx request URL; `video extend` reports the model it ran with (#1180).
 
 Full ledger: [LIVE_VERIFICATION_v0.97.0](LIVE_VERIFICATION_v0.97.0.md).
+
+</details>
 
 <details><summary>v0.96.1 — Omni 1.2 start+end, refused video submits not billed</summary>
 
@@ -836,6 +864,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Errors carry `charged` / `next_action` (#1201), billed requests and image submits sent once (#1260, #1274, #1275), `gflow capabilities` + `capabilities://self` (#1197), `gflow models list/show` (#1196), caption heal on flow.google.com (#546), language-independent classic selectors (#1273) | ✅ done (v0.98.0) |
 | Credits read without a browser, wire health in `doctor` and `gflow_auth_status`, Chrome close no longer waits 30 s, `video extend` reports its model, no httpx request URL logged (#1229, #1140, #1180) | ✅ done (v0.97.0) |
 | Omni 1.2 start+end, video submits refused before they are billed, 10s end-frame cap (#1178) | ✅ done (v0.96.1) |
 | Omni 1.2 Flash 3–15s (#1168), Omni r2v 4/6/10s (#1167), agent-only composer reload (#1142) | ✅ done (v0.96.0) |
