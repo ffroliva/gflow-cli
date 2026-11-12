@@ -20,7 +20,13 @@ from gflow_cli.api.image import (
     ImageRef,
     Model,
 )
-from gflow_cli.errors import EXIT_CODE_MAP, FlowHostMigratedError, NetworkError, WireFormatError
+from gflow_cli.errors import (
+    EXIT_CODE_MAP,
+    FlowHostMigratedError,
+    NetworkError,
+    TransportTimeoutError,
+    WireFormatError,
+)
 from tests.api.transports._ogiz0b import submit_body
 
 MEDIA = "11111111-1111-4111-8111-111111111111"
@@ -310,8 +316,11 @@ async def test_client_never_resubmits_a_page_owned_image_run(
         NetworkError("bearer: HTTP 503 server error"),
         PwTimeout("Timeout 30000ms exceeded"),
         PwError("net::ERR_CONNECTION_RESET"),
+        # What the HTTP transports raise on a hung submit (bearer.py, sapisidhash.py,
+        # evaluate_fetch.py): exit 9 / retry would invite the double spend (#1279 review).
+        TransportTimeoutError(detail="POST batchGenerateImages timed out after 60s"),
     ],
-    ids=["5xx", "timeout", "reset"],
+    ids=["5xx", "timeout", "reset", "transport-timeout"],
 )
 async def test_client_sends_an_http_image_submit_once_and_asks_to_reconcile(
     monkeypatch: pytest.MonkeyPatch, exc: BaseException
@@ -339,6 +348,7 @@ async def test_client_sends_an_http_image_submit_once_and_asks_to_reconcile(
     assert exit_code == 6
     assert caught.value.charged == "maybe"
     assert caught.value.next_action == "reconcile"
+    assert caught.value.retryable is False
     hint = caught.value.to_problem_details()["remediation_hint"]
     assert "check the project in flow" in hint.lower()
 

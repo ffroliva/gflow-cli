@@ -538,11 +538,15 @@ class GenerationSurface(WorkspaceSurface):
                 request=req_with_token,
                 **resolver_kw,
             )
-        except (NetworkError, *retryable_engine_errors()) as exc:
+        except (NetworkError, TransportTimeoutError, *retryable_engine_errors()) as exc:
             if page_owned:
                 raise
+            # First line only: keeps the cause (`net::ERR_...`, the HTTP status) without
+            # Playwright's call log.
+            cause = (str(exc).strip().splitlines() or [""])[0][:160]
             raise NetworkError(
-                detail=f"{type(exc).__name__} on an image submit; not resent",
+                detail=f"{type(exc).__name__} on an image submit ({cause}); not resent",
+                instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
                 next_action="reconcile",
                 remediation_hint=(
@@ -624,8 +628,8 @@ class GenerationSurface(WorkspaceSurface):
     ) -> GeneratedImage:
         """Single-shot Imagen/Narwhal image generation.
 
-        Spec C2: retry+mint live in the per-method closure inside
-        :meth:`_drive_image_generation` — fresh token on each attempt.
+        Spec C2: the mint lives in :meth:`_drive_image_generation`. The submit is sent
+        once on every transport (#1010, #1275): its reCAPTCHA token is single-use.
         Multi-image fan-out is the caller's responsibility
         (see ``generate_images_batch``); this method always returns the FIRST
         media item.
