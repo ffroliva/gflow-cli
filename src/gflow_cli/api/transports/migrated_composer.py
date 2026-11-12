@@ -723,11 +723,11 @@ def _duration(label: str) -> re.Pattern[str]:
     The unit is a translated word, the number is not: the same exception, and the same
     bar, as ``migrated_upscale.menu_token_pattern``. Siblings in the pane share the
     leading digit: ``480p`` is refused because a digit follows, ``4K`` because a resolution
-    suffix does. A miss still raises exit 11 from :meth:`MigratedComposer._select` rather
-    than clicking a wrong radio.
+    suffix does, and the old count label ``4x`` because ``x`` does. A miss still raises
+    exit 11 from :meth:`MigratedComposer._select` rather than clicking a wrong radio.
     """
     number = label.removesuffix("s")
-    return re.compile(r"^\s*" + re.escape(number) + r"(?!\d)(?!\s*[pPkK]\b)\D*$")
+    return re.compile(r"^\s*" + re.escape(number) + r"(?!\d)(?!\s*[pPkKxX]\b)\D*$")
 
 
 def _unique_display_name(image_path: Path) -> str:

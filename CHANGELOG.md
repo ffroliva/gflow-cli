@@ -39,6 +39,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Classic-editor selectors no longer depend on the UI language ([#1273](https://github.com/ffroliva/gflow-cli/issues/1273)).**
+  On the classic (labs) editor the voice/character include action, the media-dialog upload
+  button and the I2V frame slots now anchor on structure and icons only; the English and
+  Portuguese/Russian caption fallbacks are gone. The duration tab is matched by its exact
+  `8s` token first, then by its number alone, so a translated unit such as `8 giây` now
+  works too; the number match refuses a resolution (`480p`, `4K`) or count (`4x`) sibling.
+  When two visible iconless buttons could be the include action, gflow now fails loudly
+  (exit 9, with a screenshot, "ambiguous: N matches") instead of clicking the first one.
+
 - **An image submit is never resent with the same reCAPTCHA token ([#1275](https://github.com/ffroliva/gflow-cli/issues/1275)).**
   On a transport that sends gflow's own reCAPTCHA token (the HTTP transports, not Flow's page),
   a failed image submit was retried up to three times with the same single-use token. A 5xx

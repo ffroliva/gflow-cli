@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 import structlog
 
 from gflow_cli.api.transports._video_common import (
-    FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
     _capture_debug_screenshot,
     screenshot_clause,
@@ -82,14 +81,13 @@ class FrameAttachMixin(ReferenceAttachMixin):
         out_dir: Path | None,
         wait_ms: int,
     ) -> Locator:
-        """Locate an I2V frame slot, structural-first with a text-label fallback.
+        """Locate an I2V frame slot by its structural anchor (no text label, #1273).
 
         Shared by the local-upload and remote-ref frame-attach paths. The frame
         slots are the dialog-divs inside the swap_horiz container, indexed by
-        position (0=start, 1=end); FRAME_SLOT_BY_LABEL (has-text 'Start'/'End',
-        English-only) is the fallback when the structural count is insufficient.
-        Once an image binds, its slot leaves the structural pattern, so the next
-        unfilled slot is `.first` of the remaining matches regardless of index.
+        position (0=start, 1=end). Once an image binds, its slot leaves the
+        structural pattern, so the next unfilled slot is `.first` of the
+        remaining matches regardless of index.
         Returns the (unclicked) slot locator; raises RuntimeError with a debug
         screenshot if none resolves.
         """
@@ -108,17 +106,11 @@ class FrameAttachMixin(ReferenceAttachMixin):
             return structs.nth(slot_index)
         if struct_count > 0:
             return structs.first
-        slot = page.locator(FRAME_SLOT_BY_LABEL.format(label=label)).first
-        try:
-            await slot.wait_for(state="visible", timeout=3000)
-        except Exception as e:
-            msg = (
-                f"frame slot index {slot_index} ({label!r}) not present "
-                f"(found {struct_count} structural slot(s), "
-                f"text-label fallback also missed)"
-            )
-            raise RuntimeError(msg) from e
-        return slot
+        msg = (
+            f"frame slot index {slot_index} ({label!r}) not present "
+            f"(found {struct_count} structural slot(s))"
+        )
+        raise RuntimeError(msg)
 
     @staticmethod
     async def _attach_remote_frame(

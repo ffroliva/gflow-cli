@@ -70,7 +70,7 @@ Google Flow ships a UI update that renames or restructures a selector anchor.
 `FRAME_SLOTS_STRUCT` matches zero elements (the PR #70 regression). The
 structural-first tier matches but selects the wrong element (e.g., two elements
 matching `div[type='button'][aria-haspopup='dialog']` after Flow adds a new
-dialog button). A non-English locale is used (e.g. `GFLOW_CLI_LOCALE=pt-BR` or a Brazilian Google account) and single-language English text selectors fail because they lack Tier 1 structural anchors (`a[href*='changelog']`, `button:has(i:text('close'))`) or Tier 2 multi-locale text cascades. A new locale is used whose CMP dialog is not in
+dialog button). A non-English locale is used (e.g. `GFLOW_CLI_LOCALE=pt-BR` or a Brazilian Google account) and a text-label selector fails because it is not a structural anchor (`a[href*='changelog']`, `button:has(i:text('close'))`); per AGENTS.md § Locale-Invariance Discipline the fix is a structural anchor, never a multi-locale text cascade. A new locale is used whose CMP dialog is not in
 `_ONBOARDING_TEXT_SELECTORS`. The `--lang=en-US` Chromium arg is removed before
 `IMAGE_MODEL_OPTION_SELECTORS` is converted to structural anchors.
 

@@ -80,9 +80,6 @@ from gflow_cli.api.transports._video_common import (
     ENTITY_ATTACH_DRIFT_HINT as ENTITY_ATTACH_DRIFT_HINT,
 )
 from gflow_cli.api.transports._video_common import (
-    FRAME_SLOT_BY_LABEL as FRAME_SLOT_BY_LABEL,
-)
-from gflow_cli.api.transports._video_common import (
     FRAME_SLOTS_STRUCT as FRAME_SLOTS_STRUCT,
 )
 from gflow_cli.api.transports._video_common import (

@@ -264,13 +264,9 @@ UPLOAD_IMAGE_ROUTE = "uploadImage"
 # Flow's editor (regular elements don't carry a `type` attr on divs). Order is
 # DOM order: `.nth(0)` = Start, `.nth(1)` = End.
 #
-# Tier 2 (FALLBACK, EN-only): `FRAME_SLOT_BY_LABEL` matches by visible English
-# text. Kept for defense-in-depth in case Flow drops the `type` attribute on
-# the slots; the fail-loud `RuntimeError` in `_attach_frame` covers the case
-# where both tiers miss on a non-EN profile.
-#
-# Caller labels are always the hardcoded constants 'Start' / 'End', so no
-# CSS-escaping is needed.
+# It is the only tier (#1273): the English-label fallback that used to follow it
+# could only match an English profile, and the visibility wait before it already
+# fails when the `type` attribute is gone. A miss raises a loud `RuntimeError`.
 #
 # Earlier PR #70 used a structural anchor
 #   `div:has(> button:has(i.google-symbols:text-is('swap_horiz')))`
@@ -282,7 +278,6 @@ UPLOAD_IMAGE_ROUTE = "uploadImage"
 # matched on EN. This was discovered 2026-05-26 via DOM probe on pt-BR — see
 # scripts/dev/capture_i2v_frame_slots_dom.py.
 FRAME_SLOTS_STRUCT = "div[type='button'][aria-haspopup='dialog']"
-FRAME_SLOT_BY_LABEL = "div[aria-haspopup='dialog']:has-text('{label}')"
 # Media-dialog action buttons. These MUST be locale-agnostic: Flow renders the
 # dialog in the CHROME PROFILE's language (NOT the Google account language, and
 # the `--lang=en-US` launch arg does NOT override an existing profile's stored
@@ -295,19 +290,11 @@ FRAME_SLOT_BY_LABEL = "div[aria-haspopup='dialog']:has-text('{label}')"
 #     only iconless button in the open dialog -> selected structurally at the
 #     call site via .filter(has_not=<icon>).
 # Both are scoped to the open Radix popover ([role='dialog'][data-state='open']).
-# FALLBACK / OPERATOR NOTE: if Google ever restructures this dialog so even these
-# anchors break, `_upload_via_open_dialog` raises a clear error + screenshot
-# instead of hanging. The operator workaround is to set the CHROME PROFILE
-# language to English -- the Google ACCOUNT language alone is NOT enough.
+# If Google ever restructures this dialog so even these anchors break,
+# `_upload_via_open_dialog` raises a clear error + screenshot instead of hanging.
 UPLOAD_MEDIA_BUTTON = (
     "[role='dialog'][data-state='open'] button:has(i.google-symbols:text-is('upload'))"
 )
-# Tier-2 fallback: the original localized-text selector (#50). Only matches an
-# ENGLISH-rendering profile — kept as a graceful fallback for the narrow case
-# where Google changes the `upload` icon ligature but the English label survives.
-# This is exactly why the failure message tells the operator to set the Chrome
-# profile to English: it makes this fallback tier viable.
-UPLOAD_MEDIA_BUTTON_TEXT = "[role='dialog'][data-state='open'] button:has-text('Upload media')"
 # 'Add to Prompt' has no stable string anchor; it is resolved via the tiered,
 # locale-safe PICKER_INCLUDE_BUTTON / _resolve_include_action pattern (a
 # hardcoded English string here previously hung non-English accounts — #170/#56).
@@ -374,34 +361,27 @@ PICKER_VOZES_TAB = (
 # Picker include button (Vozes flow). Issue #170: the original single pt-BR
 # has-text selector broke every non-Portuguese account — Flow renders in the
 # ACCOUNT language and `?hl=en` cannot override it. Recon (denon82 pt-BR,
-# 2026-06-11): the button carries NO ligature icon, so known localized captions
-# lead; the structural fallback is the LONE iconless button inside the open
-# picker dialog (every other dialog button has a ligature: tabs, `play_arrow`
-# preview, `arrow_drop_down` sort) — same situation as ADD_TO_PROMPT_DIALOG.
-# Tiers are probed sequentially (see _resolve_include_action), never flattened
-# into one comma list: comma lists resolve in DOM order, not tier priority.
-PICKER_INCLUDE_BUTTON: tuple[str, str] = (
-    "button:has-text('Incluir no comando'), button:has-text('Добавить в запрос'),"
-    " button:has-text('Add to prompt')",
+# 2026-06-11): the button carries NO ligature icon; it is the LONE iconless
+# button inside the open picker dialog (every other dialog button has a
+# ligature: tabs, `play_arrow` preview, `arrow_drop_down` sort) — same
+# situation as ADD_TO_PROMPT_DIALOG. Structural only (#1273): the caption tier
+# is gone, and _resolve_include_action refuses a tier that matches more than
+# one element, so a second iconless button fails loudly instead of clicking.
+PICKER_INCLUDE_BUTTON: tuple[str, ...] = (
     "[role='dialog'][data-state='open'] button:not(:has(i.google-symbols))",
 )
-_INCLUDE_BUTTON_TIER_NAMES = ("text", "structural")
+_INCLUDE_BUTTON_TIER_NAMES = ("structural",)
 # Context-menu include action shown on RIGHT-CLICK of a Personagens entity
 # tile. This is what stages a `referenceEntity` (the inline Tudo button instead
 # stages a `referenceImage` of the thumbnail). Verified 2026-06-06.
 # Issue #170 + recon 2026-06-11 (pt-BR denon82, matching the ru report): the
 # menu is `div[role='menu'][data-state='open']` with menuitem ligatures
 # add / content_cut / content_copy / delete — `add` is unique within the menu,
-# so the icon tier is locale-free. The text tier keeps known captions, menu-
-# scoped so a user-named tile (e.g. a character called 'Add to prompt') can
-# never match.
-PICKER_CONTEXT_INCLUDE: tuple[str, str] = (
+# so the icon tier is locale-free and the only one (#1273).
+PICKER_CONTEXT_INCLUDE: tuple[str, ...] = (
     "[role='menu'][data-state='open'] [role='menuitem']:has(i.google-symbols:text-is('add'))",
-    "[role='menu'] [role='menuitem']:has-text('Incluir no comando'),"
-    " [role='menu'] [role='menuitem']:has-text('Добавить в запрос'),"
-    " [role='menu'] [role='menuitem']:has-text('Add to prompt')",
 )
-_CONTEXT_INCLUDE_TIER_NAMES = ("icon", "text")
+_CONTEXT_INCLUDE_TIER_NAMES = ("icon",)
 # Issue #174: Flow is A/B-rolling a full-page media-library UI where the
 # include action lands (a chip appears) but the staged entity never reaches
 # the submit. Both entity-attach backstops (video + image) point affected

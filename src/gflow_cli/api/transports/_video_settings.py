@@ -7,6 +7,7 @@ A part of `VideoGenerationMixin`, moved byte-identical from
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,7 @@ from gflow_cli.api.transports._video_common import (
     selector_drift_detail,
 )
 from gflow_cli.api.transports._video_editor_mode import EditorModeMixin
+from gflow_cli.api.transports.migrated_composer import _duration
 from gflow_cli.api.video import Aspect, VideoModel
 from gflow_cli.errors import UiSelectorDriftError, VideoModelSelectionError
 
@@ -196,26 +198,38 @@ class VideoSettingsMixin(EditorModeMixin):
     @staticmethod
     async def _select_video_duration(page: Page, seconds: int, *, out_dir: Path | None) -> None:
         """Click the duration tab for `seconds` (4/6/8, or 10 for omni_flash).
-        Disambiguated by visible tab/button text ('4s'..'10s'), NOT id-suffix
+        Disambiguated by the tab's NUMBER as a whole token, NOT id-suffix
         (collides with count). Must run AFTER model select — the 10s tab only
         exists once omni_flash is chosen. Fatal on miss (issue #288): this
         only runs for an explicit --duration, and duration is a contract
         parameter — a silent fall-through to Flow's default corrupts
-        downstream timeline math."""
+        downstream timeline math.
+
+        The unit is translated (`8s`, `8 giây`) while the number is not, so
+        the match is `migrated_composer._duration`'s rule (#963, #1273): the
+        number, then no digit (refuses `480p`, `1080p`) and no resolution
+        suffix (refuses `4K`) or count suffix (refuses `4x`). The exact token
+        `8s` goes first, on the tab or on a child of it (an icon + `<span>8s`
+        label, which the whole-text regex cannot match): it is a format token,
+        not a translated word."""
+        # json.dumps doubles the backslashes, which a CSS string token needs.
+        token = json.dumps(_duration(f"{seconds}s").pattern)
         tab = await VideoGenerationMixin._probe_selector_cascade(
             page,
             "duration_tab",
             (
                 f"[role='tab']:text-is('{seconds}s')",
-                f"[role='tab']:has-text('{seconds}s')",
-                f"[role='button']:text-is('{seconds}s')",
-                f"[role='button']:has-text('{seconds}s')",
-                f"button:text-is('{seconds}s')",
-                f"button:has-text('{seconds}s')",
-                f"[role='option']:text-is('{seconds}s')",
-                f"[role='option']:has-text('{seconds}s')",
-                f"[role='menuitem']:text-is('{seconds}s')",
-                f"[role='menuitem']:has-text('{seconds}s')",
+                f"[role='tab']:has(:text-is('{seconds}s'))",
+                *(
+                    f"{role}:text-matches({token})"
+                    for role in (
+                        "[role='tab']",
+                        "[role='button']",
+                        "button",
+                        "[role='option']",
+                        "[role='menuitem']",
+                    )
+                ),
             ),
         )
 
