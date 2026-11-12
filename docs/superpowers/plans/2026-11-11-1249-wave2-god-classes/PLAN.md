@@ -124,3 +124,16 @@ every caller (22 construction sites + the whole recorder): not in a pure refacto
 Each PR: golden master first (its own commit or PR), then one surface per commit, the baseline
 ratchet, the ub-mode metrics (CRAP per function before/after, duplicate-code, wiring mutation),
 `/gflow:check`, two fresh xhigh reviews, Sonar to zero, CodeRabbit answered.
+
+## Decision log
+
+| Date | Decision | Why | Rejected |
+|---|---|---|---|
+| 2026-11-12 | PR 1 (#1262): `DataRepository` as five sibling table groups over `RepositoryBase` | No repository method calls across groups (AST-checked), so no chain is needed; each group is under 20 public methods | a linear chain like wave 1 |
+| 2026-11-12 | `OperationRecorder`: `RecorderCore` plus three parts, each inheriting the core | The parts call only core methods (`_generation_metadata`, `_resolve_prompts`); `open` stays on the final class because five CLI tests patch it | putting `open` in the core |
+| 2026-11-12 | Golden master = the rows each existing data test leaves in its SQLite files, not a hand-written scenario | 100 existing tests already drive every table group; their rows are the observable outcome, at no authoring cost | a new end-to-end scenario |
+| 2026-11-12 | Golden master retired once CI proved the move (run 43206267489, every test job green) | As a standing test it forces a 10k-line re-record for any new data test, costs ~12 s, and sharpit reads its 100-in-1 runs as N+1. Both reviews agreed | keeping it, or trimming it to a subset |
+| 2026-11-12 | One file-level pyright directive per private module, not 19 per-line ignores | The helpers are private to the data package; renaming them is churn in a move-only wave | renaming helpers to public names |
+| 2026-11-12 | Sonar S6663 (38) marked false positive, S7632 (7) accepted, each with a comment | Moved code: `sqlite3.Row` supports str keys; `# noqa: CODE - reason` is the repo convention (130 uses on develop). The 4 S108 came from the slicer and were fixed in code | rewriting moved bodies |
+| 2026-11-12 | pylint duplicate-code 3 → 6 recorded, not "fixed" | pylint compares only across files: the same 3 repeated `OperationRecord(... =None)` blocks were inside the old single file. Removing them means rewriting bodies | deduplicating in this PR |
+| 2026-11-12 | Paths in the golden master normalised to `/` for any drive-letter or temp path | Linux CI saw backslashes from `Path` values recorded on Windows; re-recorded on develop's code each time | per-OS fixtures |
