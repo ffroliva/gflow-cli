@@ -41,13 +41,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A timeout or connection reset on a billed extend or upscale asks you to check Flow ([#1274](https://github.com/ffroliva/gflow-cli/issues/1274)).**
   A Playwright timeout or connection reset while `gflow video extend` or `gflow image upscale`
-  (or their MCP tools) sent its billed request exited 1 as an `UnexpectedError`, with no hint,
-  though Flow may already hold the job. It now exits 6 like a server error on the same
-  request: `charged: maybe`, `next_action: reconcile`, a hint to check the project in Flow,
-  and no resend. Non-billed calls still retry a timeout or reset as before.
+  (or the `gflow_upscale_image` MCP tool; `video extend` has no MCP tool) sent its billed
+  request exited 1 as an `UnexpectedError`, with no hint, though Flow may already hold the
+  job. It now exits 6 like a server error on the same request: `charged: maybe`,
+  `next_action: reconcile`, a hint to check the project in Flow, the cause's first line in
+  the detail, and no resend. A browser closed while that request is in flight now gets the
+  same answer instead of `BrowserSessionClosedError`, since the request may have reached
+  Flow. A timeout before the request is sent (fetching the access token) surfaces as before.
+  Non-billed calls still retry a timeout or reset as before.
 
 - **A billed extend or upscale is never resent after a server error ([#1260](https://github.com/ffroliva/gflow-cli/issues/1260)).**
-  `gflow video extend` and `gflow image upscale` (and their MCP tools) retried a 5xx or 429
+  `gflow video extend` and `gflow image upscale` (and the `gflow_upscale_image` MCP tool;
+  `video extend` has no MCP tool) retried a 5xx or 429
   up to three times with the same request, single-use reCAPTCHA token included. A 5xx can
   arrive after Flow took the job, so a resend could bill twice or be refused for the spent
   token. These requests are now sent once. A server error exits 6 with

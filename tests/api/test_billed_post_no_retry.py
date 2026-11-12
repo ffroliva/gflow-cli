@@ -186,8 +186,34 @@ async def test_a_billed_post_engine_error_is_sent_once_and_asks_to_reconcile(
     assert _exit_code_for(caught.value) == 6  # not the catch-all exit 1
     assert caught.value.charged == "maybe"
     assert caught.value.next_action == "reconcile"
+    assert caught.value.retryable is False
+    # The cause's first line is kept; Playwright's multi-line call log is not.
+    assert caught.value.detail == f"{type(exc).__name__} on a billed request ({exc}); not resent"
     hint = caught.value.to_problem_details()["remediation_hint"]
     assert "check the project in flow" in hint.lower()
+
+
+async def test_a_billed_post_detail_keeps_only_the_first_line_of_the_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, page = _client(tmp_path, monkeypatch)
+    page.request = _RaisingRequest(PwError("net::ERR_CONNECTION_RESET\nCall log:\n  - POST ..."))
+    with pytest.raises(NetworkError) as caught:
+        await c._post_json(routes.EXTEND_VIDEO, {"a": 1}, route_name="x", billed=True)
+    assert caught.value.detail == (
+        "Error on a billed request (net::ERR_CONNECTION_RESET); not resent"
+    )
+
+
+async def test_a_billed_token_fetch_timeout_posts_nothing_and_is_not_a_reconcile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Nothing reached Flow, so "Flow may have accepted this" would be false.
+    c, page = _client(tmp_path, monkeypatch)
+    c._request_headers = AsyncMock(side_effect=PwTimeout("Timeout 30000ms exceeded"))
+    with pytest.raises(PwTimeout):
+        await c._post_json(routes.EXTEND_VIDEO, {"a": 1}, route_name="x", billed=True)
+    assert page.request.posted == []
 
 
 async def test_an_unbilled_post_engine_error_still_retries_and_surfaces_raw(

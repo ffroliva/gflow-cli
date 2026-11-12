@@ -820,8 +820,10 @@ class FlowSession:
         """POST a JSON body with retry + typed-error classification.
 
         ``billed=True`` for a POST that spends credits with a single-use reCAPTCHA
-        token in its body (#1260): it is sent once. A 5xx can arrive after Flow took
-        the job, so it raises ``NetworkError`` with ``next_action="reconcile"``.
+        token in its body (#1260): it is sent once. A 5xx, or a timeout / reset /
+        closed browser on the POST itself (#1274), can arrive after Flow took the
+        job, so it raises ``NetworkError`` with ``next_action="reconcile"``. An
+        engine error before the POST (e.g. the token fetch) surfaces unchanged.
 
         aisandbox-pa requires text/plain content-type (not application/json)
         — see samples/captured/*.json. The tRPC host on labs.google accepts
@@ -852,7 +854,17 @@ class FlowSession:
                         url=url,
                         headers=_redact_headers_for_log(headers),
                     )
-                return await page.request.post(url, data=body_str, headers=headers)
+                try:
+                    return await page.request.post(url, data=body_str, headers=headers)
+                except retryable_engine_errors() as exc:
+                    if not billed:
+                        raise
+                    # A timeout or reset on the POST can come after Flow took the job
+                    # (#1274). First line only: keeps Playwright's call log out.
+                    cause = str(exc).partition("\n")[0]
+                    raise _billed_not_resent(
+                        f"{type(exc).__name__} on a billed request ({cause})", route
+                    ) from exc
             finally:
                 self._checkin_page(page)
 
@@ -955,19 +967,15 @@ class FlowSession:
         Non-retryable 4xx fallthrough is classified outside this helper via
         ``_raise_for_non_retryable`` to keep retry-vs-classify concerns
         separate.
+
+        ``billed=True`` (#1260) makes one attempt, and a 5xx raises the reconcile
+        ``NetworkError``. Engine errors (timeout, reset) pass through unchanged here:
+        only ``_post_json`` knows whether the POST itself was sent (#1274).
         """
         response: Any = None
         async for retrying in post_with_retry(max_attempts=1 if billed else MAX_ATTEMPTS):
             with retrying:
-                try:
-                    response = await attempt()
-                except retryable_engine_errors() as exc:
-                    if not billed:
-                        raise
-                    # A timeout or reset can come after Flow took the job (#1274).
-                    raise _billed_not_resent(
-                        f"{type(exc).__name__} on a billed request", route
-                    ) from exc
+                response = await attempt()
                 if response.status == 429:
                     raise RateLimitError(
                         detail=f"HTTP {response.status}",
