@@ -101,6 +101,29 @@ capability twice and the automated gates cannot see the two drifting apart. A pl
 touches the CLI and has no MCP task is incomplete, not lean. The mirror axes are enumerated
 once, in `skills/check/SKILL.md` step 1b; cite them, do not copy them.
 
+**Engineering discipline — every plan carries it** (these are the project's working rules,
+written here so every agent sees them; Uncle Bob's `ub-mode` skill, where installed, states
+the same rules and is optional):
+
+- **Make it work first: pin behaviour before changing it.** Task 1 is always the red test. For
+  a refactor it is a **golden master** recorded on develop (signatures, source hashes of what
+  moves, the observable outcomes a caller sees), and the plan says how you watched it fail.
+- **Get the data shape right before the logic.** Domain types that make illegal states
+  unrepresentable come before the code that uses them.
+- **Build the lever.** When the work is repetitive (moving dozens of methods, editing many call
+  sites), plan a task that builds the tool: do one unit by hand, then make the tool match it.
+- **Verifiable units.** One task, one commit, tests green between commits. A refactor moves code;
+  it does not rewrite bodies, error handling or log events in the same commit.
+- **Measure what you claim to improve.** A refactor or speed plan has a task that records
+  metrics **before** and **after**: CRAP per function (complexity x coverage, no function
+  worse, new ones under 10), duplicate blocks (no new ones), and mutation testing on new
+  wiring (surviving mutants are killed by a behaviour test or the dead code is deleted).
+  Speed work follows [`optimize`](../optimize/SKILL.md).
+- **Attack the premise.** When two fixes resting on the same assumption fail the same gate,
+  stop and write that assumption down before a third attempt.
+- **Keep a log.** Every plan ends with a **Decision log** (date, decision, why, what was
+  rejected), updated as the work runs, including dead ends.
+
 ### Phase 4 — Draft the plan and show it to the user
 
 Produce the full `PLAN.md` content using this schema:
@@ -171,6 +194,15 @@ src/gflow_cli/<existing>.py
 - [ ] Docs updated (`USAGE.md` / `CONFIGURATION.md` as applicable)
 - [ ] BDD feature file covers all Critical + High scenarios from `/gflow:scenario`
 - [ ] No `# TODO` in diff without a tracked issue link
+- [ ] Task 1's red test (or golden master) was seen failing before the change
+- [ ] Before/after metrics recorded in the PR (refactor and speed plans)
+- [ ] Worktree clean: no untracked scratch files, no leftover clones or temp dirs
+
+## Decision log
+
+| Date | Decision | Why | Rejected |
+|---|---|---|---|
+| <YYYY-MM-DD> | <what was decided> | <evidence> | <alternative and why not> |
 ```
 
 Show the drafted plan to the user. If they approve (or say "write it"), proceed to Phase 5.
