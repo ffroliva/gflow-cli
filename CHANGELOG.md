@@ -39,6 +39,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A billed extend or upscale is never resent after a server error ([#1260](https://github.com/ffroliva/gflow-cli/issues/1260)).**
+  `gflow video extend` and `gflow image upscale` (and their MCP tools) retried a 5xx or 429
+  up to three times with the same request, single-use reCAPTCHA token included. A 5xx can
+  arrive after Flow took the job, so a resend could bill twice or be refused for the spent
+  token. These requests are now sent once. A server error exits 6 with
+  `charged: maybe`, `next_action: reconcile` and a hint to check the project in Flow before
+  running the command again. Non-billed calls (polls, reads) still retry as before.
+
 - **A renamed image heals on flow.google.com too ([#546](https://github.com/ffroliva/gflow-cli/issues/546)).**
   `gflow image i2i --ref <media id> --project <id>` with a catalog name gone stale (the image
   was renamed in Flow) exited 32 where Flow serves flow.google.com, because the listing the

@@ -168,7 +168,10 @@ class MediaEditSurface(GenerationSurface):
             batch_id=str(uuid.uuid4()),
         )
         resp = await self._post_json(
-            routes.EXTEND_VIDEO, body, route_name="batchAsyncGenerateVideoExtendVideo"
+            routes.EXTEND_VIDEO,
+            body,
+            route_name="batchAsyncGenerateVideoExtendVideo",
+            billed=True,
         )
         data = cast("JsonObject", resp) if isinstance(resp, dict) else {}
         workflows = data.get("workflows")
@@ -283,6 +286,7 @@ class MediaEditSurface(GenerationSurface):
                 routes.UPSAMPLE_IMAGE,
                 build_upsample_image_body(req, session_id=session_id),
                 route_name="upsampleImage",
+                billed=True,
             )
         except WafRejectionError as exc:
             # A 403 on a 4K request is almost certainly the Ultra-tier gate, not a
