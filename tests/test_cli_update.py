@@ -132,7 +132,7 @@ def test_source_install_exits_11(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_manager_failure_exits_11_json_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _fake(*, check: bool) -> UpdateReport:
+    def _fake(*, check: bool, **_kwargs: object) -> UpdateReport:
         raise ConfigurationError("`uv tool upgrade gflow-cli` exited 3")
 
     monkeypatch.setattr(cli_update, "run_update", _fake)
@@ -143,3 +143,62 @@ def test_manager_failure_exits_11_json_envelope(monkeypatch: pytest.MonkeyPatch)
     assert payload["error"]["class"] == "ConfigurationError"
     assert payload["error"]["exit_code"] == 11
     assert "exited 3" in payload["error"]["detail"]
+
+
+def test_update_suppresses_banner_with_and_without_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "maybe_notify_update", _notice)
+    monkeypatch.setattr(cli, "_stderr_is_terminal", lambda: True)
+    monkeypatch.setattr(cli_update, "run_update", lambda *, check, **kw: _report())
+
+    # gflow update --check suppresses the banner
+    res_check = CliRunner().invoke(main, ["update", "--check"])
+    assert res_check.exit_code == 0
+    assert "Update available" not in res_check.output
+
+    # gflow update suppresses the banner
+    res_update = CliRunner().invoke(main, ["update"])
+    assert res_update.exit_code == 0
+    assert "Update available" not in res_update.output
+
+
+def test_update_verbose_option_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_verbose: list[bool] = []
+
+    def _fake(*, check: bool, verbose: bool = False, **_kwargs: object) -> UpdateReport:
+        seen_verbose.append(verbose)
+        return _report()
+
+    monkeypatch.setattr(cli_update, "run_update", _fake)
+    res = CliRunner().invoke(main, ["update", "--verbose"])
+    assert res.exit_code == 0
+    assert seen_verbose == [True]
+
+    seen_verbose.clear()
+    res = CliRunner().invoke(main, ["update", "-v"])
+    assert res.exit_code == 0
+    assert seen_verbose == [True]
+
+    seen_verbose.clear()
+    res = CliRunner().invoke(main, ["-v", "update"])
+    assert res.exit_code == 0
+    assert seen_verbose == [True]
+
+
+def test_status_callback_prints_when_not_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake(*, check: bool, status_callback: object = None, **_kwargs: object) -> UpdateReport:
+        if callable(status_callback):
+            status_callback("Updating gflow-cli 0.1.0 -> 999.0.0 via uv...")
+        return _report(upgraded=True)
+
+    monkeypatch.setattr(cli_update, "run_update", _fake)
+    res = CliRunner().invoke(main, ["update"])
+    assert res.exit_code == 0
+    assert "Updating gflow-cli 0.1.0 -> 999.0.0 via uv..." in res.output
+    assert "Updated to 999.0.0. Restart any running `gflow serve` / MCP server." in res.output
+
+    # In --json mode, status_callback does not write to stdout
+    res_json = CliRunner().invoke(main, ["update", "--json"])
+    assert res_json.exit_code == 0
+    payload = json.loads(res_json.stdout)
+    assert payload["status"] == "ok"
+    assert "Updating" not in res_json.stdout

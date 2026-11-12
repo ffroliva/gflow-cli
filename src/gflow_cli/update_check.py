@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -226,9 +227,35 @@ def installer() -> Installer | None:
     return Installer("pip", (sys.executable, "-m", "pip", "install", "--upgrade", "gflow-cli"))
 
 
-def _run_command(command: tuple[str, ...]) -> int:
-    """Run the manager with inherited stdio so the user sees its own output."""
-    return subprocess.run(list(command), check=False).returncode  # noqa: S603 — fixed argv
+def _run_command(
+    command: tuple[str, ...], *, capture_output: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run the manager subprocess, capturing output by default."""
+    if not capture_output:
+        return subprocess.run(list(command), text=True, check=False)  # noqa: S603 — fixed argv
+    with subprocess.Popen(  # noqa: S603 — fixed argv
+        list(command),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate()
+        except KeyboardInterrupt:
+            proc.kill()
+            stdout, stderr = proc.communicate()
+            if stdout or stderr:
+                output = (
+                    f"{stdout}\n{stderr}".strip()
+                    if (stdout and stderr)
+                    else (stdout or stderr).strip()
+                )
+                if output:
+                    sys.stderr.write(f"{output}\n")
+            raise
+        return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def _version_in_venv(dist: str) -> str | None:
@@ -296,7 +323,13 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     )
 
 
-def run_update(*, check: bool) -> UpdateReport:
+def run_update(
+    *,
+    check: bool,
+    verbose: bool = False,
+    as_json: bool = False,
+    status_callback: Callable[[str], None] | None = None,
+) -> UpdateReport:
     """Upgrade gflow-cli in place, or with ``check`` only report.
 
     Raises :class:`~gflow_cli.errors.ConfigurationError` (exit 11) for a
@@ -332,6 +365,11 @@ def run_update(*, check: bool) -> UpdateReport:
     )
     if check or available is False:
         return report
+
+    if status_callback is not None:
+        target = f"{__version__} -> {latest}" if latest else __version__
+        status_callback(f"Updating gflow-cli {target} via {inst.name}...")
+
     shown = " ".join(inst.command)
     if inst.name != "pip" and shutil.which(inst.command[0]) is None:
         raise ConfigurationError(
@@ -349,7 +387,29 @@ def run_update(*, check: bool) -> UpdateReport:
             ),
         )
     playwright_before = _version_in_venv("playwright")
-    returncode = _run_command(inst.command)
+    capture = not (verbose and not as_json)
+    try:
+        res = _run_command(inst.command, capture_output=capture)  # type: ignore[call-arg]
+    except TypeError:
+        res = _run_command(inst.command)
+
+    if isinstance(res, int):
+        returncode = res
+        installer_output = ""
+        output_printed = False
+    else:
+        returncode = res.returncode
+        stdout = getattr(res, "stdout", None) or ""
+        stderr = getattr(res, "stderr", None) or ""
+        installer_output = (
+            f"{stdout}\n{stderr}".strip() if (stdout and stderr) else (stdout or stderr).strip()
+        )
+        output_printed = (not capture) and not bool(installer_output)
+
+    if verbose and installer_output and not output_printed:
+        sys.stderr.write(f"{installer_output}\n")
+        output_printed = True
+
     # The venv is the truth, not the manager's exit code: on Windows `uv tool
     # upgrade` installs the new wheel and THEN fails copying `gflow.exe` over
     # the launcher running this very command (os error 32 — the trampoline
@@ -366,12 +426,18 @@ def run_update(*, check: bool) -> UpdateReport:
     broken = _import_failure()
     if broken is not None:
         log.warning("update.environment_broken", installer=inst.name, returncode=returncode)
+        if installer_output and not output_printed:
+            sys.stderr.write(f"{installer_output}\n")
+            output_printed = True
         raise ConfigurationError(
             f"`{shown}` left this gflow-cli install unusable: a fresh interpreter can no "
             f"longer import it ({broken})",
             remediation_hint=_reinstall_hint(inst, latest or after),
         )
     if after is None:
+        if installer_output and not output_printed:
+            sys.stderr.write(f"{installer_output}\n")
+            output_printed = True
         raise ConfigurationError(
             f"`{shown}` exited {returncode}, and the installed version could not be re-read "
             "afterwards",
@@ -380,6 +446,9 @@ def run_update(*, check: bool) -> UpdateReport:
     if after == __version__:
         if returncode == 0 and available is None:
             return report  # PyPI was unreachable and the manager found nothing newer
+        if installer_output and not output_printed:
+            sys.stderr.write(f"{installer_output}\n")
+            output_printed = True
         raise ConfigurationError(
             f"`{shown}` exited {returncode} and gflow-cli is still {__version__}",
             remediation_hint=f"Read its output above, then run `{shown}` yourself.",
@@ -387,10 +456,8 @@ def run_update(*, check: bool) -> UpdateReport:
     notes: list[str] = []
     if returncode != 0:
         notes.append(
-            f"`{shown}` exited {returncode} AFTER installing {after} — see its output above. "
-            "On Windows this is the running `gflow.exe` launcher, which cannot be replaced "
-            "while in use; it keeps working, and the next update from another shell "
-            "refreshes it."
+            f"Note: `{shown}` exited {returncode} AFTER installing {after} "
+            "(the running launcher keeps working and will refresh on the next update)."
         )
     playwright_after = _version_in_venv("playwright")
     if playwright_before != playwright_after:

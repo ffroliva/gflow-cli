@@ -192,9 +192,12 @@ def main(ctx: click.Context, verbose: bool) -> None:
     # #479: once-a-day PyPI update notice. Best-effort and cache-served — it
     # never blocks (a stale cache refreshes on a daemon thread for the next
     # run) and never raises; stderr so piped/JSON stdout stays clean.
-    update_notice = maybe_notify_update()
-    if update_notice:
-        _print_update_notice(update_notice)
+    # #1163: never show the cached banner on `gflow update` (or `gflow update --check`),
+    # which does its own live PyPI query and would contradict the result.
+    if ctx.invoked_subcommand != "update":
+        update_notice = maybe_notify_update()
+        if update_notice:
+            _print_update_notice(update_notice)
     if ctx.invoked_subcommand and ctx.invoked_subcommand != "telemetry":
         notice_at_command = sys.argv[1:3]
         if notice_at_command not in (["auth", "login"], ["mcp", "setup"]):

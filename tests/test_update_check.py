@@ -11,6 +11,8 @@ cap holds even when the daemon fetch thread dies with a fast command.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -496,6 +498,218 @@ class TestRunUpdate:
         report = uc.run_update(check=False)
         assert len(report.notes) == 1
         assert "playwright install chromium" in report.notes[0]
+
+    def test_installer_output_captured_by_default(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        fake_process = subprocess.CompletedProcess(
+            args=["uv", "tool", "upgrade", "gflow-cli"],
+            returncode=0,
+            stdout="Resolved 27 packages in 12ms\nInstalled 1 package",
+            stderr="",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        report = uc.run_update(check=False, verbose=False)
+        assert report.upgraded is True
+        captured = capsys.readouterr()
+        assert "Resolved 27 packages" not in captured.err
+        assert "Resolved 27 packages" not in captured.out
+
+    def test_installer_output_shown_with_verbose(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        fake_process = subprocess.CompletedProcess(
+            args=["uv", "tool", "upgrade", "gflow-cli"],
+            returncode=0,
+            stdout="Resolved 27 packages in 12ms",
+            stderr="",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        report = uc.run_update(check=False, verbose=True)
+        assert report.upgraded is True
+        captured = capsys.readouterr()
+        assert "Resolved 27 packages" in captured.err
+
+    def test_installer_output_shown_on_failure(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        from gflow_cli.errors import ConfigurationError
+
+        fake_process = subprocess.CompletedProcess(
+            args=["uv", "tool", "upgrade", "gflow-cli"],
+            returncode=2,
+            stdout="",
+            stderr="error: could not resolve dependencies",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
+        with pytest.raises(ConfigurationError):
+            uc.run_update(check=False, verbose=False)
+        captured = capsys.readouterr()
+        assert "error: could not resolve dependencies" in captured.err
+
+    def test_status_callback_invoked(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        status_messages: list[str] = []
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        report = uc.run_update(check=False, status_callback=status_messages.append)
+        assert report.upgraded is True
+        assert len(status_messages) == 1
+        assert f"Updating gflow-cli {__version__} -> 999.0.0 via uv..." == status_messages[0]
+
+    @pytest.mark.parametrize(
+        ("installer_name", "receipt_file", "noisy_output"),
+        [
+            ("uv", "uv-receipt.toml", "Resolved 27 packages\nDownloaded 1 package"),
+            ("pipx", "pipx_metadata.json", "upgrading gflow-cli from 0.1.0 to 999.0.0"),
+            (
+                "pip",
+                None,
+                "Collecting gflow-cli\nRequirement already satisfied\nSuccessfully installed",
+            ),
+        ],
+    )
+    def test_all_installers_capture_output_cleanly(
+        self,
+        index_install: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        installer_name: str,
+        receipt_file: str | None,
+        noisy_output: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        if receipt_file:
+            (index_install / receipt_file).write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(uc.shutil, "which", lambda name: f"/bin/{name}")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        fake_process = subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=noisy_output,
+            stderr="warning: some stderr notice",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", lambda: None)
+
+        report = uc.run_update(check=False, verbose=False)
+        assert report.upgraded is True
+        assert report.installer == installer_name
+        assert report.latest == "999.0.0"
+
+        captured = capsys.readouterr()
+        assert noisy_output not in captured.out
+        assert noisy_output not in captured.err
+
+    @pytest.mark.parametrize(
+        ("receipt_file", "noisy_stdout"),
+        [
+            ("uv-receipt.toml", "Resolved 27 packages"),
+            ("pipx_metadata.json", "upgrading gflow-cli"),
+            (None, "Collecting gflow-cli\nRequirement already satisfied"),
+        ],
+    )
+    def test_json_stdout_clean_for_all_installers(
+        self,
+        index_install: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        receipt_file: str | None,
+        noisy_stdout: str,
+    ) -> None:
+        import subprocess
+
+        from click.testing import CliRunner
+
+        from gflow_cli.cli import main
+
+        if receipt_file:
+            (index_install / receipt_file).write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(uc.shutil, "which", lambda name: f"/bin/{name}")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        fake_process = subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=noisy_stdout,
+            stderr="launcher notice",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", lambda: None)
+
+        res = CliRunner().invoke(main, ["update", "--json"])
+        assert res.exit_code == 0, res.output
+        doc = json.loads(res.stdout)
+        assert doc["status"] == "ok"
+        assert doc["upgraded"] is True
+        assert doc["latest"] == "999.0.0"
+        assert noisy_stdout not in res.stdout
+
+    def test_interruption_preserves_captured_output(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        class _FakeProc:
+            args = ["fake"]
+            returncode = -15
+
+            def __init__(self, *a: object, **kw: object) -> None:
+                self._calls = 0
+
+            def __enter__(self) -> _FakeProc:
+                return self
+
+            def __exit__(self, *a: object) -> None:
+                pass
+
+            def communicate(self) -> tuple[str, str]:
+                self._calls += 1
+                if self._calls == 1:
+                    raise KeyboardInterrupt
+                return ("", "partially downloaded bytes\n")
+
+            def kill(self) -> None:
+                pass
+
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        with pytest.raises(KeyboardInterrupt):
+            uc._run_command(("fake",), capture_output=True)
+        captured = capsys.readouterr()
+        assert "partially downloaded bytes" in captured.err
+
+    def test_run_command_decodes_utf8_with_replacement(self) -> None:
+        cmd = (
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(b'valid utf8 \\xc3\\xa1 and invalid \\xff\\n')",
+        )
+        res = uc._run_command(cmd, capture_output=True)
+        assert res.returncode == 0
+        assert "valid utf8 á" in res.stdout
+        assert "\ufffd" in res.stdout
 
 
 class TestFetchLatest:
