@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright
 
+from gflow_cli.api._engine import retryable_engine_errors
 from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
@@ -317,6 +318,21 @@ def _raise_for_non_retryable(resp: Any, body_text: str, *, route: str) -> None:
             remediation_hint=_labs_rpc_retired_hint(body_text, route=route),
             discovery=_build_wire_format_discovery(resp, body_text, route),
         )
+
+
+def _billed_not_resent(cause: str, route: str, status: int | None = None) -> NetworkError:
+    """A billed POST failed after it may have reached Flow: reconcile, never resend."""
+    return NetworkError(
+        detail=f"{cause}; not resent",
+        status=status,
+        route=route,
+        next_action="reconcile",
+        remediation_hint=(
+            "Flow may have accepted this billed request before the error, "
+            "so gflow did not resend it. Check the project in Flow for the "
+            "new clip or image before running the command again."
+        ),
+    )
 
 
 def _redact_for_log(body_str: str) -> str:
@@ -943,7 +959,15 @@ class FlowSession:
         response: Any = None
         async for retrying in post_with_retry(max_attempts=1 if billed else MAX_ATTEMPTS):
             with retrying:
-                response = await attempt()
+                try:
+                    response = await attempt()
+                except retryable_engine_errors() as exc:
+                    if not billed:
+                        raise
+                    # A timeout or reset can come after Flow took the job (#1274).
+                    raise _billed_not_resent(
+                        f"{type(exc).__name__} on a billed request", route
+                    ) from exc
                 if response.status == 429:
                     raise RateLimitError(
                         detail=f"HTTP {response.status}",
@@ -955,16 +979,8 @@ class FlowSession:
                     if billed:
                         # Flow may have taken the job before failing; resending the
                         # same single-use token would re-bill or be refused (#1260).
-                        raise NetworkError(
-                            detail=f"HTTP {response.status} on a billed request; not resent",
-                            status=response.status,
-                            route=route,
-                            next_action="reconcile",
-                            remediation_hint=(
-                                "Flow may have accepted this billed request before the error, "
-                                "so gflow did not resend it. Check the project in Flow for the "
-                                "new clip or image before running the command again."
-                            ),
+                        raise _billed_not_resent(
+                            f"HTTP {response.status} on a billed request", route, response.status
                         )
                     raise NetworkError(
                         detail=f"HTTP {response.status}",
