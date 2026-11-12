@@ -342,6 +342,37 @@ async def test_migrated_image_route_dispatches_before_the_labs_driver(
     assert page.url == "about:blank"
 
 
+async def test_the_migrated_image_route_hands_the_refresh_resolver_to_the_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#546: without the resolver, a renamed image in the project fails on this host (exit
+    32) where the labs driver heals it from the project listing."""
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+
+    async def goto(url: str, **_: Any) -> None:
+        page.url = url
+
+    page.goto = goto
+    transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
+    run_images = AsyncMock(return_value=[])
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_images", run_images)
+
+    def resolver(_media_id: str) -> str | None:
+        return None
+
+    await transport.generate_images(project_id=PROJECT, request=_request(), name_resolver=resolver)
+
+    assert run_images.await_args.kwargs["name_resolver"] is resolver
+
+
 def test_ui_transport_owns_its_image_recaptcha_on_about_blank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

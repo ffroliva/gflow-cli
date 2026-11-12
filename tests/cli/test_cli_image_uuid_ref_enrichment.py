@@ -384,6 +384,27 @@ class TestBuildNameResolver:
         assert fetches == ["project-1"]
         assert repo.writes == [("ffroliva", media_id, "Rusty gate at dawn", "refresh")]
 
+    def test_heal_writes_a_page_caption_through_without_a_listing_fetch(self) -> None:
+        """flow.google.com (#546): the composer reads the caption on its own page, where the
+        labs listing is retired, and hands it to ``heal``; the catalog is written with
+        ``source="refresh"`` and nothing is fetched."""
+        fetches: list[str] = []
+        repo = _RecordingRepo()
+        resolver = self._resolver_for({}, repo, calls=fetches)
+
+        assert resolver is not None
+        resolver.heal("media-1", "Rusty gate at dawn")  # type: ignore[attr-defined]
+        assert repo.writes == [("ffroliva", "media-1", "Rusty gate at dawn", "refresh")]
+        assert fetches == []
+
+    def test_heal_in_redacted_mode_writes_nothing(self) -> None:
+        repo = _RecordingRepo()
+        resolver = self._resolver_for({}, repo, prompt_mode="redacted")
+
+        assert resolver is not None
+        resolver.heal("media-1", "Rusty gate at dawn")  # type: ignore[attr-defined]
+        assert repo.writes == []
+
     def test_no_project_id_builds_no_resolver(self) -> None:
         """Condition (a): without a project id there is no listing to consult
         — no resolver is built and the transport keeps today's behavior."""

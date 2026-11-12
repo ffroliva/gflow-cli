@@ -37,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the closest matches. Bare `gflow models` still works and is an alias of
   `gflow models list` (#1196).
 
+### Fixed
+
+- **A renamed image heals on flow.google.com too ([#546](https://github.com/ffroliva/gflow-cli/issues/546)).**
+  `gflow image i2i --ref <media id> --project <id>` with a catalog name gone stale (the image
+  was renamed in Flow) exited 32 on an account Flow serves flow.google.com, because the
+  listing the heal reads (`flow.projectInitialData`) is retired there. gflow now reads the
+  current caption from the page's own `@` picker, retries once, and writes the fresh name to
+  the catalog as before (`store` history mode only).
+
 ## [0.97.0] — 2026-11-10
 
 ### Added
