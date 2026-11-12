@@ -29,7 +29,7 @@ import pytest
 from playwright.async_api import Route, async_playwright
 from pytest_bdd import given, scenarios, then, when
 
-from gflow_cli.api.transports import ui_automation, ui_automation_video
+from gflow_cli.api.transports import _video_editor_mode, ui_automation
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.errors import (
@@ -91,7 +91,7 @@ def _short_probe_budgets(monkeypatch: pytest.MonkeyPatch) -> None:
     the gallery sweep's 18 selectors).
     """
     monkeypatch.setattr(ui_automation, "_NEW_PROJECT_PROBE_TIMEOUT_MS", 250)
-    monkeypatch.setattr(ui_automation_video, "_PROBE_TIMEOUT_MS", 250)
+    monkeypatch.setattr(_video_editor_mode, "_PROBE_TIMEOUT_MS", 250)
 
 
 async def _serve(page: Any, pages: dict[str, str]) -> None:

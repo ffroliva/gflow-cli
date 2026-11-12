@@ -952,7 +952,7 @@ class TestDownloadVideo:
         """#1003: once Flow has billed the clip, a bucket write that fails (bad creds,
         missing bucket) must say so with the media id and the free recovery command —
         MediaDownloadError is also what makes the recorder mark the asset generated."""
-        from gflow_cli.api.transports import ui_automation_video as uav
+        from gflow_cli.api.transports import _video_network as uav
         from gflow_cli.errors import MediaDownloadError
 
         async def _denied(_target: object, _data: bytes) -> None:

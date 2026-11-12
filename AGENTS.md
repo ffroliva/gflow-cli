@@ -27,6 +27,7 @@ that did not run.
 | Cut a release | `/gflow:release` | It hard-gates on changelog → check → live-verify → doc-review; each is a STOP |
 | Audit docs before shipping | `/gflow:doc-review` | Catches same-release errors a read-through cannot |
 | See a red SonarCloud check | `/gflow:sonar <N>` | The gate measures *new* code; the fix is rarely where you would look |
+| Find CI outside 3-5 min, a slow suite, or e2e run one test at a time | `/gflow:optimize [ci\|local\|e2e]` | Speed is quality here: e2e is the evidence layer, and a slow loop gets run less. Measure first; never weaken a test |
 | Touch auth or reCAPTCHA | `/gflow:known-issues` | Known-broken surfaces have documented workarounds; rediscovering them costs days |
 
 **Canonical bodies live in `skills/<name>/SKILL.md`** — plain Markdown, agent-agnostic
@@ -349,6 +350,7 @@ The `skills/` directory ships installable agent skill docs in plain Markdown wit
 | `known-issues` | [`skills/known-issues/SKILL.md`](skills/known-issues/SKILL.md) | Open/mitigated known issues — before auth/reCAPTCHA work |
 | `video-production` | [`skills/video-production/SKILL.md`](skills/video-production/SKILL.md) | User wants a finished multi-shot or dialogue video (consistent actors, room, several angles, spoken lines), or clips came back with a film border, a drifting room, rushed dialogue, a person-policy refusal or exit 36 |
 | `sonar` | [`skills/sonar/SKILL.md`](skills/sonar/SKILL.md) | Drive the SonarCloud quality gate to zero for a PR/branch |
+| `optimize` | [`skills/optimize/SKILL.md`](skills/optimize/SKILL.md) | Make tests and CI fast without weakening them: CI 3-5 min, local suite 3 min, live e2e run in parallel |
 | `live-verify` | [`skills/live-verify/SKILL.md`](skills/live-verify/SKILL.md) | Pre-flight state check at start of work; live-verification against real Flow before claiming done |
 | `doc-review` | [`skills/doc-review/SKILL.md`](skills/doc-review/SKILL.md) | Council-driven documentation audit before a release |
 | `release` | [`skills/release/SKILL.md`](skills/release/SKILL.md) | Cut a release — bump, CHANGELOG, tag, push, back-merge |
