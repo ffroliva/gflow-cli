@@ -103,7 +103,7 @@ Asks:
 - Does the UX degrade gracefully if the new feature fails (remediation hint in error message)?
 - On Windows: are path separators, `platformdirs` paths, and `PYTHONUTF8=1` requirements respected?
 - If this is a new subcommand or flag: is the `--help` text self-contained and accurate?
-- Does this change touch DOM selectors? If yes, are selectors strictly locale-invariant (Tier 1 structural/ARIA/icon/href anchors + Tier 2 multi-locale text cascades across EN, PT, ES, DE, FR, IT, JA, ZH, KO), rejecting single-language English-only selectors?
+- Does this change touch DOM selectors? If yes, do they follow AGENTS.md § Locale-Invariance Discipline: structural anchors only (ARIA roles, icon ligatures, hrefs, DOM relationships), no `has-text` and no multi-locale text cascades, with the two measured token exceptions (the upscale resolution token, the duration number) as the bar for any further one?
 
 Output: structured analysis, confidence `0–10`, UX friction points.
 
