@@ -22,7 +22,7 @@ from gflow_cli.api import routes
 from gflow_cli.api._retry import MAX_ATTEMPTS, _make_retrying  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image_upscale import TargetResolution
-from gflow_cli.errors import NetworkError
+from gflow_cli.errors import NetworkError, RateLimitError
 
 _M = "3f4272fd-2897-4621-b0cd-0fb9576758d3"
 _P = "0b6d3c1e-5a4f-4c2b-9e7d-1a2b3c4d5e6f"
@@ -40,29 +40,32 @@ class _Resp:
 
 
 class _Request:
-    def __init__(self, status: int) -> None:
-        self.status = status
+    """Answers each POST with the next status; the last one repeats."""
+
+    def __init__(self, *statuses: int) -> None:
+        self.statuses = list(statuses)
         self.posted: list[str] = []
 
     async def post(self, url: str, **_: Any) -> _Resp:
         self.posted.append(url)
-        return _Resp(self.status)
+        return _Resp(self.statuses[min(len(self.posted), len(self.statuses)) - 1])
 
 
 class _Page:
-    def __init__(self, status: int) -> None:
-        self.request = _Request(status)
+    def __init__(self, *statuses: int) -> None:
+        self.request = _Request(*statuses)
         self.url = "https://labs.google/fx/tools/flow"
 
 
-def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int) -> tuple[Any, _Page]:
+def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *statuses: int) -> tuple[Any, _Page]:
     monkeypatch.setattr(
         session_mod,
         "post_with_retry",
         lambda **kw: _make_retrying(wait_seconds=lambda _: 0, **kw).__aiter__(),
     )
-    page = _Page(status)
+    page = _Page(*statuses)
     c: Any = FlowApiClient(profile_dir=tmp_path / "prof")
+    c._ensure_access_token = AsyncMock(return_value="ya29.fake")
     c._checkout_page = AsyncMock(return_value=page)
     c._checkin_page = lambda _page: None
     c._request_headers = AsyncMock(return_value={})
@@ -83,6 +86,37 @@ async def test_a_billed_post_is_sent_once_on_a_5xx(
     assert caught.value.retryable is False
     hint = caught.value.to_problem_details()["remediation_hint"]
     assert "try again" not in hint.lower()  # the class default would invite a re-bill
+
+
+async def test_a_billed_post_is_sent_once_on_a_429(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, page = _client(tmp_path, monkeypatch, 429)
+    with pytest.raises(RateLimitError):
+        await c._post_json(
+            routes.EXTEND_VIDEO,
+            {"a": 1},
+            route_name="batchAsyncGenerateVideoExtendVideo",
+            billed=True,
+        )
+    assert len(page.request.posted) == 1
+
+
+async def test_a_billed_post_resends_once_after_a_401_but_never_retries_the_5xx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The 401 resend is kept (refused at auth, nothing billed); the resend is billed too,
+    # so its 5xx must not be retried with the same single-use token.
+    c, page = _client(tmp_path, monkeypatch, 401, 503)
+    with pytest.raises(NetworkError) as caught:
+        await c._post_json(
+            routes.EXTEND_VIDEO,
+            {"a": 1},
+            route_name="batchAsyncGenerateVideoExtendVideo",
+            billed=True,
+        )
+    assert len(page.request.posted) == 2
+    assert caught.value.next_action == "reconcile"
 
 
 async def test_an_unbilled_post_still_retries_a_5xx(
