@@ -66,7 +66,7 @@ remove it.
 | **Shards** (CI matrix) | A balanced shard still exceeds ~2 min | Add a value to `test-313-shard.matrix.shard` (`GFLOW_TEST_SHARD=k/N`); the count floor is checked over the sum in `test-313` | Runner start-up (~20-30 s) is paid per shard; past ~4-5 shards it stops paying |
 | **Cut a per-test cost** | A file or test is slow against its baseline | `pytest-speed`: fixture timer (`-p scripts.ci.pytest_speed.fixture_timer`), first-cost, then remove the cost (share an expensive fixture at module scope, drop a fixed sleep for an awaited condition, fake a network call) | Shared fixtures must not leak state between tests |
 | **Serial tail** | A job that runs after the tests dominates (SonarCloud needs combined coverage) | Start what can start earlier; keep the merge-coverage step small | Sonar's gate must still see all coverage |
-| **Profile clones (live e2e)** | e2e runs one test at a time because one Chrome profile cannot be shared (exit 11) | One copy of a signed-in profile per xdist worker (the lock is keyed by directory), caches left out; `-n` = number of clones. **Status: spike pending**, see below | Concurrent clones of one Google session may sign each other out; daily image quota and credits are per account; WAF throttling |
+| **Profile clones (live e2e)** | e2e runs one test at a time because one Chrome profile cannot be shared (exit 11) | One copy of a signed-in profile per xdist worker (the lock is keyed by directory), caches left out (~265 MB, ~4 s each); `-n` = number of clones. **Measured working at 2 browsers per account** (spike below) | Wider fan-out is not measured yet; daily image quota and credits are per account; WAF throttling |
 | **Exclusive resources (e2e)** | Two tests need the same project, quota or port | `@pytest.mark.xdist_group("<resource>")` **and** `--dist loadgroup` for that run (worksteal ignores groups) | Group only what truly conflicts, or the run goes serial again |
 | **Cut overhead around a generation (e2e)** | A generating test spends much more than the model's own time | Fixture timer on one e2e file: browser launch, page load, fixed waits; reuse a warm page only where tests do not depend on fresh state | Never reuse state a test asserts on |
 
@@ -85,10 +85,12 @@ remove it.
 ## Profile clones — status
 
 The profile lock (`profile_lease.py`) is keyed by the profile **directory**, so a copy of a
-signed-in profile has its own lock. Whether N copies of one Google session can drive Flow **at
-the same time** without signing each other out is not yet measured: the spike is
-`scripts/dev/spike_profile_clone_concurrency.py`, and its result goes in
-`docs/superpowers/spikes/`. Until it reports, do not build on clones.
+signed-in profile has its own lock. Measured on 2026-11-12
+([spike](../../docs/superpowers/spikes/2026-11-12-profile-clone-concurrency.md),
+`scripts/dev/spike_profile_clone_concurrency.py`): one clone of denon82 drove flow.google.com
+at the same time as the original, and both stayed signed in. Before relying on a wide fan-out
+(4-12 workers), measure it the same way: Google throttling, the shared daily image quota and the
+shared credit balance are per account, not per clone.
 
 ## Integration
 
