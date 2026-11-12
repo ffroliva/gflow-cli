@@ -82,7 +82,6 @@ MODULE_NAMES = (
     "_GENERATION_ROUTE_RE",
     "_PICKER_PROJECT_OPTION_MATCH_JS",
     "_PICKER_PROJECT_TRIGGER_ACTIVE_JS",
-    "_PROBE_TIMEOUT_MS",
     "_capture_debug_screenshot",
     "_summarize_request_image_inputs",
     "_upload_rejection_message",
@@ -90,7 +89,6 @@ MODULE_NAMES = (
     "migrated_route",
     "screenshot_clause",
     "selector_drift_detail",
-    "write_asset_async",
     "zip_entity_refs",
 )
 
