@@ -119,7 +119,9 @@ def _resolved() -> dict[str, Any]:
     found: dict[str, Any] = {}
     for klass in UiAutomationTransport.__mro__[:-1]:  # everything but ``object``
         for name, value in vars(klass).items():
-            if name in ("__dict__", "__weakref__", "__module__", "__doc__", "__qualname__"):
+            # Class bookkeeping (`__firstlineno__`, `__static_attributes__` exist on 3.13 only)
+            # is not behaviour; dunder methods such as `__init__` are.
+            if name.startswith("__") and _function(value) is None:
                 continue
             found.setdefault(name, value)
     return found
