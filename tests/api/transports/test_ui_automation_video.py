@@ -16,6 +16,7 @@ import structlog
 from gflow_cli.api.transports._video_common import (
     _CONTEXT_INCLUDE_TIER_NAMES,
     _INCLUDE_BUTTON_TIER_NAMES,
+    UPLOAD_MEDIA_BUTTON,
 )
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
@@ -33,7 +34,6 @@ from gflow_cli.api.transports.ui_automation_video import (
     PICKER_PROJECT_MENU_POLLS,
     PICKER_PROJECT_SELECTOR_TRIGGERS,
     PICKER_SEARCH_INPUT,
-    UPLOAD_MEDIA_BUTTON,
     VideoGenerationMixin,
     _upload_rejection_message,
 )
