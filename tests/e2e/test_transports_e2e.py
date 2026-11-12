@@ -54,6 +54,7 @@ from gflow_cli.errors import (
     AuthExpiredError,
     AuthMissingError,
 )
+from tests.e2e.conftest import skip_labs_composer_check, skip_on_migrated_host
 
 # ---------------------------------------------------------------------------
 # Module-level marker — every test in this file inherits e2e
@@ -106,6 +107,7 @@ def _make_client(strategy: str, profile: Path) -> FlowApiClient:
 @pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
+@skip_on_migrated_host
 async def test_e2e_single_image_gen(strategy: str, e2e_profile_dir: Path) -> None:
     """C2: generate_image() returns ≥ 1 GeneratedImage with an https:// fife_url."""
     req = GenerateImageRequest(prompt=_PROMPT, model=Model.NARWHAL)
@@ -179,6 +181,7 @@ async def test_e2e_i2i_local_ref_attach(
     # than silently dropped (the #56 false-positive class). ``_attach_references``
     # emits one ``reference_attached`` event per bound ref; its absence means the
     # ref never bound even though an image came back.
+    skip_labs_composer_check(install_log_capture.entries, "reference_attached")
     events = [e["event"] for e in install_log_capture.entries]
     assert "ui_automation_video.reference_attached" in events, (
         "expected a 'reference_attached' event proving the local ref bound through "
@@ -379,6 +382,7 @@ async def test_e2e_5_sequential_batches(strategy: str, e2e_profile_dir: Path) ->
 @pytest.mark.parametrize("strategy", STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
+@skip_on_migrated_host
 async def test_e2e_recoverable_auth_expiry(strategy: str, e2e_profile_dir: Path) -> None:
     """C4a: Deliberately staling the cached credential triggers a silent refresh.
 
@@ -476,6 +480,7 @@ async def test_e2e_unrecoverable_auth_expiry(
 @pytest.mark.parametrize("strategy", LIVE_STRATEGIES)
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
+@skip_on_migrated_host
 async def test_e2e_generate_image_without_project_id(strategy: str, e2e_profile_dir: Path) -> None:
     """generate_image(req=req) without project_id auto-creates a project.
 

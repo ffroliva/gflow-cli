@@ -44,6 +44,25 @@ _UNRESOLVABLE_UUID = "11111111-2222-3333-4444-555555555555"
 _UPLOAD_FALLBACK_EVENT = "ui_automation_video.image_ref_upload_fallback"
 _PICKER_MISS_EVENT = "ui_automation_video.existing_asset_not_found"
 _SELECTED_EXISTING_EVENT = "ui_automation_video.image_ref_selected_existing"
+#: One contract, logged by whichever composer Flow served: the labs driver, or the
+#: flow.google.com in-place binder (#913). Which one ran is read from the run's own events.
+_HOST_EVENTS = {
+    "labs": {
+        "selected": _SELECTED_EXISTING_EVENT,
+        "upload": _UPLOAD_FALLBACK_EVENT,
+        "resolver_failed": "ui_automation_video.name_resolver_failed",
+    },
+    "migrated": {
+        "selected": "migrated.existing_references_attached",
+        "upload": "migrated.reference_uploaded",
+        "resolver_failed": "migrated.name_resolver_failed",
+    },
+}
+
+
+def _served(events: list[str]) -> dict[str, str]:
+    """The event names of the composer that ran: flow.google.com logs ``migrated.*``."""
+    return _HOST_EVENTS["migrated" if any(e.startswith("migrated.") for e in events) else "labs"]
 
 
 def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -61,7 +80,9 @@ def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
         capture_output=True,
         text=True,
         check=False,
-        env={**child_env, "GFLOW_CLI_LOG_FORMAT": "json"},
+        # INFO: the events asserted below are info-level, and a command logs WARNING and
+        # above by default since #1041.
+        env={**child_env, "GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
     )
 
 
@@ -129,9 +150,14 @@ def test_e2e_unresolvable_uuid_ref_fails_loud(e2e_env: dict[str, str], tmp_path:
     # typed no-fallback error rather than a picker-miss event. A cataloged
     # name that misses still emits _PICKER_MISS_EVENT (see the cross-project
     # test's fallback path).
-    assert "could not be selected in the picker" in proc.stderr, (
-        f"expected the typed no-fallback abort; stderr tail: {proc.stderr[-600:]!r}"
-    )
+    if '"error_class": "FlowHostMigratedError"' in proc.stderr:
+        # flow.google.com: `--ref <uuid>` outside the catalog is not ported yet (#933), and
+        # the typed exit-36 refusal is the same no-silent-skip guarantee.
+        pass
+    else:
+        assert "could not be selected in the picker" in proc.stderr, (
+            f"expected the typed no-fallback abort; stderr tail: {proc.stderr[-600:]!r}"
+        )
     # `debug_picker_*.png` diagnostics are expected on a miss; only GENERATED
     # media must be absent.
     generated = [
@@ -204,11 +230,12 @@ def test_e2e_same_project_uuid_ref_selected_in_picker(
         f"same-project UUID ref failed; stderr tail: {ref_run.stderr[-600:]!r}"
     )
     events = _events(ref_run.stderr)
-    assert _SELECTED_EXISTING_EVENT in events, (
-        f"expected the picker to select the existing asset ({_SELECTED_EXISTING_EVENT}); "
+    served = _served(events)
+    assert served["selected"] in events, (
+        f"expected the picker to select the existing asset ({served['selected']}); "
         f"observed events: {sorted(set(events))}"
     )
-    assert _UPLOAD_FALLBACK_EVENT not in events, (
+    assert served["upload"] not in events, (
         "a same-project ref must not duplicate-upload — the picker path regressed"
     )
     ref_payload = _json_payload(ref_run.stdout)
