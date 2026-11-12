@@ -204,10 +204,18 @@ one-line fixes skip the loop.
 `/gflow:check` clean (ruff + pyright + tests) before the PR. Scope tests
 locally (full `pytest --cov` OOMs — memory `full-test-suite-ooms`); trust CI.
 
+The engineering discipline in [`plan`](../plan/SKILL.md) § Engineering discipline applies to
+execution too: the smallest edit that turns the red test green, no drive-by refactoring, one
+logical commit per step with tests green between, and the worktree left clean (no scratch
+files, clones or temp dirs). A refactor or speed fix also records its before/after metrics
+(CRAP per function, duplicate blocks, mutation on new wiring) for the PR.
+
 ### 6. Draft PR
 `gh pr create --draft --base develop`. Body is a **plain string** (never a
 heredoc — CLAUDE.md MCP rule). Include a **Verification status** section with
-checked/unchecked boxes; use `Refs #N` when a human must still verify,
+checked/unchecked boxes, the red test's failure line from before the fix (or, when a named
+external blocker stopped the red run, that blocker in its place), and the metrics
+when step 5 recorded them; use `Refs #N` when a human must still verify,
 `Closes #N` only when fully verified here. Then run `/gflow:pr-council-review`
 (or `/gflow:branch-review` pre-push) — baseline D1–D5 **plus D14 over-engineering /
 YAGNI**, which is the lens correctness and quality reviews do not apply. Apply the
