@@ -27,6 +27,7 @@ from __future__ import annotations
 import builtins
 import dis
 import hashlib
+import importlib
 import inspect
 import json
 import os
@@ -42,6 +43,7 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import VideoGenerationMixin
 
 FIXTURE = Path(__file__).parent / "fixtures" / "video_mixin_contract.json"
+PARTS = ("network", "editor_mode", "settings", "picker_project", "references", "frames")
 
 MODULE_NAMES = (
     "ADD_MEDIA_BUTTON",
@@ -115,9 +117,13 @@ def _describe(obj: Any) -> str:
 
 
 def _resolved() -> dict[str, Any]:
-    """Every attribute the transport resolves through its class chain, first definition wins."""
+    """Every attribute ``VideoGenerationMixin`` resolves through its class chain, first wins.
+
+    The chain only: ``UiAutomationTransport``'s own methods are not part of the move, so an
+    edit to them must not force a re-record here.
+    """
     found: dict[str, Any] = {}
-    for klass in UiAutomationTransport.__mro__[:-1]:  # everything but ``object``
+    for klass in VideoGenerationMixin.__mro__[:-1]:  # everything but ``object``
         for name, value in vars(klass).items():
             # Class bookkeeping (`__firstlineno__`, `__static_attributes__` exist on 3.13 only)
             # is not behaviour; dunder methods such as `__init__` are.
@@ -131,8 +137,29 @@ def method_contract() -> dict[str, str]:
     return {name: _describe(value) for name, value in sorted(_resolved().items())}
 
 
+VIDEO_MODULES = frozenset(
+    {
+        "gflow_cli.api.transports.ui_automation_video",
+        "gflow_cli.api.transports._video_common",
+        *(f"gflow_cli.api.transports._video_{p}" for p in PARTS),
+    }
+)
+
+
+def _describe_name(obj: Any) -> str:
+    """A name's value or signature; source only for functions the video modules define.
+
+    A function re-exported from elsewhere (``storage.write_asset_async``) is pinned by
+    signature, so an edit in its own module does not break this contract.
+    """
+    func = _function(obj)
+    if func is not None and func.__module__ not in VIDEO_MODULES:
+        return f"{type(obj).__name__} {inspect.signature(func)}"
+    return _describe(obj)
+
+
 def names_contract() -> dict[str, str]:
-    return {name: _describe(getattr(video_mod, name)) for name in MODULE_NAMES}
+    return {name: _describe_name(getattr(video_mod, name)) for name in MODULE_NAMES}
 
 
 def _global_reads(code: types.CodeType) -> set[str]:
@@ -162,12 +189,23 @@ def test_every_name_read_from_ui_automation_video_is_still_there(
     assert names_contract() == expected["module_names"]
 
 
+def _functions_to_resolve() -> list[types.FunctionType]:
+    """The chain's methods and every function the video modules define, decorators unwrapped."""
+    found = [f for f in map(_function, _resolved().values()) if f is not None]
+    for name in VIDEO_MODULES:
+        module = importlib.import_module(name)
+        found += [
+            f
+            for f in vars(module).values()
+            if isinstance(f, types.FunctionType) and f.__module__ == name
+        ]
+    # ``@asynccontextmanager`` and friends hide the body behind a wrapper from contextlib.
+    return [inspect.unwrap(f) for f in found]  # pyright: ignore[reportReturnType]
+
+
 def test_every_global_a_method_reads_still_resolves_where_it_lives() -> None:
     missing = []
-    for value in _resolved().values():
-        func = _function(value)
-        if func is None:
-            continue
+    for func in _functions_to_resolve():
         for read in sorted(_global_reads(func.__code__)):
             if read not in func.__globals__ and not hasattr(builtins, read):
                 missing.append(f"{func.__module__}.{func.__qualname__} reads {read}")
