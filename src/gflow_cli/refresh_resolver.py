@@ -1,7 +1,7 @@
 """The #546 refresh-on-miss resolver: a stale catalog caption healed from Flow.
 
-Moved out of ``cli_image.py`` unchanged (#1249 ratchet) so the flow.google.com heal could
-land without growing that file; ``cli_image`` re-exports the names it always had.
+Moved out of ``cli_image.py`` (#1249 ratchet); the closure became :class:`RefreshResolver`,
+which adds ``heal`` for the flow.google.com page heal. ``cli_image`` re-exports the old names.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _build_name_resolver(
     profile_name: str,
     project_id: str | None,
     prompt_mode: str,
-) -> Callable[[str], str | None] | None:
+) -> RefreshResolver | None:
     """Build the #546 refresh-on-miss resolver the transport consults.
 
     Pure and browser-free: ``fetch_listing`` is a SYNC seam over
@@ -66,13 +66,8 @@ def _build_name_resolver(
 
 
 class RefreshResolver:
-    """The #546 resolver: media UUID -> the project listing's current name.
-
-    Called, it reads the labs listing (``flow.projectInitialData``). On flow.google.com that
-    listing is retired, so the composer reads the caption on its own page instead and hands
-    it to :meth:`heal`. Either way a fresh name is written with ``source="refresh"`` only
-    when ``prompt_mode == "store"``; ``redacted`` heals the run but never the disk.
-    """
+    """Called, it reads the labs listing; on flow.google.com (listing retired) the
+    composer reads the caption on its page and hands it to :meth:`heal` instead."""
 
     def __init__(
         self,
@@ -132,7 +127,7 @@ def wire_refresh_resolver(
     *,
     profile_name: str,
     project_id: str | None,
-) -> Callable[[str], str | None] | None:
+) -> RefreshResolver | None:
     """Bridge the async ``FlowApiClient`` into the sync #546 resolver seam.
 
     Thread topology: the transport invokes the resolver via

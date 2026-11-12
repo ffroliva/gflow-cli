@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import unicodedata
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import structlog
 
@@ -73,67 +73,86 @@ def picker_query(ref: ImageRef) -> str:
     return caption.strip()
 
 
+@runtime_checkable
+class CaptionHealer(Protocol):
+    """A resolver that can persist a caption found for a media id (``RefreshResolver``)."""
+
+    def heal(self, media_id: str, name: str) -> None: ...
+
+
+#: Each picker option as ``[token, title]``, in display order. One read, so a picker still
+#: filling in cannot pair a caption with another image's token.
+OPTION_PAIRS_JS = (
+    "(sel) => [...document.querySelectorAll(sel)].map(o => {"
+    " const img = o.querySelector('img');"
+    " const m = ((img && img.getAttribute('src')) || '').match(/\\/asb\\/([A-Za-z0-9_-]+)/);"
+    " const t = o.querySelector('.asset-title');"
+    " return [m ? m[1] : '', ((t && t.textContent) || '').trim()]; })"
+)
+
+
 async def heal_catalog(
     name_resolver: object, refs: tuple[ImageRef, ...], stale: dict[str, str]
 ) -> None:
     """Tell the catalog the captions this run found on the page (#546).
 
-    The CLI's resolver carries ``heal(media_id, name)`` (``cli_image.RefreshResolver``),
-    which writes with ``sync.source == "refresh"`` and honours ``history_prompts``. It is
+    Only a resolver that is a :class:`CaptionHealer` (``refresh_resolver.RefreshResolver``)
+    persists; it writes ``sync.source == "refresh"`` and honours ``history_prompts``. It is
     sync and opens the store, so it runs on a worker thread. A failed write never fails a
     run that attached: it is logged by media id only.
     """
-    heal = getattr(name_resolver, "heal", None)
-    if not callable(heal):
+    if not isinstance(name_resolver, CaptionHealer):
         return
     for ref in refs:
         if ref.display_name == stale.get(ref.name, ref.display_name):
             continue
         try:
-            await asyncio.to_thread(heal, ref.name, ref.display_name)
+            await asyncio.to_thread(name_resolver.heal, ref.name, ref.display_name)
         except Exception:  # noqa: BLE001 - the catalog write must never kill the generation
             log.warning("migrated.caption_heal_failed", media_id=ref.name)
 
 
 async def refreshed_from_picker(
     composer: MigratedComposer, page: Page, refs: tuple[ImageRef, ...]
-) -> tuple[ImageRef, ...]:
+) -> tuple[ImageRef, ...] | None:
     """``refs`` with each caption replaced by the one the page shows now (#546).
 
-    Measured (``docs/superpowers/spikes/2026-11-12-migrated-listing-captions.md``): with
-    nothing typed, the ``@`` picker lists the project's first page of assets, and an
-    option's title is its caption; the option is this image when its ``/asb/`` token is
-    the grid tile's. A reference the page does not list keeps its caption, and the
-    caller's reload budget decides what happens next.
+    Measured on one profile (``docs/superpowers/spikes/2026-11-12-migrated-listing-captions.md``):
+    with nothing typed, the ``@`` picker lists the project's most recent assets, and an
+    option's title is its caption; the option is this image when its ``/asb/`` token is the
+    grid tile's. A reference the page does not list, or whose shown caption cannot be typed
+    safely, keeps its caption, and the caller's reload budget decides what happens next.
+
+    ``None`` when no reference has a grid tile in this page load: nothing could be matched,
+    so the caller should not spend its one look. A failed read is a hint that failed, never
+    a reason to stop the run: it is logged and the references come back unchanged.
     """
     from gflow_cli.api.transports import migrated_composer as mc  # noqa: PLC0415 - cycle
 
-    grid = {
-        ref.name: str(
-            await page.evaluate(
-                mc._GRID_TOKEN_JS,  # pyright: ignore[reportPrivateUsage]
-                ref.name,
-            )
-            or ""
-        )
-        for ref in refs
-    }
-    await composer._caret_to_end(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    await page.keyboard.type("@", delay=120)
-    await page.wait_for_timeout(2200)
-    js = mc._OPTION_TOKENS_JS  # pyright: ignore[reportPrivateUsage]
-    tokens = [str(t) for t in await page.evaluate(js, mc.PICKER_OPTION)]
-    js = mc._OPTION_TITLES_JS  # pyright: ignore[reportPrivateUsage]
-    titles = [str(t) for t in await page.evaluate(js, mc.PICKER_OPTION)]
-    await page.keyboard.press("Escape")
-    await page.wait_for_timeout(800)
-    captions = dict(zip(tokens, titles, strict=False))
+    try:
+        grid_js = mc._GRID_TOKEN_JS  # pyright: ignore[reportPrivateUsage]
+        grid = {ref.name: str(await page.evaluate(grid_js, ref.name) or "") for ref in refs}
+        if not any(grid.values()):
+            return None
+        await composer._caret_to_end(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        await page.keyboard.type("@", delay=120)
+        await page.wait_for_timeout(2200)
+        pairs = await page.evaluate(OPTION_PAIRS_JS, mc.PICKER_OPTION)
+        captions = {str(token): str(title) for token, title in pairs}
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(800)
+    except Exception:  # noqa: BLE001 - a failed look must not cost the reload that follows
+        log.warning("migrated.caption_lookup_failed")
+        return refs
     fresh: list[ImageRef] = []
     for ref in refs:
         name = captions.get(grid[ref.name], "").strip() if grid[ref.name] else ""
-        if name and name != ref.display_name:
+        candidate = replace(ref, display_name=name) if name and name != ref.display_name else ref
+        try:
+            picker_query(candidate)
+        except ReferenceNotFoundError:
+            candidate = ref  # the page shows a caption that cannot be typed safely
+        if candidate is not ref:
             log.info("migrated.existing_reference_renamed", media_id=ref.name)
-            fresh.append(replace(ref, display_name=name))
-        else:
-            fresh.append(ref)
+        fresh.append(candidate)
     return tuple(fresh)

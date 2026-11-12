@@ -20,6 +20,7 @@ from gflow_cli.api.transports.migrated_composer import (
     _guard_image_submit,
     _unported_image_form,
 )
+from gflow_cli.api.transports.migrated_existing_refs import refreshed_from_picker
 from gflow_cli.errors import ReferenceNotFoundError
 from tests.api.transports._ogiz0b import submit_body
 
@@ -330,6 +331,8 @@ class _CaptionPage(FakePage):
     """Flow's picker: with nothing typed it lists the project's assets; a query lists only the
     options whose caption equals it. Option titles carry the caption (spike 2026-11-12)."""
 
+    pairs_raise = False
+
     def _query(self) -> str:
         after = self.typed[len(self.typed) - 1 - self.typed[::-1].index("@") + 1 :]
         typed = [t for t in after if t != " " and not t.startswith("<")]
@@ -340,6 +343,10 @@ class _CaptionPage(FakePage):
         return [o for o in self._options if not query or o[0] == query]
 
     async def evaluate(self, script: str, arg: Any = None) -> Any:
+        if arg == PICKER_OPTION and "title" in script and "asb" in script:
+            if self.pairs_raise:
+                raise RuntimeError("Execution context was destroyed")
+            return [[token, caption] for caption, token in self.options()]
         if arg == PICKER_OPTION and "title" in script:
             return [caption for caption, _token in self.options()]
         return await super().evaluate(script, arg)
@@ -394,3 +401,46 @@ async def test_a_failing_catalog_write_never_kills_a_run_that_attached() -> None
         page, "proj", request, name_resolver=_Resolver(heal_raises=True)
     )
     assert ids == (PARENT,)
+
+
+@pytest.mark.usefixtures("_short_grid_budget")
+async def test_a_failed_page_look_costs_nothing_but_the_hint() -> None:
+    """Both reviews of #1259: the look is a hint. If reading the picker throws, the run still
+    gets its reloads and ends in the binder's own error, never the page's."""
+    page: Any = _CaptionPage(grid={PARENT: "tokNew"}, options=[("a single red apple", "tokNew")])
+    page.pairs_raise = True
+    resolver = _Resolver()
+    request = _req(refs=(_ref("renamed in the Flow UI"),))
+    with pytest.raises(ReferenceNotFoundError):
+        await _composer().reference_existing(page, "proj", request, name_resolver=resolver)
+    assert page.reloads >= 1
+    assert resolver.healed == []
+
+
+@pytest.mark.usefixtures("_short_grid_budget")
+async def test_a_caption_the_page_shows_that_cannot_be_typed_is_not_taken() -> None:
+    page: Any = _CaptionPage(grid={PARENT: "tokNew"}, options=[("apple @ dawn", "tokNew")])
+    resolver = _Resolver()
+    request = _req(refs=(_ref("renamed in the Flow UI"),))
+    with pytest.raises(ReferenceNotFoundError):
+        await _composer().reference_existing(page, "proj", request, name_resolver=resolver)
+    assert resolver.healed == []
+
+
+@pytest.mark.usefixtures("_reload_budget")
+async def test_the_run_heals_without_a_resolver_too() -> None:
+    """MCP, ``gflow run`` and image batch pass no resolver: the run still finds the image;
+    only the catalog write needs one."""
+    page: Any = _CaptionPage(grid={PARENT: "tokNew"}, options=[("a single red apple", "tokNew")])
+    request = _req(refs=(_ref("renamed in the Flow UI"),))
+    ids = await _composer().reference_existing(page, "proj", request)
+    assert ids == (PARENT,)
+    assert page.bound == ["tokNew"]
+
+
+async def test_no_grid_tile_means_the_look_is_not_spent() -> None:
+    """A miss before the tile renders could match nothing, so it must not use up the look."""
+    page: Any = _CaptionPage(grid={}, options=[("a single red apple", "tokNew")])
+    refs = (_ref("renamed in the Flow UI"),)
+    assert await refreshed_from_picker(_composer(), page, refs) is None
+    assert "@" not in page.typed

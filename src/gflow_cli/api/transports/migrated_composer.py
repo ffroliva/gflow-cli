@@ -2573,18 +2573,18 @@ class MigratedComposer:
 
         #546 on this host: the picker is searched by the catalog's caption, which goes
         stale when the image is renamed in Flow. The labs listing the resolver reads is
-        retired here, so when a ``name_resolver`` is given the first miss reads the
-        current captions from the page itself (:meth:`_refreshed_from_picker`) and the
-        reload that follows retries with them; the reload also clears the stale ``@query``
-        text. A caption found this way is handed to the catalog after the attach. Cached
-        name = optimization; listing = truth; UUID = identity.
+        retired here, so the first miss with a grid tile reads the current captions from
+        the page itself (``refreshed_from_picker``) and the reload that follows retries
+        with them; the reload also clears the stale ``@query`` text. A caption found this
+        way is handed to ``name_resolver`` after the attach, when it can persist one.
+        Cached name = optimization; listing = truth; UUID = identity.
         """
         refs = request.refs
         for ref in refs:
             _picker_query(ref)  # an unusable caption is refused before any reload
         stale = {ref.name: ref.display_name for ref in refs}
         deadline = time.monotonic() + EXISTING_REF_WAIT_S
-        look_up = name_resolver is not None
+        look_up = True
         while True:
             try:
                 tokens = await self.await_existing_references(page, refs)
@@ -2593,9 +2593,9 @@ class MigratedComposer:
                 await _heal_catalog(name_resolver, refs, stale)
                 return media_ids
             except ReferenceNotFoundError:
-                if look_up:
-                    look_up = False  # one look: a bounded second pass, not a loop
-                    refs = await refreshed_from_picker(self, page, refs)
+                if look_up:  # one look, spent only when a tile could be matched
+                    found = await refreshed_from_picker(self, page, refs)
+                    look_up, refs = found is None, found or refs
                 if time.monotonic() >= deadline:
                     raise
             log.info("migrated.existing_reference_reload")

@@ -2569,7 +2569,7 @@ class VideoGenerationMixin:
                 # to_thread: the resolver is a SYNC callable that may block on
                 # I/O (the CLI bridge parks its worker thread on a listing
                 # fetch scheduled back onto this loop via
-                # run_coroutine_threadsafe — see cli_image.wire_refresh_resolver).
+                # run_coroutine_threadsafe — see refresh_resolver.wire_refresh_resolver).
                 # Calling it inline would deadlock that bridge.
                 fresh = await asyncio.to_thread(name_resolver, media_id)
             except Exception:  # noqa: BLE001 - resolver must never kill the generation

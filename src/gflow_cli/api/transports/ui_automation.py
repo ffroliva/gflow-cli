@@ -46,6 +46,9 @@ from gflow_cli.api.transports.migrated_composer import (
     ModelMenuMatcher,
     migrated_images_prefer,
 )
+from gflow_cli.api.transports.ui_automation_entities import (
+    entity_ids_from_request_body as _entity_ids_from_request_body,
+)
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -75,10 +78,7 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Locator, Page, ViewportSize
 
-from gflow_cli.api.transports.base import GenerationRequestRecorder, TransportSetup
-from gflow_cli.api.transports.ui_automation_entities import (
-    entity_ids_from_request_body as _entity_ids_from_request_body,
-)
+    from gflow_cli.api.transports.base import GenerationRequestRecorder, TransportSetup
 
 # Lazy-imported at call time so ``import gflow_cli`` doesn't pay the
 # Playwright import cost when another transport is selected.
