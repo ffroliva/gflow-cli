@@ -42,10 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Classic-editor selectors no longer depend on the UI language ([#1273](https://github.com/ffroliva/gflow-cli/issues/1273)).**
   On the classic (labs) editor the voice/character include action, the media-dialog upload
   button and the I2V frame slots now anchor on structure and icons only; the English and
-  Portuguese/Russian caption fallbacks are gone. The duration tab is matched by its number,
-  so `8 giây` works and a `480p` or `4K` tab is never taken for `4s`. An include button
-  that is no longer the only iconless button in the picker now fails loudly (exit 9, with a
-  screenshot) instead of clicking the first one.
+  Portuguese/Russian caption fallbacks are gone. The duration tab is matched by its exact
+  `8s` token first, then by its number alone, so a translated unit such as `8 giây` now
+  works too; the number match refuses a resolution (`480p`, `4K`) or count (`4x`) sibling.
+  When two visible iconless buttons could be the include action, gflow now fails loudly
+  (exit 9, with a screenshot, "ambiguous: N matches") instead of clicking the first one.
 - **A billed extend or upscale is never resent after a server error ([#1260](https://github.com/ffroliva/gflow-cli/issues/1260)).**
   `gflow video extend` and `gflow image upscale` (and their MCP tools) retried a 5xx or 429
   up to three times with the same request, single-use reCAPTCHA token included. A 5xx can
