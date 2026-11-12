@@ -293,6 +293,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 | Every page step times out, but auth/HTTP calls work | Network reaches Google only through a proxy; the browser ignores `HTTPS_PROXY` | Set `GFLOW_CLI_BROWSER_PROXY=http://host:port` (no credentials: a password-protected proxy is refused, exit 11) |
 | Exit 7 `RpcResponseUnavailableError` ("outcome unknown") | A create/rename/upload was sent but its result was never seen | Do NOT re-run blindly: check the project on flow.google.com first (a re-run can duplicate), then pass `--project <id>` |
 | No progress lines any more | Default log level is WARNING since v0.88.0 | `GFLOW_CLI_LOG_LEVEL=INFO` or `-v` |
+| Any error, unsure whether it cost anything | Every error envelope (`--json`, MCP) carries `charged` (`yes`/`no`/`maybe`) and `next_action` | Follow `next_action`: `retry` is safe; `reconcile` means check the project in Flow before re-running (a billed request is never resent); `reauth` means sign in again. See `docs/ERRORS.md` |
 
 ## Important constraints
 

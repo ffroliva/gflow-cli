@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.0] — 2026-11-12
+
 ### Added
 
 - **Error envelopes say whether Flow may have billed, and what to do next.** Every
@@ -87,6 +89,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads the current caption from the page's own `@` picker and retries within the reload
   budget; the MCP tool and `gflow run` heal the run too. The CLI still writes the fresh
   name to the catalog (`store` history mode only). Reach: the assets the empty picker lists.
+
+### Changed
+
+- **Internal: `VideoGenerationMixin` is split into single-purpose parts ([#1249](https://github.com/ffroliva/gflow-cli/issues/1249)).**
+  The 3,278-line video mixin is now a chain of mixins in `api/transports/_video_*.py`, with the
+  shared selectors in `_video_common`; every name others read from `ui_automation_video` is still
+  there. No behaviour change: a golden master pins every moved method's source.
 
 ## [0.97.0] — 2026-11-10
 
@@ -7033,7 +7042,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...HEAD
+[0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
 [0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0
