@@ -596,7 +596,9 @@ class FlowSession:
         """Shared failure boundary for client entry points: map a closed
         Playwright target to the typed retryable error, stage the incident
         bundle while the page is alive, and re-raise (design §6.2 step 5)."""
-        if _is_target_closed(e):
+        # A billed POST's reconcile error names the closed target in its detail; re-wrapping
+        # it as the retryable close would invite a re-bill (#1274, CodeRabbit on #1278).
+        if _is_target_closed(e) and getattr(e, "next_action", None) != "reconcile":
             wrapped = BrowserSessionClosedError()
             await self._capture_incident(wrapped, phase=phase)
             raise wrapped from e

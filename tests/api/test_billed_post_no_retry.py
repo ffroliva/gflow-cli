@@ -229,3 +229,25 @@ async def test_an_unbilled_post_engine_error_still_retries_and_surfaces_raw(
 def _exit_code_for(err: Exception) -> int:
     """Mirror the CLI's EXIT_CODE_MAP isinstance walk."""
     return next((code for cls, code in EXIT_CODE_MAP.items() if isinstance(err, cls)), 1)
+
+
+async def test_upsample_closed_browser_stays_a_reconcile_not_a_retryable_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit on #1278: upsample_image's boundary re-wrapped any error whose message
+    names a closed target as BrowserSessionClosedError (retry, which invites a re-bill). The
+    billed reconcile error carries that text in its detail, so it must survive the boundary."""
+    c, page = _client(tmp_path, monkeypatch)
+    page.request = _RaisingRequest(PwError("Target page, context or browser has been closed"))
+    c._capture_incident = AsyncMock()
+    with pytest.raises(NetworkError) as caught:
+        await c.upsample_image(
+            media_id=_M,
+            project_id=_P,
+            target_resolution=TargetResolution.RES_2K,
+            out_path=tmp_path / "out.png",
+        )
+    assert page.request.posted == [routes.UPSAMPLE_IMAGE]
+    assert caught.value.next_action == "reconcile"
+    assert _exit_code_for(caught.value) == 6
+    c._capture_incident.assert_awaited_once()  # the incident is still staged
