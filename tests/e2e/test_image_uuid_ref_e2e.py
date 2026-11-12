@@ -299,6 +299,8 @@ def test_e2e_cross_project_uuid_ref_falls_back_to_upload(
         e2e_env,
     )
 
+    if ref_run.returncode == 36:  # FlowHostMigratedError: Flow served flow.google.com
+        pytest.skip("a cross-project --ref <uuid> is not ported to flow.google.com yet (#933)")
     assert ref_run.returncode == 0, (
         f"cross-project UUID ref failed instead of falling back to upload; "
         f"stderr tail: {ref_run.stderr[-600:]!r}"

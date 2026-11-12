@@ -40,7 +40,7 @@ from typing import ParamSpec
 import pytest
 
 from gflow_cli.config import get_settings, reset_settings
-from gflow_cli.errors import FlowHostMigratedError
+from gflow_cli.errors import FlowHostMigratedError, WireFormatError
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
@@ -192,6 +192,12 @@ def skip_on_migrated_host(
             await fn(*args, **kwargs)
         except FlowHostMigratedError:
             pytest.skip("labs-only affordance; this profile is on the migrated host")
+        except WireFormatError as exc:
+            # A labs RPC Flow switched off for this account answers with this sentence
+            # (observed 2026-11-12); any other wire error is a real failure.
+            if "deprecated and disabled" not in str(exc):
+                raise
+            pytest.skip("labs RPC not ported to flow.google.com yet; Flow refused it")
 
     return wrapper
 

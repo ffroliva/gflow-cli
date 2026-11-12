@@ -15,12 +15,14 @@ import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model
+from tests.e2e.conftest import skip_on_migrated_host
 
 pytestmark = pytest.mark.e2e
 
 
 @pytest.mark.asyncio
 @pytest.mark.e2e_image
+@skip_on_migrated_host
 async def test_e2e_entity_smuggling_interception(
     monkeypatch: pytest.MonkeyPatch,
     install_log_capture: structlog.testing.LogCapture,
