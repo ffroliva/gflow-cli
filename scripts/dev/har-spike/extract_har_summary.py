@@ -51,6 +51,8 @@ ENUM_KEYS = {
     "modelKey",
     "targetResolution",
     "tool",
+    "toolName",
+    "updateMask",
     "userPaygateTier",
     "videoAspectRatio",
     "videoModelKey",
@@ -72,6 +74,11 @@ def _redact_header(name: str, value: str) -> str:
     return value
 
 
+# Headers that carry a URL: a signed media link (GoogleAccessId/Signature) opens the user's
+# private media, so only scheme, host and path survive (#1276 review).
+_URL_HEADERS = {"location", "referer", "content-location"}
+
+
 def _headers_to_dict(headers: list[dict[str, Any]]) -> dict[str, str]:
     safe: dict[str, str] = {}
     for header in headers:
@@ -79,6 +86,8 @@ def _headers_to_dict(headers: list[dict[str, Any]]) -> dict[str, str]:
         if not name:
             continue
         value = str(header.get("value", ""))
+        if name.lower() in _URL_HEADERS and value:
+            value = _safe_url(value)[0]
         safe[name.lower()] = _redact_header(name, value)
     return safe
 
@@ -92,17 +101,19 @@ def _redact_json(value: Any, key: str | None = None) -> Any:
     if key in PROMPT_KEYS:
         return "<redacted:prompt>"
 
+    if isinstance(value, str) and key in ENUM_KEYS and _ENUM_VALUE.fullmatch(value):
+        return value
+
+    # Everything under a secret key goes, nested dicts, lists and numbers included. An
+    # allowlisted key such as `modelKey` is exempt: it only contains "key".
+    if key is not None and key not in ENUM_KEYS and _is_sensitive_key(key):
+        return f"<redacted:{key}>"
+
     if isinstance(value, dict):
         return {str(k): _redact_json(v, str(k)) for k, v in value.items()}
 
     if isinstance(value, list):
         return [_redact_json(item, key) for item in value]
-
-    if isinstance(value, str) and key in ENUM_KEYS and _ENUM_VALUE.fullmatch(value):
-        return value
-
-    if key is not None and _is_sensitive_key(key):
-        return f"<redacted:{key}>"
 
     if isinstance(value, str):
         return f"<redacted:str:{len(value)}>"

@@ -399,7 +399,7 @@ Both write to **gitignored** output — `scripts/dev/_spike_out/` and
 `scripts/dev/har-spike/artifacts/`. Captures carry Bearer tokens, cookies and prompts:
 `*.har` is gitignored repo-wide, and a capture must never be committed or pasted into an
 issue unredacted. Use `scripts/dev/har-spike/extract_har_summary.py` for the redacted
-summary that IS shareable. Findings belong in `docs/superpowers/spikes/`; the evidence
+summary that is meant to be shared, and read it before you post it. Findings belong in `docs/superpowers/spikes/`; the evidence
 that produced them stays local.
 
 > **The harness is vendored in for discoverability, and that is the whole point.** It

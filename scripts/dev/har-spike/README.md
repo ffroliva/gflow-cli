@@ -130,3 +130,6 @@ Close Chrome manually, then remove generated evidence if needed:
 Remove-Item -Recurse -Force .\.agent-browser, .\.npm-cache
 Remove-Item -Force .\artifacts\* -Exclude .gitkeep
 ```
+
+Keys are kept as they are, because they are the structure a transport comparison needs; a body that
+used free text as a JSON key would show it. No Flow request body seen so far does.
