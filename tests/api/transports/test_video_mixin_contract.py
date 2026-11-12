@@ -18,7 +18,8 @@ drive the transport against fake pages. The expected values live in
 ``fixtures/video_mixin_contract.json``, recorded on develop at 4143e83c. A change to that file
 is a behaviour change and must be justified. Re-record it with:
 
-    RECORD_VIDEO_MIXIN_CONTRACT=1 uv run pytest tests/api/transports/test_video_mixin_contract.py -k record
+    RECORD_VIDEO_MIXIN_CONTRACT=1 uv run pytest -k record
+        tests/api/transports/test_video_mixin_contract.py
 """
 
 from __future__ import annotations
@@ -161,7 +162,7 @@ def test_every_name_read_from_ui_automation_video_is_still_there(
 
 def test_every_global_a_method_reads_still_resolves_where_it_lives() -> None:
     missing = []
-    for name, value in _resolved().items():
+    for value in _resolved().values():
         func = _function(value)
         if func is None:
             continue
