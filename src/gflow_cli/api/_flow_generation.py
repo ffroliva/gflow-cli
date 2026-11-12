@@ -17,8 +17,8 @@ import structlog
 from gflow_cli.api import routes
 from gflow_cli.api._engine import (
     mint_evaluate_kwargs,
+    retryable_engine_errors,
 )
-from gflow_cli.api._retry import MAX_ATTEMPTS, post_with_retry
 from gflow_cli.api.dto import (
     CreditsInfo,
     GeneratedImage,
@@ -528,16 +528,29 @@ class GenerationSurface(WorkspaceSurface):
         resolver_kw: dict[str, Any] = (
             {} if name_resolver is None else {"name_resolver": name_resolver}
         )
-        images: list[GeneratedImage] = []
-        # #1010: a page-owned call IS the billed click, and an error after it does not
-        # mean nothing was made, so retrying it re-submits (one run left 2 images).
-        async for retrying in post_with_retry(max_attempts=1 if page_owned else MAX_ATTEMPTS):
-            with retrying:
-                images = await self.transport.generate_images(
-                    project_id=project_id,
-                    request=req_with_token,
-                    **resolver_kw,
-                )
+        # Sent once on every transport. #1010: a page-owned call IS the billed click, and
+        # an error after it does not mean nothing was made (one retry left 2 images).
+        # #1275: an HTTP transport sends a single-use token, so a resend is refused or
+        # spends the image quota twice.
+        try:
+            images = await self.transport.generate_images(
+                project_id=project_id,
+                request=req_with_token,
+                **resolver_kw,
+            )
+        except (NetworkError, *retryable_engine_errors()) as exc:
+            if page_owned:
+                raise
+            raise NetworkError(
+                detail=f"{type(exc).__name__} on an image submit; not resent",
+                route=routes.batch_generate_images_url(project_id),
+                next_action="reconcile",
+                remediation_hint=(
+                    "Flow may have accepted this image request before the error, so gflow "
+                    "did not resend it. Check the project in Flow for the new image before "
+                    "running the command again."
+                ),
+            ) from exc
         if not images:
             raise ContentPolicyError(
                 detail="empty media[]",

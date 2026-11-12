@@ -72,7 +72,8 @@ submit and are retryable by default: `TransportTimeoutError`, `NetworkError`,
 `WafRejectionError`, `BrowserSessionClosedError`, `FlowAppError`, `FlowAgentUiError`.
 Every raise site gflow knows to come after a submit overrides them to `reconcile`
 (`retryable: false`): the labs `t2v`/`i2v`/`r2v` and `video extend` poll timeouts, the
-flow.google.com post-submit timeouts, a 5xx on a billed extend or upscale submit, the
+flow.google.com post-submit timeouts, a 5xx on a billed extend or upscale submit, a failed
+image submit on a transport that sends its own reCAPTCHA token, the
 agent-only composer's refusals, and a failed
 download of a finished clip. So a `retry` that reaches you comes from a site gflow treats as before the
 submit. `maybe` still says gflow cannot prove it: a scheduler that runs paid
@@ -97,6 +98,10 @@ place today:
 - A 5xx on a billed `video extend` or `image upscale` submit (`NetworkError`, #1260)
   reads `maybe` / `reconcile`. The request carries a single-use reCAPTCHA token, so it
   is sent once and never resent; check the project in Flow before running it again.
+- An image submit on a transport that sends the client's reCAPTCHA token (the HTTP
+  transports, not Flow's own page) failing with a 5xx, timeout or connection reset
+  (`NetworkError`, #1275) reads `maybe` / `reconcile`. The token is single-use, so the
+  submit is sent once; check the project in Flow for the image before running it again.
 - A video Flow reports failed reads `maybe` / `reconcile`, with its media id as
   `operation_id`, on the worker queue as on the CLI.
 - A failed write of a generated asset to disk or a bucket (`ConfigurationError`) reads
