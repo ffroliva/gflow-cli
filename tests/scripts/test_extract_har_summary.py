@@ -83,9 +83,10 @@ class HarSummaryTests(unittest.TestCase):
         self.assertEqual(entry["request"]["headers"]["cookie"], "<redacted:present>")
         self.assertEqual(entry["request"]["headers"]["authorization"], "<redacted:present>")
         self.assertEqual(entry["response"]["headers"]["set-cookie"], "<redacted:present>")
+        # A secret-shaped key now takes its whole subtree with it (#1276 review).
         self.assertEqual(
-            entry["request"]["body"]["json"]["clientContext"]["recaptchaContext"]["token"],
-            "<redacted:token>",
+            entry["request"]["body"]["json"]["clientContext"]["recaptchaContext"],
+            "<redacted:recaptchaContext>",
         )
         self.assertEqual(
             entry["request"]["body"]["json"]["clientContext"]["sessionId"],
@@ -161,6 +162,83 @@ class HarSummaryTests(unittest.TestCase):
         body = summary["entries"][0]["request"]["body"]
         self.assertEqual(body["textPreview"], "<redacted:non-json>")
 
+    def test_redacts_free_text_under_any_key_and_keeps_allowlisted_enums(self) -> None:
+        body = {
+            "parts": [{"text": "private prompt"}],
+            "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+            "videoModelKey": "veo_3_1_t2v_fast",
+            "aspectRatio": "private prompt in an allowlisted key",
+            "seed": 42,
+            "enabled": True,
+        }
+        har = {
+            "log": {
+                "entries": [
+                    {
+                        "request": {
+                            "method": "POST",
+                            "url": "https://aisandbox-pa.googleapis.com/v1/flow:generate",
+                            "headers": [],
+                            "postData": {"mimeType": "application/json", "text": json.dumps(body)},
+                        },
+                        "response": {"status": 200, "headers": []},
+                    }
+                ]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            har_path = Path(tmp) / "capture.har"
+            har_path.write_text(json.dumps(har), encoding="utf-8")
+
+            summary = summarize_har(har_path, host_filter="aisandbox-pa.googleapis.com")
+
+        self.assertNotIn("private prompt", json.dumps(summary))
+        redacted = summary["entries"][0]["request"]["body"]["json"]
+        self.assertEqual(redacted["parts"][0]["text"], "<redacted:str:14>")
+        self.assertEqual(redacted["imageAspectRatio"], "IMAGE_ASPECT_RATIO_LANDSCAPE")
+        self.assertEqual(redacted["videoModelKey"], "veo_3_1_t2v_fast")
+        self.assertEqual(redacted["seed"], 42)
+        self.assertIs(redacted["enabled"], True)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewRoundTests(unittest.TestCase):
+    """#1276 review round: each assertion pins one leak or one survived mutant."""
+
+    def test_location_and_referer_keep_no_query(self) -> None:
+        signed = "https://storage.googleapis.com/b/o.png?GoogleAccessId=x%40y&Signature=abc"
+        headers = _mod._headers_to_dict(
+            [
+                {"name": "Location", "value": signed},
+                {"name": "Referer", "value": "https://flow.google.com/project/p?token=t"},
+            ]
+        )
+        dumped = json.dumps(headers)
+        self.assertNotIn("Signature=", dumped)
+        self.assertNotIn("GoogleAccessId=", dumped)
+        self.assertNotIn("token=t", dumped)
+        self.assertEqual(headers["location"], "https://storage.googleapis.com/b/o.png")
+
+    def test_everything_under_a_secret_key_is_redacted(self) -> None:
+        out = _mod._redact_json({"session": {"id": 1234567890}, "token": ["a", "b"]})
+        dumped = json.dumps(out)
+        self.assertNotIn("1234567890", dumped)
+        self.assertNotIn('"a"', dumped)
+
+    def test_list_items_inherit_their_key(self) -> None:
+        out = _mod._redact_json({"modelKey": ["veo_3_1_fast"], "text": ["a private prompt"]})
+        self.assertEqual(out["modelKey"], ["veo_3_1_fast"])
+        self.assertNotIn("private", json.dumps(out))
+
+    def test_enum_values_are_capped_at_64_characters(self) -> None:
+        out = _mod._redact_json({"tool": "a" * 65, "modelKey": "veo_3_1"})
+        self.assertEqual(out["tool"], "<redacted:str:65>")
+        self.assertEqual(out["modelKey"], "veo_3_1")
+
+    def test_tool_name_and_update_mask_are_shown(self) -> None:
+        out = _mod._redact_json({"toolName": "prompt_rewriter", "updateMask": "title"})
+        self.assertEqual(out, {"toolName": "prompt_rewriter", "updateMask": "title"})
