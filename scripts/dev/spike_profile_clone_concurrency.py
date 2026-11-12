@@ -24,10 +24,10 @@ import sys
 import time
 from pathlib import Path
 
-HOME = Path(
-    os.environ.get("GFLOW_CLI_HOME")
-    or Path(os.environ.get("LOCALAPPDATA", "")) / "ffroliva" / "gflow-cli"
-)
+from gflow_cli.paths import default_home
+
+# Same resolution as the CLI: GFLOW_CLI_HOME, else the platform user-data directory.
+HOME = Path(os.environ.get("GFLOW_CLI_HOME") or default_home())
 # Caches and lock files are not session state: leaving them out makes a clone ~6x smaller.
 SKIP = {
     "Cache",
@@ -55,8 +55,6 @@ SKIP = {
 
 def clone(src: str, dst: str) -> float:
     source, target = HOME / f"profile_{src}", HOME / f"profile_{dst}"
-    if target.exists():
-        shutil.rmtree(target)
     start = time.monotonic()
     shutil.copytree(source, target, ignore=lambda _dir, names: [n for n in names if n in SKIP])
     return time.monotonic() - start
@@ -97,24 +95,32 @@ def credits(profile: str) -> dict[str, object]:
 def main() -> None:
     src, count = sys.argv[1], int(sys.argv[2])
     names = [f"{src}-spike{i}" for i in range(1, count + 1)]
-    for name in names:
-        print(
-            f"clone {name}: {clone(src, name):.1f}s, {size_mb(name)} MB (source {size_mb(src)} MB)"
-        )
-    everyone = [src, *names]
-    start = time.monotonic()
-    with cf.ThreadPoolExecutor(len(everyone)) as pool:
-        concurrent = list(pool.map(credits, everyone))
-    print(f"CONCURRENT ({time.monotonic() - start:.0f}s wall):")
-    for row in concurrent:
-        print("  ", row)
-    print("SEQUENTIAL recheck (still signed in?):")
-    for profile in everyone:
-        print("  ", credits(profile))
-    if "--keep" not in sys.argv:
+    # Never overwrite a clone a previous run kept (--keep) or left behind after a crash.
+    taken = [n for n in names if (HOME / f"profile_{n}").exists()]
+    if taken:
+        sys.exit(f"refusing to overwrite existing clones {taken}; remove them first")
+    created: list[str] = []
+    try:
         for name in names:
-            shutil.rmtree(HOME / f"profile_{name}", ignore_errors=True)
-        print("clones removed")
+            created.append(name)  # before copying, so a partial copy is also cleaned up
+            print(f"clone {name}: {clone(src, name):.1f}s, {size_mb(name)} MB")
+        print(f"source {src}: {size_mb(src)} MB")
+        everyone = [src, *names]
+        start = time.monotonic()
+        with cf.ThreadPoolExecutor(len(everyone)) as pool:
+            concurrent = list(pool.map(credits, everyone))
+        print(f"CONCURRENT ({time.monotonic() - start:.0f}s wall):")
+        for row in concurrent:
+            print("  ", row)
+        print("SEQUENTIAL recheck (still signed in?):")
+        for profile in everyone:
+            print("  ", credits(profile))
+    finally:
+        # Signed-in copies must not outlive the run unless asked: timeouts and Ctrl-C included.
+        if "--keep" not in sys.argv:
+            for name in created:
+                shutil.rmtree(HOME / f"profile_{name}", ignore_errors=True)
+            print(f"clones removed: {created}")
 
 
 if __name__ == "__main__":

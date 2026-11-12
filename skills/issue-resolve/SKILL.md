@@ -213,7 +213,8 @@ files, clones or temp dirs). A refactor or speed fix also records its before/aft
 ### 6. Draft PR
 `gh pr create --draft --base develop`. Body is a **plain string** (never a
 heredoc — CLAUDE.md MCP rule). Include a **Verification status** section with
-checked/unchecked boxes, the red test's failure line from before the fix, and the metrics
+checked/unchecked boxes, the red test's failure line from before the fix (or, when a named
+external blocker stopped the red run, that blocker in its place), and the metrics
 when step 5 recorded them; use `Refs #N` when a human must still verify,
 `Closes #N` only when fully verified here. Then run `/gflow:pr-council-review`
 (or `/gflow:branch-review` pre-push) — baseline D1–D5 **plus D14 over-engineering /

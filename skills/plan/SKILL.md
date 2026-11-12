@@ -107,12 +107,16 @@ the same rules and is optional):
 
 - **Make it work first: pin behaviour before changing it.** Task 1 is always the red test. For
   a refactor it is a **golden master** recorded on develop (signatures, source hashes of what
-  moves, the observable outcomes a caller sees), and the plan says how you watched it fail.
+  moves, the observable outcomes a caller sees). It passes on develop by design, so prove it can
+  fail: apply a deliberate mutation (edit one body line, drop one import), watch it go red, then
+  revert. A fix's red test must fail on the unfixed code for the expected reason.
 - **Get the data shape right before the logic.** Domain types that make illegal states
   unrepresentable come before the code that uses them.
 - **Build the lever.** When the work is repetitive (moving dozens of methods, editing many call
   sites), plan a task that builds the tool: do one unit by hand, then make the tool match it.
-- **Verifiable units.** One task, one commit, tests green between commits. A refactor moves code;
+- **Verifiable units.** One task, one commit, tests green between commits, with one exception:
+  a task-1 red-test commit may stay red, says so in its message (with the failure line), and is
+  followed directly by the commit that makes it green. A refactor moves code;
   it does not rewrite bodies, error handling or log events in the same commit.
 - **Measure what you claim to improve.** A refactor or speed plan has a task that records
   metrics **before** and **after**: CRAP per function (complexity x coverage, no function
@@ -194,7 +198,8 @@ src/gflow_cli/<existing>.py
 - [ ] Docs updated (`USAGE.md` / `CONFIGURATION.md` as applicable)
 - [ ] BDD feature file covers all Critical + High scenarios from `/gflow:scenario`
 - [ ] No `# TODO` in diff without a tracked issue link
-- [ ] Task 1's red test (or golden master) was seen failing before the change
+- [ ] Task 1's red test failed on the unfixed code, or (refactor) its golden master was seen
+  failing on a deliberate mutation and passing on develop
 - [ ] Before/after metrics recorded in the PR (refactor and speed plans)
 - [ ] Worktree clean: no untracked scratch files, no leftover clones or temp dirs
 
