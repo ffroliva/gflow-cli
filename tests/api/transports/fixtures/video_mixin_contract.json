@@ -109,7 +109,6 @@
     "_GENERATION_ROUTE_RE": "Pattern: re.compile('batchGenerateImages|batchAsyncGenerateVideo')",
     "_PICKER_PROJECT_OPTION_MATCH_JS": "str: '(args) => { const menus = Array.from(document.querySelectorAll(\"[role=\\'menu\\'][data-state=\\'open\\']\")); const scope = menus.length ? menus : [document]; const candidates = scope.flatMap((m) => Array.from(m.querySelectorAll(\"a, button, li, div[role], [role=\\'menuitem\\'], [role=\\'menuitemradio\\'], [role=\\'menuitemcheckbox\\'], [role=\\'option\\']\"))); const innermost = (els) =>  els.find((el) => !els.some((o) => o !== el && el.contains(o))) || els[0] || null; let hit = innermost(candidates.filter((el) =>  (el.getAttribute(\\'href\\') || \\'\\').includes(args.projectId))); let matchedBy = hit ? \\'href\\' : null; if (!hit) {  hit = innermost(candidates.filter((el) => el.outerHTML.includes(args.projectId)));  matchedBy = hit ? \\'id\\' : null; } if (!hit && args.projectName) {  const norm = (s) => (s || \\'\\').replace(/\\\\s+/g, \\' \\').trim().toLowerCase();  const wanted = norm(args.projectName);  hit = innermost(candidates.filter((el) => norm(el.textContent) === wanted))   || innermost(candidates.filter((el) => norm(el.textContent).includes(wanted)));  matchedBy = hit ? \\'name\\' : null; } if (!hit) { return { clicked: false, matched_by: null, candidates: candidates.length }; } hit.click(); return { clicked: true, matched_by: matchedBy, candidates: candidates.length };}'",
     "_PICKER_PROJECT_TRIGGER_ACTIVE_JS": "str: \"(el, args) => { if (el.outerHTML.includes(args.projectId)) { return true; } if (!args.projectName) { return false; } const norm = (s) => (s || '').replace(/\\\\s+/g, ' ').trim().toLowerCase(); return norm(el.textContent) === norm(args.projectName)  || norm(el.textContent).includes(norm(args.projectName));}\"",
-    "_PROBE_TIMEOUT_MS": "int: 4000",
     "_capture_debug_screenshot": "function (page: 'Any', out_dir: 'Path | None', filename: 'str') -> 'Path | None' sha=b92fbcbc9736dda7",
     "_summarize_request_image_inputs": "function (request: 'Any') -> 'dict[str, Any]' sha=11148d3b5e96cb1c",
     "_upload_rejection_message": "function (status: 'int | None', label: 'str') -> 'str | None' sha=beba5001ebe1e7a8",
@@ -117,7 +116,6 @@
     "migrated_route": "function (url: 'object', flow_host: 'str', *, prefer_migrated: 'bool' = False) -> 'str'",
     "screenshot_clause": "function (shot: 'Path | None') -> 'str' sha=d964b8b010c05795",
     "selector_drift_detail": "function (probe: 'str', what: 'str', shot: 'Path | None') -> 'str' sha=594082d815af8fbf",
-    "write_asset_async": "function (target: 'AnyPath', data: 'bytes', *, charged: 'Charged' = 'maybe', next_action: 'NextAction' = 'reconcile') -> 'None'",
     "zip_entity_refs": "function (entity_ids: 'tuple[str, ...]', entity_names: 'tuple[str, ...]') -> 'list[tuple[str, str]]' sha=42b91457e8930150"
   }
 }
