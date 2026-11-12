@@ -1,15 +1,4 @@
-"""Video-generation methods for UiAutomationTransport.
-
-Mixed into `UiAutomationTransport` via `VideoGenerationMixin` — kept in its own
-module because `ui_automation.py` is already over the 800-line cap.
-
-Video generation mirrors `generate_images`: the transport drives the Flow
-editor UI and Flow's own JavaScript builds the request, sends it, and mints
-reCAPTCHA on submit — the transport never POSTs a generate body. The status
-endpoint returns HTTP 401 to `page.request.post`, so polling captures Flow's
-own `batchCheckAsyncVideoGenerationStatus` responses instead of issuing the
-POST (spec §5.5).
-"""
+"""Selectors and helpers shared by the `_video_*` parts of `VideoGenerationMixin` (#1249)."""
 
 # The private helpers here are used by the `_video_*` parts, not in this module (#1249).
 # pyright: reportUnusedFunction=false
@@ -19,7 +8,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import structlog
 
@@ -28,9 +17,6 @@ from gflow_cli.api.video import (
     Aspect,
     VideoModel,
 )
-
-if TYPE_CHECKING:
-    pass
 
 log = structlog.get_logger(__name__)
 
