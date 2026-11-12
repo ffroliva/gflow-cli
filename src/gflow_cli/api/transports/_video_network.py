@@ -1,7 +1,6 @@
 """Entity interception, status polling and clip download.
 
-A part of `VideoGenerationMixin`, moved byte-identical from
-`ui_automation_video.py` (#1249 wave 2).
+A part of `VideoGenerationMixin`, moved from `ui_automation_video.py` (#1249 wave 2).
 """
 
 # pyright: reportPrivateUsage=false
@@ -95,13 +94,6 @@ class FlowNetworkMixin:
         image/video generation runs.
         """
         import json
-        from unittest.mock import AsyncMock, Mock
-
-        if isinstance(page, Mock):
-            if not isinstance(getattr(page.context, "route", None), AsyncMock):
-                page.context.route = AsyncMock()
-            if not isinstance(getattr(page.context, "unroute", None), AsyncMock):
-                page.context.unroute = AsyncMock()
 
         async def intercept_generation_request(route: Any) -> None:
             req_obj = route.request

@@ -80,8 +80,8 @@ day to undo.
 
 **Redact before you attach.** Raw captures carry cookies, Bearer tokens and prompts, and
 `*.har` is gitignored repo-wide for that reason. Run
-`python scripts/dev/har-spike/extract_har_summary.py <capture>.har --host <host>` and attach
-the **summary** — it is redacted by design and is what a maintainer needs anyway. Never paste
+`python scripts/dev/har-spike/extract_har_summary.py <capture>.har` (keep its default API host) and attach
+the **summary**, after reading it: it is redacted by design and is what a maintainer needs anyway. Never paste
 a raw HAR or an unredacted incident bundle into an issue.
 
 > **Windows-only today.** The CDP harness is nine PowerShell scripts; a portable Python twin

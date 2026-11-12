@@ -151,7 +151,7 @@ if (-not (Test-Path -LiteralPath $HarPath)) {
     throw "HAR file was not created: $HarPath"
 }
 
-$extractor = Join-Path $ProjectRoot "scripts\extract_har_summary.py"
+$extractor = Join-Path $PSScriptRoot "extract_har_summary.py"
 & python $extractor $HarPath --host $HostFilter --out $summaryPath
 $pythonExitCode = $LASTEXITCODE
 if ($pythonExitCode -ne 0) {
