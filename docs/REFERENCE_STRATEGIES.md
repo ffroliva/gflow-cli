@@ -116,6 +116,11 @@ video `@Name` exits 29 because the character catalog cannot be read on that host
   Because nothing is uploaded, this path never meets Flow's one-time upload-terms dialog.
   **Behaviour change:** a same-project image since deleted in Flow used to exit 36 at
   once; it now spends up to ~90 s (`EXISTING_REF_WAIT_S`) reloading the grid, then exits 32.
+- **A renamed image heals itself (#546).** If the image was renamed in Flow after gflow
+  recorded it, the stored caption no longer matches the picker. gflow reads the current
+  caption from the page's own `@` picker and retries within the same reload budget, then
+  writes the fresh name back to the catalog (CLI, `store` history mode). `gflow run` and the
+  MCP tools heal the run the same way. Reach: the assets the empty picker lists.
 - **What to do on a refusal.**
   - **Exit 32:** no option, or several, carry the exact name. Rename the colliding asset in
     Flow, or give the character a unique one-word name.

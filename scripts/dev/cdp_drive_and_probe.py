@@ -28,7 +28,6 @@ sys.path.append("src")
 
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport  # noqa: E402
 from gflow_cli.api.transports.ui_automation_video import (  # noqa: E402
-    FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
     VideoGenerationMixin,
 )
@@ -78,12 +77,6 @@ async def probe(port: int) -> int:
             ),
             "swap_horiz icon, any icon class": ("div:has(> button:has(i:text-is('swap_horiz')))"),
             "FIXED Tier 1: FRAME_SLOTS_STRUCT (current code)": FRAME_SLOTS_STRUCT,
-            "Tier 2: FRAME_SLOT_BY_LABEL Start (EN-only)": (
-                FRAME_SLOT_BY_LABEL.format(label="Start")
-            ),
-            "Tier 2: FRAME_SLOT_BY_LABEL End (EN-only)": (FRAME_SLOT_BY_LABEL.format(label="End")),
-            "pt-BR variant: Inicial": (FRAME_SLOT_BY_LABEL.format(label="Inicial")),
-            "pt-BR variant: Final": (FRAME_SLOT_BY_LABEL.format(label="Final")),
         }
 
         print()

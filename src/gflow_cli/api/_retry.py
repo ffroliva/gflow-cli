@@ -4,7 +4,7 @@ Uses ``tenacity.AsyncRetrying`` with ``reraise=True`` so the original
 :class:`gflow_cli.errors.GFlowError` surfaces (no ``RetryError`` leakage).
 
 Constants:
-    MAX_ATTEMPTS = 3
+    MAX_ATTEMPTS = 3  (a billed POST passes 1: its reCAPTCHA token is single-use, #1260)
     RETRY_AFTER_CAP_SECONDS = 60.0
 
 Public API:

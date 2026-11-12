@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.97.0"
+version = "0.98.0"
 description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -177,6 +177,13 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/gflow_cli"]
 
+# Scratch output never ships, whatever .gitignore says. A checkout under .worktrees/ is
+# itself matched by our .gitignore, and hatchling then drops EVERY .gitignore pattern (it
+# treats the project root as VCS-ignored), so the sdist swept up tmp/ -- including files
+# that parallel tests delete mid-build, which failed `uv build` with FileNotFoundError.
+[tool.hatch.build.targets.sdist]
+exclude = ["/tmp", "/out"]
+
 # `gflow docs` reads the pages at runtime, so they have to be IN the wheel (#861).
 # `force-include` + `exclude` does NOT work here -- hatchling ignores exclude patterns for
 # forced inclusions, measured 2026-09-17 at 145 leaked `superpowers/` files. The hook globs
@@ -206,6 +213,16 @@ ignore = ["S101", "S110", "S112"]
 "eval/**" = ["T20"]
 # skills/ ships runnable helper tools alongside each SKILL.md; a CLI helper prints.
 "skills/**" = ["T20"]
+
+# Size/complexity thresholds read by scripts/ci/check_size.py, which runs C901, PLR0915 and
+# PLR0904 on src/ against a shrink-only baseline (#1249). They are not in `select` above:
+# 56 existing offenders would fail `ruff check` until they are split.
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-statements = 50
+max-public-methods = 20
 
 [tool.pyright]
 include = ["src", "tests"]

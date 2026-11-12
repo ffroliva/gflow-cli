@@ -35,7 +35,7 @@ import pytest
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 
-from .test_image_uuid_ref_e2e import _events, _json_payload, _run_gflow
+from .test_image_uuid_ref_e2e import _events, _json_payload, _run_gflow, _served
 
 if TYPE_CHECKING:
     from gflow_cli.data.models import AssetLookup
@@ -43,10 +43,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 _STALE_NAME = "Deliberately stale wrong name"
-
-_SELECTED_EXISTING_EVENT = "ui_automation_video.image_ref_selected_existing"
-_UPLOAD_FALLBACK_EVENT = "ui_automation_video.image_ref_upload_fallback"
-_RESOLVER_FAILED_EVENT = "ui_automation_video.name_resolver_failed"
 
 
 def _catalog_asset(env: dict[str, str], media_id: str) -> AssetLookup | None:
@@ -137,14 +133,15 @@ def test_e2e_stale_catalog_name_self_heals_on_picker_miss(
         f"stale-name i2i failed instead of self-healing; stderr tail: {ref_run.stderr[-600:]!r}"
     )
     events = _events(ref_run.stderr)
-    assert _SELECTED_EXISTING_EVENT in events, (
-        f"expected the resolver-healed picker attach ({_SELECTED_EXISTING_EVENT}); "
+    served = _served(events)
+    assert served["selected"] in events, (
+        f"expected the resolver-healed picker attach ({served['selected']}); "
         f"observed events: {sorted(set(events))}"
     )
-    assert _UPLOAD_FALLBACK_EVENT not in events, (
+    assert served["upload"] not in events, (
         "a same-project ref with a healable name must not duplicate-upload"
     )
-    assert _RESOLVER_FAILED_EVENT not in events, (
+    assert served["resolver_failed"] not in events, (
         "the listing fetch raised inside the resolver — the bridge regressed"
     )
     ref_payload = _json_payload(ref_run.stdout)

@@ -1898,8 +1898,11 @@ Print the image and video model catalog — the source of truth for what
 `--json` for a single machine-readable object.
 
 ```text
-gflow models [OPTIONS]
+gflow models [list] [--json]
+gflow models show MODEL_ID [--json]
 ```
+
+Bare `gflow models` is an alias of `gflow models list`: same options, same output.
 
 Per model the catalog reports: `name`, `label` (image models: the name Flow's
 model menu shows, read on English accounts, such as `Nano Banana Pro`; display
@@ -1918,12 +1921,44 @@ gflow models
 
 # Machine-readable catalog for a worker / model picker
 gflow models --json
+
+# One model's limits: aliases, ref cap, durations (video) or Flow name (image), aspects
+gflow models show omni-flash
+
+# The same object gflow_list_models carries for that model (#1196)
+gflow models show NARWHAL --json
+```
+
+`show` takes a model's `name` or any spelling the generation commands' `--model`
+resolves (`omni-flash`, `Omni Flash`, `veo_lite`, `NARWHAL`, ...). Its `--json`
+emits that model's catalog entry exactly as `gflow_list_models` returns it, so a
+script reading one model needs no list parsing. Video entries carry `durations`,
+the clip lengths `--duration` accepts for that model (Veo: 4, 6, 8; Omni Flash
+adds 10), next to `max_duration`. The table view adds the model's section aspects
+for context. An unknown id exits 2 and names up to three closest models. That is
+a Click usage error: the message goes to stderr and stdout stays empty, even with
+`--json`. The catalog does not carry per-model generation modes or host
+availability, so `show` does not report them.
+
+## `gflow capabilities`
+
+Declare what this gflow can drive: one value per capability (`yes`, `no`,
+`partial`, `unknown`), with a note on every `partial`. It makes no call to Flow and
+opens no browser; the only input is `GFLOW_CLI_FLOW_HOST`, and `host` reports that
+setting. MCP clients read the same document from the resource `capabilities://self`
+(except on a no-spend server, where generation is `no`)
+([#1197](https://github.com/ffroliva/gflow-cli/issues/1197)). Every key's meaning:
+[CAPABILITIES.md](CAPABILITIES.md).
+
+```bash
+gflow capabilities          # table
+gflow capabilities --json   # {"schema": 1, "adapter": ..., "host": ..., "capabilities": {...}, "notes": {...}}
 ```
 
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
+`r2v`), `auth list`, `gflow models`, `gflow capabilities`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)
@@ -1945,10 +1980,18 @@ use. When set:
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
   `duration`, `count`, `seed`).
 - On failure, the command still emits a JSON payload — an RFC 9457
-  problem-details object including a `retryable` flag (true for WAF /
-  rate-limit / network / timeout) that a worker scheduler can key its
-  retry-vs-absorb decision off — and exits with the same non-zero code as the
-  Rich path.
+  problem-details object including a `retryable` flag that a worker scheduler
+  can key its retry-vs-absorb decision off (by default true for WAF /
+  rate-limit / network / timeout, but read the emitted value: a video poll that
+  times out after the submit reads `false` with `next_action: "reconcile"`), plus
+  `charged` (`no` / `maybe` / `yes`) and
+  `next_action` (#1201) — and exits with the same non-zero code as the Rich path.
+  Every `type`, its exit code and those defaults: [ERRORS.md](ERRORS.md).
+- One exception: a `video t2v/i2v/r2v` that Flow accepted and then reported
+  failed emits the `VideoResult` above with `status: "fail"`, not a
+  problem-details object. It has no `type` or `retryable`; it carries
+  `charged: "maybe"`, `next_action: "reconcile"` and the clip's media id as
+  `operation_id` at the top level.
 
 The data-layer recorder fires regardless of `--json`, so audit history is
 independent of the output channel.
@@ -2223,7 +2266,9 @@ GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 ## Exit codes
 
 Phase 4 (v0.4.0a1+) maps every `GFlowError` subclass to a stable exit code so
-shell scripts can branch on the failure mode without parsing stderr.
+shell scripts can branch on the failure mode without parsing stderr. With `--json`, the
+envelope also says whether Flow may have billed and what to do next; see
+[ERRORS.md](ERRORS.md).
 
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|

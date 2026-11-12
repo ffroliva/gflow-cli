@@ -13,13 +13,18 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import structlog
 
+from gflow_cli.api.transports._video_common import (
+    _CONTEXT_INCLUDE_TIER_NAMES,
+    _INCLUDE_BUTTON_TIER_NAMES,
+    UPLOAD_MEDIA_BUTTON,
+)
+from gflow_cli.api.transports.migrated_composer import _duration
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
     _PICKER_PROJECT_OPTION_MATCH_JS,
     _PICKER_PROJECT_TRIGGER_ACTIVE_JS,
     ADD_MEDIA_BUTTON,
     DIALOG_ANY,
-    FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
     PICKER_CONTEXT_INCLUDE,
     PICKER_GRID_SCROLL_ATTEMPTS,
@@ -35,6 +40,7 @@ from gflow_cli.api.transports.ui_automation_video import (
 )
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStatus
 from gflow_cli.errors import (
+    EXIT_CODE_MAP,
     AuthExpiredError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -186,10 +192,13 @@ class TestPollVideoStatus:
     @pytest.mark.asyncio
     async def test_timeout_raises(self) -> None:
         page = MagicMock()
-        with pytest.raises(TimeoutError, match="no terminal status"):
+        with pytest.raises(TransportTimeoutError, match="no terminal status") as info:
             await VideoGenerationMixin._poll_video_status(
                 page, [], "m", timeout_s=0.2, poll_interval_s=0.05
             )
+        # #1201: this is the labs t2v/i2v poll, after the submit: settle it, don't re-run.
+        pd = info.value.to_problem_details()
+        assert (pd["charged"], pd["next_action"], pd["operation_id"]) == ("maybe", "reconcile", "m")
 
     @pytest.mark.asyncio
     async def test_401_response_raises_auth_expired_error_immediately(self) -> None:
@@ -404,10 +413,15 @@ class TestSelectVideoModel:
 class TestSelectVideoDuration:
     @pytest.mark.asyncio
     async def test_clicks_the_duration_tab(self) -> None:
-        sel = "[role='tab']:text-is('6s')"
-        page = _cascade_page({sel})
-        await VideoGenerationMixin._select_video_duration(page, 6, out_dir=None)
-        page.locator.assert_any_call(sel)
+        # Which markup matches is pinned against real Chromium in
+        # TestSelectVideoDurationLocale; this pins the click on a hit.
+        tab = MagicMock()
+        tab.click = AsyncMock()
+        probe = AsyncMock(return_value=tab)
+        with patch.object(VideoGenerationMixin, "_probe_selector_cascade", probe):
+            await VideoGenerationMixin._select_video_duration(_cascade_page(set()), 6, out_dir=None)
+        tab.click.assert_awaited_once()
+        assert probe.await_args.args[1] == "duration_tab"
 
     @pytest.mark.asyncio
     async def test_missing_duration_tab_raises_drift_error(self) -> None:
@@ -949,7 +963,7 @@ class TestDownloadVideo:
         """#1003: once Flow has billed the clip, a bucket write that fails (bad creds,
         missing bucket) must say so with the media id and the free recovery command —
         MediaDownloadError is also what makes the recorder mark the asset generated."""
-        from gflow_cli.api.transports import ui_automation_video as uav
+        from gflow_cli.api.transports import _video_network as uav
         from gflow_cli.errors import MediaDownloadError
 
         async def _denied(_target: object, _data: bytes) -> None:
@@ -1050,18 +1064,19 @@ class TestGenerateVideoReturnType:
 def _make_frame_slot_page(
     *,
     structural_count: int,
-    text_label_visible: bool = False,
     upload_dialog_raises: bool = False,
 ) -> MagicMock:
     """Build a fake page for _attach_frame locale-selection tests.
 
-    structural_count  — how many results FRAME_SLOTS_STRUCT returns
-    text_label_visible — whether FRAME_SLOT_BY_LABEL.first is visible
+    structural_count — how many results FRAME_SLOTS_STRUCT returns. Every other
+    selector the code asks for is recorded in `page.other_selectors`, so a test
+    can prove no text-label selector was ever built (#1273).
     """
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
     page.on = MagicMock()
     page.remove_listener = MagicMock()
+    page.other_selectors = []
 
     struct_slots: list[MagicMock] = []
     for _ in range(structural_count):
@@ -1076,22 +1091,10 @@ def _make_frame_slot_page(
     struct_locator.count = AsyncMock(return_value=structural_count)
     struct_locator.nth = MagicMock(side_effect=lambda i: struct_slots[i])
 
-    text_locator_inner = MagicMock()
-    text_locator_inner.click = AsyncMock()
-    # Production code uses wait_for(state="visible") not is_visible()
-    if text_label_visible:
-        text_locator_inner.wait_for = AsyncMock()
-    else:
-        text_locator_inner.wait_for = AsyncMock(side_effect=Exception("not visible"))
-    text_locator_wrapper = MagicMock()
-    text_locator_wrapper.first = text_locator_inner
-
     def _locator(sel: str) -> MagicMock:
-        if FRAME_SLOTS_STRUCT in sel or sel == FRAME_SLOTS_STRUCT:
+        if sel == FRAME_SLOTS_STRUCT:
             return struct_locator
-        # FRAME_SLOT_BY_LABEL is a format string; any has-text variant
-        if "has-text" in sel:
-            return text_locator_wrapper
+        page.other_selectors.append(sel)
         return MagicMock()
 
     page.locator = MagicMock(side_effect=_locator)
@@ -1099,19 +1102,18 @@ def _make_frame_slot_page(
 
 
 class TestAttachFrameSlotSelection:
-    """_attach_frame selects frame slots structural-first (issue #24 Phase 2).
+    """_attach_frame selects frame slots structurally only (issue #24, #1273).
 
-    Validates that locale-free structural selection (FRAME_SLOTS_STRUCT) is
-    used when the slots are present, and that FRAME_SLOT_BY_LABEL text-match
-    is only consulted as a fallback.
+    FRAME_SLOTS_STRUCT is the one anchor: the English 'Start'/'End' text-label
+    fallback is gone, because it could only ever match an English profile and
+    the preceding visibility wait already fails when the structural anchor is.
     """
 
     @pytest.mark.asyncio
     async def test_structural_slot_used_when_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When structural slots are found, _attach_frame clicks the indexed
-        one without consulting the text-label fallback."""
+        """When structural slots are found, _attach_frame clicks the indexed one."""
         image = tmp_path / "start.png"
         image.write_bytes(b"\x89PNG")
 
@@ -1122,48 +1124,41 @@ class TestAttachFrameSlotSelection:
             page, slot_index=0, label="Start", image=image, out_dir=None
         )
 
-        # structural slot nth(0) was clicked
-        struct_locator = page.locator(FRAME_SLOTS_STRUCT)
-        struct_locator.nth(0).click.assert_awaited_once()
-        # text locator was never probed via wait_for
-        text_wrapper = page.locator(FRAME_SLOT_BY_LABEL.format(label="Start"))
-        text_wrapper.first.wait_for.assert_not_awaited()
+        page.locator(FRAME_SLOTS_STRUCT).nth(0).click.assert_awaited_once()
+        assert not [s for s in page.other_selectors if "has-text" in s]
 
     @pytest.mark.asyncio
-    async def test_text_label_fallback_used_when_structural_count_insufficient(
+    async def test_no_text_label_fallback_when_structural_count_is_zero(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When structural count < slot_index + 1, _attach_frame falls back to
-        the text-label selector (requires English Chrome profile)."""
+        """Slots gone between the wait and the count: fail loud, and never
+        reach for an English 'Start' label (#1273)."""
         image = tmp_path / "start.png"
         image.write_bytes(b"\x89PNG")
 
-        # Only 0 structural slots — fallback must be used
-        page = _make_frame_slot_page(structural_count=0, text_label_visible=True)
+        page = _make_frame_slot_page(structural_count=0)
         monkeypatch.setattr(VideoGenerationMixin, "_upload_via_open_dialog", AsyncMock())
-
-        await VideoGenerationMixin._attach_frame(
-            page, slot_index=0, label="Start", image=image, out_dir=None
-        )
-
-        # text locator was probed via wait_for and then clicked
-        text_wrapper = page.locator(FRAME_SLOT_BY_LABEL.format(label="Start"))
-        text_wrapper.first.wait_for.assert_awaited_once()
-        text_wrapper.first.click.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_raises_when_structural_and_text_both_miss(self, tmp_path: Path) -> None:
-        """RuntimeError is raised when neither structural nor text-label finds
-        the slot — gives a clear error instead of a silent hang."""
-        image = tmp_path / "start.png"
-        image.write_bytes(b"\x89PNG")
-
-        page = _make_frame_slot_page(structural_count=0, text_label_visible=False)
 
         with pytest.raises(RuntimeError, match="frame slot index 0"):
             await VideoGenerationMixin._attach_frame(
                 page, slot_index=0, label="Start", image=image, out_dir=None
             )
+        assert not [s for s in page.other_selectors if "has-text" in s]
+
+    @pytest.mark.asyncio
+    async def test_miss_message_does_not_mention_a_text_fallback(self, tmp_path: Path) -> None:
+        """RuntimeError is raised when the structural slot is missing — a clear
+        error instead of a silent hang, naming only the anchor that exists."""
+        image = tmp_path / "start.png"
+        image.write_bytes(b"\x89PNG")
+
+        page = _make_frame_slot_page(structural_count=0)
+
+        with pytest.raises(RuntimeError, match="frame slot index 0") as excinfo:
+            await VideoGenerationMixin._attach_frame(
+                page, slot_index=0, label="Start", image=image, out_dir=None
+            )
+        assert "text-label" not in str(excinfo.value)
 
     @pytest.mark.asyncio
     async def test_raises_when_image_missing(self, tmp_path: Path) -> None:
@@ -1524,19 +1519,23 @@ class TestI2vT2vRoutingBackstop:
 
 
 class TestPickerIncludeSelectorLocaleInvariance:
-    """Issue #170: the picker include selectors must be tiered cascades —
-    locale-free anchor first where one exists, localized text as fallback.
+    """Issue #170 / #1273: the picker include selectors anchor on structure only.
 
     Recon (denon82 pt-BR 2026-06-11 + ru report on #170): the right-click
     context menu is `div[role='menu'][data-state='open']` and its include item
     carries the `add` ligature (unique within the menu: content_cut /
     content_copy / delete). The Vozes include button has NO ligature — it is
-    the lone iconless button in the open picker dialog.
+    the lone iconless button in the open picker dialog. AGENTS.md
+    § Locale-Invariance Discipline forbids the translated-caption tiers that
+    used to sit beside these (#1273), so each is a single structural tier.
     """
 
-    def test_context_include_is_a_two_tier_cascade(self) -> None:
+    _CAPTIONS = ("Incluir", "Добавить", "Add to prompt", "has-text")
+
+    def test_context_include_is_a_single_icon_tier(self) -> None:
         assert isinstance(PICKER_CONTEXT_INCLUDE, tuple)
-        assert len(PICKER_CONTEXT_INCLUDE) == 2
+        assert len(PICKER_CONTEXT_INCLUDE) == 1
+        assert _CONTEXT_INCLUDE_TIER_NAMES == ("icon",)
 
     def test_context_include_tier1_is_menu_scoped_add_icon(self) -> None:
         """Tier 1 locked verbatim so a drift can't silently slip past."""
@@ -1545,34 +1544,108 @@ class TestPickerIncludeSelectorLocaleInvariance:
             "[role='menuitem']:has(i.google-symbols:text-is('add'))"
         ), f"PICKER_CONTEXT_INCLUDE[0] drifted: {PICKER_CONTEXT_INCLUDE[0]!r}"
 
-    def test_context_include_tier1_has_no_localized_text(self) -> None:
-        for word in ("Incluir", "Добавить", "Add to prompt"):
-            assert word not in PICKER_CONTEXT_INCLUDE[0]
+    def test_context_include_has_no_localized_text(self) -> None:
+        for word in self._CAPTIONS:
+            assert all(word not in tier for tier in PICKER_CONTEXT_INCLUDE)
 
-    def test_context_include_text_tier_covers_pt_ru_en_menu_scoped(self) -> None:
-        text_tier = PICKER_CONTEXT_INCLUDE[1]
-        for caption in ("Incluir no comando", "Добавить в запрос", "Add to prompt"):
-            assert caption in text_tier, f"missing caption {caption!r}"
-        # Every comma-segment must be scoped to the open menu so a user-named
-        # tile (e.g. a character called 'Add to prompt') can never match.
-        for segment in text_tier.split(","):
-            assert segment.strip().startswith("[role='menu']"), (
-                f"unscoped text segment: {segment.strip()!r}"
-            )
-
-    def test_include_button_is_a_two_tier_cascade(self) -> None:
+    def test_include_button_is_a_single_structural_tier(self) -> None:
         assert isinstance(PICKER_INCLUDE_BUTTON, tuple)
-        assert len(PICKER_INCLUDE_BUTTON) == 2
+        assert len(PICKER_INCLUDE_BUTTON) == 1
+        assert _INCLUDE_BUTTON_TIER_NAMES == ("structural",)
 
-    def test_include_button_text_tier_covers_pt_ru_en(self) -> None:
-        text_tier = PICKER_INCLUDE_BUTTON[0]
-        for caption in ("Incluir no comando", "Добавить в запрос", "Add to prompt"):
-            assert caption in text_tier, f"missing caption {caption!r}"
+    def test_include_button_has_no_localized_text(self) -> None:
+        for word in self._CAPTIONS:
+            assert all(word not in tier for tier in PICKER_INCLUDE_BUTTON)
 
     def test_include_button_structural_tier_is_lone_iconless_dialog_button(self) -> None:
-        structural = PICKER_INCLUDE_BUTTON[1]
-        assert structural.startswith("[role='dialog'][data-state='open']")
-        assert ":not(:has(i.google-symbols))" in structural
+        assert PICKER_INCLUDE_BUTTON[0] == (
+            "[role='dialog'][data-state='open'] button:not(:has(i.google-symbols))"
+        )
+
+
+# A Vozes-style picker: icon buttons (tabs, preview) plus the include button(s).
+_PICKER_DIALOG_HTML = """
+<div role="dialog" data-state="open">
+  <button id="tab"><i class="google-symbols">voice_selection</i></button>
+  <button id="play"><i class="google-symbols">play_arrow</i></button>
+  {include}
+</div>
+<script>
+  window.clicked = [];
+  document.addEventListener("click", (e) => window.clicked.push(e.target.closest("button")?.id));
+</script>
+"""
+
+
+class TestResolveIncludeActionUniqueness:
+    """#1273 predict STOP condition: the structural include tier is "the lone
+    iconless button in the open dialog". If Flow ever adds a second one, the
+    tier must refuse rather than click whichever is first. Real Chromium, so
+    the CSS engine — not a fake — decides what matches."""
+
+    @staticmethod
+    async def _resolve(page: Any) -> Any:
+        return await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_INCLUDE_BUTTON,
+            _INCLUDE_BUTTON_TIER_NAMES,
+            surface="vozes_button",
+            detail="voice 'Alnilam'",
+            out_dir=None,
+            screenshot_name="debug_include.png",
+        )
+
+    async def test_lone_iconless_button_resolves_in_any_language(self, page: Any) -> None:
+        await page.set_content(
+            _PICKER_DIALOG_HTML.format(include='<button id="inc">Adicionar ao comando</button>')
+        )
+        loc = await self._resolve(page)
+        await loc.click()
+        assert await page.evaluate("window.clicked") == ["inc"]
+
+    async def test_two_iconless_buttons_fail_closed_without_a_click(self, page: Any) -> None:
+        await page.set_content(
+            _PICKER_DIALOG_HTML.format(
+                include='<button id="inc">Include</button><button id="other">Cancel</button>'
+            )
+        )
+        with pytest.raises(TransportTimeoutError, match="ambiguous: 2 matches") as excinfo:
+            await self._resolve(page)
+        assert EXIT_CODE_MAP[type(excinfo.value)] == 9
+        assert await page.evaluate("window.clicked") == []
+
+    async def test_hidden_iconless_button_does_not_make_the_visible_one_ambiguous(
+        self, page: Any
+    ) -> None:
+        await page.set_content(
+            _PICKER_DIALOG_HTML.format(
+                include='<button id="ghost" style="display:none">Old</button>'
+                '<button id="inc">Include</button>'
+            )
+        )
+        loc = await self._resolve(page)
+        await loc.click()
+        assert await page.evaluate("window.clicked") == ["inc"]
+
+    async def test_unique_context_menu_icon_tier_still_resolves(self, page: Any) -> None:
+        await page.set_content(
+            """
+            <div role="menu" data-state="open">
+              <div role="menuitem" id="add"><i class="google-symbols">add</i>Incluir</div>
+              <div role="menuitem" id="cut"><i class="google-symbols">content_cut</i></div>
+            </div>
+            """
+        )
+        loc = await VideoGenerationMixin._resolve_include_action(
+            page,
+            PICKER_CONTEXT_INCLUDE,
+            _CONTEXT_INCLUDE_TIER_NAMES,
+            surface="context_menu",
+            detail="entity 'e1'",
+            out_dir=None,
+            screenshot_name="debug_ctx.png",
+        )
+        assert await loc.get_attribute("id") == "add"
 
 
 class TestAttachCharacterEntities:
@@ -1590,6 +1663,7 @@ class TestAttachCharacterEntities:
         loc.scroll_into_view_if_needed = AsyncMock()
         loc.count = AsyncMock(return_value=1)
         loc.or_ = MagicMock(return_value=loc)
+        loc.filter = MagicMock(return_value=loc)
         page.locator.return_value = loc
         page.get_by_role.return_value = loc
         page.wait_for_timeout = AsyncMock()
@@ -1698,7 +1772,7 @@ class TestAttachReferenceAudio:
         self, install_log_capture: structlog.testing.LogCapture
     ) -> None:
         """The Vozes include button has no ligature (recon 2026-06-11): the
-        text tier is primary and its match must be reported for telemetry."""
+        structural tier is the only one, and its match is reported for telemetry."""
         page = TestAttachCharacterEntities._picker_page()
 
         await VideoGenerationMixin._attach_reference_audio(page, "Alnilam", out_dir=None)
@@ -1709,7 +1783,7 @@ class TestAttachReferenceAudio:
             if e["event"] == "ui_automation_video.include_selector_tier"
         ]
         assert tier_events, "expected an include_selector_tier event"
-        assert tier_events[0]["tier"] == "text"
+        assert tier_events[0]["tier"] == "structural"
         assert tier_events[0]["surface"] == "vozes_button"
 
     @pytest.mark.asyncio
@@ -3398,6 +3472,115 @@ class TestUploadRejectionTypedError:
                 page, image, log_label="Start", out_dir=None
             )
         page.remove_listener.assert_called_once()  # finally-detach on the raise path
+
+
+class TestUploadButtonIsIconOnly:
+    @pytest.mark.asyncio
+    async def test_only_the_icon_selector_is_tried(self, tmp_path: Path) -> None:
+        """#1273: the English 'Upload media' text fallback is gone. A miss on the
+        locale-free `upload` ligature is one attempt and a loud error that no
+        longer tells the user to switch Chrome to English."""
+        tried: list[str] = []
+        page = MagicMock()
+        page.on = MagicMock()
+        page.remove_listener = MagicMock()
+        page.screenshot = AsyncMock()
+
+        class _FcCm:
+            async def __aenter__(self) -> MagicMock:
+                return MagicMock()
+
+            async def __aexit__(self, *args: object) -> bool:
+                return False
+
+        page.expect_file_chooser = MagicMock(side_effect=lambda **_: _FcCm())
+
+        def _locator(sel: str) -> MagicMock:
+            tried.append(sel)
+            loc = MagicMock()
+            loc.first = loc
+            loc.click = AsyncMock(side_effect=TimeoutError("no such button"))
+            return loc
+
+        page.locator = MagicMock(side_effect=_locator)
+        image = tmp_path / "s1.jpg"
+        image.write_bytes(b"\xff\xd8\xff")
+
+        with pytest.raises(RuntimeError, match="file chooser") as excinfo:
+            await VideoGenerationMixin._upload_via_open_dialog(
+                page, image, log_label="Start", out_dir=None
+            )
+        assert tried == [UPLOAD_MEDIA_BUTTON]
+        assert "English" not in str(excinfo.value)
+        page.remove_listener.assert_called_once()
+
+
+# Classic-editor duration tabs: the number is stable, the unit is translated
+# (`8s` EN/PT, `8 giây` VI — #963), and resolution siblings share leading digits.
+_DURATION_TABS_HTML = """
+<div role="tablist">{tabs}</div>
+<script>
+  window.clicked = [];
+  document.addEventListener("click", (e) => window.clicked.push(e.target.closest("[id]").id));
+</script>
+"""
+
+
+def _tabs(*labels: str) -> str:
+    return "".join(
+        f'<button role="tab" id="t{i}">{label}</button>' for i, label in enumerate(labels)
+    )
+
+
+class TestSelectVideoDurationLocale:
+    """#1273: the classic duration tab is matched by its NUMBER as a whole token,
+    the rule `migrated_composer._duration` already uses (#963). Real Chromium."""
+
+    async def test_translated_unit_is_matched_by_number(self, page: Any) -> None:
+        await page.set_content(
+            _DURATION_TABS_HTML.format(tabs=_tabs("480p", "4K", "1080p", "8 giây"))
+        )
+        await VideoGenerationMixin._select_video_duration(page, 8, out_dir=None)
+        assert await page.evaluate("window.clicked") == ["t3"]
+
+    async def test_resolution_siblings_are_refused(self, page: Any) -> None:
+        await page.set_content(_DURATION_TABS_HTML.format(tabs=_tabs("480p", "4K", "4s", "8s")))
+        await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+        assert await page.evaluate("window.clicked") == ["t2"]
+
+    async def test_count_label_is_refused_for_the_same_number(self) -> None:
+        # The old count tab `4x` must never be read as `--duration 4` (it bills 4 clips).
+        assert not _duration("4s").search("4x")
+        assert not _duration("4s").search("4X")
+        assert _duration("4s").search("4s")
+
+    async def test_count_tab_is_not_clicked_for_duration(self, page: Any) -> None:
+        await page.set_content(_DURATION_TABS_HTML.format(tabs=_tabs("4x", "4s")))
+        await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+        assert await page.evaluate("window.clicked") == ["t1"]
+
+    @pytest.mark.parametrize("wrap", ["{}", "<span>{}</span>"], ids=["bare", "span"])
+    async def test_label_with_icon_still_matches(self, page: Any, wrap: str) -> None:
+        icon = '<i class="google-symbols">timer</i>'
+        await page.set_content(
+            _DURATION_TABS_HTML.format(
+                tabs=f'<button role="tab" id="t0">{icon}{wrap.format("4s")}</button>'
+                f'<button role="tab" id="t1">{icon}{wrap.format("8s")}</button>'
+            )
+        )
+        await VideoGenerationMixin._select_video_duration(page, 8, out_dir=None)
+        assert await page.evaluate("window.clicked") == ["t1"]
+
+    async def test_only_resolution_siblings_is_a_drift_miss(
+        self, page: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gflow_cli.api.transports._video_editor_mode as editor_mode
+
+        monkeypatch.setattr(editor_mode, "_PROBE_TIMEOUT_MS", 100)
+        await page.set_content(_DURATION_TABS_HTML.format(tabs=_tabs("480p", "4K")))
+        with pytest.raises(UiSelectorDriftError, match="4s duration tab"):
+            await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+        assert await page.evaluate("window.clicked") == []
 
 
 class TestCaptureDebugScreenshotFailure:

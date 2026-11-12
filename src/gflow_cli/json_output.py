@@ -26,11 +26,16 @@ if TYPE_CHECKING:
     from gflow_cli.services.doctor import DoctorReport
 
 
+def dumps(payload: dict[str, Any]) -> str:
+    """The one ``--json`` serialization; MCP resources that mirror a command reuse it."""
+    return json.dumps(payload, indent=2)
+
+
 def emit(payload: dict[str, Any]) -> None:
     """Print *payload* as indented JSON on stdout (the only side effect here)."""
     import click
 
-    click.echo(json.dumps(payload, indent=2))
+    click.echo(dumps(payload))
 
 
 def exit_code_for(exc: GFlowError) -> int:
@@ -98,6 +103,9 @@ def unexpected_payload(
         "title": "Unexpected error",
         "exit_code": 1,
         "retryable": False,
+        # #1201: an unclassified failure proves nothing about billing.
+        "charged": "maybe",
+        "next_action": "none",
     }
     if debug is not None:
         error["detail"] = str(debug)
@@ -194,7 +202,7 @@ def video_result(
     ``generation_status`` is the raw ``MEDIA_GENERATION_STATUS_*`` wire value.
     """
     st = result.status
-    return {
+    payload: dict[str, Any] = {
         "status": "ok" if st.succeeded else "fail",
         "command": command,
         "media_id": st.media_id,
@@ -212,3 +220,9 @@ def video_result(
             "seed": request.seed,
         },
     }
+    if not st.succeeded:
+        # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
+        payload.update(charged="maybe", next_action="reconcile")
+        if st.media_id:
+            payload["operation_id"] = st.media_id
+    return payload

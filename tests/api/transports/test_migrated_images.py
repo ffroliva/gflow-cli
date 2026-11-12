@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog
+from playwright.async_api import Error as PwError
+from playwright.async_api import TimeoutError as PwTimeout
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
@@ -18,7 +20,13 @@ from gflow_cli.api.image import (
     ImageRef,
     Model,
 )
-from gflow_cli.errors import FlowHostMigratedError, WireFormatError
+from gflow_cli.errors import (
+    EXIT_CODE_MAP,
+    FlowHostMigratedError,
+    NetworkError,
+    TransportTimeoutError,
+    WireFormatError,
+)
 from tests.api.transports._ogiz0b import submit_body
 
 MEDIA = "11111111-1111-4111-8111-111111111111"
@@ -302,6 +310,49 @@ async def test_client_never_resubmits_a_page_owned_image_run(
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize(
+    "exc",
+    [
+        NetworkError("bearer: HTTP 503 server error"),
+        PwTimeout("Timeout 30000ms exceeded"),
+        PwError("net::ERR_CONNECTION_RESET"),
+        # What the HTTP transports raise on a hung submit (bearer.py, sapisidhash.py,
+        # evaluate_fetch.py): exit 9 / retry would invite the double spend (#1279 review).
+        TransportTimeoutError(detail="POST batchGenerateImages timed out after 60s"),
+    ],
+    ids=["5xx", "timeout", "reset", "transport-timeout"],
+)
+async def test_client_sends_an_http_image_submit_once_and_asks_to_reconcile(
+    monkeypatch: pytest.MonkeyPatch, exc: BaseException
+) -> None:
+    """#1275: the HTTP transports send the client's single-use reCAPTCHA token, and a 5xx,
+    timeout or reset can come after Flow took the job. A resend is refused for the spent
+    token or spends the daily image quota twice, so the submit goes out once."""
+    calls: list[str] = []
+
+    class _Failing(_HttpImageTransport):
+        async def generate_images(self, **kwargs: Any) -> list[GeneratedImage]:
+            calls.append(kwargs["request"].recaptcha_token)
+            raise exc
+
+    client = FlowApiClient.__new__(FlowApiClient)
+    client.transport = _Failing()  # type: ignore[assignment]
+    monkeypatch.setattr(client, "_mint_recaptcha_token", AsyncMock(return_value="minted"))
+
+    with pytest.raises(NetworkError) as caught:
+        await client._drive_images_generation(  # noqa: SLF001
+            project_id=PROJECT, req=_request(), recaptcha_action="imageGeneration"
+        )
+    assert calls == ["minted"]
+    exit_code = next(c for cls, c in EXIT_CODE_MAP.items() if isinstance(caught.value, cls))
+    assert exit_code == 6
+    assert caught.value.charged == "maybe"
+    assert caught.value.next_action == "reconcile"
+    assert caught.value.retryable is False
+    hint = caught.value.to_problem_details()["remediation_hint"]
+    assert "check the project in flow" in hint.lower()
+
+
 async def test_migrated_image_route_dispatches_before_the_labs_driver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -340,6 +391,37 @@ async def test_migrated_image_route_dispatches_before_the_labs_driver(
     assert result == generated
     run_images.assert_awaited_once()
     assert page.url == "about:blank"
+
+
+async def test_the_migrated_image_route_hands_the_refresh_resolver_to_the_composer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#546: without the resolver, a renamed image in the project fails on this host (exit
+    32) where the labs driver heals it from the project listing."""
+    from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
+    reset_settings()
+    transport = UiAutomationTransport()
+    page = MagicMock()
+    page.url = f"https://flow.google.com/project/{PROJECT}"
+
+    async def goto(url: str, **_: Any) -> None:
+        page.url = url
+
+    page.goto = goto
+    transport._page = page  # noqa: SLF001
+    transport._setup_done = True  # noqa: SLF001
+    run_images = AsyncMock(return_value=[])
+    monkeypatch.setattr("gflow_cli.api.transports.migrated_composer.run_images", run_images)
+
+    def resolver(_media_id: str) -> str | None:
+        return None
+
+    await transport.generate_images(project_id=PROJECT, request=_request(), name_resolver=resolver)
+
+    assert run_images.await_args.kwargs["name_resolver"] is resolver
 
 
 def test_ui_transport_owns_its_image_recaptcha_on_about_blank(

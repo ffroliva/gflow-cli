@@ -58,6 +58,9 @@ gflow auth login --browser chrome
 # Check the session (spends nothing)
 gflow auth status
 gflow credits user          # Veo credit balance (no browser when the direct read is on and the saved session is accepted; spends nothing)
+gflow capabilities          # what gflow can drive here: yes/no/partial per capability (no call to Flow)
+gflow models list           # image and video models, aliases, durations (no call to Flow)
+# Every error says whether Flow may have charged you and what to do next: docs/ERRORS.md
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"

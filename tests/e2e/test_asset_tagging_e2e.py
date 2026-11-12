@@ -84,6 +84,10 @@ async def test_e2e_asset_tagging_resolution(
         env=os.environ,
         check=False,
     )
+    if create.returncode != 0 and "Flow has migrated to https://flow.google.com" in create.stderr:
+        # The labs createEntity route is retired for this account and character create is
+        # not ported to flow.google.com yet (open PR #987).
+        pytest.skip("character create is not ported to flow.google.com yet (#987)")
     assert create.returncode == 0, f"character create failed: stderr={create.stderr}"
     # --json emits one (pretty-printed) JSON document, possibly after a line of
     # human-readable log noise ("  Project: ... (existing)"). Slice the outer

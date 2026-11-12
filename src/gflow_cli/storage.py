@@ -23,6 +23,10 @@ import asyncio
 import posixpath
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gflow_cli.errors import Charged, NextAction
 
 # ---------------------------------------------------------------------------
 # Public type alias
@@ -152,7 +156,13 @@ def refuse_cloud_storage_for_local_file(storage_uri: str | None, what: str) -> N
         )
 
 
-async def write_asset_async(target: AnyPath, data: bytes) -> None:
+async def write_asset_async(
+    target: AnyPath,
+    data: bytes,
+    *,
+    charged: Charged = "maybe",
+    next_action: NextAction = "reconcile",
+) -> None:
     """Write *data* to *target* without blocking the asyncio event loop.
 
     * **Local** ``Path``: creates parent directories then writes; runs in a
@@ -162,7 +172,9 @@ async def write_asset_async(target: AnyPath, data: bytes) -> None:
 
     Raises:
         ConfigurationError: *target* cannot be written (#1091). By then Flow has
-            generated the asset, so callers salvage its id first (#1035).
+            generated the asset, so callers salvage its id first (#1035). It reads
+            ``charged``/``next_action`` (#1201): ``maybe``/``reconcile`` by default, for an
+            asset Flow made; a free render passes ``no``/``fix_input``.
     """
     try:
         if is_cloud_path(target):
@@ -179,4 +191,6 @@ async def write_asset_async(target: AnyPath, data: bytes) -> None:
                 "Point --out (or GFLOW_CLI_OUTPUT_DIR / GFLOW_CLI_STORAGE_URI) at a "
                 "location this process can write. The asset is still in the Flow project."
             ),
+            charged=charged,
+            next_action=next_action,
         ) from exc

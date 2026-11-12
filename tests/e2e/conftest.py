@@ -40,7 +40,7 @@ from typing import ParamSpec
 import pytest
 
 from gflow_cli.config import get_settings, reset_settings
-from gflow_cli.errors import FlowHostMigratedError
+from gflow_cli.errors import FlowHostMigratedError, WireFormatError
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
@@ -192,8 +192,25 @@ def skip_on_migrated_host(
             await fn(*args, **kwargs)
         except FlowHostMigratedError:
             pytest.skip("labs-only affordance; this profile is on the migrated host")
+        except WireFormatError as exc:
+            # A labs RPC Flow switched off for this account answers with this sentence
+            # (observed 2026-11-12); any other wire error is a real failure.
+            if "deprecated and disabled" not in str(exc):
+                raise
+            pytest.skip("labs RPC not ported to flow.google.com yet; Flow refused it")
 
     return wrapper
+
+
+def skip_labs_composer_check(entries: list[dict[str, object]], check: str) -> None:
+    """Skip a check on an event only the labs composer logs, when Flow served flow.google.com.
+
+    Call it AFTER the host-neutral assertions (an image came back, the count matched) and
+    right before an assertion on a ``ui_automation*`` event. On flow.google.com the migrated
+    composer runs instead and logs ``migrated.*``; the checks above already passed there.
+    """
+    if any(str(e.get("event", "")).startswith("migrated.") for e in entries):
+        pytest.skip(f"{check} is logged only by the labs composer; Flow served flow.google.com")
 
 
 # --- /about landing: a missing precondition, not a failure (#888) --------------------

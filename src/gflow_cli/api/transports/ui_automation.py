@@ -46,6 +46,9 @@ from gflow_cli.api.transports.migrated_composer import (
     ModelMenuMatcher,
     migrated_images_prefer,
 )
+from gflow_cli.api.transports.ui_automation_entities import (
+    entity_ids_from_request_body as _entity_ids_from_request_body,
+)
 from gflow_cli.api.transports.ui_automation_video import (
     ENTITY_ATTACH_DRIFT_HINT,
     MODE_SWITCH_TRIGGER_SELECTORS,
@@ -886,47 +889,6 @@ def _reference_field_count(post_data: str | None) -> int:
     return sum(1 for k in first if "reference" in k.lower() or "entity" in k.lower())
 
 
-def _entity_ids_from_one_request(req: Any) -> set[str]:
-    """Extract entityId strings from a single ``requests[]`` entry."""
-    if not isinstance(req, dict):
-        return set()
-    ents = cast(_JsonObj, req).get("referenceEntities")
-    if not isinstance(ents, list):
-        return set()
-    out: set[str] = set()
-    for ent in cast(_AnyList, ents):
-        if isinstance(ent, dict):
-            entity_id = cast(_JsonObj, ent).get("entityId")
-            if isinstance(entity_id, str):
-                out.add(entity_id)
-    return out
-
-
-def _entity_ids_from_request_body(post_data: str | None) -> set[str]:
-    """Entity ids carried by an outgoing ``batchGenerateImages`` body.
-
-    Request shape (live-verified — issue #170 report + movie spike):
-    ``requests[].referenceEntities[].entityId``. Feeds the #170 submit
-    backstop: a UI attach miss must not degrade to a text-only generation
-    reported as success.
-    """
-    if not post_data:
-        return set()
-    try:
-        parsed: object = json.loads(post_data)
-    except (ValueError, TypeError):
-        return set()
-    if not isinstance(parsed, dict):
-        return set()
-    out: set[str] = set()
-    reqs = cast(_JsonObj, parsed).get("requests")
-    if not isinstance(reqs, list):
-        return out
-    for req in cast(_AnyList, reqs):
-        out |= _entity_ids_from_one_request(req)
-    return out
-
-
 def _jitter_ms(base_ms: int, variance: float = 0.25) -> int:
     """Calculate a randomized delay around `base_ms` with `±variance` spread.
 
@@ -937,6 +899,27 @@ def _jitter_ms(base_ms: int, variance: float = 0.25) -> int:
         return 0
     delta = int(round(base_ms * max(0.0, min(1.0, variance))))
     return max(1, secrets.SystemRandom().randint(base_ms - delta, base_ms + delta))  # NOSONAR
+
+
+async def _try_iframe_close_button(page: Page) -> bool:
+    """Try each close-button selector inside each changelog iframe. Returns True on success."""
+    for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
+        try:
+            frame = page.frame_locator(iframe_sel).first
+            for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
+                loc = frame.locator(close_sel).first
+                if await loc.is_visible(timeout=500):
+                    await loc.click(force=True)
+                    await page.wait_for_timeout(_jitter_ms(1000))
+                    log.info(
+                        _EVT_OVERLAY_DISMISSED,
+                        selector=close_sel,
+                        method="close_button_frame",
+                    )
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 class UiAutomationTransport(VideoGenerationMixin):
@@ -1310,27 +1293,6 @@ class UiAutomationTransport(VideoGenerationMixin):
                 continue
         return False
 
-    @staticmethod
-    async def _try_iframe_close_button(page: Page) -> bool:
-        """Try each close-button selector inside each changelog iframe. Returns True on success."""
-        for iframe_sel in CHANGELOG_IFRAME_SELECTORS:
-            try:
-                frame = page.frame_locator(iframe_sel).first
-                for close_sel in OVERLAY_CLOSE_BUTTON_SELECTORS:
-                    loc = frame.locator(close_sel).first
-                    if await loc.is_visible(timeout=500):
-                        await loc.click(force=True)
-                        await page.wait_for_timeout(_jitter_ms(1000))
-                        log.info(
-                            _EVT_OVERLAY_DISMISSED,
-                            selector=close_sel,
-                            method="close_button_frame",
-                        )
-                        return True
-            except Exception:
-                continue
-        return False
-
     async def _require_unblocked(
         self,
         page: Page,
@@ -1465,7 +1427,7 @@ class UiAutomationTransport(VideoGenerationMixin):
         if await cls._try_page_close_button(page, _GENERIC_CLOSE):
             return await cls._verify_overlay_cleared(page, method="close_button_page")
 
-        if await cls._try_iframe_close_button(page):
+        if await _try_iframe_close_button(page):
             return await cls._verify_overlay_cleared(page, method="close_button_frame")
 
         # Escape fallback (regression test case: iframe present, no close button).
@@ -3089,7 +3051,13 @@ class UiAutomationTransport(VideoGenerationMixin):
         self.last_image_route = route
         if route == "migrated":
             try:
-                result = await run_images(page, request, project_id=project_id, out_dir=out_dir)
+                result = await run_images(
+                    page,
+                    request,
+                    project_id=project_id,
+                    out_dir=out_dir,
+                    name_resolver=name_resolver,
+                )
             except Exception:
                 # #792: do NOT park here. FlowApiClient stages the incident bundle
                 # from THIS page at its failure boundary, and parking first hands

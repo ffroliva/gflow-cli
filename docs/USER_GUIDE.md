@@ -618,7 +618,7 @@ Once it passes, fix the prompt in `prompts.txt` and rerun the loop.
 
 ### 12.2 Exit 4 — `RateLimitError`
 
-Flow returned `429 Too Many Requests`. The `tenacity` retry layer already retried up to 3× with exponential jittered backoff (1 s → 2 s → 4 s, ±25% jitter, capped at 60 s when `Retry-After` is set). If it still failed, you're hitting either:
+Flow returned `429 Too Many Requests`. For reads and polls, the `tenacity` retry layer already retried up to 3× with exponential jittered backoff (1 s → 2 s → 4 s, ±25% jitter, capped at 60 s when `Retry-After` is set). An image submit and a billed extend or upscale are sent once and never retried, because their reCAPTCHA token is single-use (#1260, #1274, #1275). If it still failed, you're hitting either:
 
 - **Sustained rate limit** — the API thinks you're spamming. Wait and resume.
 - **Daily quota** — your plan's allowance for the day is exhausted. Check the credit balance UI.

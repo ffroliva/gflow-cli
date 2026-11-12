@@ -94,6 +94,8 @@ _UNEXPECTED_RESULT = {
         "detail": "Unexpected RuntimeError; details were logged server-side.",
         "message": "Unexpected RuntimeError; details were logged server-side.",
         "retryable": False,
+        "charged": "maybe",
+        "next_action": "none",
     },
 }
 

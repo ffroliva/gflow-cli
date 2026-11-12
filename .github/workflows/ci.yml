@@ -10,6 +10,14 @@ on:
 permissions:
   contents: read
 
+# One run per PR or branch: a newer push cancels the run it supersedes, so a burst of
+# merges does not queue several full matrices for the runner pool (measured 2026-11-12:
+# 7 min wall time, ~2.5 min of it waiting for runners, against ~4 min unqueued).
+# main is never cancelled: every release-line commit keeps its full record.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 env:
   # Suppress Node.js deprecation warnings and align with user request to use Node 22/remove noise.
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
@@ -189,6 +197,21 @@ jobs:
       # --no-sync for the same reason: `uv run` re-locks before running.
       - name: Repo hygiene (no artefacts, no hardcoded paths, version lockstep)
         run: uv run --no-sync python scripts/ci/check_repo_hygiene.py
+
+      # On a pull request, --base-ref also fails a hand edit that adds or raises a baseline
+      # entry against the PR's base. A push has no base to compare with (main against develop
+      # would differ legitimately), so it runs the plain gate. The checkout is shallow, so fetch
+      # the base branch's tip first.
+      - name: Size gate (file/class length + ruff complexity ratchet, #1249)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            uv run --no-sync python scripts/ci/check_size.py --base-ref FETCH_HEAD
+          else
+            uv run --no-sync python scripts/ci/check_size.py
+          fi
 
       - name: Documentation links
         run: uv run python scripts/ci/check_doc_links.py

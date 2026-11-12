@@ -44,6 +44,11 @@ The hexagonal target above is the steady state. The **current** package — and 
 - Cross-module communication goes through public interfaces, never private internals.
 - Modules don't share global mutable state. Configuration is read-only at the boundary (`Settings`).
 - When a module file grows past 400 lines, prefer extraction to a sub-package over inline growth.
+- **Enforced (#1249):** `scripts/ci/check_size.py` fails a file over 2,000 lines, a class over 1,000 lines, and any ruff `C901` (complexity over 10), `PLR0915` (over 50 statements) or `PLR0904` (over 20 public methods) hit, with the thresholds set once in `pyproject.toml`. The line limits are loose on purpose (a tight one forces wrappers and extra hops) and are tightened one step at a time. Existing offenders sit in `scripts/ci/size_baseline.json`, a ratchet that can only shrink (`--update-baseline` lowers, drops or moves entries, never adds or raises them; `# noqa` exempts nothing). A function moved to another file keeps its entry when its value did not grow. CI also runs `--base-ref`, which fails a hand edit that adds or raises an entry. It runs in `/gflow:check`, as a pre-commit hook, and as a CI step.
+
+**`FlowApiClient` composition (#1249 wave 1).** `api/client.py` keeps the session lifecycle (launch, page pool, transport setup, close) and composes the rest from single-responsibility classes, one module each: `_flow_session.FlowSession` (page checkout, recorder hooks, incidents, access token, the JSON verbs), `_flow_bootstrap.AccountBootstrap` (account chooser, locale), `_flow_workspace.WorkspaceSurface` (projects, agent info, uploads, workflows, scenes), `_flow_generation.GenerationSurface` (image and video generation, the reCAPTCHA mint, polling, downloads, credits), `_flow_media_edit.MediaEditSurface` (upscale, extend) and `_flow_characters.CharacterSurface` (character entities and images). Four of them form one chain on `FlowSession`, each inheriting everything before it: `WorkspaceSurface` → `GenerationSurface` → `MediaEditSurface` → `CharacterSurface`. Generation needs the workspace (`generate_*` create a project), character images need generation (they download), and media edits sit between those two. So none of the four can be reused alone without the ones before it. `AccountBootstrap` is a second branch on `FlowSession`, and `FlowApiClient(CharacterSurface, AccountBootstrap)` joins the two. Every method kept its body and its name on `FlowApiClient`, so callers and tests that patch `client._post_json` or `client._mint_recaptcha_token` are unchanged. `client.py` re-exports every name other code imports from it; a test that patches a module global (`patch("gflow_cli.api.client.storage_path")`) has to follow the code to its new module, and each such edit is listed in the PR. A re-exported constant or helper (`MAX_IMAGE_BYTES`, `MAX_CONCAT_B64_LEN`, `_is_target_closed`) still imports from `client`, but patching it there no longer reaches the code that moved; patch the module that defines it. A narrow provider port is later work: it needs a second implementation to justify it.
+
+**`VideoGenerationMixin` composition (#1249 wave 2).** `UiAutomationTransport` still inherits only `VideoGenerationMixin`, which keeps the orchestration (`generate_video`, `_submit_and_poll`, `_generate_video_locked`) in `api/transports/ui_automation_video.py`. Its other methods are a linear chain of mixins, one module each, every link inheriting the one before: `_video_network.FlowNetworkMixin` (entity interception, status polling, clip download) → `_video_editor_mode.EditorModeMixin` (selector cascade, agent mode, Flow-crash detection) → `_video_settings.VideoSettingsMixin` (model, duration, sub-mode, count, aspect) → `_video_picker_project.PickerProjectMixin` (the asset picker's project sync and grid scrolling) → `_video_references.ReferenceAttachMixin` (uploads, existing assets, image UUIDs, characters, audio) → `_video_frames.FrameAttachMixin` (start and end frames) → `VideoGenerationMixin`. The order puts every callee before its callers, so pyright sees each call. The shared selectors and helpers moved verbatim to `_video_common`, and `ui_automation_video` re-exports every name other code reads from it. Moved bodies still call siblings as `VideoGenerationMixin._x(...)`, because tests patch them on that class; `ui_automation_video` binds that name into each part's module once the class exists, and `tests/api/transports/test_video_mixin_contract.py` fails if a method reads a name its module cannot resolve. A test that patches a module global follows the method that reads it: `_PROBE_TIMEOUT_MS` is patched on `_video_editor_mode`, `write_asset_async` on `_video_network`.
 
 **Phase 4 module additions (in v0.4.0a1):**
 
@@ -52,7 +57,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Data layer module (shipped in v0.9.0):**
 
-- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and final asset locations (local paths or cloud URIs). Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Since #1249 wave 2, `DataRepository` is five table-group classes over one store (`_repo_projects`, `_repo_assets`, `_repo_operations`, `_repo_scenes`, `_repo_local_files`, sharing `_repo_base.RepositoryBase`). `OperationRecorder` is `_recorder_core.RecorderCore` plus image, video and character recording parts (`_recording_*`). Both keep their public API and import path; `open` stays a classmethod on `OperationRecorder`. Records all new image/video operations, asset provenance, and final asset locations (local paths or cloud URIs). Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
 
 **External storage module (shipped after v0.9.1):**
 
@@ -382,18 +387,16 @@ The dependency direction is inviolate. Everything else is preference, not religi
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  Provider       │ ← protocol (planned abstraction — see ROADMAP; not yet a `providers/` package)
+│  Provider       │ ← protocol (planned abstraction; not yet a `providers/` package)
 │  abstraction    │
 └────────┬────────┘
          │
-   ┌─────┴─────┬───────────────┐
-   │           │               │
-┌──▼──┐    ┌────────┐       ┌───────┐
-│Flow │    │Official│       │ Mock  │
-│(now)│    │ Veo    │       │(tests)│
-│     │    │(planned│       │       │
-│     │    │ later) │       │       │
-└──┬──┘    └────────┘       └───────┘
+   ┌─────┴─────┐
+   │           │
+┌──▼──┐    ┌───────┐
+│Flow │    │ Mock  │
+│(now)│    │(tests)│
+└──┬──┘    └───────┘
    │
    │   POST /v1/flow/uploadImage
    │   POST /v1/video:batchAsyncGenerateVideoText
@@ -403,7 +406,7 @@ The dependency direction is inviolate. Everything else is preference, not religi
 aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. A future release may add `OfficialVeoProvider` (via [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
+The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. Google's separately billed Gemini / Vertex AI generation APIs are out of scope ([ROADMAP](../ROADMAP.md#out-of-scope)).
 
 ## Auth strategy
 

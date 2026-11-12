@@ -86,6 +86,31 @@ def test_e2e_models_catalog_json_shape() -> None:
             )
 
 
+@pytest.mark.e2e_auth
+def test_e2e_models_list_and_show_json() -> None:
+    """#1196 on the real binary: `models list --json` is the bare catalog, and
+    `models show <alias> --json` is that model's catalog entry, nothing else."""
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-m", "gflow_cli", "models", *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    bare, listed, shown = run("--json"), run("list", "--json"), run("show", "omni-flash", "--json")
+    for proc in (bare, listed, shown):
+        assert proc.returncode == 0, proc.stderr[-400:]
+    assert json.loads(listed.stdout) == json.loads(bare.stdout)
+    entry = next(m for m in json.loads(bare.stdout)["video"]["models"] if m["name"] == "omni_flash")
+    assert json.loads(shown.stdout) == entry
+
+    unknown = run("show", "omni-flsh")
+    assert unknown.returncode == 2
+    assert "omni-flash" in unknown.stderr
+
+
 @pytest.mark.e2e_image
 def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> None:
     """`gflow image t2i --json` produces a pure-JSON document with the

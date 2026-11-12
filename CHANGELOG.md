@@ -7,6 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.98.0] — 2026-11-12
+
+### Added
+
+- **Error envelopes say whether Flow may have billed, and what to do next.** Every
+  `--json` error, MCP error result and failed worker-queue task now carries `charged`
+  (`no` / `maybe` / `yes`) and `next_action` (`retry`, `retry_after`, `wait`, `reauth`,
+  `fix_input`, `reconcile` or `none`), plus `operation_id` when an id exists. Each error
+  class declares its defaults, and raise sites that know better override them: a failed
+  download of a billed clip, an extend render or chain link failing after billed work, and
+  a labs poll timeout after submit read `reconcile`. The result-shaped `--json` failures
+  (`video t2v`/`i2v`/`r2v`, `video extend`, a partial `video chain`) and the envelopes the
+  MCP server and worker build by hand carry them too. `retryable` is unchanged and always
+  agrees with `next_action`; a rate limit also reports its `retry_after` seconds. Every `type` URI, its exit code and its defaults are listed in
+  [docs/ERRORS.md](docs/ERRORS.md) (#1201).
+- **`gflow capabilities [--json]` and the MCP resource `capabilities://self`** declare what
+  gflow can drive, so an agent can plan instead of learning by failing (#1197). One value per
+  key (`yes`/`no`/`partial`/`unknown`), with a note on every `partial`: `cancel.server` and
+  `idempotent_submit` are `no`, and `submit.no_wait`/`status`/`wait` are `partial` (MCP
+  `wait=false` and `tasks/get` only; the CLI verbs are #1194), and `download` is `partial`
+  (recovery is video-only, #877). No call to Flow: the only input is `GFLOW_CLI_FLOW_HOST`,
+  and `host` reports that setting (per-profile resolution is #1212). Both surfaces return
+  the same document, except that a no-spend MCP server reports generation as `no`; a test
+  fails when a CLI command is added without a capability entry. Keys: `docs/CAPABILITIES.md`.
+- **`gflow models list` and `gflow models show <id>`.** `show` prints one model's catalog
+  entry (aliases, reference cap; image models add Flow's menu name and the default flag, video
+  models their selectable `durations` and max duration) by name or any spelling `--model`
+  accepts; `--json` emits exactly the object `gflow_list_models` returns for that model, so a
+  script no longer parses the whole list for one model's limits. An unknown id exits 2 and
+  names the closest matches. Bare `gflow models` still works and is an alias of
+  `gflow models list` (#1196).
+
+### Fixed
+
+- **Classic-editor selectors no longer depend on the UI language ([#1273](https://github.com/ffroliva/gflow-cli/issues/1273)).**
+  On the classic (labs) editor the voice/character include action, the media-dialog upload
+  button and the I2V frame slots now anchor on structure and icons only; the English and
+  Portuguese/Russian caption fallbacks are gone. The duration tab is matched by its exact
+  `8s` token first, then by its number alone, so a translated unit such as `8 giây` now
+  works too; the number match refuses a resolution (`480p`, `4K`) or count (`4x`) sibling.
+  When two visible iconless buttons could be the include action, gflow now fails loudly
+  (exit 9, with a screenshot, "ambiguous: N matches") instead of clicking the first one.
+
+- **An image submit is never resent with the same reCAPTCHA token ([#1275](https://github.com/ffroliva/gflow-cli/issues/1275)).**
+  On a transport that sends gflow's own reCAPTCHA token (the HTTP transports, not Flow's page),
+  a failed image submit was retried up to three times with the same single-use token. A 5xx
+  can arrive after Flow took the job, so a resend was refused for the spent token or spent the
+  daily image quota twice. The submit is now sent once on every transport. A server error,
+  timeout (including the transport's own submit timeout), connection reset or closed browser
+  exits 6 with `charged: maybe`, `next_action: reconcile` and a hint to check the project in
+  Flow; a closed browser on these transports used to exit 15. A 429 is no longer retried
+  either: it exits 4 with its `retry_after`, since the daily quota does not clear in seconds.
+  An auth refresh after a 401 still resends once, because a 401 is refused before anything is
+  made. The Flow-page path (#1010) is unchanged; polls and downloads still retry.
+
+- **A timeout or connection reset on a billed extend or upscale asks you to check Flow ([#1274](https://github.com/ffroliva/gflow-cli/issues/1274)).**
+  A Playwright timeout or connection reset while `gflow video extend` or `gflow image upscale`
+  (or the `gflow_upscale_image` MCP tool; `video extend` has no MCP tool) sent its billed
+  request exited 1 as an `UnexpectedError`, with no hint, though Flow may already hold the
+  job. It now exits 6 like a server error on the same request: `charged: maybe`,
+  `next_action: reconcile`, a hint to check the project in Flow, the cause's first line in
+  the detail, and no resend. A browser closed while that request is in flight now gets the
+  same answer instead of `BrowserSessionClosedError`, since the request may have reached
+  Flow. A timeout before the request is sent (fetching the access token) surfaces as before.
+  Non-billed calls still retry a timeout or reset as before.
+
+- **A billed extend or upscale is never resent after a server error ([#1260](https://github.com/ffroliva/gflow-cli/issues/1260)).**
+  `gflow video extend` and `gflow image upscale` (and the `gflow_upscale_image` MCP tool;
+  `video extend` has no MCP tool) retried a 5xx or 429
+  up to three times with the same request, single-use reCAPTCHA token included. A 5xx can
+  arrive after Flow took the job, so a resend could bill twice or be refused for the spent
+  token. These requests are now sent once. A server error exits 6 with
+  `charged: maybe`, `next_action: reconcile` and a hint to check the project in Flow before
+  running the command again. Non-billed calls (polls, reads) still retry as before.
+
+- **A renamed image heals on flow.google.com too ([#546](https://github.com/ffroliva/gflow-cli/issues/546)).**
+  `gflow image i2i --ref <media id> --project <id>` with a catalog name gone stale (the image
+  was renamed in Flow) exited 32 where Flow serves flow.google.com, because the listing the
+  heal reads (`flow.projectInitialData`) answers "deprecated and disabled" there. gflow now
+  reads the current caption from the page's own `@` picker and retries within the reload
+  budget; the MCP tool and `gflow run` heal the run too. The CLI still writes the fresh
+  name to the catalog (`store` history mode only). Reach: the assets the empty picker lists.
+
+### Changed
+
+- **Internal: `VideoGenerationMixin` is split into single-purpose parts ([#1249](https://github.com/ffroliva/gflow-cli/issues/1249)).**
+  The 3,278-line video mixin is now a chain of mixins in `api/transports/_video_*.py`, with the
+  shared selectors in `_video_common`; every name others read from `ui_automation_video` is still
+  there. No behaviour change: a golden master pins every moved method's source.
+
 ## [0.97.0] — 2026-11-10
 
 ### Added
@@ -6952,7 +7042,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...HEAD
+[0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
 [0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0

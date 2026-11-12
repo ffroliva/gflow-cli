@@ -1,0 +1,39 @@
+name: Feature request
+description: Something gflow should do that it does not.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stops you today? Start here, not with the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The behaviour you would like. Example commands welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where should it live?
+      description: Every user-facing CLI capability has an MCP twin, or a recorded reason it does not. Say which door you would use.
+      options:
+        - CLI and MCP
+        - CLI only (say why below)
+        - MCP only (say why below)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: flow
+    attributes:
+      label: Does Flow already do this in the web app?
+      description: If yes, which host served it (flow.google.com / labs.google) and how you reach it there. A feature gflow cannot drive yet is usually "not ported yet", not missing from Flow.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you use now
