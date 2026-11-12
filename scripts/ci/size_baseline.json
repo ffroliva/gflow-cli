@@ -1,6 +1,6 @@
 {
  "C901:src/gflow_cli/api/_flow_session.py::_extract_provider_error_message": 11,
- "C901:src/gflow_cli/api/transports/_video_network.py::FlowNetworkMixin._intercept_reference_entities": 18,
+ "C901:src/gflow_cli/api/transports/_video_network.py::FlowNetworkMixin._intercept_reference_entities": 15,
  "C901:src/gflow_cli/api/transports/_video_network.py::FlowNetworkMixin._intercept_reference_entities.intercept_generation_request": 13,
  "C901:src/gflow_cli/api/transports/_video_picker_project.py::PickerProjectMixin._ensure_picker_project": 16,
  "C901:src/gflow_cli/api/transports/_video_references.py::ReferenceAttachMixin._upload_via_open_dialog": 11,
@@ -37,7 +37,7 @@
  "C901:src/gflow_cli/services/mentions.py::resolve_mentions": 27,
  "C901:src/gflow_cli/update_check.py::run_update": 12,
  "C901:src/gflow_cli/worker/daemon.py::FlowWorker.process_task": 33,
- "PLR0915:src/gflow_cli/api/transports/_video_network.py::FlowNetworkMixin._intercept_reference_entities": 57,
+ "PLR0915:src/gflow_cli/api/transports/_video_network.py::FlowNetworkMixin._intercept_reference_entities": 51,
  "PLR0915:src/gflow_cli/api/transports/_video_picker_project.py::PickerProjectMixin._ensure_picker_project": 55,
  "PLR0915:src/gflow_cli/api/transports/migrated_composer.py::MigratedComposer._upload_via_toolbar": 78,
  "PLR0915:src/gflow_cli/api/transports/migrated_composer.py::MigratedComposer.submit_and_observe": 190,
