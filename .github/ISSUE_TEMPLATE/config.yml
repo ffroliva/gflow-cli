@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/ffroliva/gflow-cli/security/advisories/new
+    about: Secret leaks, auth bypass, supply-chain concerns. Never open a public issue — see docs/SECURITY.md § Reporting.
+  - name: Documentation
+    url: https://ffroliva.github.io/gflow-cli/docs/
+    about: The docs site. Offline, `gflow docs --search TERM` searches the same docs bundled with your install.
+  - name: Questions and ideas
+    url: https://github.com/ffroliva/gflow-cli/discussions
+    about: How-to questions and open-ended ideas belong in Discussions.

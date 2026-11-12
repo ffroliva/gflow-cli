@@ -1,0 +1,63 @@
+name: Flow surface change
+description: Flow changed — a selector, menu or wire call gflow relies on stopped working.
+labels: ["bug", "investigation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        gflow drives a product it does not control, so the most useful thing here is what Flow actually rendered or called on your machine.
+
+        **A timeout is not proof of absence.** A selector that misses is evidence about the selector, never about the feature. Please describe what you *observed*, and if you can, capture it with the $0 spike tools: [skills/spike](https://github.com/ffroliva/gflow-cli/blob/develop/skills/spike/SKILL.md) and [docs/E2E_TESTING.md](https://github.com/ffroliva/gflow-cli/blob/develop/docs/E2E_TESTING.md).
+  - type: input
+    id: version
+    attributes:
+      label: gflow version
+      description: Output of `gflow --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or MCP tool call
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host Flow served
+      options:
+        - flow.google.com
+        - labs.google
+        - Not observed
+    validations:
+      required: true
+  - type: input
+    id: locale
+    attributes:
+      label: Account / UI locale
+      description: Flow's UI language for this account (gflow's selectors must not depend on it).
+      placeholder: en, pt-BR, vi ...
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What Flow did vs what gflow expected
+      description: What you saw in the web app at that step (button, menu, dialog, request), and the exit code / problem details gflow returned (`--json`).
+    validations:
+      required: true
+  - type: textarea
+    id: har
+    attributes:
+      label: Redacted HAR summary (optional)
+      description: |
+        Only the output of `python scripts/dev/har-spike/extract_har_summary.py <capture>.har --host <host>`. **Never attach a raw HAR** — it carries cookies, Bearer tokens and prompts.
+      render: text
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I attached no raw HAR or incident bundle, and removed tokens, cookies, signed URLs and account emails.
+          required: true

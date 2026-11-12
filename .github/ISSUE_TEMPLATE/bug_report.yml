@@ -1,0 +1,94 @@
+name: Bug report
+description: A gflow command or MCP tool did something wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before you file: if Flow itself seems to have changed (a selector or wire stopped working), use the **Flow surface change** form instead. Auth or reCAPTCHA trouble? Check [KNOWN_ISSUES.md](https://github.com/ffroliva/gflow-cli/blob/develop/KNOWN_ISSUES.md) first.
+  - type: input
+    id: version
+    attributes:
+      label: gflow version
+      description: Output of `gflow --version`.
+      placeholder: gflow-cli 0.97.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Windows 11 / macOS 15 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - uv tool
+        - pipx
+        - pip
+        - source checkout
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface reproduces it?
+      description: The CLI and the MCP server are separate adapters over one service. If you only tried one, say so.
+      options:
+        - CLI
+        - MCP
+        - Both
+        - Only tried one of them
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command or MCP tool call
+      description: The full `gflow ...` command line, or the MCP tool name and its arguments.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host Flow served
+      description: The address in the browser gflow drove. This records what was served, not what your account can or cannot do.
+      options:
+        - flow.google.com
+        - labs.google
+        - Not observed
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs actual
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Exit code and problem details
+      description: Re-run with `--json` and paste the exit code (3-39) and the RFC 9457 problem-details JSON, including `charged` and `next_action`.
+      render: json
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`gflow doctor` output"
+      description: Read-only, spends nothing. Exit 33 just means it found something.
+      render: text
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      description: gflow redacts tokens and cookies in its own error output by default, but logs, screenshots and pasted text may still carry them.
+      options:
+        - label: I removed tokens, cookies, signed media URLs and account emails from everything above.
+          required: true
