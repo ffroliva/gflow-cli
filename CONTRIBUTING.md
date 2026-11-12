@@ -53,6 +53,8 @@ does not, and say why — a reviewer can then start from your evidence instead o
 
 ### Reporting that something is broken? Spike it first
 
+File it with the [issue forms](https://github.com/ffroliva/gflow-cli/issues/new/choose): *Bug report*, *Feature request*, or *Flow surface change* when Flow itself seems to have moved. They ask for exactly what triage needs.
+
 An e2e test proves a **fix**. A spike proves a **diagnosis** — and it is what turns "this
 does not work for me" into something a maintainer can act on without owning your account.
 
