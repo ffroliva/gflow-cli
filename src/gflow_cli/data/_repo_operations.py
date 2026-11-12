@@ -12,19 +12,7 @@ import dataclasses
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, cast
-
-from gflow_cli.data.models import (
-    OperationAssetRole,
-    OperationKind,
-    OperationRecord,
-    OperationStatus,
-)
-from gflow_cli.errors import DataIntegrityError
-
-if TYPE_CHECKING:
-    pass
-
+from typing import Any, cast
 
 from gflow_cli.data._repo_base import (
     RepositoryBase,
@@ -33,6 +21,13 @@ from gflow_cli.data._repo_base import (
     _row_to_operation,
     _utc_now,
 )
+from gflow_cli.data.models import (
+    OperationAssetRole,
+    OperationKind,
+    OperationRecord,
+    OperationStatus,
+)
+from gflow_cli.errors import DataIntegrityError
 
 
 class OperationsRepo(RepositoryBase):

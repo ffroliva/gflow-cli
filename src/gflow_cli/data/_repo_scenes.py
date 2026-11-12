@@ -10,23 +10,18 @@ from __future__ import annotations
 
 import dataclasses
 import sqlite3
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
+from gflow_cli.data._repo_base import (
+    RepositoryBase,
+    _utc_now,
+)
 from gflow_cli.data.models import (
     ChainLinkRecord,
     SceneClipRecord,
     SceneRecord,
 )
 from gflow_cli.errors import DataIntegrityError
-
-if TYPE_CHECKING:
-    pass
-
-
-from gflow_cli.data._repo_base import (
-    RepositoryBase,
-    _utc_now,
-)
 
 
 class ScenesChainsRepo(RepositoryBase):

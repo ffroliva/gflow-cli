@@ -130,7 +130,8 @@ use `cloud_uri` as the authoritative location. See
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│ OperationRecorder (gflow_cli/data/recorder.py)          │
+│ OperationRecorder (gflow_cli/data/recorder.py,          │
+│   parts in _recorder_core.py + _recording_*.py)         │
 │ Public methods:                                         │
 │   record_upload_image(...)                              │
 │   record_generated_images(...)                          │
@@ -141,7 +142,8 @@ use `cloud_uri` as the authoritative location. See
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│ DataRepository (gflow_cli/data/repository.py)           │
+│ DataRepository (gflow_cli/data/repository.py,           │
+│   table groups in _repo_*.py)                           │
 │ Row-level upserts + read queries                        │
 │ Wraps sqlite3.IntegrityError → DataIntegrityError       │
 │ All writes use ON CONFLICT(...) upserts                 │
@@ -474,7 +476,7 @@ Cloud-only assets have `LocalFileRecord.path is None` and carry their object
 location in `LocalFileRecord.cloud_uri`; path-based seed-image resolution is
 local-only.
 
-The public read API is documented in [`src/gflow_cli/data/repository.py`](../src/gflow_cli/data/repository.py); all read methods return typed `SeedImage` / `AssetLookup` dataclasses, not raw SQLite rows.
+The public read API is `DataRepository` ([`src/gflow_cli/data/repository.py`](../src/gflow_cli/data/repository.py)), whose methods live in the table-group modules `data/_repo_*.py`; all read methods return typed `SeedImage` / `AssetLookup` dataclasses, not raw SQLite rows.
 
 ---
 

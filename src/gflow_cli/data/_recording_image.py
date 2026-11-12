@@ -31,11 +31,9 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import AssetInfo, GeneratedImage, ProjectInfo
     from gflow_cli.api.image import GenerateImageRequest
-    from gflow_cli.api.video import GenerateVideoRequest
     from gflow_cli.storage import CloudStorageInfo
 
     # Both generation requests carry the tool-provenance fields the recorder reads.
-    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
 
 
 from gflow_cli.data._recorder_core import (

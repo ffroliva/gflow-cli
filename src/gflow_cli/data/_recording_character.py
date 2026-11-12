@@ -29,11 +29,7 @@ from gflow_cli.data.redaction import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from gflow_cli.api.image import GenerateImageRequest
-    from gflow_cli.api.video import GenerateVideoRequest
-
     # Both generation requests carry the tool-provenance fields the recorder reads.
-    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
 
 
 from gflow_cli.data._recorder_core import (

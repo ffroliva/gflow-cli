@@ -100,6 +100,8 @@ def _normalise(value: Any, tmp: str) -> Any:
         return value
     value = value.replace(tmp, "<tmp>").replace(tmp.replace("\\", "/"), "<tmp>")
     value = value.replace(json.dumps(tmp)[1:-1], "<tmp>")  # JSON-escaped paths in metadata
+    if "<tmp>" in value:  # the rest of a temp path: one separator, so Windows and POSIX agree
+        value = value.replace("\\\\", "/").replace("\\", "/")
     return _UUID.sub("<uuid>", _TS.sub("<ts>", value))
 
 

@@ -11,21 +11,16 @@ from __future__ import annotations
 import dataclasses
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
-
-from gflow_cli.data.models import (
-    ProjectRecord,
-)
-from gflow_cli.errors import DataIntegrityError
-
-if TYPE_CHECKING:
-    pass
-
+from typing import cast
 
 from gflow_cli.data._repo_base import (
     RepositoryBase,
     _utc_now,
 )
+from gflow_cli.data.models import (
+    ProjectRecord,
+)
+from gflow_cli.errors import DataIntegrityError
 
 
 class ProjectsRepo(RepositoryBase):

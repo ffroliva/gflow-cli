@@ -326,7 +326,7 @@ never hard-code wire names in user-facing help — see [[cli-model-aliases-verif
   ops are free and idempotent-ish (PATCH with updateMask).
 - **Privacy / redaction (VERIFIED).** `personalityNotes` is free-text PII → routed through the recorder's
   `prompt_fields(..., mode=prompt_mode)` so redacted mode (`GFLOW_CLI_HISTORY_PROMPTS=redacted`) **hashes** it
-  exactly like a prompt (`data/recorder.py` + `data/redaction.py`). The signed `fifeUrl` is **never persisted**
+  exactly like a prompt (`data/_recording_character.py` + `data/redaction.py`). The signed `fifeUrl` is **never persisted**
   — `client.generate_character_image` returns only ids (mediaId/workflowId) to the saga, so no `signature=`/
   `Expires=` URL can reach a DB row (structural guarantee, not just a strip). Reuse `_post_json`'s redaction
   wrapper on the new tRPC/REST calls (`show_locals=False`).

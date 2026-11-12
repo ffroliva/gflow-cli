@@ -11,8 +11,12 @@ from __future__ import annotations
 import dataclasses
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
+from gflow_cli.data._repo_base import (
+    RepositoryBase,
+    _utc_now,
+)
 from gflow_cli.data.models import (
     AssetKind,
     LocalFileRecord,
@@ -20,15 +24,6 @@ from gflow_cli.data.models import (
     SeedImage,
 )
 from gflow_cli.errors import DataIntegrityError
-
-if TYPE_CHECKING:
-    pass
-
-
-from gflow_cli.data._repo_base import (
-    RepositoryBase,
-    _utc_now,
-)
 
 
 class LocalFilesRepo(RepositoryBase):
