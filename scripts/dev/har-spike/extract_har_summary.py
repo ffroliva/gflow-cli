@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -35,6 +36,26 @@ SENSITIVE_KEY_PARTS = (
 )
 
 PROMPT_KEYS = {"prompt", "textPrompt", "negativePrompt"}
+
+# Every other string is redacted to its length. A value survives only under one of these
+# keys AND when it looks like an enum token, so free text under an allowlisted key is
+# still redacted.
+ENUM_KEYS = {
+    "applicationType",
+    "aspectRatio",
+    "imageAspectRatio",
+    "imageInputType",
+    "imageModelName",
+    "mediaCategory",
+    "mimeType",
+    "modelKey",
+    "targetResolution",
+    "tool",
+    "userPaygateTier",
+    "videoAspectRatio",
+    "videoModelKey",
+}
+_ENUM_VALUE = re.compile(r"[A-Za-z0-9_.:/-]{1,64}")
 
 
 def _safe_url(url: str) -> tuple[str, str, list[str]]:
@@ -75,10 +96,16 @@ def _redact_json(value: Any, key: str | None = None) -> Any:
         return {str(k): _redact_json(v, str(k)) for k, v in value.items()}
 
     if isinstance(value, list):
-        return [_redact_json(item) for item in value]
+        return [_redact_json(item, key) for item in value]
+
+    if isinstance(value, str) and key in ENUM_KEYS and _ENUM_VALUE.fullmatch(value):
+        return value
 
     if key is not None and _is_sensitive_key(key):
         return f"<redacted:{key}>"
+
+    if isinstance(value, str):
+        return f"<redacted:str:{len(value)}>"
 
     return value
 
@@ -149,7 +176,9 @@ def summarize_har(har_path: Path, *, host_filter: str | None = None) -> dict[str
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("har", type=Path, help="HAR file to summarize")
-    parser.add_argument("--host", default="aisandbox-pa.googleapis.com", help="Host substring filter")
+    parser.add_argument(
+        "--host", default="aisandbox-pa.googleapis.com", help="Host substring filter"
+    )
     parser.add_argument("--out", type=Path, help="Output JSON path")
     args = parser.parse_args()
 

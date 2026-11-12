@@ -93,6 +93,12 @@ headers, tokens, prompts, and generation metadata. **Keep them local.** `artifac
 repo-wide, so a capture cannot be committed by accident. Use the redacted summary for
 transport comparison notes.
 
+The summary keeps a request body's keys, numbers, booleans and nulls. Every string is
+redacted by default, to `<redacted:str:<length>>`, except a short enum-like token under a
+key in `ENUM_KEYS` (model keys, aspect ratios, resolution, tier). Prompt keys show
+`<redacted:prompt>` and secret-looking keys `<redacted:<key>>`. Still read a summary
+before pasting it anywhere public.
+
 You can also summarize an existing HAR directly:
 
 ```powershell

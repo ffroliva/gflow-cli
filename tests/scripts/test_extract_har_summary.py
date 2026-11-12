@@ -161,6 +161,45 @@ class HarSummaryTests(unittest.TestCase):
         body = summary["entries"][0]["request"]["body"]
         self.assertEqual(body["textPreview"], "<redacted:non-json>")
 
+    def test_redacts_free_text_under_any_key_and_keeps_allowlisted_enums(self) -> None:
+        body = {
+            "parts": [{"text": "private prompt"}],
+            "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+            "videoModelKey": "veo_3_1_t2v_fast",
+            "aspectRatio": "private prompt in an allowlisted key",
+            "seed": 42,
+            "enabled": True,
+        }
+        har = {
+            "log": {
+                "entries": [
+                    {
+                        "request": {
+                            "method": "POST",
+                            "url": "https://aisandbox-pa.googleapis.com/v1/flow:generate",
+                            "headers": [],
+                            "postData": {"mimeType": "application/json", "text": json.dumps(body)},
+                        },
+                        "response": {"status": 200, "headers": []},
+                    }
+                ]
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            har_path = Path(tmp) / "capture.har"
+            har_path.write_text(json.dumps(har), encoding="utf-8")
+
+            summary = summarize_har(har_path, host_filter="aisandbox-pa.googleapis.com")
+
+        self.assertNotIn("private prompt", json.dumps(summary))
+        redacted = summary["entries"][0]["request"]["body"]["json"]
+        self.assertEqual(redacted["parts"][0]["text"], "<redacted:str:14>")
+        self.assertEqual(redacted["imageAspectRatio"], "IMAGE_ASPECT_RATIO_LANDSCAPE")
+        self.assertEqual(redacted["videoModelKey"], "veo_3_1_t2v_fast")
+        self.assertEqual(redacted["seed"], 42)
+        self.assertIs(redacted["enabled"], True)
+
 
 if __name__ == "__main__":
     unittest.main()
