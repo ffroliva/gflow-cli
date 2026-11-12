@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, cast
 import structlog
 from playwright.async_api import BrowserContext, Page, Playwright
 
-from gflow_cli.api._retry import parse_retry_after, post_with_retry
+from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
 )
@@ -754,19 +754,23 @@ class FlowSession:
         *,
         route: str,
         is_aisandbox: bool,
+        billed: bool = False,
     ) -> Any:
         """Run ``attempt`` under the retry policy; on an aisandbox 401, re-fetch
         the access token once and retry, then raise ``AisandboxAuthError``.
 
+        ``billed`` (#1260): one attempt on a 5xx/429. The 401 resend stays, because a
+        401 is refused at auth, before anything is billed.
+
         Shared by ``_post_json`` and ``_patch_json`` so the auth-refresh policy
         lives in one place.
         """
-        resp = await self._run_with_retry(attempt, route=route)
+        resp = await self._run_with_retry(attempt, route=route, billed=billed)
         if is_aisandbox and resp.status == 401:
             # Token may have expired mid-session — re-fetch once and retry.
             self._access_token = None
             await self._ensure_access_token()
-            resp = await self._run_with_retry(attempt, route=route)
+            resp = await self._run_with_retry(attempt, route=route, billed=billed)
             if resp.status == 401:
                 # #803: the token was minted and then refused, so the Google
                 # sign-in is the one thing here that demonstrably works. Name
@@ -795,8 +799,13 @@ class FlowSession:
         *,
         content_type: str = _AISANDBOX_CONTENT_TYPE,
         route_name: str | None = None,
+        billed: bool = False,
     ) -> Any:
         """POST a JSON body with retry + typed-error classification.
+
+        ``billed=True`` for a POST that spends credits with a single-use reCAPTCHA
+        token in its body (#1260): it is sent once. A 5xx can arrive after Flow took
+        the job, so it raises ``NetworkError`` with ``next_action="reconcile"``.
 
         aisandbox-pa requires text/plain content-type (not application/json)
         — see samples/captured/*.json. The tRPC host on labs.google accepts
@@ -831,7 +840,9 @@ class FlowSession:
             finally:
                 self._checkin_page(page)
 
-        resp = await self._run_with_aisandbox_retry(attempt, route=route, is_aisandbox=is_aisandbox)
+        resp = await self._run_with_aisandbox_retry(
+            attempt, route=route, is_aisandbox=is_aisandbox, billed=billed
+        )
         text = await resp.text()
         _raise_for_non_retryable(resp, text, route=route)
         try:
@@ -920,7 +931,7 @@ class FlowSession:
                 discovery=_build_wire_format_discovery(resp, text, route),
             ) from e
 
-    async def _run_with_retry(self, attempt: Any, *, route: str) -> Any:
+    async def _run_with_retry(self, attempt: Any, *, route: str, billed: bool = False) -> Any:
         """Execute ``attempt()`` under the tenacity retry policy.
 
         Inside the retry block we ONLY classify retryable failures
@@ -930,7 +941,7 @@ class FlowSession:
         separate.
         """
         response: Any = None
-        async for retrying in post_with_retry():
+        async for retrying in post_with_retry(max_attempts=1 if billed else MAX_ATTEMPTS):
             with retrying:
                 response = await attempt()
                 if response.status == 429:
@@ -941,6 +952,20 @@ class FlowSession:
                         route=route,
                     )
                 if response.status >= 500:
+                    if billed:
+                        # Flow may have taken the job before failing; resending the
+                        # same single-use token would re-bill or be refused (#1260).
+                        raise NetworkError(
+                            detail=f"HTTP {response.status} on a billed request; not resent",
+                            status=response.status,
+                            route=route,
+                            next_action="reconcile",
+                            remediation_hint=(
+                                "Flow may have accepted this billed request before the error, "
+                                "so gflow did not resend it. Check the project in Flow for the "
+                                "new clip or image before running the command again."
+                            ),
+                        )
                     raise NetworkError(
                         detail=f"HTTP {response.status}",
                         status=response.status,
