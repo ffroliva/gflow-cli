@@ -12,7 +12,7 @@
 # rather than an ambient version that might surprise someone. The gap is closed by
 # verifying the image's actual runtime contract below rather than by staying on an older
 # interpreter — see docker/README.md § "Verified on this image".
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 ENV PYTHONUNBUFFERED=1 \
     GFLOW_CLI_UPDATE_CHECK=false \
