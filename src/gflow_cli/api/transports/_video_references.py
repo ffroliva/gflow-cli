@@ -167,15 +167,11 @@ class ReferenceAttachMixin(PickerProjectMixin):
             # The locale-agnostic icon selector is the only anchor (#1273). On a
             # miss, fail loud with a screenshot; short timeouts so it cannot
             # become the silent ~34s hang that #56 was about.
-            chooser = None
-            last_err: Exception | None = None
             try:
                 async with page.expect_file_chooser(timeout=8000) as fc_info:
                     await page.locator(UPLOAD_MEDIA_BUTTON).first.click(timeout=4000)
                 chooser = await fc_info.value
             except Exception as e:
-                last_err = e
-            if chooser is None:
                 shot = await _capture_debug_screenshot(
                     page,
                     out_dir,
@@ -188,9 +184,7 @@ class ReferenceAttachMixin(PickerProjectMixin):
                     f"https://github.com/ffroliva/gflow-cli/issues."
                     f"{screenshot_clause(shot)}"
                 )
-                raise RuntimeError(
-                    msg,
-                ) from last_err
+                raise RuntimeError(msg) from e
             await chooser.set_files(str(image))
             deadline = time.monotonic() + timeout_s
             while not uploaded and time.monotonic() < deadline:
@@ -677,8 +671,10 @@ class ReferenceAttachMixin(PickerProjectMixin):
         hint with exit 9 instead of the privacy-hashed 'Unexpected error.'.
         """
         last_exc: Exception | None = None
+        ambiguous = 0
         for tier, selector in zip(tier_names, tiers, strict=True):
-            matches = page.locator(selector)
+            # Hidden nodes are not candidates: Flow keeps closed dialogs mounted.
+            matches = page.locator(selector).filter(visible=True)
             loc = matches.first
             try:
                 await loc.wait_for(state="visible", timeout=4000)
@@ -693,6 +689,7 @@ class ReferenceAttachMixin(PickerProjectMixin):
                     tier=tier,
                     count=count,
                 )
+                ambiguous = max(ambiguous, count)
                 continue
             log.info(
                 "ui_automation_video.include_selector_tier",
@@ -703,8 +700,9 @@ class ReferenceAttachMixin(PickerProjectMixin):
         shot = await _capture_debug_screenshot(page, out_dir, screenshot_name)
         await page.keyboard.press("Escape")
         await page.keyboard.press("Escape")
+        what = f"was ambiguous: {ambiguous} matches" if ambiguous else "did not appear"
         raise TransportTimeoutError(
-            f"{detail} include action did not appear (no selector tier "
+            f"{detail} include action {what} (no selector tier "
             f"matched exactly one element on surface {surface!r}).{screenshot_clause(shot)}",
             remediation_hint=(
                 "Flow's resource picker may have changed. "

@@ -18,6 +18,7 @@ from gflow_cli.api.transports._video_common import (
     _INCLUDE_BUTTON_TIER_NAMES,
     UPLOAD_MEDIA_BUTTON,
 )
+from gflow_cli.api.transports.migrated_composer import _duration
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.transports.ui_automation_video import (
     _PICKER_PROJECT_OPTION_MATCH_JS,
@@ -1608,10 +1609,23 @@ class TestResolveIncludeActionUniqueness:
                 include='<button id="inc">Include</button><button id="other">Cancel</button>'
             )
         )
-        with pytest.raises(TransportTimeoutError, match="include action") as excinfo:
+        with pytest.raises(TransportTimeoutError, match="ambiguous: 2 matches") as excinfo:
             await self._resolve(page)
         assert EXIT_CODE_MAP[type(excinfo.value)] == 9
         assert await page.evaluate("window.clicked") == []
+
+    async def test_hidden_iconless_button_does_not_make_the_visible_one_ambiguous(
+        self, page: Any
+    ) -> None:
+        await page.set_content(
+            _PICKER_DIALOG_HTML.format(
+                include='<button id="ghost" style="display:none">Old</button>'
+                '<button id="inc">Include</button>'
+            )
+        )
+        loc = await self._resolve(page)
+        await loc.click()
+        assert await page.evaluate("window.clicked") == ["inc"]
 
     async def test_unique_context_menu_icon_tier_still_resolves(self, page: Any) -> None:
         await page.set_content(
@@ -1649,6 +1663,7 @@ class TestAttachCharacterEntities:
         loc.scroll_into_view_if_needed = AsyncMock()
         loc.count = AsyncMock(return_value=1)
         loc.or_ = MagicMock(return_value=loc)
+        loc.filter = MagicMock(return_value=loc)
         page.locator.return_value = loc
         page.get_by_role.return_value = loc
         page.wait_for_timeout = AsyncMock()
@@ -3506,7 +3521,7 @@ _DURATION_TABS_HTML = """
 <div role="tablist">{tabs}</div>
 <script>
   window.clicked = [];
-  document.addEventListener("click", (e) => window.clicked.push(e.target.id));
+  document.addEventListener("click", (e) => window.clicked.push(e.target.closest("[id]").id));
 </script>
 """
 
@@ -3532,6 +3547,29 @@ class TestSelectVideoDurationLocale:
         await page.set_content(_DURATION_TABS_HTML.format(tabs=_tabs("480p", "4K", "4s", "8s")))
         await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
         assert await page.evaluate("window.clicked") == ["t2"]
+
+    async def test_count_label_is_refused_for_the_same_number(self) -> None:
+        # The old count tab `4x` must never be read as `--duration 4` (it bills 4 clips).
+        assert not _duration("4s").search("4x")
+        assert not _duration("4s").search("4X")
+        assert _duration("4s").search("4s")
+
+    async def test_count_tab_is_not_clicked_for_duration(self, page: Any) -> None:
+        await page.set_content(_DURATION_TABS_HTML.format(tabs=_tabs("4x", "4s")))
+        await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+        assert await page.evaluate("window.clicked") == ["t1"]
+
+    @pytest.mark.parametrize("wrap", ["{}", "<span>{}</span>"], ids=["bare", "span"])
+    async def test_label_with_icon_still_matches(self, page: Any, wrap: str) -> None:
+        icon = '<i class="google-symbols">timer</i>'
+        await page.set_content(
+            _DURATION_TABS_HTML.format(
+                tabs=f'<button role="tab" id="t0">{icon}{wrap.format("4s")}</button>'
+                f'<button role="tab" id="t1">{icon}{wrap.format("8s")}</button>'
+            )
+        )
+        await VideoGenerationMixin._select_video_duration(page, 8, out_dir=None)
+        assert await page.evaluate("window.clicked") == ["t1"]
 
     async def test_only_resolution_siblings_is_a_drift_miss(
         self, page: Any, monkeypatch: pytest.MonkeyPatch
