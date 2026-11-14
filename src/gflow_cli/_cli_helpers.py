@@ -35,9 +35,11 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import functools
 import re
 import sys
 import traceback
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -51,8 +53,8 @@ from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
-    EXIT_CODE_MAP,
     GFlowError,
+    exit_code_for,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
@@ -75,7 +77,10 @@ _console = Console()
 # `reportPrivateUsage` rule does NOT honor the PEP 484 `from X import Y as Y`
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
+    "DeprecatedAliasOption",
     "_FLOW_ID_RE",
+    "_OUT_DIR_SHORT_DEPRECATION_WARNING",
+    "_OUT_FILE_DEPRECATION_WARNING",
     "_handle_gflow_error",
     "_handle_unhandled_error",
     "_make_provider_dir",
@@ -83,10 +88,13 @@ __all__ = [
     "_validate_project_id",
     "apply_tool_option",
     "default_project",
+    "deprecated_alias_option",
+    "out_file_option",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
     "tool_option",
+    "upscale_out_dir_option",
 ]
 
 # Flow project ids are interpolated into navigation URLs and CSS selectors
@@ -96,6 +104,108 @@ __all__ = [
 # `routes._PROJECT_ID_RE`. Relocated here (T4b follow-up) so the two call-site
 # modules can't drift out of sync.
 _FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+_OUT_FILE_DEPRECATION_WARNING = (
+    "-o/--output PATH is deprecated and will select the output format in a future release "
+    "(-o json|table|id). Use --out-file PATH."
+)
+
+_OUT_DIR_SHORT_DEPRECATION_WARNING = (
+    "-o is deprecated as the short form of --out and will select the output format in a future "
+    "release (-o json|table|id). Use --out DIR."
+)
+
+
+class DeprecatedAliasOption(click.Option):
+    """Marks an option as the deprecated spelling of another (#1158); no behaviour of its own.
+
+    The Click-tree guard test finds deprecated spellings by this class.
+    """
+
+
+def deprecated_alias_option(
+    primary_opts: Sequence[str],
+    deprecated_opts: Sequence[str],
+    dest: str,
+    *,
+    type: click.ParamType[Any] | type[object],
+    help: str,
+    warning_line: str,
+) -> Callable[[Any], Any]:
+    """Add ``primary_opts`` and its deprecated spelling ``deprecated_opts``, both feeding ``dest``.
+
+    The two options get separate slots and the callback wrapper merges them, so the
+    result does not depend on Click's parameter-processing order (Click < 8.5 let the
+    unused option overwrite the used one with None). The wrapper must sit outside any
+    error guard so the conflict reaches Click as a usage error (exit 2).
+    """
+    alias = f"{dest}_deprecated"
+    old_spelling = "/".join(deprecated_opts)
+    conflict = f"Use {primary_opts[0]} only; {old_spelling} is its deprecated spelling."
+
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            old = kwargs.pop(alias)
+            if old is not None:
+                if kwargs.get(dest) is not None:
+                    raise click.UsageError(conflict)
+                click.echo(warning_line, err=True)
+                kwargs[dest] = old
+            return f(*args, **kwargs)
+
+        with_alias = click.option(
+            *deprecated_opts,
+            alias,
+            type=type,
+            default=None,
+            help=f"Deprecated: use {primary_opts[0]}.",
+            cls=DeprecatedAliasOption,
+        )(wrapper)
+        return click.option(*primary_opts, dest, type=type, default=None, help=help)(with_alias)
+
+    return decorator
+
+
+def out_file_option(
+    dest: str = "output_file",
+    *,
+    help: str,
+) -> Callable[[Any], Any]:
+    """Decorator adding ``--out-file PATH`` and keeping deprecated ``-o/--output PATH`` (#1158).
+
+    Writes to ``dest`` (e.g. ``output_file`` or ``output``). Warns on stderr when
+    the deprecated spelling is used, and raises ``click.UsageError`` (exit 2)
+    naming ``--out-file`` if both are provided.
+    """
+    return deprecated_alias_option(
+        primary_opts=("--out-file",),
+        deprecated_opts=("-o", "--output"),
+        dest=dest,
+        type=click.Path(dir_okay=False, path_type=Path),
+        help=help,
+        warning_line=_OUT_FILE_DEPRECATION_WARNING,
+    )
+
+
+def upscale_out_dir_option(
+    dest: str = "out_dir",
+    *,
+    help: str = "Output directory (defaults to the configured gflow output dir).",
+) -> Callable[[Any], Any]:
+    """Decorator adding ``--out DIR`` and keeping deprecated short form ``-o DIR`` (#1158).
+
+    Reuses ``deprecated_alias_option``. Warns on stderr when ``-o`` is used,
+    and raises ``click.UsageError`` (exit 2) naming ``--out`` if both are provided.
+    """
+    return deprecated_alias_option(
+        primary_opts=("--out",),
+        deprecated_opts=("-o",),
+        dest=dest,
+        type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+        help=help,
+        warning_line=_OUT_DIR_SHORT_DEPRECATION_WARNING,
+    )
 
 
 def _validate_project_id(
@@ -324,19 +434,6 @@ def safe_path_text(path: Path) -> str:
         return str(path)
 
 
-def _exit_code_for(exc: GFlowError) -> int:
-    """Return the exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
-
-    Iteration order matters: subclasses inherit the parent class's code only
-    if they don't have their own entry, and the dict is ordered
-    most-specific-first (see ``errors.py``).
-    """
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
-
-
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     """Print user-facing message + remediation, emit ``error_raised`` event,
     return exit code.
@@ -351,7 +448,7 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
     _print_incident_ref(exc.incident_ref)
-    return _exit_code_for(exc)
+    return exit_code_for(exc)
 
 
 def _print_incident_ref(ref: Any) -> None:
@@ -438,7 +535,7 @@ def run_with_handlers(
         if as_json:
             emit_error_event(_logger, e, cli_command=cli_command)
             json_output.emit(json_output.error_payload(e))
-            sys.exit(_exit_code_for(e))
+            sys.exit(exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
         _report_interrupt()

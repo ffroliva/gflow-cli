@@ -36,8 +36,8 @@ from pydantic import Field
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
-from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
-from gflow_cli.api import routes
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project  # pyright: ignore[reportPrivateUsage]
+from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
@@ -51,7 +51,9 @@ from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError, is_retryable
+from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
+from gflow_cli.mcp.out_file import DeprecatedOutputParam, OutFileParam
+from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
 from gflow_cli.mcp.tasks_extension import detach
 from gflow_cli.profile_store import (
@@ -123,34 +125,6 @@ _EntityNamesParam = Annotated[
 # ---------------------------------------------------------------------------
 # Token bucket rate limiter
 # ---------------------------------------------------------------------------
-
-_BUCKET_CAPACITY = 8
-_BUCKET_REFILL_RATE = 1 / 20  # 1 token every 20 seconds
-
-
-class _TokenBucket:
-    """Simple token-bucket rate limiter for generation tools."""
-
-    def __init__(self, capacity: int = _BUCKET_CAPACITY, refill_rate: float = _BUCKET_REFILL_RATE):
-        self._capacity = capacity
-        self._tokens = float(capacity)
-        self._refill_rate = refill_rate
-        self._last_refill = time.monotonic()
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> bool:
-        """Try to acquire a token. Returns True if acquired, False if rate-limited."""
-        async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._last_refill
-            self._tokens = min(self._capacity, self._tokens + elapsed * self._refill_rate)
-            self._last_refill = now
-
-            if self._tokens >= 1:
-                self._tokens -= 1
-                return True
-            return False
-
 
 _rate_limiter = _TokenBucket()
 
@@ -245,7 +219,8 @@ def _masked_unexpected_dict(exc: Exception) -> dict[str, Any]:
         "detail": detail,
         # Same key set as _gflow_error_dict so clients see ONE envelope schema.
         "message": detail,
-        "retryable": False,
+        # #1201: an unclassified failure proves nothing about billing.
+        **outcome_members("maybe", "none"),
     }
 
 
@@ -271,7 +246,7 @@ def _guarded(
             try:
                 result = await fn(*args, **kwargs)
             except GFlowError as exc:
-                outcome = str(_exit_code_for(exc))
+                outcome = str(exit_code_for(exc))
                 log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
                 result = _error_payload(_gflow_error_dict(exc))
             except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
@@ -384,6 +359,7 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
                 "detail": (
                     "No gflow profiles exist. Run `gflow auth login --browser chrome` first."
                 ),
+                **outcome_members("no", "reauth"),
             },
         }
     except NoDefaultProfileError as exc:
@@ -399,6 +375,7 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
                     "`gflow auth use <name>` / set GFLOW_CLI_PROFILE."
                 ),
                 "available_profiles": exc.available,
+                **outcome_members("no", "fix_input"),
             },
         }
 
@@ -422,6 +399,7 @@ def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
                     f"Profile {resolved!r} resolved but its directory does not exist: "
                     f"{profile_dir}. Run `gflow auth login --browser chrome` first."
                 ),
+                **outcome_members("no", "reauth"),
             },
         }
 
@@ -541,7 +519,10 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 "status": "failed",
                 "task_id": task_id,
                 "error": completed_task.error
-                or {"detail": f"Task ended in unexpected status {completed_task.status!r}"},
+                or {
+                    "detail": f"Task ended in unexpected status {completed_task.status!r}",
+                    **outcome_members("maybe", "reconcile"),
+                },
             }
             # #1035/#895: media Flow generated before the failure (a lost
             # download) is still reachable by these ids.
@@ -688,7 +669,13 @@ def _bad_param(title: str, detail: str) -> dict[str, Any]:
     """Build the standard RFC 9457 bad-parameter (400) error envelope."""
     return {
         "status": "error",
-        "error": {"type": _BAD_PARAM_TYPE, "title": title, "status": 400, "detail": detail},
+        "error": {
+            "type": _BAD_PARAM_TYPE,
+            "title": title,
+            "status": 400,
+            "detail": detail,
+            **outcome_members("no", "fix_input"),
+        },
     }
 
 
@@ -719,6 +706,27 @@ def _confined_output_file(output: str) -> str | dict[str, Any]:
     if path.is_dir() or path == get_settings().output_dir.resolve():
         return _bad_param("Invalid Output", f"Output '{output}' is a directory, not a file.")
     return str(path)
+
+
+def _resolve_out_file(
+    out_file: str | None, output: str | None, *, local_only: bool = False
+) -> str | None | dict[str, Any]:
+    """The confined file path from ``out_file`` or its deprecated twin ``output`` (#1158).
+
+    Refuses both at once, refuses a local file under cloud storage when ``local_only``
+    (naming the parameter the caller passed), and returns a 400 envelope or the path.
+    """
+    if out_file is not None and output is not None:
+        return _bad_param(
+            "Conflicting Output Options",
+            "Cannot specify both 'out_file' and 'output'. Use 'out_file' ('output' is deprecated).",
+        )
+    name, path = ("out_file", out_file) if out_file is not None else ("output", output)
+    if path is None:
+        return None
+    if local_only:
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, name)
+    return _confined_output_file(path)
 
 
 def _resolve_ref_local_path(
@@ -996,7 +1004,8 @@ def _build_video_media_inputs(
     description=(
         "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
-        "output, if given, must resolve inside the configured output directory. "
+        "out_file, if given, must resolve inside the configured output directory "
+        "(output is deprecated: use out_file). "
         "Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), "
         "nano2-lite (Nano Banana 2 Lite), "
         "nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). "
@@ -1032,7 +1041,8 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
-    output: str | None = None,
+    out_file: OutFileParam = None,
+    output: DeprecatedOutputParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
@@ -1081,8 +1091,10 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
-        output: Optional file to write, inside the configured output dir: a relative path
+        out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
+        output: Deprecated: use out_file (removed in a future release). Optional file to write,
+            inside the configured output dir.
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
 
@@ -1096,12 +1108,9 @@ async def gflow_generate_image(
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
-
-    if output is not None:
-        confined = _confined_output_file(output)
-        if isinstance(confined, dict):
-            return confined
-        output = confined
+    if isinstance(resolved := _resolve_out_file(out_file, output), dict):
+        return resolved
+    output = resolved
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False)
@@ -1266,7 +1275,8 @@ def _build_video_payload(
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
-        "output, if given, must resolve inside the configured output directory. "
+        "out_file, if given, must resolve inside the configured output directory "
+        "(output is deprecated: use out_file). "
         "Returns the local file path to the generated video."
     ),
 )
@@ -1289,7 +1299,8 @@ async def gflow_generate_video(  # NOSONAR
     project: str | None = None,
     project_name: str | None = None,
     ui_mode: str | None = None,
-    output: str | None = None,
+    out_file: OutFileParam = None,
+    output: DeprecatedOutputParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -1378,8 +1389,10 @@ async def gflow_generate_video(  # NOSONAR
             agent-only flow.google.com composer (#799) is routed to its own
             driver before that check, so 't2v' runs there under 'auto' or
             'classic'.
-        output: Optional file to write, inside the configured output dir: a relative path
+        out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
+        output: Deprecated: use out_file (removed in a future release). Optional file to write,
+            inside the configured output dir.
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
@@ -1394,12 +1407,10 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
-    if output is not None:
-        refuse_cloud_storage_for_local_file(get_settings().storage_uri, "output")
-        confined = _confined_output_file(output)
-        if isinstance(confined, dict):
-            return confined
-        output = confined
+    # #1008: a video moved to a local file cannot live in a cloud bucket.
+    if isinstance(resolved := _resolve_out_file(out_file, output, local_only=True), dict):
+        return resolved
+    output = resolved
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);
@@ -1586,8 +1597,12 @@ async def gflow_list_models() -> dict[str, Any]:
     name="gflow_get_credits",
     description=(
         "Read the current Google Flow credit balance for one saved profile or all profiles "
-        "- the number Flow's account menu shows, read from flow.google.com in that "
-        "profile's browser (one browser launch per profile, sequential for all_profiles). "
+        "- the number Flow's account menu shows. Read directly from flow.google.com with "
+        "the profile's saved session (no browser) when Flow accepts it; otherwise read in "
+        "that profile's browser (one browser launch per profile, sequential for "
+        "all_profiles). The direct read is off on macOS by default, behind a proxy, or with "
+        "GFLOW_CLI_WIRE_READS=0. HTTP 429/503 returns a retryable error with no browser "
+        "fallback: wait, do not loop. "
         "Spends no credits. Set all_profiles=true when choosing an "
         "account for generation; partial profile failures remain visible in the result. "
         "Set refresh=true to renew a signed-out session (rewrites that profile's saved "
@@ -2117,7 +2132,19 @@ async def gflow_usage_stats(weeks: int = 12) -> dict[str, Any]:
         "BEFORE a generation tool to fail fast on expired auth, before a long "
         "blocking generation call. Never starts an interactive login flow. May boot a "
         "short-lived headless browser, which on flow.google.com is the usual path, and "
-        "may take up to ~2 min on a slow network."
+        "may take up to ~2 min on a slow network. Every session result also carries "
+        "`wire: {status, build}`, the health of the direct (browser-free) credits read, "
+        "probed first with one GET and one POST to flow.google.com unless the direct read "
+        "is off. `wire.status` is `accepted` (the saved cookies work), `signed_out_shell` or "
+        "`http_401` (Flow refused the saved session), `store_unreadable` (the profile's "
+        "cookies could not be read: Chrome has it open, or it has no saved session), "
+        "`disabled` (GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, "
+        "`throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, "
+        "`unparseable` or `unexpected`. With `accepted`, credit reads need no browser; any "
+        "other status means they use the browser instead and does not change `status`, "
+        "except `throttled`: Flow is rate-limiting the account, so the browser probe is "
+        "skipped and the result is `status: throttled` with a retryable 429 `error` "
+        "carrying `retry_after` seconds. `build` is Flow's build label when read, else null."
     ),
 )
 @_guarded
@@ -2132,20 +2159,43 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
         profile: gflow-cli profile name (``"default"`` auto-resolves like the CLI).
 
     Returns:
-        ``{"status": "authenticated", "profile", "user_email"}`` on success;
+        ``{"status": "authenticated", "profile", "user_email", "wire"}`` on success;
         otherwise ``{"status": <outcome>, "profile", "error": {...problem
-        details with remediation_hint...}}``.
+        details with remediation_hint...}, "wire"}``. ``wire`` is
+        :func:`gflow_cli.api.flow_wire.health` (status enum + build label). A
+        throttled wire skips the browser probe: ``{"status": "throttled", ...}``.
     """
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):
         return resolved
     log.info("mcp.tool.auth_status", profile=resolved)
+    # The wire first: a browser probe holding the profile would lock the cookie jar (#1229).
+    wire = await flow_wire.health(auth_mod.profile_dir(resolved))
+    if wire["status"] == "throttled":
+        # The browser probe would send more requests to an account Flow is rate-limiting.
+        from gflow_cli.errors import RateLimitError
+
+        retry_after = wire.get("retry_after")
+        throttled = RateLimitError(
+            "Flow is throttling this account",
+            status=429,
+            route="auth_status",
+            retry_after=retry_after,
+            remediation_hint="Wait, then call gflow_auth_status again; re-login does not help.",
+        )
+        return {
+            "status": "throttled",
+            "profile": resolved,
+            "error": {**_gflow_error_dict(throttled), "retry_after": retry_after},
+            "wire": wire,
+        }
     status = await verification.verify_flow_profile(auth_mod.profile_dir(resolved), source="mcp")
     if status.authenticated:
         return {
             "status": "authenticated",
             "profile": resolved,
             "user_email": status.user_email,
+            "wire": wire,
         }
     if status.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
         # #796: a local profile-state fault. Not retryable (the marker will not
@@ -2157,7 +2207,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "status": 409,
             "detail": status.detail,
             "message": status.detail,
-            "retryable": False,
+            **outcome_members("no", "reauth"),
             "remediation_hint": (
                 "This profile has no `.gflow_browser_strategy` marker, so its "
                 "cookies cannot be read. Re-run `gflow auth login --browser "
@@ -2173,7 +2223,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "status": 409,
             "detail": status.detail,
             "message": status.detail,
-            "retryable": False,
+            **outcome_members("no", "reauth"),
             "remediation_hint": (
                 "This profile's Chrome cookie database is corrupt or unreadable. "
                 "Close any Chrome window using this profile, then re-run "
@@ -2191,7 +2241,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "status": 503,
             "detail": status.detail,
             "message": status.detail,
-            "retryable": True,
+            **outcome_members("no", "retry"),
             "remediation_hint": (
                 "Could not verify the Flow session (network or endpoint "
                 "problem). Check connectivity and retry; re-login is only "
@@ -2206,6 +2256,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             # AuthExpiredError only carries an HTTP status when built from a
             # real response; a dead/missing session is semantically a 401.
             "status": 401,
+            # #1201: a credit-free probe; AuthExpiredError's default "maybe" covers polls.
+            "charged": "no",
             "remediation_hint": (
                 f"Run 'gflow auth login --profile {resolved}' in your local "
                 "terminal (interactive; not available through MCP)."
@@ -2215,6 +2267,7 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
         "status": status.outcome.value,
         "profile": resolved,
         "error": error,
+        "wire": wire,
     }
 
 

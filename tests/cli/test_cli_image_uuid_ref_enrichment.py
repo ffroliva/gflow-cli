@@ -33,6 +33,8 @@ from gflow_cli.errors import DataStoreError
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from gflow_cli.refresh_resolver import RefreshResolver
+
 _UUID = "5a80906f-31cc-4a87-9782-95f14bb165ce"
 
 
@@ -350,7 +352,7 @@ class TestBuildNameResolver:
         prompt_mode: str = "store",
         project_id: str | None = "project-1",
         calls: list[str] | None = None,
-    ) -> Callable[[str], str | None] | None:
+    ) -> RefreshResolver | None:
         from gflow_cli.cli_image import _build_name_resolver
 
         def _fetch(pid: str) -> object:
@@ -383,6 +385,27 @@ class TestBuildNameResolver:
         assert resolver(media_id) == "Rusty gate at dawn"
         assert fetches == ["project-1"]
         assert repo.writes == [("ffroliva", media_id, "Rusty gate at dawn", "refresh")]
+
+    def test_heal_writes_a_page_caption_through_without_a_listing_fetch(self) -> None:
+        """flow.google.com (#546): the composer reads the caption on its own page, where the
+        labs listing is retired, and hands it to ``heal``; the catalog is written with
+        ``source="refresh"`` and nothing is fetched."""
+        fetches: list[str] = []
+        repo = _RecordingRepo()
+        resolver = self._resolver_for({}, repo, calls=fetches)
+
+        assert resolver is not None
+        resolver.heal("media-1", "Rusty gate at dawn")
+        assert repo.writes == [("ffroliva", "media-1", "Rusty gate at dawn", "refresh")]
+        assert fetches == []
+
+    def test_heal_in_redacted_mode_writes_nothing(self) -> None:
+        repo = _RecordingRepo()
+        resolver = self._resolver_for({}, repo, prompt_mode="redacted")
+
+        assert resolver is not None
+        resolver.heal("media-1", "Rusty gate at dawn")
+        assert repo.writes == []
 
     def test_no_project_id_builds_no_resolver(self) -> None:
         """Condition (a): without a project id there is no listing to consult

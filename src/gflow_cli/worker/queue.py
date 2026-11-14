@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from gflow_cli.errors import DataIntegrityError, QueueSchemaError, is_retryable
+from gflow_cli.errors import (
+    DataIntegrityError,
+    QueueSchemaError,
+    is_retryable,
+    outcome_members,
+)
 from gflow_cli.worker import codec
 
 if TYPE_CHECKING:
@@ -331,24 +336,37 @@ def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
     return "failed"
 
 
+#: The record of a task a user cancelled before it submitted anything (#1201).
+CANCELLED_ERROR: dict[str, Any] = {
+    "type": "https://gflow-cli.dev/errors/cancelled",
+    "title": "Cancelled",
+    "detail": "Cancelled before it ran.",
+    "reason": "cancelled",
+    **outcome_members("no", "none"),
+}
+
+
 def _recovery_error(status: str, reason: str) -> dict[str, Any]:
     if status == "indeterminate":
         return {
             "type": "https://gflow-cli.dev/errors/indeterminate-outcome",
             "title": "Indeterminate Generation Outcome",
-            "status": 202,
             "detail": (
                 f"Task interrupted ({reason}) after submit was attempted; a credit "
                 "may have been spent and the outcome is unknown. NOT retried automatically."
             ),
             "reason": reason,
+            **outcome_members("maybe", "reconcile"),
         }
+    if reason == "cancelled":
+        # A user's cancel is not a failure to retry, whichever pre-submit phase it hit.
+        return CANCELLED_ERROR | {"detail": "Cancelled before any submit; nothing spent."}
     return {
         "type": "https://gflow-cli.dev/errors/daemon-recovery",
         "title": "Interrupted Before Submit",
-        "status": 500,
         "detail": f"Task interrupted ({reason}) before any submit; nothing spent, safe to retry.",
         "reason": reason,
+        **outcome_members("no", "retry"),
     }
 
 

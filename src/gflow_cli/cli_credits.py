@@ -70,9 +70,10 @@ _REFRESH_HELP = (
 def credits() -> None:
     """Show current Google Flow credit balances.
 
-    Opens flow.google.com in the profile's browser and reads the balance the app
-    itself loads (the number in Flow's account menu). Spends nothing; takes one
-    browser launch per profile.
+    Reads the balance flow.google.com itself loads (the number in Flow's account
+    menu) directly, without a browser, when the profile's saved session is accepted;
+    otherwise opens flow.google.com in the profile's browser and reads it there.
+    Spends nothing. GFLOW_CLI_WIRE_READS=0 always uses the browser.
     """
 
 

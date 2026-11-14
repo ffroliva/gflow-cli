@@ -7,7 +7,174 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.0] — 2026-11-14
+
+### Added
+
+- **Opt-in stable exit-code core (`GFLOW_CLI_EXIT_CODES=2`).** Opt in to a standardized core
+  (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted; 4 is reserved for "accepted, still running") with specific causes moved to
+  `40`–`44` (`40`–`63` is reserved for specific causes). In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
+  preserves the legacy code ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)).
+- **`--out-file PATH` on generation/export commands and `out_file` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  The explicit file destination is `--out-file PATH` on `data errors export`, `image t2i`,
+  `image i2i`, `scene create`, `video t2v`, `video i2v`, `video r2v`, `video chain`, and
+  `video extend`. In MCP, `gflow_generate_image` and `gflow_generate_video` gain `out_file`.
+  `video chain` has never written to this path; it now says so on stderr instead of staying
+  silent, and the clips still land under `--out-dir` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+
+### Deprecated
+
+- **`-o/--output PATH` on generation/export commands and `output` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  Passing `-o` or `--output PATH` still works and prints one stderr deprecation warning.
+  Passing `-o DIR` to `video upscale` still works with a warning; use `--out DIR`.
+  In MCP `gflow_generate_image` and `gflow_generate_video`, `output` is deprecated in favor of `out_file`.
+  Passing both old and new options is refused with exit 2 (or an MCP validation error).
+
+### Changed
+
+- **Internal: `UiAutomationTransport` and `MigratedComposer` are split into single-purpose mixins ([#1249](https://github.com/ffroliva/gflow-cli/issues/1249)).**
+  The two classes are now chains of mixins, one job each; every name other modules read is still
+  importable from the same place. No behaviour change.
+- **Locked `opentelemetry-api` 1.45.2** (transitive only).
+
+### Upcoming breaking change
+
+- In a future release `-o/--output` selects the output format (`-o json|table|id`).
+  Replace -o/--output PATH with --out-file PATH (and video upscale -o DIR with --out DIR).
+- **Exit-code core will become the default in a later release ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
+  - `4` (`RateLimitError`) moves to `40`.
+  - `5` (`ContentPolicyError`) moves to `41`.
+  - `6` (`NetworkError`) moves to `42`.
+  - `7` (`WireFormatError`) moves to `43`.
+  - `8` (`AuthMissingError`) moves to `3` (unified auth exit code with `AuthExpiredError`).
+  - `9` (`TransportTimeoutError`) moves to `44`.
+  - `4` is reserved for "accepted, still running" (resumable jobs).
+  - `5–9` are reserved.
+  - `0`, `1`, `2`, `3`, `130`, and `10–39` are unchanged.
+  Set GFLOW_CLI_EXIT_CODES=2 now to test your scripts against the new codes.
+
+## [0.98.0] — 2026-11-12
+
+### Added
+
+- **Error envelopes say whether Flow may have billed, and what to do next.** Every
+  `--json` error, MCP error result and failed worker-queue task now carries `charged`
+  (`no` / `maybe` / `yes`) and `next_action` (`retry`, `retry_after`, `wait`, `reauth`,
+  `fix_input`, `reconcile` or `none`), plus `operation_id` when an id exists. Each error
+  class declares its defaults, and raise sites that know better override them: a failed
+  download of a billed clip, an extend render or chain link failing after billed work, and
+  a labs poll timeout after submit read `reconcile`. The result-shaped `--json` failures
+  (`video t2v`/`i2v`/`r2v`, `video extend`, a partial `video chain`) and the envelopes the
+  MCP server and worker build by hand carry them too. `retryable` is unchanged and always
+  agrees with `next_action`; a rate limit also reports its `retry_after` seconds. Every `type` URI, its exit code and its defaults are listed in
+  [docs/ERRORS.md](docs/ERRORS.md) (#1201).
+- **`gflow capabilities [--json]` and the MCP resource `capabilities://self`** declare what
+  gflow can drive, so an agent can plan instead of learning by failing (#1197). One value per
+  key (`yes`/`no`/`partial`/`unknown`), with a note on every `partial`: `cancel.server` and
+  `idempotent_submit` are `no`, and `submit.no_wait`/`status`/`wait` are `partial` (MCP
+  `wait=false` and `tasks/get` only; the CLI verbs are #1194), and `download` is `partial`
+  (recovery is video-only, #877). No call to Flow: the only input is `GFLOW_CLI_FLOW_HOST`,
+  and `host` reports that setting (per-profile resolution is #1212). Both surfaces return
+  the same document, except that a no-spend MCP server reports generation as `no`; a test
+  fails when a CLI command is added without a capability entry. Keys: `docs/CAPABILITIES.md`.
+- **`gflow models list` and `gflow models show <id>`.** `show` prints one model's catalog
+  entry (aliases, reference cap; image models add Flow's menu name and the default flag, video
+  models their selectable `durations` and max duration) by name or any spelling `--model`
+  accepts; `--json` emits exactly the object `gflow_list_models` returns for that model, so a
+  script no longer parses the whole list for one model's limits. An unknown id exits 2 and
+  names the closest matches. Bare `gflow models` still works and is an alias of
+  `gflow models list` (#1196).
+
 ### Fixed
+
+- **Classic-editor selectors no longer depend on the UI language ([#1273](https://github.com/ffroliva/gflow-cli/issues/1273)).**
+  On the classic (labs) editor the voice/character include action, the media-dialog upload
+  button and the I2V frame slots now anchor on structure and icons only; the English and
+  Portuguese/Russian caption fallbacks are gone. The duration tab is matched by its exact
+  `8s` token first, then by its number alone, so a translated unit such as `8 giây` now
+  works too; the number match refuses a resolution (`480p`, `4K`) or count (`4x`) sibling.
+  When two visible iconless buttons could be the include action, gflow now fails loudly
+  (exit 9, with a screenshot, "ambiguous: N matches") instead of clicking the first one.
+
+- **An image submit is never resent with the same reCAPTCHA token ([#1275](https://github.com/ffroliva/gflow-cli/issues/1275)).**
+  On a transport that sends gflow's own reCAPTCHA token (the HTTP transports, not Flow's page),
+  a failed image submit was retried up to three times with the same single-use token. A 5xx
+  can arrive after Flow took the job, so a resend was refused for the spent token or spent the
+  daily image quota twice. The submit is now sent once on every transport. A server error,
+  timeout (including the transport's own submit timeout), connection reset or closed browser
+  exits 6 with `charged: maybe`, `next_action: reconcile` and a hint to check the project in
+  Flow; a closed browser on these transports used to exit 15. A 429 is no longer retried
+  either: it exits 4 with its `retry_after`, since the daily quota does not clear in seconds.
+  An auth refresh after a 401 still resends once, because a 401 is refused before anything is
+  made. The Flow-page path (#1010) is unchanged; polls and downloads still retry.
+
+- **A timeout or connection reset on a billed extend or upscale asks you to check Flow ([#1274](https://github.com/ffroliva/gflow-cli/issues/1274)).**
+  A Playwright timeout or connection reset while `gflow video extend` or `gflow image upscale`
+  (or the `gflow_upscale_image` MCP tool; `video extend` has no MCP tool) sent its billed
+  request exited 1 as an `UnexpectedError`, with no hint, though Flow may already hold the
+  job. It now exits 6 like a server error on the same request: `charged: maybe`,
+  `next_action: reconcile`, a hint to check the project in Flow, the cause's first line in
+  the detail, and no resend. A browser closed while that request is in flight now gets the
+  same answer instead of `BrowserSessionClosedError`, since the request may have reached
+  Flow. A timeout before the request is sent (fetching the access token) surfaces as before.
+  Non-billed calls still retry a timeout or reset as before.
+
+- **A billed extend or upscale is never resent after a server error ([#1260](https://github.com/ffroliva/gflow-cli/issues/1260)).**
+  `gflow video extend` and `gflow image upscale` (and the `gflow_upscale_image` MCP tool;
+  `video extend` has no MCP tool) retried a 5xx or 429
+  up to three times with the same request, single-use reCAPTCHA token included. A 5xx can
+  arrive after Flow took the job, so a resend could bill twice or be refused for the spent
+  token. These requests are now sent once. A server error exits 6 with
+  `charged: maybe`, `next_action: reconcile` and a hint to check the project in Flow before
+  running the command again. Non-billed calls (polls, reads) still retry as before.
+
+- **A renamed image heals on flow.google.com too ([#546](https://github.com/ffroliva/gflow-cli/issues/546)).**
+  `gflow image i2i --ref <media id> --project <id>` with a catalog name gone stale (the image
+  was renamed in Flow) exited 32 where Flow serves flow.google.com, because the listing the
+  heal reads (`flow.projectInitialData`) answers "deprecated and disabled" there. gflow now
+  reads the current caption from the page's own `@` picker and retries within the reload
+  budget; the MCP tool and `gflow run` heal the run too. The CLI still writes the fresh
+  name to the catalog (`store` history mode only). Reach: the assets the empty picker lists.
+
+### Changed
+
+- **Internal: `VideoGenerationMixin` is split into single-purpose parts ([#1249](https://github.com/ffroliva/gflow-cli/issues/1249)).**
+  The 3,278-line video mixin is now a chain of mixins in `api/transports/_video_*.py`, with the
+  shared selectors in `_video_common`; every name others read from `ui_automation_video` is still
+  there. No behaviour change: a golden master pins every moved method's source.
+
+## [0.97.0] — 2026-11-10
+
+### Added
+
+- **`gflow credits` reads the balance without starting a browser when the saved session is
+  accepted.** `credits user`, `credits list` and the MCP `gflow_get_credits` tool now ask
+  flow.google.com for the balance directly, with the profile's saved cookies: two HTTP
+  requests and no Chrome. When that fails (signed out, a network error, an unexpected reply)
+  they read it in the browser as before; with Chrome open on the profile both reads fail and
+  report the profile in use (exit 11, close Chrome and retry). When Flow throttles the account
+  (HTTP 429 or 503) nothing falls back to the browser, which would send the same requests:
+  `credits user` exits 4 or 6, and `credits list` records the error for that profile. `GFLOW_CLI_WIRE_READS=0` turns the
+  direct read off; it is off by default on macOS and while any proxy is configured
+  (`GFLOW_CLI_BROWSER_PROXY`, or an environment/system proxy). The direct read uses the saved
+  Google session outside Chrome; what that risks and what is still unmeasured is in
+  KNOWN_ISSUES (#1229).
+
+- **`gflow doctor` and the MCP `gflow_auth_status` tool report whether that direct read works.**
+  Doctor's new `auth.wire_read` check (default profile) and the tool's new `wire` field (on every session result) give
+  `accepted` with Flow's build label, or the reason credit reads use the browser
+  (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …).
+  Each sends one GET and one POST to flow.google.com unless the direct read is off. The check
+  is informational: it never changes doctor's exit code. When Flow is throttling the account,
+  `gflow_auth_status` skips its browser probe and returns `status: throttled` with
+  `retry_after` (#1229).
+
+### Fixed
+
+- **No gflow process logs an httpx request URL any more.** Starting the MCP server set Python
+  logging to INFO, at which httpx writes every request's full URL to stderr; MCP clients keep
+  that output. The `httpx` and `httpcore` loggers are now held at WARNING in every gflow
+  process (#1229).
 
 - **`video extend` on flow.google.com reports the model it ran with instead of `unknown`.**
   The page now orders the extension with an Omni key (`macaron_cookie_extend_4s`, measured
@@ -15,6 +182,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request, so a word in the prompt can no longer pass for it. The page also no longer creates
   a scene before the extend. The extend e2e contract follows the new wire, and the guard that refuses an
   extend of the wrong clip is unchanged (#1180).
+- **Closing Chrome no longer waits out the 30 s close timeout on Windows.** Chrome's
+  shutdown waited on its OneDrive-folder check (`CloudSyncedFolderChecker`), which never
+  answered on an affected machine, so every browser-backed command (for example `gflow credits
+  user`) paid about 30 s after its work was done. Headless real Chrome waited too. gflow now
+  turns that feature off in every Chrome it launches. Playwright passes its own `--disable-features` list and Chrome
+  keeps only the last one, so gflow sends a single switch that carries Playwright's list plus
+  its own. If a Playwright release moves that list where gflow cannot read it, the switch is
+  left out and the close is slow again rather than wrong (#1140, #1233).
 
 ## [0.96.1] — 2026-11-08
 
@@ -6913,7 +7088,10 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...HEAD
+[0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
+[0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
+[0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
 [0.96.0]: https://github.com/ffroliva/gflow-cli/compare/v0.95.0...v0.96.0
 [0.95.0]: https://github.com/ffroliva/gflow-cli/compare/v0.94.0...v0.95.0

@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from gflow_cli.browser_manager import disable_features_args
+
 _DEV = Path(__file__).resolve().parents[2] / "scripts" / "dev"
 if str(_DEV) not in sys.path:
     sys.path.insert(0, str(_DEV))
@@ -33,4 +35,5 @@ def test_recording_client_injects_video_and_preserves_base(tmp_path: Path) -> No
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
         "--window-position=-30000,-30000",
+        *disable_features_args(),  # #1140
     ]

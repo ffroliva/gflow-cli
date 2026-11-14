@@ -93,7 +93,8 @@ Generate videos using Google's Veo model.
 
 ### gflow_auth_status
 Credit-free, non-interactive Flow session probe — call it before a generate
-tool to fail fast on expired auth. Login itself is CLI-only.
+tool to fail fast on expired auth. Its `wire` field says whether credit reads
+work without a browser (`accepted`) or why not. Login itself is CLI-only.
 
 ### gflow_list_projects
 Browse the local project catalog.
@@ -212,6 +213,25 @@ async def known_issues_section(slug: str) -> str:
             "for the index of valid slugs."
         )
     return _cap_section(section)
+
+
+@server.resource(
+    uri="capabilities://self",
+    name="Capabilities",
+    description=(
+        "What gflow can drive, as yes/no/partial/unknown per capability, with notes for "
+        "partial. Same document as `gflow capabilities --json`, except on a no-spend "
+        "server, where generation is no. Makes no call to Flow."
+    ),
+    mime_type="application/json",
+)
+async def capabilities_self() -> str:
+    """The MCP twin of ``gflow capabilities --json`` (#1197)."""
+    from gflow_cli import json_output
+    from gflow_cli.cli_capabilities import current_capabilities
+    from gflow_cli.mcp.server import no_spend_active
+
+    return json_output.dumps(current_capabilities(no_spend=no_spend_active()))
 
 
 @server.resource(

@@ -31,7 +31,7 @@ The `gflow` CLI exposes these command groups (full reference in [docs/USAGE.md](
 - `gflow image` — `t2i` / `i2i` / `upload` (Imagen / Nano Banana).
 - `gflow video` — `t2v` / `i2v` / `r2v` / `batch`, plus `chain` (last-frame I2V chaining from a JSONL manifest; link 0 is t2v, later links are i2v seeded by the previous clip's last frame; veo models only).
 - `gflow character` — `create` / `list` / `show` / `voices`: reusable, project-scoped Flow Character entities (a named subject with reference images, optional voice and personality) for consistent subjects across generations. See [docs/CHARACTER.md](CHARACTER.md).
-- `gflow scene` — `create` / `show`: compose ordered clips into a scene; `create --output` renders a credit-free server-side extended video via `runVideoFxConcatenation` (no local ffmpeg).
+- `gflow scene` — `create` / `show`: compose ordered clips into a scene; `create --out-file` renders a credit-free server-side extended video via `runVideoFxConcatenation` (no local ffmpeg).
 - `gflow data` — query the local SQLite catalog.
 
 ## Routing rules
@@ -96,7 +96,7 @@ weights live in [`skills/pr-council-review/SKILL.md`](../skills/pr-council-revie
 | Path | Why material | Recommended gate |
 |---|---|---|
 | `src/gflow_cli/auth/`, `recaptcha` | Google anti-bot / auth lifecycle | predict (security persona) + council |
-| `src/gflow_cli/api/client.py`, `_sapisidhash.py` | Auth-token plumbing (Bearer / access-token / SAPISID) outside `auth/`; surfaced as a coverage gap by `scripts/dev/materiality_backtest.py` (3 historical fixes) | predict (security persona) + council |
+| `src/gflow_cli/api/client.py`, `api/_flow_*.py` (split out of it, #1249), `_sapisidhash.py` | Auth-token plumbing (Bearer / access-token / SAPISID) outside `auth/`; surfaced as a coverage gap by `scripts/dev/materiality_backtest.py` (3 historical fixes) | predict (security persona) + council |
 | `src/gflow_cli/api/transports/` | Highest-risk transport surface; live-verify | predict + council (live-verify) |
 | `src/gflow_cli/data/` | SQLite migration / data-loss risk | predict + council (migration safety) |
 
