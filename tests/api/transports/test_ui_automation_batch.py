@@ -228,7 +228,7 @@ async def test_generate_images_batch_happy_path(monkeypatch: pytest.MonkeyPatch)
     - serial invariant: each prompt's detach_fn is called BEFORE the next
       prompt's _attach_batch_response_listener (no two listeners ever active)
     """
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
     # Build a mock transport instance bypassing __init__.
@@ -352,7 +352,7 @@ async def test_generate_images_batch_continue_on_error_send_fail(
 ) -> None:
     """One prompt's _send_prompt raises. With continue_on_error=True the loop
     continues and that prompt's result has status='fail'."""
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
     from gflow_cli.errors import GFlowError
 
@@ -430,7 +430,7 @@ async def test_generate_images_batch_fail_fast_partial_salvage(
     """One prompt's _send_prompt raises with continue_on_error=False. Method
     raises BatchPartialError carrying partial_results for prompts 0..N-1
     that already completed."""
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
     from gflow_cli.errors import BatchPartialError, GFlowError
 
@@ -507,7 +507,7 @@ async def test_generate_images_batch_detach_invariant(
 ) -> None:
     """Every listener that was attached has its detach_fn called before the
     method returns, even on the error path."""
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
     from gflow_cli.errors import BatchPartialError, GFlowError
 
@@ -590,7 +590,7 @@ async def test_settings_fail_after_attach_calls_detach_before_continue(
     With continue_on_error=True the loop must continue to prompt 2 (ok).
     Listeners for idx=0 and idx=2 must be detached (cleanup invariant).
     """
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
@@ -681,7 +681,7 @@ async def test_await_captured_timeout_partial_list_gives_fail_result(
     status='fail' and the error message contains the word 'timed out' or
     'timeout' (case-insensitive).
     """
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
@@ -757,7 +757,7 @@ async def test_batch_setup_failure_propagates_no_listener_attached(
     No listener should have been attached because the failure happens before
     the per-prompt loop.
     """
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
@@ -818,7 +818,7 @@ async def test_serial_pattern_await_captured_always_called(
     inline immediately after _send_prompt, so there is no short-circuit risk.
     This test verifies the call is made and the result is ok.
     """
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
@@ -884,7 +884,7 @@ async def test_generate_images_batch_project_id_identical_across_results(
     After a 3-prompt happy run, every BatchSubmissionResult must share
     exactly one project_id.
     """
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
@@ -1200,7 +1200,7 @@ async def test_configure_generation_settings_resets_count_between_prompts() -> N
 async def test_generate_images_batch_threads_ui_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import gflow_cli.api.transports.ui_automation as uia_mod
+    import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
     from gflow_cli.config import UiMode
 

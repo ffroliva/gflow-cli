@@ -284,6 +284,8 @@ PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     ): "gflow_cli.api.transports._ui_settings",
     ("_select_image_model", "log"): "gflow_cli.api.transports._ui_settings",
     ("_configure_generation_settings", "log"): "gflow_cli.api.transports._ui_settings",
+    ("_generate_images_batch_locked", "asyncio"): "gflow_cli.api.transports._ui_image",
+    ("_generate_images_batch_locked", "random"): "gflow_cli.api.transports._ui_image",
 }
 
 
