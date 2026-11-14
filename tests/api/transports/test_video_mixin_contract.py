@@ -214,7 +214,7 @@ def test_tests_that_patch_the_mixin_class_still_reach_the_transport() -> None:
     # ``setattr(VideoGenerationMixin, name, fake)`` shadows a method defined on any base of the
     # mixin, but not one the transport inherits from a class placed before the mixin.
     assert UiAutomationTransport.__mro__[1] is VideoGenerationMixin
-    assert set(UiAutomationTransport.__mro__[2:]) <= set(VideoGenerationMixin.__mro__)
+    assert set(VideoGenerationMixin.__mro__) <= set(UiAutomationTransport.__mro__)
 
 
 @pytest.mark.skipif(

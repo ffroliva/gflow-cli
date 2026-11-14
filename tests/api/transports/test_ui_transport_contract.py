@@ -263,14 +263,18 @@ def test_mro_keeps_video_generation_mixin_ahead_of_moved_bases() -> None:
 
 
 # Scenario S1 (Reach guard):
-# Maps each patched global name to the module whose namespace the patch currently targets.
+# Maps each patched (method, global_name) pair to the module whose namespace the patch targets.
 # When a reader moves to a new module, its patch string is retargeted AND this map is updated.
-PATCHED_GLOBAL_TARGETS = {
-    "async_playwright": "gflow_cli.api.transports.ui_automation",
-    "_count_tabs_locator": "gflow_cli.api.transports.ui_automation",
-    "_NEW_PROJECT_PROBE_TIMEOUT_MS": "gflow_cli.api.transports.ui_automation",
-    "IMAGE_MODEL_OPTION_SELECTORS": "gflow_cli.api.transports.ui_automation",
-    "log": "gflow_cli.api.transports.ui_automation",
+PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
+    ("setup", "async_playwright"): "gflow_cli.api.transports.ui_automation",
+    ("_is_settings_panel_open", "_count_tabs_locator"): "gflow_cli.api.transports.ui_automation",
+    ("_enter_editor", "_NEW_PROJECT_PROBE_TIMEOUT_MS"): "gflow_cli.api.transports.ui_automation",
+    (
+        "_select_image_model",
+        "IMAGE_MODEL_OPTION_SELECTORS",
+    ): "gflow_cli.api.transports.ui_automation",
+    ("_select_image_model", "log"): "gflow_cli.api.transports.ui_automation",
+    ("_configure_generation_settings", "log"): "gflow_cli.api.transports.ui_automation",
 }
 
 
@@ -285,8 +289,12 @@ def test_patched_module_globals_reach_their_readers() -> None:
             if func is None:
                 continue
             reads = _global_reads(func.__code__)
-            for global_name, expected_module_name in PATCHED_GLOBAL_TARGETS.items():
-                if global_name in reads:
+            for (
+                target_func_name,
+                global_name,
+            ), expected_module_name in PATCHED_GLOBAL_READERS.items():
+                if name == target_func_name:
+                    assert global_name in reads, f"{name} does not read {global_name}"
                     actual_module_name = func.__globals__.get("__name__")
                     if actual_module_name != expected_module_name:
                         mismatches.append(

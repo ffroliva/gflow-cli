@@ -49,7 +49,7 @@ _ABSORBED_BY_EXISTING_WAIT = {
     # the full URL_SETTLE_TIMEOUT_MS (4 s) to return None, on every parked run of
     # a locale-resolved account. The only `wait_until="commit"` goto in this file
     # is that park (#792). On the record, per this module's own rule.
-    ("ui_automation.py", "commit"),
+    ("_ui_session.py", "commit"),
 }
 
 
@@ -96,6 +96,7 @@ def _settle_lines(path: Path) -> set[int]:
     "relpath",
     [
         "transports/ui_automation.py",
+        "transports/_ui_session.py",
         "transports/experimental/evaluate_fetch.py",
         "transports/experimental/sapisidhash.py",
         "transports/experimental/bearer.py",
