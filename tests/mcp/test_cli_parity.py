@@ -14,12 +14,12 @@ has no instructions support — agentic-video is a deliberate typed divergence
 (``drivers/agentic.py`` raises ``FlowAgentUiError``). An ``instructions`` param
 on the video tool would be silently dropped, so it is intentionally absent.
 
-Note on ``--output``/``-o`` (#411): mirrored since the wiring landed — both
-generate tools accept ``output`` (``tools.py``) and put ``output_file`` in the
-task payload, which the daemon decodes and relocates the artifact to
-(``worker/daemon.py``). A v0.48.0 pre-release audit removed an earlier dead
-param that the queue never read; the docstring here claimed that state long
-after the real wiring shipped (#495).
+Note on ``--output``/``-o`` (#411): ``out_file`` is the name and ``output`` is
+deprecated (removed in a future release). Both generate tools accept either
+parameter (``tools.py``) and put ``output_file`` in the task payload, which the
+daemon decodes and relocates the artifact to (``worker/daemon.py``). A v0.48.0
+pre-release audit removed an earlier dead param that the queue never read; the
+docstring here claimed that state long after the real wiring shipped (#495).
 
 Note on ``image t2i --jitter`` (#241): intentionally NOT mirrored on
 ``gflow_generate_image``. The jitter paces submissions *between prompts* in a
