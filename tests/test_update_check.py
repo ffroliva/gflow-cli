@@ -334,6 +334,43 @@ def _exits(
     return _run
 
 
+class _FakeProc:
+    """Stands in for `subprocess.Popen` in `_run_command`'s captured branch.
+
+    Records the Popen kwargs and every `communicate` timeout. With
+    ``interrupt_with`` set, the first `communicate` raises KeyboardInterrupt and
+    the drain after `kill()` returns (or raises) that value."""
+
+    kwargs: dict[str, object] = {}
+    timeouts: list[float | None] = []
+    interrupt_with: tuple[str, str] | BaseException | None = None
+
+    def __init__(self, args: object, **kwargs: object) -> None:
+        type(self).kwargs = kwargs
+        type(self).timeouts = []
+        self.args = args
+        self.returncode = 0
+
+    def __enter__(self) -> _FakeProc:
+        return self
+
+    def __exit__(self, *a: object) -> None:
+        type(self).interrupt_with = None
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        self.timeouts.append(timeout)
+        drain = type(self).interrupt_with
+        if drain is None:
+            return ("", "")
+        if len(self.timeouts) == 1:
+            raise KeyboardInterrupt
+        if isinstance(drain, BaseException):
+            raise drain
+        return drain
+
+    def kill(self) -> None: ...
+
+
 @pytest.fixture
 def uv_install(index_install: Path, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
     """uv-tool install, `uv` on PATH, subprocess seam captured, Playwright stable."""
@@ -768,33 +805,18 @@ class TestRunUpdate:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        class _FakeProc:
-            args = ["fake"]
-            returncode = -15
-
-            def __init__(self, *a: object, **kw: object) -> None:
-                self._calls = 0
-
-            def __enter__(self) -> _FakeProc:
-                return self
-
-            def __exit__(self, *a: object) -> None:
-                pass
-
-            def communicate(self) -> tuple[str, str]:
-                self._calls += 1
-                if self._calls == 1:
-                    raise KeyboardInterrupt
-                return ("", "partially downloaded bytes\n")
-
-            def kill(self) -> None:
-                pass
-
         monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        _FakeProc.interrupt_with = ("", "partially downloaded bytes\n")
         with pytest.raises(KeyboardInterrupt):
             uc._run_command(("fake",), capture_output=True)
         captured = capsys.readouterr()
         assert "partially downloaded bytes" in captured.err
+
+    def test_capture_never_waits_on_a_hidden_prompt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With both pipes captured, a pip `User for host:` prompt would be invisible."""
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        uc._run_command(("fake",), capture_output=True)
+        assert _FakeProc.kwargs.get("stdin") is subprocess.DEVNULL, _FakeProc.kwargs
 
     def test_run_command_decodes_utf8_with_replacement(self) -> None:
         cmd = (

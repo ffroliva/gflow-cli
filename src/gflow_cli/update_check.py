@@ -242,6 +242,7 @@ def _run_command(
         return subprocess.run(list(command), text=True, check=False)  # noqa: S603 — fixed argv
     with subprocess.Popen(  # noqa: S603 — fixed argv
         list(command),
+        stdin=subprocess.DEVNULL,  # a prompt would be invisible and look like a hang
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
