@@ -272,8 +272,7 @@ def _guarded(
             try:
                 result = await fn(*args, **kwargs)
             except GFlowError as exc:
-                # Keep legacy code so weekly telemetry aggregates stay comparable (#1202).
-                outcome = str(legacy_exit_code_for(exc))
+                outcome = str(legacy_exit_code_for(exc))  # legacy: comparable telemetry (#1202)
                 log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
                 result = _error_payload(_gflow_error_dict(exc))
             except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
@@ -348,12 +347,9 @@ def outcome_of(result: dict[str, Any]) -> str:
         return "queued"
     if status in {"error", "failed", "rate_limited", "invalid_tools"}:
         error = result.get("error")
-        # Keep legacy code so weekly telemetry aggregates stay comparable (#1202).
-        code: Any = result.get("exit_code_legacy") or result.get("exit_code")
-        if code is None and isinstance(error, dict):
-            code = cast(dict[str, Any], error).get("exit_code_legacy") or cast(
-                dict[str, Any], error
-            ).get("exit_code")
+        if "exit_code" not in result and isinstance(error, dict):
+            result = cast(dict[str, Any], error)
+        code: Any = result.get("exit_code_legacy", result.get("exit_code"))  # legacy (#1202)
         return str(code) if code is not None else "error"
     return "0"
 
