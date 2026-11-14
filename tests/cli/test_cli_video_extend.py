@@ -14,6 +14,7 @@ command and an expensive one:
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -631,12 +632,16 @@ def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> Non
     assert result.exit_code == 0
     assert "does not report the price" in result.output
     assert "exact amount" not in result.output
-    assert "scene" in result.output
+    flat = " ".join(result.output.split())  # Rich wraps at the terminal width
+    assert "grows the source clip in place" in flat  # #1184, a dated observation
+    assert "measured 2026-11-08" in flat
+    assert "Flow bills 8s" not in flat  # the length is the key's, not a fixed Veo 8 s
 
 
 class _MigratedClient:
-    def __init__(self, *, done: bool) -> None:
+    def __init__(self, *, done: bool, media: str = "new-media") -> None:
         self.done = done
+        self.media = media  # MEDIA = Flow grew the source in place (#1184)
         self.calls: list[dict[str, Any]] = []
 
     async def __aenter__(self) -> _MigratedClient:
@@ -652,12 +657,12 @@ class _MigratedClient:
 
         self.calls.append(kwargs)
         kwargs["on_started"](
-            ExtendStarted(media_id="new-media", workflow_id="new-wf", model_key="k"), "16:9"
+            ExtendStarted(media_id=self.media, workflow_id="new-wf", model_key="k"), "16:9"
         )
         record = GenerationRecord(
             workflow_id="new-wf",
             project_id=PROJECT,
-            media_id="new-media",
+            media_id=self.media,
             status=3 if self.done else 4,
             video_url=None,
             poster_url=None,
@@ -715,6 +720,141 @@ async def test_the_migrated_session_reports_one_video_result(
     assert payload["scene_id"] == SCENE
     assert rows == [("new-media", "16:9")]  # recorded at submit, with the page's aspect
     assert fake.calls[0]["aspect"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("done", [True, False])
+async def test_an_in_place_session_notes_the_clip_only_after_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, done: bool
+) -> None:
+    """#1184: the submit hook is told the source id (so it can skip the in-place clip),
+    and the extend note lands only once Flow reports the clip done."""
+    from gflow_cli.cli_video import _extend_migrated_session
+
+    fake = _MigratedClient(done=done, media=MEDIA)
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+    sources: list[str | None] = []
+    notes: list[tuple[Any, ...]] = []
+
+    class _Recorder:
+        def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
+            sources.append(source_media_id)
+
+        def record_extended_in_place(self, *args: Any) -> None:
+            notes.append(args)
+
+    with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="go",
+            aspect=None,
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            as_json=True,
+            recorder=_Recorder(),  # type: ignore[arg-type]
+        )
+    assert sources == [MEDIA]
+    assert notes == ([("p", MEDIA, "new-wf", "k")] if done else [])  # profile, id, workflow, key
+
+
+@pytest.mark.asyncio
+async def test_a_same_day_rerun_does_not_overwrite_the_default_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1184: an in-place extend keeps the source id, so the default
+    ``<date>/<media_id>_extend.mp4`` repeats for every extend of that clip. An earlier
+    run's file there must survive; the first run of the day keeps the plain name."""
+    from datetime import date
+
+    from gflow_cli.cli_video import _extend_migrated_session
+
+    monkeypatch.setattr(
+        "gflow_cli.cli_video.get_settings", lambda: SimpleNamespace(output_dir=tmp_path)
+    )
+    day = tmp_path / "videos" / date.today().isoformat()
+    plain = day / f"{MEDIA}_extend.mp4"
+
+    async def _run() -> Path:
+        fake = _MigratedClient(done=True, media=MEDIA)
+        monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="go",
+            aspect=None,
+            output_file=None,
+            project_id=PROJECT,
+            as_json=True,
+            recorder=None,
+        )
+        return fake.calls[0]["out_path"]
+
+    assert await _run() == plain
+    day.mkdir(parents=True)
+    plain.write_bytes(b"earlier extend")
+    second = await _run()
+    assert second != plain
+    assert second.parent == day
+    assert second.name.startswith(f"{MEDIA}_extend-") and second.suffix == ".mp4"
+    assert plain.read_bytes() == b"earlier extend"
+
+
+@pytest.mark.parametrize(
+    ("key", "media", "added", "billed"),
+    [
+        ("macaron_cookie_extend_4s", MEDIA, 4, 4),  # in place: the key names its length
+        ("macaron_cookie_extend", MEDIA, None, None),  # in place, no token: unknown
+        (None, MEDIA, None, None),  # in place, key unread: unknown, not Veo's 7/8
+        ("veo_3_1_extension_lite", "new-media", 7, 8),  # a separate Veo segment
+        ("macaron_cookie_extend_4s", "new-media", 7, 8),  # separate segment: name ignored
+    ],
+)
+def test_the_migrated_payload_reports_the_length_by_identity(
+    key: str | None, media: str, added: int | None, billed: int | None
+) -> None:
+    """#1184: "in place" is the returned id being the source's, not the key's name. An
+    in-place extend reads its length from the key's ``_<n>s`` token (+3.9 s measured for
+    ``_4s``) or reports it unknown; a separate segment keeps the measured 7 s / 8 s."""
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video import _migrated_extend_payload
+
+    record = GenerationRecord(
+        workflow_id="wf",
+        project_id=PROJECT,
+        media_id=media,
+        status=3,
+        video_url=None,
+        poster_url=None,
+        size_bytes=None,
+    )
+    outcome = ExtendOutcome(record=record, video=None, model_key=key, aspect="9:16", scene_id=None)
+    payload = _migrated_extend_payload(
+        outcome, "out.mp4", profile_name="p", media_id=MEDIA, project_id=PROJECT, aspect=None
+    )
+    assert (payload["seconds_added"], payload["seconds_billed"]) == (added, billed)
+    assert payload["request"]["duration"] == added
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("macaron_cookie_extend_4s", 4),
+        ("macaron_cookie_extend_4s_low_priority", 4),  # `s_` is no word boundary
+        ("macaron_cookie_extend_12s", 12),
+        ("macaron_cookie_extend_4sx", None),  # not a length token
+        (None, None),
+    ],
+)
+def test_the_extend_seconds_token_is_read_from_any_omni_key(
+    key: str | None, expected: int | None
+) -> None:
+    from gflow_cli.api.transports.migrated_extend import extend_key_seconds
+
+    assert extend_key_seconds(key) == expected
 
 
 def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:
@@ -1002,3 +1142,58 @@ async def test_a_failed_scene_read_before_the_render_is_reconciled_with_a_runnab
     hint = pd["remediation_hint"]
     assert f"gflow scene create --project {PROJECT}" in hint
     assert "wf-seg-1" in hint
+
+
+@pytest.mark.asyncio
+async def test_the_free_rerender_names_only_confirmed_segments_and_the_profile(
+    _patched_client: _FakeClient, _chain_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    """#1208 review: a segment whose poll failed is not confirmed, so the recovery
+    command must not render it; and the command must reach the run's own profile."""
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video import _extend_session
+    from gflow_cli.errors import SceneConcatError
+
+    async def _boom(_inputs: Any, *, out_path: Any) -> Any:
+        raise SceneConcatError("render failed")
+
+    _patched_client.concatenate_scene = _boom  # type: ignore[method-assign]
+    _chain_spy["_emit"] = [
+        ExtendStarted(media_id="m1", workflow_id="wf-seg-1", model_key="k", unit_cost=10),
+        ExtendStarted(media_id="m2", workflow_id="wf-seg-2", model_key="k", unit_cost=10),
+    ]
+    _chain_spy["_result"] = ExtendChainResult(
+        scene_id="s", completed_media_ids=["m1"], credits_spent=20
+    )
+    with pytest.raises(SceneConcatError) as info:
+        await _extend_session(
+            profile_name="other-account",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompts=("a", "b"),
+            segments=2,
+            aspect="16:9",
+            jitter_range=(0.0, 0.0),
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            scene_id=None,
+            seed=None,
+            as_json=False,
+            recorder=None,
+        )
+    hint = info.value.to_problem_details()["remediation_hint"]
+    assert "wf-seg-1" in hint
+    assert "wf-seg-2" not in hint
+    assert "--profile other-account" in hint
+
+
+def test_a_resumed_rerender_keeps_the_instruction_out_of_the_command() -> None:
+    """#1208 review: prose inside the command made it fail in a shell."""
+    from gflow_cli.cli_video import _free_rerender_hint
+
+    hint = _free_rerender_hint("proj", "p", ["wf-1"], resumed=True)
+    command, _, rest = hint.partition("--out-file <path>")
+    assert command.startswith("gflow scene create --project proj --profile p wf-1")
+    assert "(" not in command
+    assert "earlier clips" in rest

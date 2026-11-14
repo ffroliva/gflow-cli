@@ -76,6 +76,32 @@ Machine-readable output: the generation commands (`image t2i` / `image i2i`,
 emit a single parseable object on stdout instead of Rich tables. See
 [§ JSON output](#json-output-json).
 
+Machine-readable command tree ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)):
+`gflow --help --json` prints every command as one JSON object, and
+`gflow <group> [<cmd>] --help --json` narrows it to that part of the tree. Agents and scripts
+can discover commands from it instead of scraping `--help` text, which changes with wording.
+
+```bash
+gflow --help --json | jq -r '.commands[] | select(.spends_credits) | .path | join(" ")'
+gflow video t2v --help --json | jq '.commands[0].params[].name'
+```
+
+Shape: `{"schema": 1, "name": "gflow", "version": "...", "commands": [...]}`. Each command
+has `path` (e.g. `["video", "t2v"]`), `summary`, `aliases`, `params` and `spends_credits`.
+Each param has `name` as typed (`--json`, `PROMPT`), `opts` (every spelling, including the
+off switch of an on/off pair such as `--on/--off`), `type` (`flag` for an on/off switch),
+`choices`, `multiple` (repeatable), `nargs`, `default`, `required` and `help`. Paths and
+params are read from the CLI itself, so they cannot drift. `spends_credits` is set by hand on
+each command, and a test fails when a command has none or when it disagrees with the MCP
+server's spend gate. A bare group that runs on its own, such as `gflow auth`, is listed as a
+command too. **`spends_credits` is `true` for a command that submits a new Flow generation**: the
+video commands (`video t2v`/`i2v`/`r2v`/`chain`/`extend`) spend Veo credits; the image
+commands (`image t2i`/`i2i`/`batch`, `gflow run`, `character create`) and `movie run` submit
+generations too, and images bill the daily image quota rather than credits. Reads, exports
+(`image upscale`, `video upscale`), local catalog work and server-side composition
+(`scene create`) are `false`. The cost of `image upscale --scale 4k` (a subscription tier
+feature) has not been measured.
+
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
 ## `gflow docs`
@@ -121,7 +147,17 @@ There is deliberately **no MCP twin** — see the note at the top of
 
 ## `gflow auth`
 
-See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
+See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands). In short:
+
+```bash
+gflow auth                       # list profiles, or start the first login
+gflow auth login --browser chrome
+gflow auth status [--profile NAME]
+gflow auth renew [--profile NAME | --all] [--json]
+gflow auth list [--json]
+gflow auth use NAME              # make NAME the default profile
+gflow auth logout [--profile NAME] [--yes]   # delete a saved session (asks first)
+```
 
 ## `gflow credits`
 
@@ -350,7 +386,7 @@ Options:
   --project-name, --project-title TEXT
                             Title for the fresh project gflow creates when
                             --project is omitted (single- or multi-prompt).
-  -o, --output PATH         Explicit destination file path for the generated asset
+  --out-file PATH           Explicit destination file path for the generated asset
                             (e.g., `./out/bird.png`). Overrides automatic filename.
   --reference-entity ID     Flow CHARACTER entity id to reference for character
                             consistency (repeatable; must live in --project).
@@ -419,7 +455,12 @@ gflow image t2i "cat in space" --tool creative-director:style=cinema
 
 **Output paths.**
 
-- **Explicit File (`-o` / `--output PATH`).** Saves the generated asset directly to `PATH` (e.g. `-o ./assets/hero.png`). Parent directories are created automatically if they do not exist. With `--count > 1`, images are written as `PATH`'s stem plus `_1`, `_2`, … before the extension (`-o hero.png --count 2` → `hero_1.png`, `hero_2.png`); video commands write a single file only. `-o` is **single-prompt only** (multi-prompt runs abort with a usage error — use `--out` there) and takes precedence over `--out` when both are passed. The path is a **local filesystem path**; it does not accept `s3://`/`gs://` URLs (cloud output still goes through `GFLOW_CLI_STORAGE_URI`).
+> **Output flags.** Use `--out-file PATH` for an explicit destination file path.
+> The legacy `-o/--output PATH` flag is deprecated. In a future release, `-o/--output` will
+> select the output format (`-o json|table|id`), aligning with major CLIs such as `kubectl`,
+> `az`, `gcloud`, and `aws`. Use `--out DIR` for directory output (and `--out-dir DIR` for video).
+
+- **Explicit File (`--out-file PATH`).** Saves the generated asset directly to `PATH` (e.g. `--out-file ./assets/hero.png`). Parent directories are created automatically if they do not exist. With `--count > 1`, images are written as `PATH`'s stem plus `_1`, `_2`, … before the extension (`--out-file hero.png --count 2` → `hero_1.png`, `hero_2.png`); video commands write a single file only. `--out-file` is **single-prompt only** (multi-prompt runs abort with a usage error — use `--out` there) and takes precedence over `--out` when both are passed. The path is a **local filesystem path**; it does not accept `s3://`/`gs://` URLs (cloud output still goes through `GFLOW_CLI_STORAGE_URI`). (The legacy `-o`/`--output PATH` flags remain supported with a deprecation warning.)
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
 - **Directory (`--out DIR`).** Files are written flat as `<DIR>/<media_name>_<n>.png` — no date subdirectory.
 - **Multi-prompt mode.** Files are written as `prompt_<prompt-index>_<variation-index>.png`; the prompt index and variation index are zero-based.
@@ -481,7 +522,7 @@ Options:
                             Aspect ratio.                     [default: 9:16]
   -n, --count INTEGER       How many images to generate (1-4).  [default: 1]
   --out PATH                Output directory (same semantics as t2i).
-  -o, --output PATH         Explicit destination file path (same semantics as t2i).
+  --out-file PATH           Explicit destination file path (same semantics as t2i).
   --project ID              Generate in this EXISTING Flow project (skip scratch).
   --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
                             must live in --project). Counts toward the ref cap.
@@ -533,7 +574,7 @@ project that owns them** via `--project <id>` (this also means no throwaway
 scratch project is created). The CLI attaches each entity through the Flow editor's
 resource picker; the submit then carries `referenceEntities`, exactly like the
 video R2V path. Entities count toward the same per-model reference cap as `--ref`
-images. `--reference-entity` / `--output` are **single-prompt only**; `--project` also
+images. `--reference-entity` / `--out-file` are **single-prompt only**; `--project` also
 works with several prompts, which then all run in that project.
 
 For a *pure* character reference (no starting image) use `t2i` — `i2i` still
@@ -693,8 +734,9 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > located (selector drift), the run refuses with exit 23 *before* submitting
 > instead of proceeding on Flow's sticky default (typically x2) and silently
 > changing what the run bills.
-> `t2v` and `i2v` (not `r2v`) additionally take `-o, --output PATH` (explicit file destination).
-> The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
+> `t2v`, `i2v`, `r2v`, `video chain`, and `video extend` additionally take `--out-file PATH` (explicit file destination).
+> `video chain` writes link i's clip to `<stem>_<i><suffix>` next to PATH (`--out-file out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`, …), numbered over the whole manifest even for one link, so `--resume-from` writes the remaining links under the names a full run would; seed frames stay under `--out-dir`, and `--json` and the catalog report the numbered paths. An existing file or folder at a numbered path is never replaced: that clip, like one whose move fails, stays at its `--out-dir` path, is recorded there, and a warning names it ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+> For `t2v`, `i2v` and `r2v` the mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
 > **`i2v` model rules (issues #125 / #626):** every model — `omni-flash`
 > included — supports i2v with a **start frame** and with an **end frame**
@@ -722,7 +764,7 @@ Generate a video from a text prompt only. On Flow's agent-only composer (#799), 
 through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm).
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [-o/--output]
+gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]
 
 Options:
   --resolution [360p|720p]
@@ -730,7 +772,7 @@ Options:
                         model, or on the labs editor, the run stops before submit with exit 11
                         and no credits spent).
                         Omit for Flow's default.
-  -o, --output PATH     Explicit destination file path for the generated asset
+  --out-file PATH       Explicit destination file path for the generated asset
                         (e.g., `./out/clip.mp4`). Overrides automatic filename.
   --project ID          Generate in this EXISTING Flow project instead of a
                         scratch project (see "Sharing one project across calls").
@@ -819,7 +861,7 @@ Options:
                              Omit for Flow's default.
   --project ID               Generate in this EXISTING Flow project instead of a
                              scratch project (see "Sharing one project across calls").
-  -o, --output PATH          Explicit destination file path for the mp4 (parents
+  --out-file PATH            Explicit destination file path for the mp4 (parents
                              auto-created; overrides --out-dir).
 ```
 
@@ -941,6 +983,13 @@ gflow image t2i "a red bicycle"      # lands in my-batch
 gflow video t2v "a tram at dusk"     # so does this
 ```
 
+To read one project back from the local catalog, or rename it on Flow and in the catalog:
+
+```bash
+gflow project show PROJ123 [--json]
+gflow project rename PROJ123 "Storyboard v2" [--json]
+```
+
 ## Batch video generation (shell loop)
 
 `gflow video` has no `batch` subcommand — a manifest-driven video runner
@@ -981,7 +1030,7 @@ that and they are not interchangeable:
 
 | You have / want | Use | Costs |
 |---|---|---|
-| Clips you already generated, want one file | `gflow scene create --output` | **Free** — server-side concat |
+| Clips you already generated, want one file | `gflow scene create --out-file` | **Free** — server-side concat |
 | One clip, want *more of the same shot* | `gflow video extend` | Credits per 8s segment |
 | Several *distinct shots* with visual continuity | `gflow video chain` | Credits per link |
 | A scripted multi-scene piece | `gflow movie` | Credits per clip |
@@ -1010,24 +1059,36 @@ reach for it before spending anything.
 > and signs the request itself. Before any click, Flow's project read must list
 > `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
 > is checked at the route and aborted, before Flow sees it, if it names another clip. The
-> new segment is downloaded to `-o` (default: the output directory). Not ported to
+> result is downloaded to `-o` (default: `videos/<date>/<media-id>_extend.mp4` in the output
+> directory, with a random tag added when that file already exists, so a same-day re-run
+> keeps the earlier file). **Measured 2026-11-08 with
+> the Omni extend key `macaron_cookie_extend_4s`:** Flow grew the source clip **in place**
+> by about 4 s (7.93 s became 11.83 s), under the source's own media id, for 12 credits. So
+> the file is the whole extended clip, the project lists no separate extension or earlier
+> version, and `--json` reports `seconds_added`/`seconds_billed` from the key (4/4; `null`
+> when the key names no length). The catalog notes the extend on the source's row once Flow
+> reports it done (`extended_by`, `extend_workflow_id`, `extended_at`)
+> ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)). A page that still orders a
+> Veo extend key was not observed that day. Not ported to
 > flow.google.com yet, each refused with exit 36 before anything is billed: more than one
 > PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
-> source clip's (leave `--aspect` off; the extension keeps the source's). Each run leaves a
-> new "Untitled Scene" in the project, and the plan shows no price because that host does
-> not report one before submitting — compare `gflow credits user` before and after. To go
-> further, extend the new clip again. "Cost and safety" and "What it produces" below
+> source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
+> price because that host does not report one before submitting — compare
+> `gflow credits user` before and after. To go further, extend the same clip again. "Cost and safety" and "What it produces" below
 > describe the labs.google arm.
 
-Continue an existing clip by another 8 seconds, then optionally render the whole
-thing to one file.
+Continue an existing clip (on labs.google by another 8 seconds), then optionally render
+the whole thing to one file.
 
 ```bash
 # one continuation
 gflow video extend <media-id> "the wave recedes back into the ocean" --project <id>
 
 # four continuations, different beats, rendered to a single mp4
-gflow video extend <media-id>   "the camera drifts upward"   "the coastline opens out below"   -n 4 -o long.mp4 --project <id>
+gflow video extend <media-id> \
+  "the camera drifts upward" \
+  "the coastline opens out below" \
+  -n 4 --out-file long.mp4 --project <id>
 ```
 
 `MEDIA_ID` is the clip to continue; each `PROMPT` describes one 8-second
@@ -1043,14 +1104,14 @@ costs credits but never quality.
 > and silence** as the shorter clip is padded into its 8s slot. A single-segment
 > extend is unaffected. See
 > [KNOWN_ISSUES](KNOWN_ISSUES.md#a-veo-extend-segment-is-7-seconds-not-the-8-flow-advertises-so-concat-pads-a-frozen-second)
-> — render without `-o` and trim in post if the seam matters.
+> — render without `--out-file` and trim in post if the seam matters.
 
 ### What it produces
 
 A Flow **Scene** containing the original clip plus each continuation — not a
-single file. Pass `-o/--output` to render it to one mp4 through Flow's
-server-side concat, which is credit-free. Without `-o`, render later with
-`gflow scene create --output <path>`.
+single file. Pass `--out-file` to render it to one mp4 through Flow's
+server-side concat, which is credit-free. Without `--out-file`, render later with
+`gflow scene create --out-file <path>`.
 
 ### Cost and safety
 
@@ -1070,7 +1131,7 @@ server-side concat, which is credit-free. Without `-o`, render later with
 | Flag | Meaning |
 |---|---|
 | `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
-| `-o`, `--output PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save only the new extension clip — scene concat is not ported there yet |
+| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save the clip Flow returns; with the Omni key (measured 2026-11-08) Flow grows the source clip in place by ~4s, so that is the whole extended clip (legacy `-o/--output` supported) |
 | `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model. Default 9:16 on labs.google; flow.google.com keeps the source clip's aspect |
 | `--project ID` | Required — the project owning `MEDIA_ID` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
@@ -1130,14 +1191,19 @@ Options:
   --dry-run                 Resolve the manifest, print the plan + credit cost,
                             and spend nothing.
   --resume-from CHAIN_ID    Resume a prior chain by its id; already-paid links
-                            are skipped (not re-billed).
+                            are skipped (not re-billed), and the next link is
+                            seeded from the last paid clip, which must still be
+                            at its recorded path (exit 20 otherwise).
   --jitter FLOAT            Random 0..JITTER second pause between links
                             (anti-bot cadence).               [default: 0.0]
   --seed-offset INTEGER     Extract the seed frame this many ms before EOF
                             (fade-to-black guard).            [default: 0]
   --aspect [9:16|16:9]      Uniform aspect for every link.    [default: 9:16]
   --profile NAME            Profile name (overrides default).
-  --out-dir DIR             Directory for the link mp4s + seed frames.
+  --out-file FILE           Write link i's clip to FILE's stem plus _i
+                            (clip.mp4 -> clip_1.mp4, clip_2.mp4).
+  --out-dir DIR             Directory for the seed frames, and for the link
+                            mp4s unless --out-file is given.
   --json                    Emit a machine-readable JSON result.
 ```
 
@@ -1176,7 +1242,10 @@ the manifest is currently informational).
 ### Output — N clips, not one file
 
 Each link is saved as its own mp4 (plus a `linkN_lastframe.jpg` seed frame
-between links) under `--out-dir` (or the default output dir). **Stitching the
+between links) under `--out-dir` (or the default output dir). With
+`--out-file out/clip.mp4` link i's clip is written to `out/clip_<i>.mp4`
+instead (1-based over the whole manifest, so a `--resume-from` run keeps each
+link's number); the seed frames stay under `--out-dir`. **Stitching the
 clips into a single video is a separate step — use `gflow scene` to
 concatenate them server-side.** Chain does not auto-concat: see the
 *deferred auto-concat* entry in
@@ -1278,19 +1347,19 @@ Arguments:
 
 Options:
   --project PROJECT_ID      Flow project id.                          [required]
-  -o, --output PATH         Render the composed scene into ONE extended .mp4 at
+  --out-file PATH           Render the composed scene into ONE extended .mp4 at
                             PATH (server-side, credit-free, no local ffmpeg).
                             Without it, only the Flow scene is composed (no file).
-  --force                   Overwrite --output if it already exists.
+  --force                   Overwrite --out-file if it already exists.
   --profile NAME            Profile name (overrides default).
 ```
 
-With `--output`, gflow calls Flow's server-side `runVideoFxConcatenation` to
+With `--out-file`, gflow calls Flow's server-side `runVideoFxConcatenation` to
 stitch the clips into a single extended video. The render is **credit-free** and
 needs **no local ffmpeg** — Flow returns the encoded video inline (base64) and
 gflow writes it to PATH (a `.mp4` suffix is enforced; takes up to ~3 min). The
 compose is **persisted to the local catalog before** the render, so a render
-failure is recoverable without re-composing. A non-`.mp4` `--output` is
+failure is recoverable without re-composing. A non-`.mp4` `--out-file` is
 rewritten to `.mp4`; an existing file errors unless `--force` is passed.
 
 **Examples:**
@@ -1300,10 +1369,10 @@ rewritten to `.mp4`; an existing file errors unless `--force` is passed.
 gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123
 
 # Same, but also render one extended .mp4 (credit-free, server-side)
-gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123 --output story.mp4
+gflow scene create wf-aaa wf-bbb wf-ccc --project proj-123 --out-file story.mp4
 
 # Trim the middle clip to its 2.0–6.5s window before concatenating
-gflow scene create wf-aaa wf-bbb:2.0-6.5 wf-ccc --project proj-123 -o story.mp4 --force
+gflow scene create wf-aaa wf-bbb:2.0-6.5 wf-ccc --project proj-123 --out-file story.mp4 --force
 ```
 
 ### `gflow scene show`
@@ -1480,6 +1549,17 @@ or signed URLs). See
 > **`data list profiles` vs `gflow auth list`** — `data list profiles` shows profiles that have **recorded generations** in the catalog; `gflow auth list` shows profiles that have ever **logged in** via `gflow auth login`. A profile that logged in but never generated anything will appear in `auth list` but not in `data list profiles`.
 
 For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying the data layer`](DATA_LAYER.md#querying-the-data-layer).
+
+## `gflow data errors export | prune`
+
+`gflow data errors export` writes every recorded failed operation as JSONL, newest first
+(`--profile`, `--older-than 90d`, `-o FILE`; stdout by default). Archive with it, then
+reclaim the space with `gflow data errors prune`.
+
+```bash
+gflow data errors export --older-than 90d -o failures.jsonl
+gflow data errors prune --older-than 90d
+```
 
 ## `gflow data prune`
 
@@ -1799,7 +1879,7 @@ Upgrade gflow-cli in place, through the package manager that installed it.
 **Stop every other `gflow` process first** — see below.
 
 ```text
-gflow update [--check] [--json]
+gflow update [--check] [-v|--verbose] [--json]
 ```
 
 The installer is read off the install itself, never guessed from `PATH`:
@@ -1812,12 +1892,14 @@ The installer is read off the install itself, never guessed from `PATH`:
 
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs
-nothing. Otherwise it runs the manager with its output shown, then re-reads the
+nothing. Otherwise it runs the manager with output captured (pass `-v`/`--verbose` to view it, or see it on failure), then re-reads the
 venv's Playwright version: when the upgrade moved it, a hint gives you the exact
 `<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
 unreachable the manager still runs — it is the authority on what is installable.
 
 `--check` only reports installed vs latest plus the command that *would* run;
+`-v` / `--verbose` streams the package manager's output live (with `--json` it stays
+captured, so stdout is one JSON document; the root `gflow -v` only raises log verbosity);
 `--json` returns `{status: "ok", installed, latest, update_available, installer,
 command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
 be reached; after an upgrade `latest` is the version the venv actually reports;
@@ -1857,9 +1939,10 @@ and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
 its own file open, so it can be neither overwritten nor renamed while it runs.
 Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
 the launcher ("os error 32"). The upgrade *did* happen — the launcher only
-points at the venv's python — so `gflow update` reports it as upgraded with a
-note quoting the manager's exit code; the next update from another shell
-refreshes the launcher.
+points at the venv's python — so `gflow update` reports it as upgraded, prints
+the manager's captured output, and adds a note quoting its exit code. The old
+launcher keeps working. A later `gflow update` reports "up to date" and does not
+run the manager, so it does not replace the launcher either.
 
 **Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
 lock just above is the benign case: it is the `gflow.exe` *you* are running, and
@@ -1886,7 +1969,7 @@ Restart any running `gflow serve` / MCP server afterwards too; a long-lived
 process keeps the old code until it restarts. There is deliberately no MCP twin
 of this command: a server must not replace its own code underneath itself.
 
-Every command also prints an **update banner** on stderr (a one-line notice when
+Every command (other than `gflow update` itself) also prints an **update banner** on stderr (a one-line notice when
 stderr is not a terminal) when a newer release is known — see
 [CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
 for the once-a-day cache and how to silence it.
@@ -1933,8 +2016,11 @@ Print the image and video model catalog — the source of truth for what
 `--json` for a single machine-readable object.
 
 ```text
-gflow models [OPTIONS]
+gflow models [list] [--json]
+gflow models show MODEL_ID [--json]
 ```
+
+Bare `gflow models` is an alias of `gflow models list`: same options, same output.
 
 Per model the catalog reports: `name`, `label` (image models: the name Flow's
 model menu shows, read on English accounts, such as `Nano Banana Pro`; display
@@ -1953,12 +2039,44 @@ gflow models
 
 # Machine-readable catalog for a worker / model picker
 gflow models --json
+
+# One model's limits: aliases, ref cap, durations (video) or Flow name (image), aspects
+gflow models show omni-flash
+
+# The same object gflow_list_models carries for that model (#1196)
+gflow models show NARWHAL --json
+```
+
+`show` takes a model's `name` or any spelling the generation commands' `--model`
+resolves (`omni-flash`, `Omni Flash`, `veo_lite`, `NARWHAL`, ...). Its `--json`
+emits that model's catalog entry exactly as `gflow_list_models` returns it, so a
+script reading one model needs no list parsing. Video entries carry `durations`,
+the clip lengths `--duration` accepts for that model (Veo: 4, 6, 8; Omni Flash
+adds 10), next to `max_duration`. The table view adds the model's section aspects
+for context. An unknown id exits 2 and names up to three closest models. That is
+a Click usage error: the message goes to stderr and stdout stays empty, even with
+`--json`. The catalog does not carry per-model generation modes or host
+availability, so `show` does not report them.
+
+## `gflow capabilities`
+
+Declare what this gflow can drive: one value per capability (`yes`, `no`,
+`partial`, `unknown`), with a note on every `partial`. It makes no call to Flow and
+opens no browser; the only input is `GFLOW_CLI_FLOW_HOST`, and `host` reports that
+setting. MCP clients read the same document from the resource `capabilities://self`
+(except on a no-spend server, where generation is `no`)
+([#1197](https://github.com/ffroliva/gflow-cli/issues/1197)). Every key's meaning:
+[CAPABILITIES.md](CAPABILITIES.md).
+
+```bash
+gflow capabilities          # table
+gflow capabilities --json   # {"schema": 1, "adapter": ..., "host": ..., "capabilities": {...}, "notes": {...}}
 ```
 
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`), `auth list`, `gflow models`, and `gflow docs` accept `--json` for machine-to-machine
+`r2v`), `auth list`, `gflow models`, `gflow capabilities`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)
@@ -1980,11 +2098,18 @@ use. When set:
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
   `duration`, `count`, `seed`).
 - On failure, the command still emits a JSON payload — an RFC 9457
-  problem-details object including a `retryable` flag (true for WAF /
-  rate-limit / network / timeout) that a worker scheduler can key its
-  retry-vs-absorb decision off, plus `charged` (`no` / `maybe` / `yes`) and
+  problem-details object including a `retryable` flag that a worker scheduler
+  can key its retry-vs-absorb decision off (by default true for WAF /
+  rate-limit / network / timeout, but read the emitted value: a video poll that
+  times out after the submit reads `false` with `next_action: "reconcile"`), plus
+  `charged` (`no` / `maybe` / `yes`) and
   `next_action` (#1201) — and exits with the same non-zero code as the Rich path.
   Every `type`, its exit code and those defaults: [ERRORS.md](ERRORS.md).
+- One exception: a `video t2v/i2v/r2v` that Flow accepted and then reported
+  failed emits the `VideoResult` above with `status: "fail"`, not a
+  problem-details object. It has no `type` or `retryable`; it carries
+  `charged: "maybe"`, `next_action: "reconcile"` and the clip's media id as
+  `operation_id` at the top level.
 
 The data-layer recorder fires regardless of `--json`, so audit history is
 independent of the output channel.
@@ -2263,6 +2388,11 @@ shell scripts can branch on the failure mode without parsing stderr. With `--jso
 envelope also says whether Flow may have billed and what to do next; see
 [ERRORS.md](ERRORS.md).
 
+The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to the stable core:
+`4→40`, `5→41`, `6→42`, `7→43`, `8→3`, `9→44`, everything else unchanged, and `--json` errors carry
+`exit_code_legacy` beside `exit_code`. It becomes the default in a later release; see
+[ERRORS.md](ERRORS.md).
+
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|
 | `0`  | —                     | Success                                          | —                                                          |
@@ -2276,7 +2406,7 @@ envelope also says whether Flow may have billed and what to do next; see
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal`, `unreadable` or `was lost`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** A lost **image** reply is recovered from the project grid since v0.89.1 ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)), so exit 9 there means the grid did not show exactly the requested images. A lost **video** reply is followed to the clip when the run uploaded a file (`--ref`, `--initial-frame`, `--end-frame`; [#1112](https://github.com/ffroliva/gflow-cli/issues/1112)), so exit 9 with `unreadable` there means no clip, or more than one, carried the upload. A one-clip t2v run is followed by its exact prompt and model ([#1141](https://github.com/ffroliva/gflow-cli/issues/1141)), so `was lost` there means the project listing could not name exactly one clip; t2v with `--count` above 1 and character-only r2v still exit 9. For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](KNOWN_ISSUES.md)) |
 | `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
-| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid, including a malformed row in a `gflow run` config, an `image batch` manifest, a `movie` manifest or a `video chain` manifest (#935: `image batch` reported these as exit 2 before); a `--project` id Flow answers with its `/404?reason=project` page, meaning not found or not accessible to this account ([#974](https://github.com/ffroliva/gflow-cli/issues/974), [#1053](https://github.com/ffroliva/gflow-cli/issues/1053)); an output folder gflow cannot write to (`--out`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_STORAGE_URI`), after a generation that succeeded: the asset is still in the Flow project ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091); a generated video clip keeps exit 6); a cloud `GFLOW_CLI_STORAGE_URI` combined with `-o`, `video chain` or `movie run --stitch`, refused before billing ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)) — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile; also a Chrome window you opened yourself holding the profile, [#984](https://github.com/ffroliva/gflow-cli/issues/984) — close it or use another `--profile`), `ProfileAccessError` (Windows Chrome cannot write the profile directory; raised at the generation client's launch), and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; for profile access denial grant write access to the complete profile directory or use a writable profile; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
+| `11` | `ConfigurationError`  | Local configuration or browser mode is invalid, including a malformed row in a `gflow run` config, an `image batch` manifest, a `movie` manifest or a `video chain` manifest (#935: `image batch` reported these as exit 2 before); a `--project` id Flow answers with its `/404?reason=project` page, meaning not found or not accessible to this account ([#974](https://github.com/ffroliva/gflow-cli/issues/974), [#1053](https://github.com/ffroliva/gflow-cli/issues/1053)); an output folder gflow cannot write to (`--out`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_STORAGE_URI`), after a generation that succeeded: the asset is still in the Flow project ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091); a generated video clip keeps exit 6); a cloud `GFLOW_CLI_STORAGE_URI` combined with `video t2v`/`i2v`/`r2v --out-file` (or legacy `-o`), `video chain` or `movie run --stitch`, refused before billing ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)) — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile; also a Chrome window you opened yourself holding the profile, [#984](https://github.com/ffroliva/gflow-cli/issues/984) — close it or use another `--profile`), `ProfileAccessError` (Windows Chrome cannot write the profile directory; raised at the generation client's launch), and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; for profile access denial grant write access to the complete profile directory or use a writable profile; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Sign-in rejected the browser for `navigator.webdriver` | Re-run `gflow auth login`; with Chrome installed the `chrome` strategy retries automatically |
@@ -2284,8 +2414,8 @@ envelope also says whether Flow may have billed and what to do next; see
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
 | `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` or `omni-1.2-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
-| `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --output`) | Retry; the recorded compose survives, so re-render is safe |
-| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
+| `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --out-file`) | Retry; the recorded compose survives, so re-render is safe |
+| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link, or a `video chain --resume-from` whose last completed clip is no longer at its recorded path (refused before anything is billed, [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)) | Check the source video downloaded intact; retry the link. For a resume, put the clip back at the path named, or start a new chain |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
 | `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | If the detail says the model picker is **hidden**, nothing was submitted: turn the **Agent** chip off in a browser and re-run ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). Otherwise update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |

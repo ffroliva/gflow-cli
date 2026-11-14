@@ -884,6 +884,7 @@ async def test_a_create_with_an_unknown_outcome_is_not_retryable_on_the_queue(
     assert updated is not None and updated.error is not None
     assert updated.status == "failed"
     assert updated.error["exit_code"] == 7
+    assert updated.error["exit_code_legacy"] == 7  # #1202: always the legacy code
     assert updated.error["retryable"] is False
     fake_client.generate_image.assert_not_called()
     worker.close()
@@ -972,6 +973,7 @@ async def test_a_bare_timeout_reaches_an_mcp_caller_as_a_hash(temp_db: DataStore
     """
     error = await _fail_t2v_with(temp_db, TimeoutError("Timeout 5000ms exceeded"), "task-776-bare")
     assert error["exit_code"] == 1
+    assert error["exit_code_legacy"] == 1  # #1202
     assert error["detail"].startswith("sha256:")
     assert "settings-trigger" not in error["detail"]
     # #1201: the untyped branch carries the same members, and proves nothing about billing.

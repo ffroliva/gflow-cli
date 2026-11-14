@@ -72,6 +72,20 @@ def test_leaf_walks_groups() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("argv", "command"),
+    [
+        (["-v", "auth", "list"], "auth list"),
+        (["--verbose", "video", "t2v", "a cat"], "video t2v"),
+        (["-v", "data", "list", "projects"], "data list projects"),
+        (["auth", "list"], "auth list"),
+    ],
+)
+def test_root_flags_do_not_swallow_the_command(argv: list[str], command: str) -> None:
+    # A flag takes no value; Click still reports nargs=1 for it (#1209).
+    assert telemetry.leaf_and_flags(main, argv)[0] == command
+
+
 def test_prompt_shaped_like_flag_is_not_a_key() -> None:
     assert telemetry.leaf_and_flags(main, ["video", "t2v", "--nonsense", "image t2i"]) == (
         "video t2v",

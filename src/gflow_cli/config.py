@@ -358,6 +358,15 @@ class Settings(BaseSettings):
         description="Where generated assets land (local storage).",
     )
 
+    # --- exit codes (#1202) ---------------------------------------------------
+    exit_codes: str | None = Field(
+        default=None,
+        description=(
+            "'2' opts in to the stable exit-code core (docs/ERRORS.md); anything else "
+            "keeps the legacy codes. Override via GFLOW_CLI_EXIT_CODES."
+        ),
+    )
+
     # --- cloud storage ----------------------------------------------------
     storage_uri: str | None = Field(
         default=None,

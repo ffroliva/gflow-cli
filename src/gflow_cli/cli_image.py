@@ -19,7 +19,7 @@ import sys
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 import click
 import structlog
@@ -35,9 +35,11 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     default_project,
+    out_file_option,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
+    spends_credits,
     tool_option,
 )
 from gflow_cli.api import routes
@@ -108,9 +110,12 @@ from gflow_cli.image_batch import (
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
-from gflow_cli.paths import image_output_path, resolve_batch_output_dir
+from gflow_cli.paths import image_output_path, numbered_path, resolve_batch_output_dir
 from gflow_cli.profile_store import account_locale_for
-from gflow_cli.services import catalog_sync
+from gflow_cli.refresh_resolver import (
+    _build_name_resolver as _build_name_resolver,  # pyright: ignore[reportPrivateUsage]
+)
+from gflow_cli.refresh_resolver import wire_refresh_resolver as wire_refresh_resolver
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 
@@ -326,126 +331,6 @@ def _enrich_uuid_refs(
         return refs
 
 
-class _DisplayNameWriter(Protocol):
-    """The one-method slice of :class:`DataRepository` the #546 resolver needs."""
-
-    def set_asset_display_name(
-        self, profile_name: str, flow_media_id: str, name: str, *, source: str
-    ) -> bool: ...
-
-
-def _build_name_resolver(
-    fetch_listing: Callable[[str], dict[str, Any]],
-    repo: _DisplayNameWriter,
-    *,
-    profile_name: str,
-    project_id: str | None,
-    prompt_mode: str,
-) -> Callable[[str], str | None] | None:
-    """Build the #546 refresh-on-miss resolver the transport consults.
-
-    Pure and browser-free: ``fetch_listing`` is a SYNC seam over
-    ``FlowApiClient.fetch_project_listing`` (the ~0.5s free
-    ``flow.projectInitialData`` call) — the caller owns any async bridging
-    (see :func:`wire_refresh_resolver` for the live topology).
-
-    * ``project_id is None`` -> ``None``: no listing to consult, the transport
-      keeps today's behavior.
-    * The resolver fetches THAT project's listing, parses it with
-      :func:`catalog_sync.parse_project_listing` (single source of listing
-      truth), and returns the current display name for the UUID (``None``
-      when unlisted — the transport then walks its existing fallback chain).
-    * Write-through provenance: a fresh name is persisted via
-      ``set_asset_display_name(..., source="refresh")`` ONLY when
-      ``prompt_mode == "store"``; ``redacted`` still self-heals the run
-      transiently but never writes a prompt-derived caption to disk.
-    """
-    if project_id is None:
-        return None
-
-    def _resolve(media_id: str) -> str | None:
-        listing = catalog_sync.parse_project_listing(fetch_listing(project_id))
-        fresh = listing.names.get(media_id)
-        if not fresh:
-            return None
-        if prompt_mode == "store":
-            repo.set_asset_display_name(profile_name, media_id, fresh, source="refresh")
-        return fresh
-
-    return _resolve
-
-
-class _RefreshWriteRepo:
-    """Write-through repo opening the store per call, in the calling thread.
-
-    The resolver runs on an ``asyncio.to_thread`` worker (see
-    :func:`wire_refresh_resolver`), so the sqlite handle must live entirely
-    on that thread — open, write, close per invocation (#543 S6 lesson:
-    never carry a connection across threads). Misses are rare, so the extra
-    open is negligible next to the listing fetch it accompanies.
-    """
-
-    def set_asset_display_name(
-        self, profile_name: str, flow_media_id: str, name: str, *, source: str
-    ) -> bool:
-        try:
-            with DataStore.open(get_settings().resolved_db_path()) as store:
-                return DataRepository(store).set_asset_display_name(
-                    profile_name, flow_media_id, name, source=source
-                )
-        except (DataStoreError, OSError) as exc:
-            logger.debug(
-                "image.refresh_write_skipped", media_id=flow_media_id, error=str(exc)[:120]
-            )
-            return False
-
-
-def wire_refresh_resolver(
-    client: FlowApiClient,
-    *,
-    profile_name: str,
-    project_id: str | None,
-) -> Callable[[str], str | None] | None:
-    """Bridge the async ``FlowApiClient`` into the sync #546 resolver seam.
-
-    Thread topology: the transport invokes the resolver via
-    ``asyncio.to_thread`` — OFF the event loop — so the fetch here may safely
-    block its worker thread on ``run_coroutine_threadsafe(...).result()``,
-    scheduling ``fetch_project_listing`` back onto the main loop captured at
-    build time (the loop is free: it is parked awaiting the ``to_thread``
-    call). No second browser context, no second ProfileLease — the fetch
-    rides the generation's own authenticated session.
-
-    Best-effort and never fatal: any construction failure returns ``None``
-    and generation proceeds exactly as before #546. Only a canonical-UUID
-    project id qualifies — ``fetch_project_listing`` rejects anything else,
-    so a resolver built around one could never succeed.
-    """
-    # Silent no-resolver path (no log): non-str covers test fakes whose mock
-    # project ids would otherwise make is_media_uuid raise.
-    if not isinstance(project_id, str) or not is_media_uuid(project_id):
-        return None
-    try:
-        loop = asyncio.get_running_loop()
-        settings = get_settings()
-
-        def _fetch(pid: str) -> dict[str, Any]:
-            return asyncio.run_coroutine_threadsafe(client.fetch_project_listing(pid), loop).result(
-                timeout=60.0
-            )
-
-        return _build_name_resolver(
-            _fetch,
-            _RefreshWriteRepo(),
-            profile_name=profile_name,
-            project_id=project_id,
-            prompt_mode=settings.history_prompts,
-        )
-    except Exception as exc:  # noqa: BLE001 - optional wiring, never blocks generation
-        logger.debug("image.refresh_resolver_unavailable", error=str(exc)[:120])
-        return None
-
-
 async def _resolve_project(
     client: FlowApiClient,
     *,
@@ -495,6 +380,7 @@ def image() -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @image.command(
     "upload",
     short_help="Upload a local image into an ephemeral Flow project.",
@@ -602,6 +488,7 @@ async def _run_upload(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @image.command(
     "upscale",
     short_help="Upscale a platform-generated image to 2K or 4K.",
@@ -827,6 +714,7 @@ _ui_mode_option = click.option(
 )
 
 
+@spends_credits(True)
 @image.command(
     "t2i",
     short_help="Generate image(s) from a text prompt.",
@@ -903,14 +791,7 @@ _ui_mode_option = click.option(
         "files are written flat as <dir>/<media_name>_<n>.png."
     ),
 )
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated asset.",
-)
+@out_file_option(help="Explicit output file path for the generated asset.")
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @click.option(
@@ -966,7 +847,7 @@ def t2i(  # NOSONAR
 
     if is_multi_prompt and output_file is not None:
         msg = (
-            "--output is single-prompt only; remove the extra prompts or use --out for"
+            "--out-file is single-prompt only; remove the extra prompts or use --out for"
             " directory output."
         )
         raise click.UsageError(msg)
@@ -1246,7 +1127,7 @@ async def _download_images(
             if len(images) == 1:
                 target = output_file
             else:
-                target = output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
+                target = numbered_path(output_file, i)
         elif out is not None:
             target = out / f"{img.media_name}_{i}.png"
         else:
@@ -1530,6 +1411,7 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
 _BATCH_TITLE = "gflow-cli image batch"
 
 
+@spends_credits(True)
 @image.command(
     "batch",
     short_help=f"Batch-generate images from a manifest (max {_MAX_BATCH_PROMPTS}, shared project).",
@@ -1712,6 +1594,7 @@ class _I2IParams:
     ui_mode: UiMode | None = None
 
 
+@spends_credits(True)
 @image.command(
     "i2i",
     short_help="Generate image(s) from a prompt + one or more reference images.",
@@ -1795,14 +1678,7 @@ class _I2IParams:
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated asset.",
-)
+@out_file_option(help="Explicit output file path for the generated asset.")
 @click.option(
     "--instruction",
     "-i",

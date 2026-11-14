@@ -58,7 +58,7 @@ segment finished, with the submitted segment's media id as `operation_id`.
 | `wait` | Wait for a condition to clear (credits, another process holding the profile) | `false` |
 | `reauth` | Run `gflow auth login` for the profile | `false` |
 | `fix_input` | Change the command, its inputs or the local setup | `false` |
-| `reconcile` | Settle the outcome first: find the result in Flow (`gflow data download <media_id>` for a billed clip, `gflow scene create --output` for a scene) before re-running | `false` |
+| `reconcile` | Settle the outcome first: find the result in Flow (`gflow data download <media_id>` for a billed clip, `gflow scene create --out-file` for a scene) before re-running | `false` |
 | `none` | Nothing a caller can do will change the result | `false` |
 
 `retryable` and `next_action` always agree: `retryable` is `true` exactly when
@@ -72,7 +72,10 @@ submit and are retryable by default: `TransportTimeoutError`, `NetworkError`,
 `WafRejectionError`, `BrowserSessionClosedError`, `FlowAppError`, `FlowAgentUiError`.
 Every raise site gflow knows to come after a submit overrides them to `reconcile`
 (`retryable: false`): the labs `t2v`/`i2v`/`r2v` and `video extend` poll timeouts, the
-flow.google.com post-submit timeouts, the agent-only composer's refusals, and a failed
+flow.google.com post-submit timeouts, a 5xx, timeout or connection reset on a billed
+extend or upscale submit, a failed image submit on a transport that sends its own
+reCAPTCHA token, the
+agent-only composer's refusals, and a failed
 download of a finished clip. So a `retry` that reaches you comes from a site gflow treats as before the
 submit. `maybe` still says gflow cannot prove it: a scheduler that runs paid
 generations unattended should check the project before a second paid attempt.
@@ -93,6 +96,18 @@ place today:
 - A labs video poll timing out after the submit reads `maybe` / `reconcile`, with the
   media id as `operation_id`. That covers both the `t2v`/`i2v`/`r2v` poll (which used to
   surface as an unclassified `UnexpectedError`) and the `video extend` poll.
+- A 5xx on a billed `video extend` or `image upscale` submit (`NetworkError`, #1260)
+  reads `maybe` / `reconcile`, and so does a timeout or connection reset while that
+  submit is in flight (#1274), which used to exit 1 as an `UnexpectedError`. A browser
+  closed while that submit is in flight reads the same (`NetworkError`, not
+  `BrowserSessionClosedError`), because the request may already have reached Flow; a
+  timeout before the submit is sent (the access-token fetch) is not reclassified. The
+  request carries a single-use reCAPTCHA token, so it
+  is sent once and never resent; check the project in Flow before running it again.
+- An image submit on a transport that sends the client's reCAPTCHA token (the HTTP
+  transports, not Flow's own page) failing with a 5xx, timeout or connection reset
+  (`NetworkError`, #1275) reads `maybe` / `reconcile`. The token is single-use, so the
+  submit is sent once; check the project in Flow for the image before running it again.
 - A video Flow reports failed reads `maybe` / `reconcile`, with its media id as
   `operation_id`, on the worker queue as on the CLI.
 - A failed write of a generated asset to disk or a bucket (`ConfigurationError`) reads
@@ -103,10 +118,10 @@ place today:
   unless it already names the in-flight link.
   An untyped one is wrapped in `ChainPartialError`. `ChainPartialError` reads `yes` only
   when it carries completed links, and lists them in `completed_media_ids`.
-- `video extend --output`: any failure while rendering billed segments (reading the
+- `video extend --out-file`: any failure while rendering billed segments (reading the
   scene back or the render itself) reads `yes` / `reconcile`. Its hint is the free
   re-render as a command that runs: `gflow scene create --project <id> <clip refs>
-  --output <path>`.
+  --out-file <path>`.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 
@@ -203,3 +218,48 @@ HTTP `status`: no HTTP call failed.
 
 `tests/test_problem_details_extensions.py` fails when a `type` is missing here or a row
 disagrees with what the code emits.
+
+## Exit codes: the stable core (opt-in in this release)
+
+In this release, gflow introduces a stable exit-code core. The default remains today's
+legacy codes. Scripts opt in to the new codes by setting `GFLOW_CLI_EXIT_CODES=2`.
+
+The core reserves low codes for broad outcomes:
+- `0`: success.
+- `1`: general error.
+- `2`: command-line usage or invalid input.
+- `3`: authentication failure (expired session or missing profile).
+- `4`: accepted and still running (reserved for asynchronous execution; emitted by nothing in this release).
+- `5–9`: reserved.
+- `130`: interrupted by signal (SIGINT).
+
+Specific error causes move into the 40–63 range. Codes 10–39 remain unchanged.
+
+### Legacy to stable core mapping
+
+| Legacy code | Core code (mode 2) | Error class / Meaning |
+|---|---|---|
+| `0` | `0` | Success (unchanged) |
+| `1` | `1` | General or unclassified error (unchanged) |
+| `2` | `2` | CLI usage or input error (unchanged) |
+| `3` | `3` | `AuthExpiredError` (unchanged) |
+| `4` | `40` | `RateLimitError` (rate limit or quota hit) |
+| `5` | `41` | `ContentPolicyError` (content safety refusal) |
+| `6` | `42` | `NetworkError` (transient connection or HTTP failure) |
+| `7` | `43` | `WireFormatError` (unexpected response shape) |
+| `8` | `3` | `AuthMissingError` (missing credentials; merged with auth code 3) |
+| `9` | `44` | `TransportTimeoutError` (browser or network timeout) |
+| `10–39` | `10–39` | Specific causes (WAF, config, data store, credits, etc.; unchanged) |
+| `130` | `130` | Interrupted by user (unchanged) |
+
+In the shared `--json` error envelope (and MCP queued failures), `exit_code` reports the
+active process exit code (40 under mode 2, or 4 by default), and `exit_code_legacy` always
+reports the legacy code. The process exit status follows the active mode on every command.
+
+### Deprecation cycle
+
+The change ships over three releases:
+1. **This release:** the legacy codes stay the default. Opt in with `GFLOW_CLI_EXIT_CODES=2`, in the environment or in `.env`.
+2. **A later release:** the stable core becomes the default. `GFLOW_CLI_EXIT_CODES=1` restores the legacy codes and prints a one-line deprecation notice on stderr.
+3. **The release after that:** the legacy codes are removed.
+

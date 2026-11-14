@@ -80,6 +80,7 @@ nav:
       - Let your assistant drive it: agents.md
       - MCP Server: MCP.md
       - Error envelope: ERRORS.md
+      - Capabilities: CAPABILITIES.md
   - Reference & Internals:
       - Architecture: ARCHITECTURE.md
       - Configuration: CONFIGURATION.md

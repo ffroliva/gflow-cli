@@ -6,6 +6,7 @@
 # Gates enforced on commit:
 #   1. ruff lint + format (fast, catches import order / style / unused imports)
 #   2. repo-hygiene (blocks tracked images, CDP lock files, hardcoded Windows paths)
+#   2b. size-gate (file/class length + ruff complexity ratchet, #1249)
 #
 # The hygiene hook is the primary defence against accidental leakage of:
 #   - generated output artefacts (*.jpg, *.jpeg, test_assets/smoke_*/, test_assets/debug_*/)
@@ -41,6 +42,14 @@ repos:
         pass_filenames: false
         always_run: true
         additional_dependencies: []
+
+      - id: size-gate
+        name: Size gate (file/class length, ruff C901/PLR0915/PLR0904; ratchet baseline)
+        # system, not python: the gate runs ruff, which an isolated hook venv does not have
+        language: system
+        entry: uv run --no-sync python scripts/ci/check_size.py
+        pass_filenames: false
+        always_run: true
 
       - id: sonar-outage-fallback
         name: Sonar (SonarCloud primary; local fallback only on outage)

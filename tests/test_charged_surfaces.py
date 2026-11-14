@@ -137,6 +137,8 @@ def test_a_failed_video_result_carries_the_members() -> None:
     )
     payload = video_result(command="video t2v", request=req, result=failed)
     assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
+    # ERRORS.md promises the media id as operation_id on the CLI as on the worker queue.
+    assert payload["operation_id"] == "m"
     ok = VideoResult(
         status=VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=None,

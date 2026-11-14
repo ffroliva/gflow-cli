@@ -61,6 +61,16 @@ def _fake_link_result(index: int, tmp_path: Path) -> Any:
     )
 
 
+def _done_links(tmp_path: Path, n: int) -> list[Any]:
+    """Recorded links whose clips are on disk, so a resume can seed from the last (#1300)."""
+    links = []
+    for i in range(n):
+        clip = tmp_path / f"done{i}.mp4"
+        clip.touch()
+        links.append(MagicMock(link_index=i, local_path=str(clip)))
+    return links
+
+
 def _assert_no_numeric_credit_claim(output: str) -> None:
     numeric_credit_lines = [
         line
@@ -138,7 +148,7 @@ def test_chain_resumed_dry_run_counts_only_remaining_operations(tmp_path: Path) 
     runner = CliRunner()
     manifest = _manifest(tmp_path, 3)
     fake_recorder = MagicMock()
-    fake_recorder.completed_links.return_value = [MagicMock(), MagicMock()]
+    fake_recorder.completed_links.return_value = _done_links(tmp_path, 2)
 
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
@@ -170,7 +180,7 @@ def test_chain_resume_with_all_links_completed_returns_before_external_work(
     runner = CliRunner()
     manifest = _manifest(tmp_path, 3)
     fake_recorder = MagicMock()
-    fake_recorder.completed_links.return_value = [MagicMock(), MagicMock(), MagicMock()]
+    fake_recorder.completed_links.return_value = _done_links(tmp_path, 3)
 
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
@@ -462,7 +472,7 @@ def test_chain_resume_skips_completed_links(tmp_path: Path) -> None:
 
     # Recorder reports the first link already paid for.
     fake_recorder = MagicMock()
-    fake_recorder.completed_links.return_value = [MagicMock()]  # 1 completed
+    fake_recorder.completed_links.return_value = _done_links(tmp_path, 1)
 
     fake_client = MagicMock()
     fake_client.__aenter__ = AsyncMock(return_value=fake_client)

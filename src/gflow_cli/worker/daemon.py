@@ -32,7 +32,7 @@ from gflow_cli.errors import (
     outcome_members,
 )
 from gflow_cli.observability import exception_message_hash
-from gflow_cli.paths import image_output_path
+from gflow_cli.paths import image_output_path, numbered_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
@@ -296,10 +296,7 @@ class FlowWorker:
                                     if len(images) == 1:
                                         target = output_file
                                     else:
-                                        target = (
-                                            output_file.parent
-                                            / f"{output_file.stem}_{i}{output_file.suffix}"
-                                        )
+                                        target = numbered_path(output_file, i)
                                     target.parent.mkdir(parents=True, exist_ok=True)
                                 else:
                                     target = image_output_path(
@@ -537,13 +534,10 @@ class FlowWorker:
 
             if isinstance(exc, GFlowError):
                 error_payload = dict(exc.to_problem_details())
-                from gflow_cli.errors import EXIT_CODE_MAP, is_retryable
+                from gflow_cli.errors import exit_code_for, is_retryable, legacy_exit_code_for
 
-                exit_code = next(
-                    (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)),
-                    1,
-                )
-                error_payload["exit_code"] = exit_code
+                error_payload["exit_code"] = exit_code_for(exc)
+                error_payload["exit_code_legacy"] = legacy_exit_code_for(exc)
                 # §6.5: same shared retry classification as CLI --json / MCP.
                 error_payload["retryable"] = is_retryable(exc)
                 if "status" not in error_payload:
@@ -561,6 +555,7 @@ class FlowWorker:
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
+                    "exit_code_legacy": 1,
                     # #1201: same members as a typed failure; nothing is proven.
                     **outcome_members("maybe", "none"),
                 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast, get_args
@@ -68,8 +69,12 @@ __all__ = [
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
+    "active_exit_code",
+    "active_exit_code_mode",
     "classify_content_safety",
+    "exit_code_for",
     "is_retryable",
+    "legacy_exit_code_for",
     "outcome_members",
 ]
 
@@ -1782,6 +1787,54 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     SceneConcatError: 19,
     # FlowApiError omitted — falls through to default 1
 }
+
+#: Mapping from legacy exit codes (4-9) to the stable exit-code core (mode 2, #1202).
+#: Codes 0, 1, 2, 3, 130 and 10-39 are unchanged.
+#: Code 4 is reserved for "accepted, still running" (emitted by nothing in release N).
+#: Codes 5-9 are reserved. Codes 40-63 are the range for specific causes.
+_CORE_V2_EXIT_CODES: dict[int, int] = {
+    4: 40,  # RateLimitError
+    5: 41,  # ContentPolicyError
+    6: 42,  # NetworkError
+    7: 43,  # WireFormatError
+    8: 3,  # AuthMissingError (AuthExpiredError is already 3)
+    9: 44,  # TransportTimeoutError
+}
+
+
+def active_exit_code_mode() -> int:
+    """2 when ``GFLOW_CLI_EXIT_CODES=2`` (environment or ``.env``), else 1 (#1202)."""
+    try:
+        from gflow_cli.config import get_settings  # lazy: config must not import errors early
+
+        value = get_settings().exit_codes
+    except Exception:  # noqa: BLE001 - a broken config must never break the error path
+        value = os.environ.get("GFLOW_CLI_EXIT_CODES")
+    return 2 if (value or "").strip() == "2" else 1
+
+
+def active_exit_code(legacy: int) -> int:
+    """The legacy code *legacy* translated to the active mode (#1202)."""
+    return _CORE_V2_EXIT_CODES.get(legacy, legacy) if active_exit_code_mode() == 2 else legacy
+
+
+def legacy_exit_code_for(exc: GFlowError) -> int:
+    """Return the legacy exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
+
+    Iteration order matters: subclasses inherit the parent class's code only
+    if they don't have their own entry, and the dict is ordered
+    most-specific-first.
+    """
+    for cls, code in EXIT_CODE_MAP.items():
+        if isinstance(exc, cls):
+            return code
+    return 1
+
+
+def exit_code_for(exc: GFlowError) -> int:
+    """Return the process exit code for *exc* in the active mode (#1202)."""
+    return active_exit_code(legacy_exit_code_for(exc))
+
 
 # Transient failures the caller can retry without operator intervention — WAF
 # bounce, rate-limit/quota, transport timeout, network blip, a dropped browser

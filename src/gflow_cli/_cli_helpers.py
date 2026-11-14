@@ -35,11 +35,14 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import functools
+import json
 import re
 import sys
 import traceback
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import click
 import structlog
@@ -51,18 +54,19 @@ from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
-    EXIT_CODE_MAP,
     GFlowError,
+    exit_code_for,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Iterator
 
     from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
+_CommandT = TypeVar("_CommandT", bound=click.Command)
 _console = Console()
 
 # Explicit re-export list. The underscore prefix on ``_resolve_profile`` and
@@ -75,18 +79,29 @@ _console = Console()
 # `reportPrivateUsage` rule does NOT honor the PEP 484 `from X import Y as Y`
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
+    "DeprecatedAliasOption",
     "_FLOW_ID_RE",
+    "_OUT_DIR_SHORT_DEPRECATION_WARNING",
+    "_OUT_FILE_DEPRECATION_WARNING",
     "_handle_gflow_error",
     "_handle_unhandled_error",
     "_make_provider_dir",
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "cli_leaves",
+    "command_tree",
+    "help_json_path",
     "default_project",
+    "deprecated_alias_option",
+    "out_file_option",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
+    "spends_credits",
+    "spends_credits_decision",
     "tool_option",
+    "upscale_out_dir_option",
 ]
 
 # Flow project ids are interpolated into navigation URLs and CSS selectors
@@ -96,6 +111,108 @@ __all__ = [
 # `routes._PROJECT_ID_RE`. Relocated here (T4b follow-up) so the two call-site
 # modules can't drift out of sync.
 _FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+_OUT_FILE_DEPRECATION_WARNING = (
+    "-o/--output PATH is deprecated and will select the output format in a future release "
+    "(-o json|table|id). Use --out-file PATH."
+)
+
+_OUT_DIR_SHORT_DEPRECATION_WARNING = (
+    "-o is deprecated as the short form of --out and will select the output format in a future "
+    "release (-o json|table|id). Use --out DIR."
+)
+
+
+class DeprecatedAliasOption(click.Option):
+    """Marks an option as the deprecated spelling of another (#1158); no behaviour of its own.
+
+    The Click-tree guard test finds deprecated spellings by this class.
+    """
+
+
+def deprecated_alias_option(
+    primary_opts: Sequence[str],
+    deprecated_opts: Sequence[str],
+    dest: str,
+    *,
+    type: click.ParamType[Any] | type[object],
+    help: str,
+    warning_line: str,
+) -> Callable[[Any], Any]:
+    """Add ``primary_opts`` and its deprecated spelling ``deprecated_opts``, both feeding ``dest``.
+
+    The two options get separate slots and the callback wrapper merges them, so the
+    result does not depend on Click's parameter-processing order (Click < 8.5 let the
+    unused option overwrite the used one with None). The wrapper must sit outside any
+    error guard so the conflict reaches Click as a usage error (exit 2).
+    """
+    alias = f"{dest}_deprecated"
+    old_spelling = "/".join(deprecated_opts)
+    conflict = f"Use {primary_opts[0]} only; {old_spelling} is its deprecated spelling."
+
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            old = kwargs.pop(alias)
+            if old is not None:
+                if kwargs.get(dest) is not None:
+                    raise click.UsageError(conflict)
+                click.echo(warning_line, err=True)
+                kwargs[dest] = old
+            return f(*args, **kwargs)
+
+        with_alias = click.option(
+            *deprecated_opts,
+            alias,
+            type=type,
+            default=None,
+            help=f"Deprecated: use {primary_opts[0]}.",
+            cls=DeprecatedAliasOption,
+        )(wrapper)
+        return click.option(*primary_opts, dest, type=type, default=None, help=help)(with_alias)
+
+    return decorator
+
+
+def out_file_option(
+    dest: str = "output_file",
+    *,
+    help: str,
+) -> Callable[[Any], Any]:
+    """Decorator adding ``--out-file PATH`` and keeping deprecated ``-o/--output PATH`` (#1158).
+
+    Writes to ``dest`` (e.g. ``output_file`` or ``output``). Warns on stderr when
+    the deprecated spelling is used, and raises ``click.UsageError`` (exit 2)
+    naming ``--out-file`` if both are provided.
+    """
+    return deprecated_alias_option(
+        primary_opts=("--out-file",),
+        deprecated_opts=("-o", "--output"),
+        dest=dest,
+        type=click.Path(dir_okay=False, path_type=Path),
+        help=help,
+        warning_line=_OUT_FILE_DEPRECATION_WARNING,
+    )
+
+
+def upscale_out_dir_option(
+    dest: str = "out_dir",
+    *,
+    help: str = "Output directory (defaults to the configured gflow output dir).",
+) -> Callable[[Any], Any]:
+    """Decorator adding ``--out DIR`` and keeping deprecated short form ``-o DIR`` (#1158).
+
+    Reuses ``deprecated_alias_option``. Warns on stderr when ``-o`` is used,
+    and raises ``click.UsageError`` (exit 2) naming ``--out`` if both are provided.
+    """
+    return deprecated_alias_option(
+        primary_opts=("--out",),
+        deprecated_opts=("-o",),
+        dest=dest,
+        type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+        help=help,
+        warning_line=_OUT_DIR_SHORT_DEPRECATION_WARNING,
+    )
 
 
 def _validate_project_id(
@@ -190,6 +307,130 @@ def tool_option(func: Callable[..., Any]) -> Callable[..., Any]:
         multiple=True,
         help=_TOOL_OPTION_HELP,
     )(func)
+
+
+_SPENDS_CREDITS_ATTR = "gflow_spends_credits"
+
+
+def spends_credits(value: bool) -> Callable[[_CommandT], _CommandT]:
+    """Record whether a leaf command submits a Flow generation (#1203).
+
+    Goes OUTERMOST, above ``@<group>.command(...)``, so it marks the Command object.
+    True means a new generation is submitted: a video spends Veo credits, an image spends
+    the daily image quota. Every leaf needs a decision; ``tests/cli/test_help_json.py``
+    fails on an undecorated one.
+    """
+
+    def mark(cmd: _CommandT) -> _CommandT:
+        setattr(cmd, _SPENDS_CREDITS_ATTR, value)
+        return cmd
+
+    return mark
+
+
+def spends_credits_decision(cmd: click.Command) -> bool | None:
+    """The ``@spends_credits`` value of *cmd*, or None when it was never decided."""
+    return getattr(cmd, _SPENDS_CREDITS_ATTR, None)
+
+
+def cli_leaves(
+    group: click.Group, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], click.Command, list[str]]]:
+    """Yield ``(path, command, aliases)`` for every runnable command under *group*.
+
+    That is every plain command plus every ``invoke_without_command`` group (bare
+    ``gflow auth`` runs). Hidden commands and groups are skipped. A command registered
+    under several names in one group yields once, under its first name; the other names
+    are its aliases.
+    """
+    names: dict[int, list[str]] = {}
+    for name, cmd in group.commands.items():
+        names.setdefault(id(cmd), []).append(name)
+    for first, *aliases in names.values():
+        cmd = group.commands[first]
+        if cmd.hidden:
+            continue
+        if not isinstance(cmd, click.Group) or cmd.invoke_without_command:
+            yield (*path, first), cmd, aliases
+        if isinstance(cmd, click.Group):
+            yield from cli_leaves(cmd, (*path, first))
+
+
+def _jsonable(value: Any) -> Any:
+    if callable(value):
+        return None
+    return json.loads(json.dumps(value, default=str))  # Path, tuple -> JSON-native
+
+
+def _param_json(param: click.Parameter) -> dict[str, Any]:
+    info = param.to_info_dict()
+    is_option = isinstance(param, click.Option)
+    long = [o for o in param.opts if o.startswith("--")]
+    return {
+        "name": (long or param.opts)[0] if is_option else param.human_readable_name,
+        "opts": [*param.opts, *param.secondary_opts] if is_option else [],
+        "type": "flag" if is_option and info["is_flag"] else param.type.name,
+        "choices": _jsonable(info["type"].get("choices")),
+        "multiple": param.multiple,
+        "nargs": param.nargs,
+        "default": _jsonable(info["default"]),
+        "required": param.required,
+        "help": getattr(param, "help", None),
+    }
+
+
+def command_tree(root: click.Group, prefix: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The ``--help --json`` payload: every runnable command at or under *prefix* (#1203)."""
+    from gflow_cli import __version__
+
+    return {
+        "schema": 1,
+        "name": "gflow",
+        "version": __version__,
+        "commands": [
+            {
+                "path": list(path),
+                "summary": cmd.get_short_help_str(limit=300),
+                "aliases": aliases,
+                "params": [_param_json(p) for p in cmd.params if not getattr(p, "hidden", False)],
+                "spends_credits": spends_credits_decision(cmd),
+            }
+            for path, cmd, aliases in cli_leaves(root)
+            if path[: len(prefix)] == prefix
+        ],
+    }
+
+
+# Parsed alongside each command's own options so a `--json` token is recognised where
+# it is an option and not where another option consumes it as a value.
+_HELP_JSON_FLAG = click.Option(["--json", "help_json"], is_flag=True, expose_value=False)
+
+
+def help_json_path(root: click.Group, args: list[str]) -> tuple[str, ...] | None:
+    """The command path a ``--help --json`` request names, or None when there is none.
+
+    Resolution goes through Click's own parser and ``resolve_command``, level by level as
+    ``click.shell_completion`` does, so option widths, option values and unknown commands
+    are Click's, not a guess from the raw tokens.
+    """
+    cmd: click.Command = root
+    ctx = click.Context(root, info_name="gflow", resilient_parsing=True)
+    path: list[str] = []
+    while True:
+        parser = cmd.make_parser(ctx)
+        _HELP_JSON_FLAG.add_to_parser(parser, ctx)
+        opts, rest, _ = parser.parse_args(args=list(args))
+        help_option = cmd.get_help_option(ctx)
+        if help_option and help_option.name in opts and "help_json" in opts:
+            return tuple(path)
+        if not isinstance(cmd, click.Group) or not rest:
+            return None
+        name, sub, args = cmd.resolve_command(ctx, rest)
+        if sub is None or name is None:
+            return None
+        cmd = sub
+        path.append(name)
+        ctx = click.Context(sub, parent=ctx, info_name=name, resilient_parsing=True)
 
 
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
@@ -324,19 +565,6 @@ def safe_path_text(path: Path) -> str:
         return str(path)
 
 
-def _exit_code_for(exc: GFlowError) -> int:
-    """Return the exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
-
-    Iteration order matters: subclasses inherit the parent class's code only
-    if they don't have their own entry, and the dict is ordered
-    most-specific-first (see ``errors.py``).
-    """
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
-
-
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     """Print user-facing message + remediation, emit ``error_raised`` event,
     return exit code.
@@ -351,7 +579,7 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
     _print_incident_ref(exc.incident_ref)
-    return _exit_code_for(exc)
+    return exit_code_for(exc)
 
 
 def _print_incident_ref(ref: Any) -> None:
@@ -438,7 +666,7 @@ def run_with_handlers(
         if as_json:
             emit_error_event(_logger, e, cli_command=cli_command)
             json_output.emit(json_output.error_payload(e))
-            sys.exit(_exit_code_for(e))
+            sys.exit(exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
         _report_interrupt()

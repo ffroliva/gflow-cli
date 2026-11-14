@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 from structlog.testing import capture_logs
 
-from gflow_cli.api import client as client_mod
+from gflow_cli.api import _flow_generation as client_mod
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.recaptcha import RecaptchaError
 from gflow_cli.errors import FlowHostMigratedError

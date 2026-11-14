@@ -151,7 +151,7 @@ def test_selector_matches_exactly_one_offered_entry(model: Model) -> None:
     selectors = IMAGE_MODEL_OPTION_SELECTORS.get(model, ())
 
     # A cascade is a FALLBACK CHAIN: the transport tries each in order and uses
-    # the first that matches (ui_automation.py `for sel in option_sels`). Summing
+    # the first that matches (_ui_settings.py `for sel in option_sels`). Summing
     # across all of them would report a model with two equivalent selectors as
     # AMBIGUOUS, which is a false alarm — the second is never reached.
     total: list[str] = []

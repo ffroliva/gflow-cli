@@ -172,7 +172,7 @@ class SceneRecord:
     total_duration: float | None
     source: str
     # Local path of the rendered extended video (server-side concat output),
-    # when `gflow scene create --output` was used. None = compose-only.
+    # when `gflow scene create --out-file` was used. None = compose-only.
     output_path: str | None = None
     created_at: str | None = None
 

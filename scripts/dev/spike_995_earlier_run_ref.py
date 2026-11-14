@@ -57,7 +57,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model  # noqa: E402
-from gflow_cli.api.transports import migrated_composer as mc  # noqa: E402
+from gflow_cli.api.transports import _mc_mention, migrated_composer as mc  # noqa: E402
 from gflow_cli.config import get_settings  # noqa: E402
 from gflow_cli.data.repository import DataRepository  # noqa: E402
 from gflow_cli.data.store import DataStore  # noqa: E402
@@ -148,7 +148,7 @@ async def main(profile: str, project: str, media: str) -> int:
         step("Q1", json.dumps(findings["q1"]))
         save()
 
-        mc.EXISTING_REF_WAIT_S = 15.0
+        _mc_mention.EXISTING_REF_WAIT_S = 15.0
         findings["q2"] = await _arm(
             composer,
             page,

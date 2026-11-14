@@ -1729,7 +1729,7 @@ class TestDurationCapabilityGuard:
 def test_output_rejects_an_existing_directory_before_generating(tmp_path: Path, sub: str) -> None:
     """`-o <existing dir>` must fail at parse time, not after a paid generation.
 
-    `_relocate_video_output` calls `Path.replace()` onto the target, which raises
+    `relocate_video_output` calls `Path.replace()` onto the target, which raises
     `PermissionError: [WinError 5]` when the target is a directory. That happens
     AFTER Flow has rendered and billed the clip, so it surfaced as a bare
     "Unexpected error" exit 1 and left the paid mp4 orphaned under a UUID name at

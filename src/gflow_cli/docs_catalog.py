@@ -266,12 +266,20 @@ def _unknown_detail(name: str, key: str, available: list[Topic]) -> str:
     nothing for a typo, and a typo is the common case — `usge` shares no substring with
     `usage` but is one transposition away.
     """
-    slugs = [t.slug for t in available]
-    near = difflib.get_close_matches(key, slugs, n=3, cutoff=0.6) if key else []
-    if not near and key:
-        near = [s for s in slugs if key in s][:3]
+    near = closest_matches(key, [t.slug for t in available])
     hint = f" — did you mean {', '.join(near)}?" if near else ""
     return f"no documentation topic named {name!r}{hint}"
+
+
+def closest_matches(key: str, choices: list[str], n: int = 3) -> list[str]:
+    """Up to *n* of *choices* nearest *key*: fuzzy first, then a substring scan.
+
+    The substring fallback covers a prefix (`veo`), which is too short for difflib's ratio.
+    """
+    if not key:
+        return []
+    near = difflib.get_close_matches(key, choices, n=n, cutoff=0.6)
+    return near or [c for c in choices if key in c][:n]
 
 
 def _snippet(line: str, terms: list[str]) -> str:

@@ -272,7 +272,7 @@ class TestPredictableOutputFlag:
 
     def test_relocate_video_output_multi_count(self, tmp_path: Path) -> None:
         from gflow_cli.api.video import VideoResult, VideoStatus
-        from gflow_cli.cli_video import _relocate_video_output
+        from gflow_cli.paths import relocate_video_output
 
         v1_temp = tmp_path / "temp_1.mp4"
         v2_temp = tmp_path / "temp_2.mp4"
@@ -289,7 +289,7 @@ class TestPredictableOutputFlag:
         )
 
         out_file = tmp_path / "multi_video" / "output.mp4"
-        relocated = _relocate_video_output([res1, res2], out_file)
+        relocated = relocate_video_output([res1, res2], out_file)
 
         assert len(relocated) == 2
         assert relocated[0].local_path == tmp_path / "multi_video" / "output_1.mp4"
@@ -305,7 +305,7 @@ class TestPredictableOutputFlag:
         import os
 
         from gflow_cli.api.video import VideoResult, VideoStatus
-        from gflow_cli.cli_video import _relocate_video_output
+        from gflow_cli.paths import relocate_video_output
 
         def cross_device(src: object, dst: object, *a: object, **k: object) -> None:
             raise OSError(errno.EXDEV, "Invalid cross-device link")
@@ -322,7 +322,7 @@ class TestPredictableOutputFlag:
         )
         out_file = tmp_path / "other_mount" / "out.mp4"
 
-        relocated = _relocate_video_output(res, out_file)
+        relocated = relocate_video_output(res, out_file)
 
         assert relocated.local_path == out_file
         assert out_file.read_bytes() == b"clip"
