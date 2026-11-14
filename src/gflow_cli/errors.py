@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast, get_args
@@ -65,6 +66,7 @@ __all__ = [
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
+    "active_exit_code_mode",
     "classify_content_safety",
     "exit_code_for",
     "is_retryable",
@@ -1723,6 +1725,25 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # FlowApiError omitted — falls through to default 1
 }
 
+#: Mapping from legacy exit codes (4-9) to the stable exit-code core (mode 2, #1202).
+#: Codes 0, 1, 2, 3, 130 and 10-39 are unchanged.
+#: Code 4 is reserved for "accepted, still running" (emitted by nothing in release N).
+#: Codes 5-9 are reserved. Codes 40-63 are the range for specific causes.
+_CORE_V2_EXIT_CODES: dict[int, int] = {
+    4: 40,  # RateLimitError
+    5: 41,  # ContentPolicyError
+    6: 42,  # NetworkError
+    7: 43,  # WireFormatError
+    8: 3,  # AuthMissingError (AuthExpiredError is already 3)
+    9: 44,  # TransportTimeoutError
+}
+
+
+def active_exit_code_mode() -> int:
+    """Return active exit-code mode: 2 if opted-in via GFLOW_CLI_EXIT_CODES=2, else 1."""
+    # Direct os.environ read: bad values or config issues must never crash error path (#1202).
+    return 2 if os.environ.get("GFLOW_CLI_EXIT_CODES", "").strip() == "2" else 1
+
 
 def legacy_exit_code_for(exc: GFlowError) -> int:
     """Return the legacy exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
@@ -1739,7 +1760,10 @@ def legacy_exit_code_for(exc: GFlowError) -> int:
 
 def exit_code_for(exc: GFlowError) -> int:
     """Return the process exit code for *exc* in the active mode (#1202)."""
-    return legacy_exit_code_for(exc)
+    legacy = legacy_exit_code_for(exc)
+    if active_exit_code_mode() == 2:
+        return _CORE_V2_EXIT_CODES.get(legacy, legacy)
+    return legacy
 
 
 # Transient failures the caller can retry without operator intervention — WAF

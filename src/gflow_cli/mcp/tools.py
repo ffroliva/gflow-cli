@@ -36,7 +36,7 @@ from pydantic import Field
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
-from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -51,7 +51,7 @@ from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError, is_retryable, outcome_members
+from gflow_cli.errors import GFlowError, is_retryable, legacy_exit_code_for, outcome_members
 from gflow_cli.mcp.server import server
 from gflow_cli.mcp.tasks_extension import detach
 from gflow_cli.profile_store import (
@@ -272,7 +272,8 @@ def _guarded(
             try:
                 result = await fn(*args, **kwargs)
             except GFlowError as exc:
-                outcome = str(_exit_code_for(exc))
+                # Keep legacy code so weekly telemetry aggregates stay comparable (#1202).
+                outcome = str(legacy_exit_code_for(exc))
                 log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
                 result = _error_payload(_gflow_error_dict(exc))
             except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
@@ -347,9 +348,12 @@ def outcome_of(result: dict[str, Any]) -> str:
         return "queued"
     if status in {"error", "failed", "rate_limited", "invalid_tools"}:
         error = result.get("error")
-        code: Any = result.get("exit_code")
+        # Keep legacy code so weekly telemetry aggregates stay comparable (#1202).
+        code: Any = result.get("exit_code_legacy") or result.get("exit_code")
         if code is None and isinstance(error, dict):
-            code = cast(dict[str, Any], error).get("exit_code")
+            code = cast(dict[str, Any], error).get("exit_code_legacy") or cast(
+                dict[str, Any], error
+            ).get("exit_code")
         return str(code) if code is not None else "error"
     return "0"
 

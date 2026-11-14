@@ -16,7 +16,7 @@ import json
 import traceback
 from typing import TYPE_CHECKING, Any
 
-from gflow_cli.errors import GFlowError, is_retryable
+from gflow_cli.errors import GFlowError, is_retryable, legacy_exit_code_for
 from gflow_cli.errors import exit_code_for as _errors_exit_code_for
 
 if TYPE_CHECKING:
@@ -56,17 +56,18 @@ _exit_code = exit_code_for
 
 
 def error_payload(exc: GFlowError) -> dict[str, Any]:
-    """``{status: fail, error: {...RFC 9457..., class, exit_code, retryable}}``.
+    """``{status: fail, error: {...RFC 9457..., class, exit_code, exit_code_legacy, retryable}}``.
 
     Reuses :meth:`GFlowError.to_problem_details` so the JSON error carries the
     same fields (title/detail/remediation_hint/type) the Rich path prints,
-    plus the concrete class name, mapped process exit code, and the retryable
-    flag the caller branches on.
+    plus the concrete class name, mapped process exit code, legacy exit code,
+    and the retryable flag the caller branches on.
     """
     error: dict[str, Any] = {
         **exc.to_problem_details(),
         "class": type(exc).__name__,
         "exit_code": _exit_code(exc),
+        "exit_code_legacy": legacy_exit_code_for(exc),
         "retryable": is_retryable(exc),
     }
     ref = exc.incident_ref
@@ -100,6 +101,7 @@ def unexpected_payload(
         "class": "UnexpectedError",
         "title": "Unexpected error",
         "exit_code": 1,
+        "exit_code_legacy": 1,
         "retryable": False,
         # #1201: an unclassified failure proves nothing about billing.
         "charged": "maybe",
