@@ -802,10 +802,13 @@ def _chain_clip_relocator(output_file: Path | None, skipped: int) -> Any:
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def relocate(index: int, result: Any) -> Any:
-        number = skipped + index + 1
-        return _relocate_single_video(
-            result, output_file.parent / f"{output_file.stem}_{number}{output_file.suffix}"
-        )
+        name = f"{output_file.stem}_{skipped + index + 1}{output_file.suffix}"
+        target = output_file.parent / name
+        try:
+            return _relocate_single_video(result, target)
+        except OSError as exc:  # billed already: keep and record the clip where it is
+            logger.warning("chain_out_file_move_failed", target=str(target), error=str(exc))
+            return result
 
     return relocate
 

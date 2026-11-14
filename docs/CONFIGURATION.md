@@ -643,6 +643,7 @@ waits for each link in turn, so total wallclock is the sum of all link waits.
 | `--jitter F` | `0.0` | Random `0..F` second pause **between** links (anti-bot cadence; never before link 0). |
 | `--seed-offset MS` | `0` | Extract the seed frame this many ms before EOF (fade-to-black guard). |
 | `--aspect` | `9:16` | `9:16` / `16:9`. Applied uniformly to every link (continuity requirement). |
+| `--out-file FILE` | unset | Link i's clip goes to `<stem>_<i><suffix>` next to FILE (`clip.mp4` gives `clip_1.mp4`, `clip_2.mp4`), numbered over the whole manifest so `--resume-from` keeps each name; seed frames stay under `--out-dir`. A clip that cannot be moved stays where it downloaded, with a warning. Deprecated spelling: `-o/--output` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)). |
 | `--out-dir DIR` | output root | Directory for the link mp4s + `linkN_lastframe.jpg` seed frames. |
 | `--profile NAME` | default profile | Per-subcommand profile override. |
 | `--json` | off | Emit a machine-readable JSON result. |

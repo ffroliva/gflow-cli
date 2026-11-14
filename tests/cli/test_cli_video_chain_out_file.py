@@ -128,6 +128,33 @@ def test_chain_out_file_writes_each_link_to_a_numbered_path(tmp_path: Path, flag
         assert _OUT_FILE_DEPRECATION_WARNING not in result.stderr
 
 
+def test_chain_out_file_move_failure_keeps_the_billed_clip_recorded(tmp_path: Path) -> None:
+    """A clip that cannot be moved stays where it downloaded and is recorded there.
+
+    The link is already billed: losing its chain row would make --resume-from bill it again.
+    """
+    from gflow_cli import cli_video
+
+    real_move = cli_video._relocate_single_video  # pyright: ignore[reportPrivateUsage]
+    calls = 0
+
+    def _move(item: Any, target: Path) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise PermissionError(13, "locked", str(target))
+        return real_move(item, target)
+
+    target = tmp_path / "out" / "clip.mp4"
+    with patch("gflow_cli.cli_video._relocate_single_video", _move):
+        result, chain_recorder, catalog, _ = _invoke_chain(
+            tmp_path, links=2, completed=0, args=["--out-file", str(target)]
+        )
+
+    expected = [target.parent / "clip_1.mp4", tmp_path / "dl" / "m1.mp4"]
+    _assert_written_and_reported(result, chain_recorder, catalog, expected)
+
+
 def test_chain_out_file_resume_keeps_each_links_number(tmp_path: Path) -> None:
     """A resume of a 3-link chain with link 1 done writes clip_2 and clip_3, never clip_1."""
     target = tmp_path / "out" / "clip.mp4"
