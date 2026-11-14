@@ -344,18 +344,23 @@ class _FakeProc:
     kwargs: dict[str, object] = {}
     timeouts: list[float | None] = []
     interrupt_with: tuple[str, str] | BaseException | None = None
+    # The pipes `__exit__` would close; a real close blocks while a grandchild holds them.
+    pipes_at_exit: tuple[object, object] = (None, None)
 
     def __init__(self, args: object, **kwargs: object) -> None:
         type(self).kwargs = kwargs
         type(self).timeouts = []
         self.args = args
         self.returncode = 0
+        self.stdout: object = object()
+        self.stderr: object = object()
 
     def __enter__(self) -> _FakeProc:
         return self
 
     def __exit__(self, *a: object) -> None:
         type(self).interrupt_with = None
+        type(self).pipes_at_exit = (self.stdout, self.stderr)
 
     def communicate(self, timeout: float | None = None) -> tuple[str, str]:
         self.timeouts.append(timeout)
@@ -813,12 +818,16 @@ class TestRunUpdate:
         assert "partially downloaded bytes" in captured.err
 
     def test_interrupt_drain_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A grandchild still holding the pipe must not block the Ctrl+C forever."""
+        """A grandchild still holding the pipe must not block the Ctrl+C forever.
+
+        Measured on Windows: after a timed-out drain, Popen.__exit__ closing the
+        pipes waited for a 25 s grandchild; with the pipes detached it returned at 6 s."""
         monkeypatch.setattr(subprocess, "Popen", _FakeProc)
         _FakeProc.interrupt_with = subprocess.TimeoutExpired("fake", 5)
         with pytest.raises(KeyboardInterrupt):
             uc._run_command(("fake",), capture_output=True)
         assert _FakeProc.timeouts[-1] is not None, f"drain timeouts: {_FakeProc.timeouts}"
+        assert _FakeProc.pipes_at_exit == (None, None), "pipes left for __exit__ to close"
 
     def test_capture_never_waits_on_a_hidden_prompt(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With both pipes captured, a pip `User for host:` prompt would be invisible."""

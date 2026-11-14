@@ -16,7 +16,6 @@ source, VCS, and direct-URL installs must not get index "upgrade" advice).
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
 import json
 import os
@@ -256,9 +255,12 @@ def _run_command(
             stdout, stderr = proc.communicate()
         except KeyboardInterrupt:
             proc.kill()
-            # Bounded: a grandchild that inherited the pipe can keep it open.
-            with contextlib.suppress(subprocess.TimeoutExpired):
+            try:
                 _show_output(*proc.communicate(timeout=5))
+            except subprocess.TimeoutExpired:
+                # A grandchild still holds the pipes, and closing them in __exit__ would
+                # wait for it (measured on Windows). Leave them to the dying process.
+                proc.stdout = proc.stderr = None
             raise
         return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
