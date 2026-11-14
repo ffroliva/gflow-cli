@@ -159,11 +159,15 @@ def skeleton(node: Any) -> Any:
 
 def fingerprint(url: str, body: str, rpcid: str) -> dict[str, Any]:
     in_url, in_body = request_ids(url, body)
-    inner: Any = None
+    inners: list[Any] = []
     for f in frames(body):
         if str(f[0]) == rpcid and len(f) > 1:
+            parsed: Any = None
             with contextlib.suppress(ValueError, TypeError):
-                inner = json.loads(str(f[1]))
+                parsed = json.loads(str(f[1]))
+            inners.append(parsed)
+    # One frame (every request recorded so far) keeps its old shape, so recorded hashes hold.
+    inner = [skeleton(i) for i in inners] if len(inners) > 1 else skeleton(next(iter(inners), None))
     frame_tail = [skeleton(x) for f in frames(body) if str(f[0]) == rpcid for x in f[2:]]
     query = parse_qs(urlsplit(url).query)
     shape = {
@@ -173,7 +177,7 @@ def fingerprint(url: str, body: str, rpcid: str) -> dict[str, Any]:
         "query_keys": sorted(query),
         "form_keys": sorted(parse_qs(body, keep_blank_values=True)),
         "frame_tail": frame_tail,
-        "inner": skeleton(inner),
+        "inner": inner,
     }
     digest = hashlib.sha256(json.dumps(shape, sort_keys=True).encode()).hexdigest()[:16]
     return {**shape, "hash": digest, "bl": (query.get("bl") or [""])[0]}
@@ -207,6 +211,14 @@ def selftest() -> None:
     for other in (c, d, e):
         assert fingerprint(url, a, "YhhmEf")["hash"] != fingerprint(url, other, "YhhmEf")["hash"]
     assert "TOKEN" not in json.dumps(fingerprint(url, a, "YhhmEf"))
+    # Two frames with the same id: the first frame's shape counts too.
+    two = "f.req=" + json.dumps([[["YhhmEf", "[1]", None, "1"], ["YhhmEf", "[1]", None, "2"]]])
+    two_changed = "f.req=" + json.dumps(
+        [[["YhhmEf", '["s"]', None, "1"], ["YhhmEf", "[1]", None, "2"]]]
+    )
+    assert (
+        fingerprint(url, two, "YhhmEf")["hash"] != fingerprint(url, two_changed, "YhhmEf")["hash"]
+    )
     print("selftest: ok")
 
 
@@ -240,7 +252,8 @@ class Guard:
         if kind == "billed" and body is not None:
             in_url, in_body = request_ids(url, body)
             ids = [i for i in dict.fromkeys(in_url + in_body) if i in BILLED] or ["?"]
-            self.captured.append({**fingerprint(url, body, ids[0]), "billed_ids": ids})
+            for rpc in ids:  # every billed id in the batch, so an unexpected one is reported
+                self.captured.append({**fingerprint(url, body, rpc), "billed_ids": ids})
             self.got.set()
         else:
             self.unresolved.append(request_ids(url, body or "")[0] or ["<none>"])

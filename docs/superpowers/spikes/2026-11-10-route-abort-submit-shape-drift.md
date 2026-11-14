@@ -132,6 +132,16 @@ whether the item was absent or disabled, and why, was not observed; only one cli
 - **Billing safety is the job's, not the driver's.** The guard has to sit at the context
   route and at `Route.continue_`, matching URL and body. A URL-only predicate billed two
   clips on 2026-11-08 ([Omni 1.2 interpolation spike](2026-11-08-omni12-interpolation-key.md)).
+- **The guard must be an allowlist before it runs unattended.** This spike's guard is a
+  denylist of the eight known billed ids. Under supervision that was enough, because a
+  credit read sits between paths. A nightly job exists to catch renames, though, and a
+  billed submit renamed to an id outside that list would pass as free. Build the list of free
+  ids from the ids the guard let through on these runs (`sent` in each record), abort every
+  other POST, and re-run the navigate control to show the page still loads.
+- **Pin the fingerprint's literal slots.** `E:` and `K:` keep any whole-string
+  `UPPER_SNAKE` or `lower_snake` token as a literal. This spike's prompts were multi-word, so
+  no prompt text is in the recorded hashes. A job should keep literals only in the slots
+  measured to hold an enum or a model key, and record every other string as `S`.
 
 ## Not measured
 
