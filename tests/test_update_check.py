@@ -446,6 +446,41 @@ class TestRunUpdate:
             uc.run_update(check=False)
         assert len(calls) == 1, f"manager ran {len(calls)} times"
 
+    @pytest.mark.parametrize(
+        ("argv", "captured"),
+        [
+            (["update"], True),
+            (["update", "-v"], False),  # streams: the user sees the manager live
+            (["update", "--json", "-v"], True),  # stdout must stay one JSON document
+        ],
+    )
+    def test_capture_decision(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        captured: bool,
+    ) -> None:
+        from click.testing import CliRunner
+
+        from gflow_cli.cli import main
+
+        seen: list[bool] = []
+
+        def _run(
+            command: tuple[str, ...], *, capture_output: bool
+        ) -> subprocess.CompletedProcess[str]:
+            seen.append(capture_output)
+            return _done(0)
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", _run)
+        res = CliRunner().invoke(main, argv)
+        assert res.exit_code == 0, res.output
+        assert seen == [captured], f"{argv}: capture_output={seen}"
+        if "--json" in argv:
+            json.loads(res.stdout)
+
     def test_manager_failure_without_a_new_version_is_configuration_error(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
