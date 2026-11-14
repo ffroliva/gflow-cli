@@ -1139,7 +1139,9 @@ Options:
   --dry-run                 Resolve the manifest, print the plan + credit cost,
                             and spend nothing.
   --resume-from CHAIN_ID    Resume a prior chain by its id; already-paid links
-                            are skipped (not re-billed).
+                            are skipped (not re-billed), and the next link is
+                            seeded from the last paid clip, which must still be
+                            at its recorded path (exit 20 otherwise).
   --jitter FLOAT            Random 0..JITTER second pause between links
                             (anti-bot cadence).               [default: 0.0]
   --seed-offset INTEGER     Extract the seed frame this many ms before EOF
@@ -2312,7 +2314,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` or `omni-1.2-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --out-file`) | Retry; the recorded compose survives, so re-render is safe |
-| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
+| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link, or a `video chain --resume-from` whose last completed clip is no longer at its recorded path (refused before anything is billed, [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)) | Check the source video downloaded intact; retry the link. For a resume, put the clip back at the path named, or start a new chain |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
 | `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | If the detail says the model picker is **hidden**, nothing was submitted: turn the **Agent** chip off in a browser and re-run ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). Otherwise update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |

@@ -260,11 +260,9 @@ def test_chain_cli_out_file_writes_numbered_mp4s_and_seeds_link_2(
         assert clip.is_file(), f"--out-file clip missing: {clip}"
         assert looks_like_video(clip.read_bytes()[:16]), f"not an mp4: {clip}"
 
+    # The database holds this run only; chain links record command "video t2v"/"video i2v".
     with sqlite3.connect(db) as conn:
         modes = [
-            row[0]
-            for row in conn.execute(
-                "SELECT mode FROM operations WHERE command = 'video chain' ORDER BY started_at"
-            )
+            row[0] for row in conn.execute("SELECT mode FROM operations ORDER BY started_at, rowid")
         ]
     assert modes == ["t2v", "i2v"], f"link 2 must go out as i2v; catalog modes: {modes}"
