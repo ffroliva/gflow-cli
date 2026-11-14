@@ -11,6 +11,8 @@ cap holds even when the daemon fetch thread dies with a fast command.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -316,6 +318,64 @@ class TestInstaller:
         assert uc.installer() is None
 
 
+def _done(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+    """What `_run_command` returns: a finished manager run."""
+    return subprocess.CompletedProcess(["fake"], returncode, stdout, stderr)
+
+
+def _exits(
+    returncode: int, stdout: str = "", stderr: str = ""
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """A `_run_command` fake with the real signature, finishing as given."""
+
+    def _run(command: tuple[str, ...], *, capture_output: bool) -> subprocess.CompletedProcess[str]:
+        return _done(returncode, stdout, stderr)
+
+    return _run
+
+
+class _FakeProc:
+    """Stands in for `subprocess.Popen` in `_run_command`'s captured branch.
+
+    Records the Popen kwargs and every `communicate` timeout. With
+    ``interrupt_with`` set, the first `communicate` raises KeyboardInterrupt and
+    the drain after `kill()` returns (or raises) that value."""
+
+    kwargs: dict[str, object] = {}
+    timeouts: list[float | None] = []
+    interrupt_with: tuple[str, str] | BaseException | None = None
+    # The pipes `__exit__` would close; a real close blocks while a grandchild holds them.
+    pipes_at_exit: tuple[object, object] = (None, None)
+
+    def __init__(self, args: object, **kwargs: object) -> None:
+        type(self).kwargs = kwargs
+        type(self).timeouts = []
+        self.args = args
+        self.returncode = 0
+        self.stdout: object = object()
+        self.stderr: object = object()
+
+    def __enter__(self) -> _FakeProc:
+        return self
+
+    def __exit__(self, *a: object) -> None:
+        type(self).interrupt_with = None
+        type(self).pipes_at_exit = (self.stdout, self.stderr)
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+        self.timeouts.append(timeout)
+        drain = type(self).interrupt_with
+        if drain is None:
+            return ("", "")
+        if len(self.timeouts) == 1:
+            raise KeyboardInterrupt
+        if isinstance(drain, BaseException):
+            raise drain
+        return drain
+
+    def kill(self) -> None: ...
+
+
 @pytest.fixture
 def uv_install(index_install: Path, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
     """uv-tool install, `uv` on PATH, subprocess seam captured, Playwright stable."""
@@ -323,9 +383,9 @@ def uv_install(index_install: Path, monkeypatch: pytest.MonkeyPatch) -> list[tup
     monkeypatch.setattr(uc.shutil, "which", lambda name: f"/bin/{name}")
     calls: list[tuple[str, ...]] = []
 
-    def _run(command: tuple[str, ...]) -> int:
+    def _run(command: tuple[str, ...], *, capture_output: bool) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        return 0
+        return _done(0)
 
     monkeypatch.setattr(uc, "_run_command", _run)
     # The venv after the manager ran: gflow-cli moved to 999.0.0, Playwright stable.
@@ -343,7 +403,9 @@ class TestRunUpdate:
         from gflow_cli.errors import ConfigurationError
 
         monkeypatch.setattr(uc, "_installed_from_index", lambda: False)
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: pytest.fail("must not spawn"))
+        monkeypatch.setattr(
+            uc, "_run_command", lambda cmd, *, capture_output: pytest.fail("must not spawn")
+        )
         with pytest.raises(ConfigurationError, match="not a PyPI install"):
             uc.run_update(check=False)
 
@@ -394,13 +456,81 @@ class TestRunUpdate:
         assert report.upgraded is True
         assert report.latest == "999.0.0"
 
+    def test_type_error_after_install_propagates_and_runs_installer_once(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bug after the manager ran must surface, never re-run the whole update."""
+        from click.testing import CliRunner
+
+        from gflow_cli.cli import main
+
+        def _boom() -> str | None:
+            raise TypeError("bug after the install")
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", _boom)
+        res = CliRunner().invoke(main, ["update"])
+        assert res.exit_code != 0
+        assert len(uv_install) == 1, f"installer ran {len(uv_install)} times"
+
+    def test_type_error_from_the_manager_run_is_not_retried(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[bool] = []
+
+        def _run(command: tuple[str, ...], *, capture_output: bool = True) -> object:
+            calls.append(capture_output)
+            raise TypeError("bug inside the run")
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", _run)
+        with pytest.raises(TypeError, match="bug inside the run"):
+            uc.run_update(check=False)
+        assert len(calls) == 1, f"manager ran {len(calls)} times"
+
+    @pytest.mark.parametrize(
+        ("argv", "captured"),
+        [
+            (["update"], True),
+            (["update", "-v"], False),  # streams: the user sees the manager live
+            (["update", "--json", "-v"], True),  # stdout must stay one JSON document
+            (["-v", "update"], True),  # root -v is debug logging, not installer streaming
+        ],
+    )
+    def test_capture_decision(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        captured: bool,
+    ) -> None:
+        from click.testing import CliRunner
+
+        from gflow_cli.cli import main
+
+        seen: list[bool] = []
+
+        def _run(
+            command: tuple[str, ...], *, capture_output: bool
+        ) -> subprocess.CompletedProcess[str]:
+            seen.append(capture_output)
+            return _done(0)
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", _run)
+        res = CliRunner().invoke(main, argv)
+        assert res.exit_code == 0, res.output
+        assert seen == [captured], f"{argv}: capture_output={seen}"
+        if "--json" in argv:
+            json.loads(res.stdout)
+
     def test_manager_failure_without_a_new_version_is_configuration_error(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from gflow_cli.errors import ConfigurationError
 
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: 3)
+        monkeypatch.setattr(uc, "_run_command", _exits(3))
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         with pytest.raises(ConfigurationError, match="exited 3"):
             uc.run_update(check=False)
@@ -443,7 +573,7 @@ class TestRunUpdate:
         from gflow_cli.errors import ConfigurationError
 
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: 2)
+        monkeypatch.setattr(uc, "_run_command", _exits(2))
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         monkeypatch.setattr(uc, "_import_failure", lambda: "ImportError: DLL load failed")
         with pytest.raises(ConfigurationError, match="unusable"):
@@ -455,12 +585,31 @@ class TestRunUpdate:
         """Measured on Windows: uv installs the wheel, then exits 1 copying the
         in-use `gflow.exe` launcher. The venv moved, so it IS an upgrade."""
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: 1)
+        monkeypatch.setattr(uc, "_run_command", _exits(1))
         report = uc.run_update(check=False)
         assert report.upgraded is True
         assert report.latest == "999.0.0"
         assert len(report.notes) == 1
         assert "exited 1 AFTER installing 999.0.0" in report.notes[0]
+
+    def test_failure_after_install_shows_output_and_an_honest_note(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The next `gflow update` reports up to date and never runs the manager,
+        so the note must not promise a refresh; and the launcher is a Windows cause."""
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(
+            uc, "_run_command", _exits(1, stderr="error: Failed to upgrade gflow-cli")
+        )
+        report = uc.run_update(check=False)
+        assert report.upgraded is True
+        assert "error: Failed to upgrade gflow-cli" in capsys.readouterr().err
+        (note,) = report.notes
+        assert "On Windows" in note, note
+        assert "next update" not in note, note
 
     def test_pypi_unreachable_and_manager_found_nothing(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
@@ -483,6 +632,18 @@ class TestRunUpdate:
             uc.run_update(check=False)
         assert uv_install == []
 
+    def test_no_updating_line_when_the_manager_cannot_start(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ConfigurationError
+
+        status: list[str] = []
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.shutil, "which", lambda name: None)
+        with pytest.raises(ConfigurationError, match="not on PATH"):
+            uc.run_update(check=False, status_callback=status.append)
+        assert status == [], f"announced a run that cannot start: {status}"
+
     def test_playwright_bump_yields_hint(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -496,6 +657,205 @@ class TestRunUpdate:
         report = uc.run_update(check=False)
         assert len(report.notes) == 1
         assert "playwright install chromium" in report.notes[0]
+
+    def test_installer_output_captured_by_default(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        fake_process = subprocess.CompletedProcess(
+            args=["uv", "tool", "upgrade", "gflow-cli"],
+            returncode=0,
+            stdout="Resolved 27 packages in 12ms\nInstalled 1 package",
+            stderr="",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
+        report = uc.run_update(check=False)
+        assert report.upgraded is True
+        captured = capsys.readouterr()
+        assert "Resolved 27 packages" not in captured.err
+        assert "Resolved 27 packages" not in captured.out
+
+    def test_installer_output_shown_on_failure(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        from gflow_cli.errors import ConfigurationError
+
+        fake_process = subprocess.CompletedProcess(
+            args=["uv", "tool", "upgrade", "gflow-cli"],
+            returncode=2,
+            stdout="",
+            stderr="error: could not resolve dependencies",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
+        with pytest.raises(ConfigurationError):
+            uc.run_update(check=False)
+        captured = capsys.readouterr()
+        assert captured.err.count("error: could not resolve dependencies") == 1
+
+    def test_status_callback_invoked(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        status_messages: list[str] = []
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        report = uc.run_update(check=False, status_callback=status_messages.append)
+        assert report.upgraded is True
+        assert len(status_messages) == 1
+        assert f"Updating gflow-cli {__version__} -> 999.0.0 via uv..." == status_messages[0]
+
+    @pytest.mark.parametrize(
+        ("installer_name", "receipt_file", "noisy_output"),
+        [
+            ("uv", "uv-receipt.toml", "Resolved 27 packages\nDownloaded 1 package"),
+            ("pipx", "pipx_metadata.json", "upgrading gflow-cli from 0.1.0 to 999.0.0"),
+            (
+                "pip",
+                None,
+                "Collecting gflow-cli\nRequirement already satisfied\nSuccessfully installed",
+            ),
+        ],
+    )
+    def test_all_installers_capture_output_cleanly(
+        self,
+        index_install: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        installer_name: str,
+        receipt_file: str | None,
+        noisy_output: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        import subprocess
+
+        if receipt_file:
+            (index_install / receipt_file).write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(uc.shutil, "which", lambda name: f"/bin/{name}")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        fake_process = subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=noisy_output,
+            stderr="warning: some stderr notice",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", lambda: None)
+
+        report = uc.run_update(check=False)
+        assert report.upgraded is True
+        assert report.installer == installer_name
+        assert report.latest == "999.0.0"
+
+        captured = capsys.readouterr()
+        assert noisy_output not in captured.out
+        assert noisy_output not in captured.err
+
+    @pytest.mark.parametrize(
+        ("receipt_file", "noisy_stdout"),
+        [
+            ("uv-receipt.toml", "Resolved 27 packages"),
+            ("pipx_metadata.json", "upgrading gflow-cli"),
+            (None, "Collecting gflow-cli\nRequirement already satisfied"),
+        ],
+    )
+    def test_json_stdout_clean_for_all_installers(
+        self,
+        index_install: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        receipt_file: str | None,
+        noisy_stdout: str,
+    ) -> None:
+        import subprocess
+
+        from click.testing import CliRunner
+
+        from gflow_cli.cli import main
+
+        if receipt_file:
+            (index_install / receipt_file).write_text("{}", encoding="utf-8")
+        monkeypatch.setattr(uc.shutil, "which", lambda name: f"/bin/{name}")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        fake_process = subprocess.CompletedProcess(
+            args=["fake"],
+            returncode=0,
+            stdout=noisy_stdout,
+            stderr="launcher notice",
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", lambda: None)
+
+        res = CliRunner().invoke(main, ["update", "--json"])
+        assert res.exit_code == 0, res.output
+        doc = json.loads(res.stdout)
+        assert doc["status"] == "ok"
+        assert doc["upgraded"] is True
+        assert doc["latest"] == "999.0.0"
+        assert noisy_stdout not in res.stdout
+
+    def test_interruption_preserves_captured_output(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        _FakeProc.interrupt_with = ("", "partially downloaded bytes\n")
+        with pytest.raises(KeyboardInterrupt):
+            uc._run_command(("fake",), capture_output=True)
+        captured = capsys.readouterr()
+        assert "partially downloaded bytes" in captured.err
+
+    def test_interrupt_drain_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A grandchild still holding the pipe must not block the Ctrl+C forever.
+
+        Measured on Windows: after a timed-out drain, Popen.__exit__ closing the
+        pipes waited for a 25 s grandchild; with the pipes detached it returned at 6 s."""
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        _FakeProc.interrupt_with = subprocess.TimeoutExpired("fake", 5)
+        with pytest.raises(KeyboardInterrupt):
+            uc._run_command(("fake",), capture_output=True)
+        assert _FakeProc.timeouts[-1] is not None, f"drain timeouts: {_FakeProc.timeouts}"
+        assert _FakeProc.pipes_at_exit == (None, None), "pipes left for __exit__ to close"
+
+    def test_capture_never_waits_on_a_hidden_prompt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With both pipes captured, a pip `User for host:` prompt would be invisible."""
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        uc._run_command(("fake",), capture_output=True)
+        assert _FakeProc.kwargs.get("stdin") is subprocess.DEVNULL, _FakeProc.kwargs
+
+    def test_capture_asks_the_child_for_utf8(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """pip / pipx on Windows write the console code page unless told otherwise."""
+        monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+        monkeypatch.setenv("GFLOW_TEST_SENTINEL", "kept")
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        uc._run_command(("fake",), capture_output=True)
+        env = _FakeProc.kwargs.get("env")
+        assert isinstance(env, dict), f"no env passed: {_FakeProc.kwargs}"
+        assert env.get("PYTHONIOENCODING") == "utf-8"
+        assert env.get("GFLOW_TEST_SENTINEL") == "kept"  # a copy, not a replacement
+
+    def test_run_command_decodes_utf8_with_replacement(self) -> None:
+        cmd = (
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.buffer.write(b'valid utf8 \\xc3\\xa1 and invalid \\xff\\n')",
+        )
+        res = uc._run_command(cmd, capture_output=True)
+        assert res.returncode == 0
+        assert "valid utf8 á" in res.stdout
+        assert "\ufffd" in res.stdout
 
 
 class TestFetchLatest:
@@ -540,7 +900,9 @@ class TestPipWithoutPipModule:
 
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
         monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: None)
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: pytest.fail("must not spawn"))
+        monkeypatch.setattr(
+            uc, "_run_command", lambda cmd, *, capture_output: pytest.fail("must not spawn")
+        )
         with pytest.raises(ConfigurationError, match="no `pip` module") as info:
             uc.run_update(check=False)
         # The remediation must not recommend the very `python -m pip` that failed.

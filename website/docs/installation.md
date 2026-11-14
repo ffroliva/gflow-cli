@@ -43,7 +43,7 @@ gflow update            # runs the installer that put gflow-cli here: uv tool / 
 gflow update --check    # only report installed vs latest
 ```
 
-Every command shows a banner when a newer release is on PyPI (`GFLOW_CLI_UPDATE_CHECK=0`
+Every other command shows a banner when a newer release is on PyPI (`GFLOW_CLI_UPDATE_CHECK=0`
 silences it). Installed from a checkout? `gflow update` refuses (exit 11) — `git pull` and
 reinstall instead. Full behaviour: [USAGE § `gflow update`](USAGE.md#gflow-update).
 
