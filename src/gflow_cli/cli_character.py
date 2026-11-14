@@ -9,7 +9,12 @@ import structlog
 from rich.console import Console
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
+from gflow_cli._cli_helpers import (
+    _make_provider_dir,
+    _resolve_profile,
+    run_with_handlers,
+    spends_credits,
+)
 from gflow_cli.api.character import (
     VOICES,
     Character,
@@ -67,6 +72,7 @@ def character() -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(True)
 @character.command("create")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--name", required=True, help="Display name for the new character.")
@@ -243,6 +249,7 @@ async def _run_create(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @character.command("list")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
@@ -282,6 +289,7 @@ async def _run_list(*, profile_dir: Path, headless: bool, project_id: str, as_js
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @character.command("show")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--id", "entity_id", default=None, help="Character entity id.")
@@ -343,6 +351,7 @@ async def _run_show(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @character.command("rm")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--id", "entity_id", default=None, help="Character entity id.")
@@ -423,6 +432,7 @@ async def _run_rm(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @character.command("voices")
 @click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
 def voices(as_json: bool) -> None:

@@ -25,6 +25,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
+    spends_credits,
     tool_option,
     upscale_out_dir_option,
 )
@@ -1182,6 +1183,7 @@ def video() -> None:
     """Generate and manage videos via Google Flow Veo."""
 
 
+@spends_credits(True)
 @video.command(
     "t2v",
     short_help="Generate a video from a text prompt.",
@@ -1349,6 +1351,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     return str(resolved), None
 
 
+@spends_credits(True)
 @video.command(
     "i2v",
     short_help="Generate a video from an initial image + motion prompt.",
@@ -1533,6 +1536,7 @@ def i2v(  # NOSONAR
     )
 
 
+@spends_credits(True)
 @video.command(
     "r2v",
     short_help="Generate a video from reference images + prompt (ingredients).",
@@ -1694,6 +1698,7 @@ def r2v(
     )
 
 
+@spends_credits(True)
 @video.command(
     "chain",
     short_help="Render a manifest of links into one continuous I2V chain.",
@@ -1874,16 +1879,13 @@ def _print_extend_plan(
     console.print(f"  prompt      : {prompt}")
     console.print(f"  aspect      : {aspect}")
     if migrated:
-        # flow.google.com publishes no extend price gflow can read before submitting, and
-        # the length depends on the key the page picks (#1184).
+        # No extend price is readable before submitting here; the length depends on the key.
         console.print(
             "  cost        : spends credits — flow.google.com does not report the price "
             "before submitting; compare `gflow credits user` before and after"
         )
-        console.print(
-            "  length      : set by the key Flow picks; measured 2026-11-08, the Omni key "
-            "grows the source clip in place by ~4s (a Veo key adds a separate ~7s segment)"
-        )
+        console.print("  length      : set by the key Flow picks; the Omni key grows the source")
+        console.print("                in place by ~4s (a Veo key adds a separate ~7s segment)")
         return
     # Report CONTENT seconds, not billed seconds. This is the last screen before
     # the confirm prompt, so quoting Flow's advertised 8s here would contradict
@@ -2066,8 +2068,7 @@ def _migrated_extend_payload(
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
-    added: int | None = _EXTEND_CONTENT_SECONDS  # a separate Veo segment: 7 s added, 8 billed
-    billed: int | None = _EXTEND_SEGMENT_SECONDS
+    added, billed = _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS  # a separate Veo segment
     if record.media_id == media_id:  # #1184: grown in place; billed is the token, not measured
         added = billed = migrated_extend.extend_key_seconds(outcome.model_key)
     return {
@@ -2410,6 +2411,7 @@ async def _extend_session(  # noqa: PLR0913
             raise result.error
 
 
+@spends_credits(True)
 @video.command(
     "extend",
     short_help="Continue an existing clip (costs credits).",
@@ -2435,11 +2437,10 @@ async def _extend_session(  # noqa: PLR0913
         "seam. See KNOWN_ISSUES.\n\n"
         "On flow.google.com gflow drives Flow's own extend UI: one segment per call "
         "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), in "
-        "the source clip's aspect, downloaded to --out-file or the output directory. "
-        "With the Omni extend key (macaron_cookie_extend_4s, measured 2026-11-08) Flow "
-        "grows the source clip in place by ~4s under its own media id, so the file is "
-        "the whole extended clip and no earlier version is listed. "
-        "The price is not shown before submitting there."
+        "the source clip's aspect, downloaded to --out-file or the output directory. With "
+        "the Omni key (macaron_cookie_extend_4s, measured 2026-11-08) Flow grows the source "
+        "in place by ~4s under its own media id, so the file is the whole extended clip and "
+        "no earlier version is listed. The price is not shown before submitting there."
     ),
 )
 @click.argument("media_id")
@@ -2479,9 +2480,8 @@ async def _extend_session(  # noqa: PLR0913
 @out_file_option(
     help=(
         "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
-        "here (server-side concat, credit-free). flow.google.com: save the clip Flow "
-        "returns here; with the Omni extend key (measured 2026-11-08) that is the whole "
-        "source clip, grown in place by ~4s."
+        "here (server-side concat, credit-free). flow.google.com: save the clip Flow returns "
+        "here; with the Omni key (measured 2026-11-08), the source grown in place by ~4s."
     ),
 )
 @_project_option
@@ -2580,6 +2580,7 @@ def extend(  # noqa: PLR0913
     )
 
 
+@spends_credits(False)
 @video.command(
     "upscale",
     short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",

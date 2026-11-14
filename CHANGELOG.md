@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow --help --json` prints the command tree as JSON ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)).**
+  `gflow <group> [<cmd>] --help --json` narrows it. Each command lists its path, summary,
+  params and `spends_credits`, which is true for a command that submits a new Flow
+  generation (video spends Veo credits, image the daily image quota). Paths and params are
+  read from Click; `spends_credits` is set per command, and tests fail when a command has no
+  decision, when the path-to-`spends_credits` snapshot changes, when a decision disagrees
+  with the MCP spend gate, or when a command is missing from `docs/USAGE.md`. `gflow auth`,
+  `auth use`/`logout`, `data errors export`/`prune`, `project show` and `project rename` are
+  now documented there.
+
 ### Fixed
 
 - **`video extend` on flow.google.com no longer fails its catalog write, and reports the
@@ -22,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<date>/<media-id>_extend.mp4` already exists, so a same-day re-run keeps the earlier
   file. The help no longer says the extension alone is downloaded or that each run leaves a
   new scene (#1184).
+- **Usage telemetry recorded the wrong command after a root flag ([#1209](https://github.com/ffroliva/gflow-cli/issues/1209)).**
+  `gflow -v auth list` counted as `gflow`, because a flag was treated as taking a value.
 
 ## [0.99.0] — 2026-11-14
 
