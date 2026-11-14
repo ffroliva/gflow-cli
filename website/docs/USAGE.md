@@ -1827,7 +1827,8 @@ venv's Playwright version: when the upgrade moved it, a hint gives you the exact
 unreachable the manager still runs — it is the authority on what is installable.
 
 `--check` only reports installed vs latest plus the command that *would* run;
-`-v` / `--verbose` shows the package manager's raw output;
+`-v` / `--verbose` streams the package manager's output live (with `--json` it stays
+captured, so stdout is one JSON document; the root `gflow -v` only raises log verbosity);
 `--json` returns `{status: "ok", installed, latest, update_available, installer,
 command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
 be reached; after an upgrade `latest` is the version the venv actually reports;

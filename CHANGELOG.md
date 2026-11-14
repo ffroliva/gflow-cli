@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow update` says one thing about the result
+  ([#1163](https://github.com/ffroliva/gflow-cli/issues/1163)).** It no longer shows the
+  cached "update available" banner, which could name an older release than the one it then
+  installed. The package manager's output is captured: a successful run prints two short
+  lines, and the output is shown only when the update fails. `gflow update -v` streams it
+  live, and `--json` stdout stays a single JSON document. When the manager exits non-zero
+  after the new version is installed (on Windows, usually the running `gflow.exe`
+  launcher), you get its output and a one-line note instead of an error followed by a
+  success. Thanks to @nitishkp001.
+
 ## [0.99.0] — 2026-11-14
 
 ### Added
