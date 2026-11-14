@@ -1,7 +1,9 @@
-# #1249 wave 2 - split the remaining god classes - Plan (not implemented)
+# #1249 wave 2 - split the remaining god classes - Plan (done)
 
-> Written at the end of wave 1 (2026-11-11). Nothing here is implemented. Run `/gflow:predict`
-> and `/gflow:scenario` per class before starting; re-measure first, because line numbers drift.
+> Written at the end of wave 1 (2026-11-11). **All four PRs merged** (#1262, #1270, #1287, #1288;
+> 2026-11-14). No class in `src/` is over 1,000 lines now. Still over the 2,000-line file limit,
+> with no seam planned: `cli_video.py` and `mcp/tools.py` (the next wave). Before that wave, read
+> steps 7-10 below; they are what PRs 3 and 4 learned.
 
 **Goal:** bring every class under the size gate (1,000 lines, 20 public methods, files under
 2,000 lines) without changing behaviour: the same CLI, MCP tools, exit codes, JSON, log events and
@@ -16,6 +18,26 @@ Flow traffic.
 4. Retarget module-path patches as import-path-only edits, each listed in the commit.
 5. Ratchet the baseline; a pure move carries its entry (`check_size.py` handles it).
 6. e2e on denon82 for every PR that touches `api/transports/`.
+
+**Added by PRs 3 and 4** (each item caught a defect that every offline gate passed):
+
+7. **Verify the move yourself, not from a report.**
+   - Run the golden master at its own commit against unmodified develop.
+   - Find every old function body verbatim in the new tree (an AST span search over the old module).
+   - Check that every name src/, tests/ and scripts/ import from the old module still resolves.
+8. **Diff per-test durations against develop** (`--durations=0 --durations-min=0.5` over
+   tests/api, tests/features and tests/e2e). A lost timeout or clock patch does not fail its
+   test; the test waits out the real deadline. PR 4's `_project_snapshot` clock patch went from 0 s
+   to 15 s, and the reach guard passed.
+9. **Sweep for patches no reach guard sees.**
+   - **Assignments:** grep tests/ and scripts/ for `<alias>.<NAME> =`, inside strings too, with aliases taken from `import ... as X`.
+   - **Names read from several modules:** patch every module that holds the name, or `sys.modules[fn.__module__]` so the patch follows the function.
+   - **Evidence from PR 4:** `test_incident_quality_e2e` renamed `READY_ANCHOR` inside a subprocess driver string, and its forced failure generated an image instead. Only the live e2e run showed it.
+   - **Guard form:** key a reach guard by (reader, name) and assert that every key matched. A "name allowed in several modules" form passes by construction.
+10. **Merging two ratcheted baselines.** A union merge of `size_baseline.json` keeps each side's
+    stale keys. Run `check_size.py --update-baseline`, then `--base-ref origin/develop`. Golden
+    masters must record nothing path- or version-dependent (a `repr()` of a module carries local
+    paths; private typing class names change between 3.11 and 3.13).
 
 **A trap wave 1 found, which matters more here.** Tests that patch a **module global**
 (`patch("...ui_automation.log")`, `setattr(migrated_composer, "FRAME_...", ...)`) stop reaching a
