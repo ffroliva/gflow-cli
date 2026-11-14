@@ -452,6 +452,7 @@ class TestRunUpdate:
             (["update"], True),
             (["update", "-v"], False),  # streams: the user sees the manager live
             (["update", "--json", "-v"], True),  # stdout must stay one JSON document
+            (["-v", "update"], True),  # root -v is debug logging, not installer streaming
         ],
     )
     def test_capture_decision(
@@ -600,32 +601,11 @@ class TestRunUpdate:
         )
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
         monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
-        report = uc.run_update(check=False, verbose=False)
+        report = uc.run_update(check=False)
         assert report.upgraded is True
         captured = capsys.readouterr()
         assert "Resolved 27 packages" not in captured.err
         assert "Resolved 27 packages" not in captured.out
-
-    def test_installer_output_shown_with_verbose(
-        self,
-        uv_install: list[tuple[str, ...]],
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        import subprocess
-
-        fake_process = subprocess.CompletedProcess(
-            args=["uv", "tool", "upgrade", "gflow-cli"],
-            returncode=0,
-            stdout="Resolved 27 packages in 12ms",
-            stderr="",
-        )
-        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
-        report = uc.run_update(check=False, verbose=True)
-        assert report.upgraded is True
-        captured = capsys.readouterr()
-        assert "Resolved 27 packages" in captured.err
 
     def test_installer_output_shown_on_failure(
         self,
@@ -647,7 +627,7 @@ class TestRunUpdate:
         monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         with pytest.raises(ConfigurationError):
-            uc.run_update(check=False, verbose=False)
+            uc.run_update(check=False)
         captured = capsys.readouterr()
         assert "error: could not resolve dependencies" in captured.err
 
@@ -699,7 +679,7 @@ class TestRunUpdate:
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
         monkeypatch.setattr(uc, "_import_failure", lambda: None)
 
-        report = uc.run_update(check=False, verbose=False)
+        report = uc.run_update(check=False)
         assert report.upgraded is True
         assert report.installer == installer_name
         assert report.latest == "999.0.0"

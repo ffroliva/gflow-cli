@@ -29,11 +29,10 @@ from gflow_cli.update_check import UpdateReport, run_update
     "--verbose",
     "-v",
     is_flag=True,
-    help="Show the package manager's raw output.",
+    help="Stream the package manager's output live (not with --json).",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON report.")
-@click.pass_context
-def update(ctx: click.Context, check: bool, verbose: bool, as_json: bool) -> None:
+def update(check: bool, verbose: bool, as_json: bool) -> None:
     """Upgrade gflow-cli to the latest PyPI release.
 
     Runs the package manager that installed gflow-cli (uv tool, pipx, or the
@@ -41,22 +40,21 @@ def update(ctx: click.Context, check: bool, verbose: bool, as_json: bool) -> Non
     or the upgrade fails. Source / editable installs are refused (exit 11) —
     update those the way they were installed.
     """
-    root_ctx = ctx.find_root()
-    root_verbose = bool(root_ctx.params.get("verbose")) if root_ctx and root_ctx.params else False
-    is_verbose = verbose or root_verbose
+    # --json keeps stdout one JSON document, so it always captures.
+    stream_output = verbose and not as_json
     run_with_handlers(
-        lambda: _run(check, as_json, verbose=is_verbose),
+        lambda: _run(check, as_json, stream_output=stream_output),
         cli_command="update",
         as_json=as_json,
     )
 
 
-async def _run(check: bool, as_json: bool, verbose: bool = False) -> None:
+async def _run(check: bool, as_json: bool, *, stream_output: bool) -> None:
     def _status(msg: str) -> None:
         if not as_json:
             click.echo(msg)
 
-    report = run_update(check=check, verbose=verbose, as_json=as_json, status_callback=_status)
+    report = run_update(check=check, stream_output=stream_output, status_callback=_status)
     if as_json:
         json_output.emit(
             {

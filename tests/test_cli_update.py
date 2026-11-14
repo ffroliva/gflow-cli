@@ -40,8 +40,7 @@ def _returns(report: UpdateReport) -> Callable[..., UpdateReport]:
     def _fake(
         *,
         check: bool,
-        verbose: bool = False,
-        as_json: bool = False,
+        stream_output: bool = False,
         status_callback: Callable[[str], None] | None = None,
     ) -> UpdateReport:
         return report
@@ -180,27 +179,29 @@ def test_update_suppresses_banner_with_and_without_check(monkeypatch: pytest.Mon
     assert "Update available" not in res_update.output
 
 
-def test_update_verbose_option_passed(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen_verbose: list[bool] = []
+@pytest.mark.parametrize(
+    ("argv", "streams"),
+    [
+        (["update", "--verbose"], True),
+        (["update", "-v"], True),
+        (["update", "--json", "-v"], False),
+        (["-v", "update"], False),  # root -v is debug logging only
+        (["update"], False),
+    ],
+)
+def test_only_the_subcommand_verbose_streams(
+    monkeypatch: pytest.MonkeyPatch, argv: list[str], streams: bool
+) -> None:
+    seen: list[bool] = []
 
-    def _fake(*, check: bool, verbose: bool = False, **_kwargs: object) -> UpdateReport:
-        seen_verbose.append(verbose)
+    def _fake(*, check: bool, stream_output: bool = False, **_kwargs: object) -> UpdateReport:
+        seen.append(stream_output)
         return _report()
 
     monkeypatch.setattr(cli_update, "run_update", _fake)
-    res = CliRunner().invoke(main, ["update", "--verbose"])
-    assert res.exit_code == 0
-    assert seen_verbose == [True]
-
-    seen_verbose.clear()
-    res = CliRunner().invoke(main, ["update", "-v"])
-    assert res.exit_code == 0
-    assert seen_verbose == [True]
-
-    seen_verbose.clear()
-    res = CliRunner().invoke(main, ["-v", "update"])
-    assert res.exit_code == 0
-    assert seen_verbose == [True]
+    res = CliRunner().invoke(main, argv)
+    assert res.exit_code == 0, res.output
+    assert seen == [streams]
 
 
 def test_status_callback_prints_when_not_json(monkeypatch: pytest.MonkeyPatch) -> None:

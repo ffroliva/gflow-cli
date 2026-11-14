@@ -326,11 +326,13 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
 def run_update(
     *,
     check: bool,
-    verbose: bool = False,
-    as_json: bool = False,
+    stream_output: bool = False,
     status_callback: Callable[[str], None] | None = None,
 ) -> UpdateReport:
     """Upgrade gflow-cli in place, or with ``check`` only report.
+
+    ``stream_output`` runs the manager on the terminal; otherwise its output is
+    captured and shown only when the update fails.
 
     Raises :class:`~gflow_cli.errors.ConfigurationError` (exit 11) for a
     non-index install, a manager binary missing from PATH, or a manager that
@@ -387,7 +389,7 @@ def run_update(
             ),
         )
     playwright_before = _version_in_venv("playwright")
-    capture = not (verbose and not as_json)
+    capture = not stream_output
     res = _run_command(inst.command, capture_output=capture)
     returncode = res.returncode
     stdout = res.stdout or ""
@@ -396,10 +398,6 @@ def run_update(
         f"{stdout}\n{stderr}".strip() if (stdout and stderr) else (stdout or stderr).strip()
     )
     output_printed = (not capture) and not bool(installer_output)
-
-    if verbose and installer_output and not output_printed:
-        sys.stderr.write(f"{installer_output}\n")
-        output_printed = True
 
     # The venv is the truth, not the manager's exit code: on Windows `uv tool
     # upgrade` installs the new wheel and THEN fails copying `gflow.exe` over
