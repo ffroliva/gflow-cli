@@ -707,21 +707,23 @@ def _resolve_chain_resume(
     settings: Any,
     profile_name: str,
     profile_dir: Path,
-) -> tuple[str, int]:
-    """Resolve the chain_id and number of already-completed links.
+) -> tuple[str, int, Path | None]:
+    """Resolve the chain_id, the number of already-completed links and the last one's clip.
 
     For a fresh run mints a new UUID.  For a resume, opens the chain recorder
     to count completed links and returns early (raises SystemExit via
     console.print + return sentinel) when the chain is already done.
-    Returns ``(chain_id, skipped)`` — callers check ``skipped >= len(links)``
-    themselves via the returned value; this helper raises nothing.
+    Returns ``(chain_id, skipped, seed_clip)`` — callers check ``skipped >= len(links)``
+    themselves. ``seed_clip`` seeds the first remaining link (#1300); a resume whose clip
+    is gone is refused here, before the cost prompt, rather than sent as an unseeded t2v.
     """
     import uuid
 
     from gflow_cli.data.chain_repo import ChainLinkRecorder
+    from gflow_cli.errors import FrameExtractionError
 
     if resume_from is None:
-        return str(uuid.uuid4()), 0
+        return str(uuid.uuid4()), 0, None
 
     chain_id = resume_from
     probe = ChainLinkRecorder.open(
@@ -731,10 +733,18 @@ def _resolve_chain_resume(
         chain_id=chain_id,
     )
     try:
-        skipped = len(probe.completed_links())
+        completed = probe.completed_links()
     finally:
         probe.close()
-    return chain_id, skipped
+    seed_clip = Path(completed[-1].local_path) if completed else None
+    if seed_clip is not None and len(completed) < len(links) and not seed_clip.is_file():
+        raise FrameExtractionError(
+            detail=f"cannot resume chain {chain_id}: the clip of its last completed link, "
+            f"{seed_clip}, is missing, so the next link has nothing to continue from",
+            remediation_hint="Put the clip back at that path, or start a new chain.",
+            charged="no",
+        )
+    return chain_id, len(completed), seed_clip
 
 
 @dataclass(frozen=True)
@@ -753,14 +763,16 @@ class _ChainExecConfig:
     chain_id: str
     as_json: bool
     relocate: Callable[[int, VideoResult], VideoResult] | None = None
+    start_index: int = 0
+    seed_clip: Path | None = None
 
 
 def _chain_clip_relocator(
-    output_file: Path | None, skipped: int
+    output_file: Path | None,
 ) -> Callable[[int, VideoResult], VideoResult] | None:
-    """``--out-file`` for a chain (#1293): link i (1-based) goes to ``<stem>_<i><suffix>``.
+    """``--out-file`` for a chain (#1293): link ``index`` goes to ``<stem>_<index + 1><suffix>``.
 
-    ``skipped`` makes i count the whole manifest, so a resumed run names its links as a full
+    ``index`` counts the whole manifest (#1300), so a resumed run names its links as a full
     run would. Always numbered, even for one link, so a resume never renames a clip.
     """
     if output_file is None:
@@ -768,7 +780,7 @@ def _chain_clip_relocator(
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     def relocate(index: int, result: VideoResult) -> VideoResult:
-        target = numbered_path(output_file, skipped + index + 1)
+        target = numbered_path(output_file, index + 1)
         try:
             return relocate_video(result, target)
         except OSError as exc:  # billed already: keep and record the clip where it is
@@ -886,6 +898,8 @@ async def _execute_chain_links(
             seed_offset_ms=seed_offset,
             jitter=jitter,
             relocate=cfg.relocate,
+            start_index=cfg.start_index,
+            seed_clip=cfg.seed_clip,
         )
         return results, False, completed_paths
     except ChainPartialError as exc:
@@ -1011,7 +1025,7 @@ async def _run_chain(
 
     # Resume: bind the prior chain_id and skip completed links so they are not
     # regenerated. A fresh run mints a new id.
-    chain_id, skipped = _resolve_chain_resume(
+    chain_id, skipped, seed_clip = _resolve_chain_resume(
         resume_from,
         links,
         settings=settings,
@@ -1096,7 +1110,9 @@ async def _run_chain(
                     jitter=jitter,
                     chain_id=chain_id,
                     as_json=as_json,
-                    relocate=_chain_clip_relocator(output_file, skipped),
+                    relocate=_chain_clip_relocator(output_file),
+                    start_index=skipped,
+                    seed_clip=seed_clip,
                 ),
             )
     finally:

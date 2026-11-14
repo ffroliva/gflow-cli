@@ -511,3 +511,52 @@ async def test_on_link_failed_hook_receives_request_and_error(tmp_path: Path) ->
     failed_req, failed_exc = failed[0]
     assert failed_req.prompt == "the cat stretches and walks off"
     assert isinstance(failed_exc, WireFormatError)
+
+
+async def test_a_resumed_link_keeps_its_manifest_index_and_is_seeded(tmp_path: Path) -> None:
+    """#1300: link 2 of a resumed chain is link 2, an i2v seeded from link 1's clip."""
+    prev_clip = tmp_path / "link1.mp4"
+    prev_clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    client = _make_client([_ok_result("m2", tmp_path / "link2.mp4")])
+    recorder = MagicMock()
+    extracted: list[tuple[Path, Path]] = []
+
+    def _extract(src: Path, dst: Path, *, offset_ms: int = 0) -> Path:
+        dst.write_bytes(b"\xff\xd8\xff\xd9")
+        extracted.append((src, dst))
+        return dst
+
+    out = await run_chain(
+        client=client,
+        links=[ChainLinkSpec(prompt="p2")],
+        out_dir=tmp_path,
+        model=VideoModel.VEO_3_1_LITE,
+        extractor=_extract,
+        recorder=recorder,
+        start_index=2,
+        seed_clip=prev_clip,
+    )
+
+    req = client.generate_video.await_args.kwargs["req"]
+    assert req.mode == Mode.I2V
+    assert extracted == [(prev_clip, tmp_path / "link1_lastframe.jpg")]
+    assert req.start_image == tmp_path / "link1_lastframe.jpg"
+    assert [r.index for r in out] == [2]
+    assert recorder.record_chain_link.call_args.args[0].index == 2
+    assert out[0].frame_path is None  # still the final link
+
+
+async def test_a_resumed_link_without_a_seed_is_refused_not_sent_as_t2v(tmp_path: Path) -> None:
+    """#1300: an index past 0 with nothing to seed it must not fall back to t2v."""
+    client = _make_client([_ok_result("m1", tmp_path / "link1.mp4")])
+
+    with pytest.raises(ValueError, match="seed_clip"):
+        await run_chain(
+            client=client,
+            links=[ChainLinkSpec(prompt="p1")],
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_fake_extractor([]),
+            start_index=1,
+        )
+    client.generate_video.assert_not_awaited()

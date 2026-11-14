@@ -1,9 +1,10 @@
-"""#1293: `video chain --out-file PATH` writes link i's clip to ``<stem>_<i><suffix>``.
+"""`video chain --out-file` (#1293) and `--resume-from` link numbering (#1300).
 
-The REAL ``run_chain`` runs; only the transport (``generate_video``), the frame
-extractor and the two recorders are faked, so the move is seen by every consumer
-of the clip path: the chain table, the videos catalog, the next link's seed
-extraction and ``--json``.
+The REAL ``run_chain`` and the REAL ``ChainLinkRecorder`` run, on the per-test database
+the autouse ``_isolate_settings`` fixture provides. Only the transport
+(``generate_video``), the frame extractor and the videos catalog are faked, so every
+consumer of a clip path is the real one: the chain table, the next link's seed and
+``--json``.
 """
 
 from __future__ import annotations
@@ -14,105 +15,115 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import structlog
 
 from gflow_cli._cli_helpers import _OUT_FILE_DEPRECATION_WARNING
-from gflow_cli.cli import main
+from gflow_cli.api.video import GenerateVideoRequest, Mode, VideoResult, VideoStatus
+from gflow_cli.cli_video import video
 from tests.cli.test_out_file_deprecation import CliRunner
 
+_KEPT_EVENT = "chain_clip_kept_at_download_path"
 
-def _invoke_chain(
-    tmp_path: Path, *, links: int, completed: int, args: list[str]
-) -> tuple[Any, MagicMock, MagicMock, list[Path]]:
-    """Run `gflow video chain` over ``links`` links, ``completed`` already recorded."""
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStatus
-    from gflow_cli.chain import run_chain as real_run_chain
 
-    manifest = tmp_path / "chain.jsonl"
-    manifest.write_text(
-        "\n".join(f'{{"prompt": "link {i}"}}' for i in range(links)), encoding="utf-8"
-    )
-    download_dir = tmp_path / "dl"
-    download_dir.mkdir()
-    media_ids = iter(f"m{i}" for i in range(links))
+@pytest.fixture(autouse=True)
+def _capture(install_log_capture: structlog.testing.LogCapture) -> structlog.testing.LogCapture:
+    """Keep structlog off stdout so ``--json`` stays one parseable document."""
+    return install_log_capture
 
-    async def _gen(*, req: GenerateVideoRequest, **_: Any) -> VideoResult:
-        media_id = next(media_ids)
-        clip = download_dir / f"{media_id}.mp4"
+
+class _Flow:
+    """A fake Flow: one clip per successful link, a 403 for the prompts in ``fail``."""
+
+    def __init__(self, tmp_path: Path) -> None:
+        self.download_dir = tmp_path / "dl"
+        self.download_dir.mkdir(exist_ok=True)
+        self.fail: set[str] = set()
+        self.calls: list[tuple[str, Mode, str | None, bool]] = []  # prompt, mode, seed, ok
+
+    async def generate_video(self, *, req: GenerateVideoRequest, **_: Any) -> VideoResult:
+        from gflow_cli.errors import WafRejectionError
+
+        seed = req.start_image.read_text() if req.start_image is not None else None
+        ok = req.prompt not in self.fail
+        self.calls.append((req.prompt, req.mode, seed, ok))
+        if not ok:
+            raise WafRejectionError("403")
+        media_id = "m" + req.prompt.removeprefix("link ")
+        clip = self.download_dir / f"{media_id}.mp4"
         clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
         return VideoResult(
             status=VideoStatus(media_id=media_id, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
             local_path=clip,
         )
 
+
+def _extract(src: Path, dst: Path, *, offset_ms: int = 0) -> Path:
+    assert src.exists(), f"seed extraction read a clip that is not on disk: {src}"
+    dst.write_text(src.name)  # the frame names the clip it came from
+    return dst
+
+
+def _invoke(tmp_path: Path, flow: _Flow, *, links: int, args: list[str]) -> tuple[Any, MagicMock]:
+    """Run `gflow video chain` once over a ``links``-link manifest."""
+    from gflow_cli.chain import run_chain as real_run_chain
+
+    manifest = tmp_path / "chain.jsonl"
+    manifest.write_text(
+        "\n".join(f'{{"prompt": "link {i}"}}' for i in range(links)), encoding="utf-8"
+    )
     client = MagicMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
-    client.generate_video = AsyncMock(side_effect=_gen)
-
-    extracted_from: list[Path] = []
-
-    def _extract(src: Path, dst: Path, *, offset_ms: int = 0) -> Path:
-        assert src.exists(), f"seed extraction read a clip that is not on disk: {src}"
-        extracted_from.append(src)
-        dst.write_bytes(b"\xff\xd8\xff\xd9")
-        return dst
-
-    chain_recorder = MagicMock()
-    chain_recorder.completed_links.return_value = [MagicMock()] * completed
+    client.generate_video = AsyncMock(side_effect=flow.generate_video)
     catalog = MagicMock()
     assert real_run_chain.__kwdefaults__ is not None
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
-        patch("gflow_cli.data.chain_repo.ChainLinkRecorder.open", return_value=chain_recorder),
         patch("gflow_cli.cli_video.OperationRecorder.open", return_value=catalog),
-        patch("gflow_cli.cli_video.FlowApiClient", return_value=client),
+        patch("gflow_cli.cli_video.FlowApiClient", return_value=client) as client_cls,
         patch.dict(real_run_chain.__kwdefaults__, {"extractor": _extract}),
     ):
         result = CliRunner().invoke(
-            main,
-            [
-                "video",
-                "chain",
-                str(manifest),
-                "--yes",
-                "--json",
-                "--out-dir",
-                str(download_dir),
-                *args,
-            ],
+            video,
+            ["chain", str(manifest), "--yes", "--json", "--out-dir", str(flow.download_dir)] + args,
         )
-    return result, chain_recorder, catalog, extracted_from
+    catalog.flow_client_cls = client_cls  # lets a test see whether a browser was opened
+    return result, catalog
 
 
-def _assert_written_and_reported(
-    result: Any, chain_recorder: MagicMock, catalog: MagicMock, expected: list[Path]
-) -> None:
-    assert result.exit_code == 0, result.output
-    for path in expected:
-        assert path.is_file(), f"--out-file clip not written: {path}"
-    payload = json.loads(result.stdout)
-    assert [Path(link["local_path"]) for link in payload["links"]] == expected
-    assert [Path(p) for p in payload["completed_paths"]] == expected
-    assert [c.args[0].local_path for c in chain_recorder.record_chain_link.call_args_list] == (
-        expected
+def _rows(tmp_path: Path, chain_id: str) -> list[tuple[int, Path]]:
+    from gflow_cli.config import get_settings
+    from gflow_cli.data.chain_repo import ChainLinkRecorder
+
+    recorder = ChainLinkRecorder.open(
+        get_settings(), profile_name="default", profile_dir=tmp_path / "prof", chain_id=chain_id
     )
-    assert [
-        c.kwargs["result"].local_path for c in catalog.record_completed_video.call_args_list
-    ] == expected
+    try:
+        return [(r.link_index, Path(r.local_path)) for r in recorder.completed_links()]
+    finally:
+        recorder.close()
+
+
+def _catalog_paths(catalog: MagicMock) -> list[Path]:
+    return [c.kwargs["result"].local_path for c in catalog.record_completed_video.call_args_list]
 
 
 @pytest.mark.parametrize("flag", ["--out-file", "-o"])
 def test_chain_out_file_writes_each_link_to_a_numbered_path(tmp_path: Path, flag: str) -> None:
     """Two links with ``--out-file out/clip.mp4`` land at clip_1.mp4 and clip_2.mp4."""
-    target = tmp_path / "out" / "clip.mp4"
-    result, chain_recorder, catalog, extracted_from = _invoke_chain(
-        tmp_path, links=2, completed=0, args=[flag, str(target)]
-    )
+    flow = _Flow(tmp_path)
+    out = tmp_path / "out"
+    result, catalog = _invoke(tmp_path, flow, links=2, args=[flag, str(out / "clip.mp4")])
 
-    expected = [target.parent / "clip_1.mp4", target.parent / "clip_2.mp4"]
-    _assert_written_and_reported(result, chain_recorder, catalog, expected)
-    assert extracted_from == [expected[0]]  # link 1 was seeded from the moved clip
+    assert result.exit_code == 0, result.output
+    expected = [out / "clip_1.mp4", out / "clip_2.mp4"]
+    assert all(p.is_file() for p in expected), list(out.iterdir())
+    payload = json.loads(result.stdout)
+    assert [Path(link["local_path"]) for link in payload["links"]] == expected
+    assert _rows(tmp_path, payload["chain_id"]) == list(enumerate(expected))
+    assert _catalog_paths(catalog) == expected
+    assert flow.calls[1][2] == "clip_1.mp4"  # link 2 was seeded from the moved clip
     assert "does not apply --out-file" not in result.stderr
     if flag == "-o":
         assert result.stderr.strip() == _OUT_FILE_DEPRECATION_WARNING
@@ -120,42 +131,62 @@ def test_chain_out_file_writes_each_link_to_a_numbered_path(tmp_path: Path, flag
         assert _OUT_FILE_DEPRECATION_WARNING not in result.stderr
 
 
-def test_chain_out_file_move_failure_keeps_the_billed_clip_recorded(tmp_path: Path) -> None:
-    """A clip that cannot be moved stays where it downloaded and is recorded there.
+@pytest.mark.sharpit(allow_n_plus_one=True)  # three runs of one chain, on purpose (#1300)
+def test_resumes_keep_manifest_indexes_seed_i2v_and_bill_each_link_once(tmp_path: Path) -> None:
+    """#1300: a 3-link chain stops at link 1, then at link 2, then completes."""
+    flow = _Flow(tmp_path)
+    out = tmp_path / "out"
+    clips = [out / f"clip_{n}.mp4" for n in (1, 2, 3)]
 
-    The link is already billed: losing its chain row would make --resume-from bill it again.
-    """
-    from gflow_cli.paths import relocate_video as real_move
+    flow.fail = {"link 1"}
+    first, _ = _invoke(tmp_path, flow, links=3, args=["--out-file", str(out / "clip.mp4")])
+    assert first.exit_code == 21, first.output
+    chain_id = json.loads(first.stdout)["chain_id"]
+    assert _rows(tmp_path, chain_id) == [(0, clips[0])]
 
-    calls = 0
+    flow.fail = {"link 2"}
+    resume = ["--resume-from", chain_id, "--out-file", str(out / "clip.mp4")]
+    second, _ = _invoke(tmp_path, flow, links=3, args=resume)
+    assert second.exit_code == 21, second.output
+    assert _rows(tmp_path, chain_id) == [(0, clips[0]), (1, clips[1])]
 
-    def _move(item: Any, target: Path) -> Any:
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise PermissionError(13, "locked", str(target))
-        return real_move(item, target)
+    flow.fail = set()
+    third, _ = _invoke(tmp_path, flow, links=3, args=resume)
+    assert third.exit_code == 0, third.output
+    assert [link["index"] for link in json.loads(third.stdout)["links"]] == [2]
+    assert _rows(tmp_path, chain_id) == list(enumerate(clips))
+    assert all(p.is_file() for p in clips)
 
-    target = tmp_path / "out" / "clip.mp4"
-    with patch("gflow_cli.cli_video.relocate_video", _move):
-        result, chain_recorder, catalog, _ = _invoke_chain(
-            tmp_path, links=2, completed=0, args=["--out-file", str(target)]
-        )
+    assert flow.calls == [
+        ("link 0", Mode.T2V, None, True),
+        ("link 1", Mode.I2V, "clip_1.mp4", False),
+        ("link 1", Mode.I2V, "clip_1.mp4", True),  # resumed: i2v, seeded from link 1's clip
+        ("link 2", Mode.I2V, "clip_2.mp4", False),
+        ("link 2", Mode.I2V, "clip_2.mp4", True),
+    ]
+    billed = [prompt for prompt, _, _, ok in flow.calls if ok]
+    assert billed == ["link 0", "link 1", "link 2"]  # no link generated twice
 
-    expected = [target.parent / "clip_1.mp4", tmp_path / "dl" / "m1.mp4"]
-    _assert_written_and_reported(result, chain_recorder, catalog, expected)
 
+def test_a_resume_whose_seed_clip_is_gone_is_refused_before_submit(tmp_path: Path) -> None:
+    """#1300: with the last paid clip missing, the next link cannot be seeded; never t2v."""
+    from gflow_cli.chain import ChainLinkResult
+    from gflow_cli.config import get_settings
+    from gflow_cli.data.chain_repo import ChainLinkRecorder
 
-def test_chain_out_file_resume_keeps_each_links_number(tmp_path: Path) -> None:
-    """A resume of a 3-link chain with link 1 done writes clip_2 and clip_3, never clip_1."""
-    target = tmp_path / "out" / "clip.mp4"
-    result, chain_recorder, catalog, _ = _invoke_chain(
-        tmp_path,
-        links=3,
-        completed=1,
-        args=["--resume-from", "chain-abc", "--out-file", str(target)],
+    missing = tmp_path / "dl" / "m0.mp4"
+    recorder = ChainLinkRecorder.open(
+        get_settings(), profile_name="default", profile_dir=tmp_path / "prof", chain_id="c1"
     )
+    recorder.record_chain_link(
+        ChainLinkResult(index=0, prompt="link 0", local_path=missing, media_id="m0")
+    )
+    recorder.close()
+    flow = _Flow(tmp_path)
 
-    expected = [target.parent / "clip_2.mp4", target.parent / "clip_3.mp4"]
-    _assert_written_and_reported(result, chain_recorder, catalog, expected)
-    assert not (target.parent / "clip_1.mp4").exists()
+    result, catalog = _invoke(tmp_path, flow, links=2, args=["--resume-from", "c1"])
+
+    assert result.exit_code == 20, result.output
+    assert str(missing) in json.loads(result.stdout)["error"]["detail"]
+    assert flow.calls == []
+    catalog.flow_client_cls.assert_not_called()

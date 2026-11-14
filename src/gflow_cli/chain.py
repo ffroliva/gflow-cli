@@ -325,6 +325,24 @@ def _build_link_result(
     )
 
 
+async def _resume_seed(
+    extractor: FrameExtractor,
+    *,
+    start_index: int,
+    seed_clip: Path | None,
+    out_dir: Path,
+    offset_ms: int,
+) -> Path | None:
+    """The seed frame for ``links[0]``: none at link 0, else re-extracted from ``seed_clip``."""
+    if start_index == 0:
+        return None
+    if seed_clip is None:
+        msg = f"link {start_index} continues a chain: pass seed_clip, the clip of the link before"
+        raise ValueError(msg)
+    dst = out_dir / f"link{start_index - 1}_lastframe.jpg"
+    return await asyncio.to_thread(extractor, src=seed_clip, dst=dst, offset_ms=offset_ms)
+
+
 async def run_chain(
     *,
     client: FlowApiClient,
@@ -340,6 +358,8 @@ async def run_chain(
     seed_offset_ms: int = 0,
     jitter: float = 0.0,
     relocate: Callable[[int, VideoResult], VideoResult] | None = None,
+    start_index: int = 0,
+    seed_clip: Path | None = None,
 ) -> list[ChainLinkResult]:
     """Render ``links`` as a sequential last-frame I2V chain.
 
@@ -374,6 +394,10 @@ async def run_chain(
             path, so the recorders, the seed extraction and the return value
             all see where the clip ended up. A result with no ``local_path``
             must come back unchanged.
+        start_index: The manifest index of ``links[0]`` (``--resume-from``, #1300). Request
+            mode, ``ChainLinkResult.index`` and the recorded ``link_index`` all count from it.
+        seed_clip: The clip of link ``start_index - 1``; its last frame seeds ``links[0]``.
+            Required when ``start_index`` is past 0, so a resumed link is never sent as t2v.
 
     Returns:
         One :class:`ChainLinkResult` per link, in order.
@@ -386,18 +410,26 @@ async def run_chain(
         ChainPartialError: A link failed with a ``WireFormatError`` (i2v routed
             to the t2v backstop) or ``WafRejectionError`` (403). Carries the
             ``Path`` of every link completed before the failure.
+        ValueError: ``start_index`` is past 0 but no ``seed_clip`` was given.
     """
     reject_unusable_links(model=model, links=links)
 
     results: list[ChainLinkResult] = []
     completed_paths: list[Path] = []
-    prev_frame: Path | None = None
+    prev_frame = await _resume_seed(
+        extractor,
+        start_index=start_index,
+        seed_clip=seed_clip,
+        out_dir=out_dir,
+        offset_ms=seed_offset_ms,
+    )
+    last_index = start_index + len(links) - 1
 
-    for index, spec in enumerate(links):
-        if index > 0 and jitter > 0:
+    for index, spec in enumerate(links, start=start_index):
+        if index > start_index and jitter > 0:
             await asyncio.sleep(random.uniform(0.0, jitter))  # noqa: S311  # cadence, not crypto
 
-        _log.info("chain_link_started", index=index, total_links=len(links))
+        _log.info("chain_link_started", index=index, total_links=last_index + 1)
         req = _build_link_request(
             spec=spec, index=index, model=model, aspect=aspect, prev_frame=prev_frame
         )
@@ -427,7 +459,7 @@ async def run_chain(
             _notify_link_failed(on_link_failed, req, exc)
             raise exc
 
-        is_last = index == len(links) - 1
+        is_last = index == last_index
 
         # RECORD-BEFORE-EXTRACT: persist the downloaded clip before decoding it.
         # The frame_path is the planned seed-frame destination; it is filled in
