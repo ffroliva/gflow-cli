@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.api import image as image_api
 from gflow_cli.api import video as video_api
 from gflow_cli.docs_catalog import closest_matches
@@ -97,6 +98,7 @@ _json_flag = click.option(
 )
 
 
+@spends_credits(False)
 @click.group("models", invoke_without_command=True)
 @_json_flag
 @click.pass_context
@@ -109,6 +111,7 @@ def models(ctx: click.Context, as_json: bool) -> None:
         ctx.invoke(models_list)
 
 
+@spends_credits(False)
 @models.command("list")
 @_json_flag
 @click.pass_context
@@ -121,6 +124,7 @@ def models_list(ctx: click.Context, as_json: bool) -> None:
     _render_catalog(catalog)
 
 
+@spends_credits(False)
 @models.command("show")
 @click.argument("model_id")
 @_json_flag

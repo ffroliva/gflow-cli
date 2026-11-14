@@ -26,6 +26,13 @@ Note on ``image t2i --jitter`` (#241): intentionally NOT mirrored on
 multi-prompt run; the MCP tool is single-prompt, so the parameter would be a
 silent no-op there. An MCP agent composing several calls owns its own cadence
 (or sets ``GFLOW_CLI_JITTER_RANGE`` server-side, which the batch paths honour).
+
+Note on ``--help --json`` (#1203): deliberately no MCP twin. It is a discovery
+surface for the CLI itself (the Click command tree); an MCP client discovers the
+server's tools and their schemas through the protocol's own ``tools/list``. It adds
+no Click option or leaf (the root group intercepts it before parsing), so it needs
+no entry in the tables below. Its ``spends_credits`` decisions must agree with the
+MCP spend gate: see ``test_paid_commands_agree_between_cli_and_mcp``.
 """
 
 from __future__ import annotations
@@ -34,7 +41,11 @@ import inspect
 import re
 from typing import Any
 
+import click
+
+from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
+from gflow_cli.mcp import server as mcp_server
 from gflow_cli.mcp import tools as mcp_tools
 from tests.mcp._cli_tree import cli_leaves
 
@@ -173,8 +184,25 @@ _MCP_EXEMPT: dict[str, str] = {
 
 
 def _cli_leaves() -> set[str]:
-    """Every invokable CLI path: plain commands + invoke_without_command groups."""
+    """Every invokable CLI path, from the walker `--help --json` uses (one surface)."""
     return cli_leaves(main)
+
+
+def _command(path: str) -> click.Command:
+    cmd: Any = main
+    for part in path.split():
+        cmd = cmd.commands[part]
+    return cmd
+
+
+def test_paid_commands_agree_between_cli_and_mcp() -> None:
+    # A CLI command marked as spending must map to a tool the MCP --no-spend gate removes.
+    disagree = {
+        leaf: (spends_credits_decision(_command(leaf)), tool)
+        for leaf, tool in CLI_TO_MCP.items()
+        if spends_credits_decision(_command(leaf)) != (tool in mcp_server._SPEND_TOOLS)
+    }
+    assert not disagree, f"spends_credits disagrees with mcp.server._SPEND_TOOLS: {disagree}"
 
 
 def test_every_cli_leaf_has_an_mcp_decision() -> None:
