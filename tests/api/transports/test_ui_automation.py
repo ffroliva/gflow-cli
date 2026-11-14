@@ -2604,11 +2604,33 @@ class TestSelectorLocaleInvariance:
         """
         import inspect
 
-        from gflow_cli.api.transports import ui_automation
+        from gflow_cli.api.transports import (
+            _ui_capture,
+            _ui_character,
+            _ui_common,
+            _ui_image,
+            _ui_navigation,
+            _ui_prompt,
+            _ui_session,
+            _ui_settings,
+            ui_automation,
+        )
 
+        modules = (
+            ui_automation,
+            _ui_capture,
+            _ui_character,
+            _ui_common,
+            _ui_image,
+            _ui_navigation,
+            _ui_prompt,
+            _ui_session,
+            _ui_settings,
+        )
         non_comment_lines = [
             line
-            for line in inspect.getsource(ui_automation).splitlines()
+            for mod in modules
+            for line in inspect.getsource(mod).splitlines()
             if not line.lstrip().startswith("#")
         ]
         assert "--lang=en-US" not in "\n".join(non_comment_lines), (
