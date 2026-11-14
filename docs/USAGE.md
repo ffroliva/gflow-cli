@@ -419,6 +419,11 @@ gflow image t2i "cat in space" --tool creative-director:style=cinema
 
 **Output paths.**
 
+> **Output flags.** Use `--out-file PATH` for an explicit destination file path.
+> The legacy `-o/--output PATH` flag is deprecated. In a future release, `-o/--output` will
+> select the output format (`-o json|table|id`), aligning with major CLIs such as `kubectl`,
+> `az`, `gcloud`, and `aws`. Use `--out DIR` for directory output (and `--out-dir DIR` for video).
+
 - **Explicit File (`--out-file PATH`).** Saves the generated asset directly to `PATH` (e.g. `--out-file ./assets/hero.png`). Parent directories are created automatically if they do not exist. With `--count > 1`, images are written as `PATH`'s stem plus `_1`, `_2`, … before the extension (`--out-file hero.png --count 2` → `hero_1.png`, `hero_2.png`); video commands write a single file only. `--out-file` is **single-prompt only** (multi-prompt runs abort with a usage error — use `--out` there) and takes precedence over `--out` when both are passed. The path is a **local filesystem path**; it does not accept `s3://`/`gs://` URLs (cloud output still goes through `GFLOW_CLI_STORAGE_URI`). (The legacy `-o`/`--output PATH` flags remain supported with a deprecation warning.)
 - **Default (`--out` omitted).** Files land under `$GFLOW_CLI_OUTPUT_DIR/images/<YYYY-MM-DD>/<media_name>_<n>.png`. The date partition keeps long-running batches navigable.
 - **Directory (`--out DIR`).** Files are written flat as `<DIR>/<media_name>_<n>.png` — no date subdirectory.
