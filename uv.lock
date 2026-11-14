@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -302,7 +302,7 @@ name = "browser-cookie3"
 version = "0.20.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jeepney", marker = "sys_platform == 'linux' or 'bsd' in sys_platform" },
+    { name = "jeepney", marker = "'bsd' in sys_platform or sys_platform == 'linux'" },
     { name = "lz4" },
     { name = "pycryptodomex" },
     { name = "shadowcopy", marker = "sys_platform == 'win32'" },
@@ -853,7 +853,7 @@ wheels = [
 
 [[package]]
 name = "gflow-cli"
-version = "0.98.0"
+version = "0.99.0"
 source = { editable = "." }
 dependencies = [
     { name = "browser-cookie3" },

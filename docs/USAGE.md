@@ -699,6 +699,7 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > instead of proceeding on Flow's sticky default (typically x2) and silently
 > changing what the run bills.
 > `t2v`, `i2v`, `r2v`, `video chain`, and `video extend` additionally take `--out-file PATH` (explicit file destination).
+> `video chain` does not apply it yet: it says so on stderr and the clips land under `--out-dir` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
 > The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
 > **`i2v` model rules (issues #125 / #626):** every model — `omni-flash`
@@ -2276,6 +2277,11 @@ GFLOW_CLI_LOG_FORMAT=json gflow image t2i "..." 2>&1 | jq .
 Phase 4 (v0.4.0a1+) maps every `GFlowError` subclass to a stable exit code so
 shell scripts can branch on the failure mode without parsing stderr. With `--json`, the
 envelope also says whether Flow may have billed and what to do next; see
+[ERRORS.md](ERRORS.md).
+
+The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to the stable core:
+`4→40`, `5→41`, `6→42`, `7→43`, `8→3`, `9→44`, everything else unchanged, and `--json` errors carry
+`exit_code_legacy` beside `exit_code`. It becomes the default in a later release; see
 [ERRORS.md](ERRORS.md).
 
 | Code | Error class           | Meaning                                          | Remediation                                                |

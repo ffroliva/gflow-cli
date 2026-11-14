@@ -112,6 +112,7 @@ gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DI
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
+                  # --out-file is not applied by chain yet (stderr notice, #1293): clips go to --out-dir
 
 # Characters (reusable, project-scoped subjects)
 gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
