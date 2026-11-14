@@ -380,6 +380,9 @@ gflow video gen "knight walks forward" --ref armor.png      # video r2v
 - A character by id (`--reference-entity`) without `--ref` is passed to `video t2v`
   unchanged, with whatever `video t2v` does with it on the host Flow serves (see that
   section); with a frame it is a usage error, because `video i2v` takes none.
+- The file destination is `--out-file PATH` (`gflow image gen "a cat" --out-file cat.png`).
+  The bridges have no `-o/--output PATH` spelling: `-o` is a usage error (exit 2), because
+  in a future release `-o` selects the output format.
 - `--json` emits the resolved verb's payload (its `command` is the mode verb, e.g.
   `"image t2i"`) plus a top-level `"mode": "<resolved>"`, on failure payloads too.
 - The mode verbs stay and are not deprecated. Use them when you want the mode fixed. The

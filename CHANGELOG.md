@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `video r2v` with `--ref`. Each then is that verb: the same options, output and exit codes,
   and `--json` adds `"mode": "<resolved>"`. A frame and a `--ref` together, or an option
   the resolved verb does not take, is a usage error (exit 2) naming the mode verb, never a
-  guess, and so is `--end-frame` without `--initial-frame`. The mode verbs stay, nothing is deprecated, and the MCP tools are unchanged: they
-  already take the mode (#1193).
+  guess, and so is `--end-frame` without `--initial-frame`. The file flag is `--out-file
+  PATH` only: the bridges take no `-o/--output PATH`. The mode verbs stay, nothing is
+  deprecated, and the MCP tools are unchanged: they already take the mode (#1193).
 - **`gflow --help --json` prints the command tree as JSON ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)).**
   `gflow <group> [<cmd>] --help --json` narrows it. Each command lists its path, summary,
   params and `spends_credits`, which is true for a command that submits a new Flow

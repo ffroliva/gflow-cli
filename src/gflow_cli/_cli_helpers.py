@@ -655,13 +655,15 @@ def bridge_params(
     The union exists so the bridge can read the routing inputs and show one ``--help``;
     the resolved verb re-parses the arguments with its own options. An option a mode
     requires (``--ref``) is relaxed, and ``help_for`` rewrites help that only reads right
-    on one mode verb, each on a copy so the mode verb is untouched.
+    on one mode verb, each on a copy so the mode verb is untouched. A deprecated spelling
+    (``-o/--output PATH``, #1158) is left out: a new verb starts on the current flags, so
+    the bridge's own parse refuses it before the mode verb could accept it.
     """
     overrides = help_for or {}
     params = list(own)
     seen = {p.name for p in own} | set(exclude)
     for param in (p for mode in modes for p in mode.params):
-        if isinstance(param, click.Argument) or param.name in seen:
+        if isinstance(param, click.Argument | DeprecatedAliasOption) or param.name in seen:
             continue
         seen.add(param.name)
         params.append(_bridge_copy(param, overrides))

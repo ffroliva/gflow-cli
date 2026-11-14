@@ -18,8 +18,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
-from gflow_cli.cli_image import resolve_image_mode
-from gflow_cli.cli_video import resolve_video_mode
+from gflow_cli.cli_gen import resolve_image_mode, resolve_video_mode
 
 _UUID = "11111111-1111-1111-1111-111111111111"
 
@@ -265,6 +264,41 @@ def test_video_gen_forwards_the_same_arguments(
         direct = _captured("cli_video", runner_name, ["video", mode, *args], tmp_path)
         bridged = _captured("cli_video", runner_name, ["video", "gen", *args], tmp_path)
     assert bridged == direct
+
+
+# ------------------------------------------- the file flag is --out-file only (#1158)
+
+
+@pytest.mark.parametrize(
+    ("group", "mode", "runner_name", "args"),
+    [
+        ("image", "t2i", "_run_t2i", ["a cat"]),
+        ("image", "i2i", "_run_i2i", ["a cat", "--ref", _UUID]),
+        ("video", "t2v", "_run_t2v", ["a sunset"]),
+        ("video", "i2v", "_run_i2v", ["slow pan", "--initial-frame", "{png}"]),
+        ("video", "r2v", "_run_r2v", ["knight", "--ref", "{png}"]),
+    ],
+)
+def test_gen_out_file_reaches_the_modes_output_file(
+    group: str, mode: str, runner_name: str, args: list[str], png: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "x.out"
+    argv = [*(a.replace("{png}", str(png)) for a in args), "--out-file", str(out)]
+    module = f"cli_{group}"
+    with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {})):
+        direct = _captured(module, runner_name, [group, mode, *argv], tmp_path)
+        bridged = _captured(module, runner_name, [group, "gen", *argv], tmp_path)
+    assert bridged == direct
+    assert bridged.kwargs["output_file"] == out
+
+
+@pytest.mark.parametrize("flag", ["-o", "--output"])
+@pytest.mark.parametrize("argv", [["image", "gen", "a cat"], ["video", "gen", "a sunset"]])
+def test_gen_has_no_deprecated_output_path_spelling(argv: list[str], flag: str) -> None:
+    # A new verb starts on --out-file; -o is about to mean the output format (#1158).
+    out = _usage_error([*argv, flag, "x.png"])
+    assert f"No such option '{flag}'" in out
+    assert "deprecated" not in out
 
 
 # ------------------------------------------------------------- --json carries the mode
