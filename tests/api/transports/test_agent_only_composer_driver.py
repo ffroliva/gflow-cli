@@ -979,8 +979,10 @@ async def test_a_names_only_character_routed_to_the_agent_composer_is_refused(
     async def agent_only(*_: Any, **__: Any) -> str:
         return "agent_only"
 
+    from gflow_cli.api.transports import _mc_editor_gate
+
     monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", agent_only)
-    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
     with pytest.raises(FlowHostMigratedError, match="character"):
         await mc.run_images(

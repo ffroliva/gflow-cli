@@ -6,7 +6,7 @@ description: Use when the user wants to drive Google Flow (Veo image-to-video, V
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
-  - Output flag confusion: '--output'/'-o' takes a FILE path (single asset, v0.48.0+); '--out' (image) / '--out-dir' (video) take a DIRECTORY
+  - Output flag confusion: '--out-file' takes a FILE path (single asset, legacy '-o/--output'); '--out' (image) / '--out-dir' (video) take a DIRECTORY
   - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
   - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
   - reCAPTCHA direction inverted: agents suggest GFLOW_CLI_HEADLESS=true to fix detection; correct fix is =false
@@ -65,10 +65,16 @@ gflow auth logout                                         # delete a saved sessi
 # otherwise in the profile's browser. GFLOW_CLI_WIRE_READS=0 always uses the browser; the
 # direct read is also off by default on macOS and skipped while any proxy is configured.
 # Exit 4/6 = Flow is throttling the account (429/503): wait, do not retry in a loop.
+# (Under the opt-in GFLOW_CLI_EXIT_CODES=2 these are 40/42; see docs/ERRORS.md.)
 # Exit 3 = sign-in page (fix: --refresh); 31 = /about or no balance reply (NOT an auth
 # problem, do not loop on login); 11 = profile in use; 7 = unrecognised reply. Tier fields are null.
 gflow credits user [--profile NAME] [--refresh] [--json]
 gflow credits list [--refresh] [--json]                   # all saved profiles; --refresh renews signed-out sessions
+
+# What this gflow can drive (no call to Flow; yes/no/partial/unknown per key, notes on partial).
+# cancel.server and idempotent_submit are "no": a submitted generation runs and may still be charged.
+# MCP twin: resource capabilities://self (same document; generation is "no" on a no-spend server). Keys: docs/CAPABILITIES.md
+gflow capabilities [--json]
 
 # Image generation (Imagen / Nano Banana)
 gflow image upload <path>                                 # → asset UUID + dimensions
@@ -106,6 +112,7 @@ gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DI
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
+                  # --out-file is not applied by chain yet (stderr notice, #1293): clips go to --out-dir
 
 # Characters (reusable, project-scoped subjects)
 gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
@@ -118,7 +125,7 @@ gflow character voices                                    # list the Gemini voic
 
 # Scenes (Add Clip / compose ordered clips)
 gflow scene create --project <id> <clip-id> [<clip-id> ...] \
-                   [-o extended.mp4]                       # --output = credit-free server-side concat
+                   [--out-file extended.mp4]               # --out-file = credit-free server-side concat
 gflow scene show <scene-id> --project <id>
 
 # Agent instructions (project brief cards, credits-free setup) — --project is REQUIRED
@@ -218,7 +225,7 @@ See [`docs/CHARACTER.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/C
 
 ```bash
 # Concatenate ordered clips server-side via runVideoFxConcatenation — no local ffmpeg, no credits.
-gflow scene create --project "$PROJECT_ID" "$CLIP_A" "$CLIP_B" -o extended.mp4
+gflow scene create --project "$PROJECT_ID" "$CLIP_A" "$CLIP_B" --out-file extended.mp4
 ```
 
 ### Chain clips by last frame (story stitching)
@@ -291,6 +298,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 | Every page step times out, but auth/HTTP calls work | Network reaches Google only through a proxy; the browser ignores `HTTPS_PROXY` | Set `GFLOW_CLI_BROWSER_PROXY=http://host:port` (no credentials: a password-protected proxy is refused, exit 11) |
 | Exit 7 `RpcResponseUnavailableError` ("outcome unknown") | A create/rename/upload was sent but its result was never seen | Do NOT re-run blindly: check the project on flow.google.com first (a re-run can duplicate), then pass `--project <id>` |
 | No progress lines any more | Default log level is WARNING since v0.88.0 | `GFLOW_CLI_LOG_LEVEL=INFO` or `-v` |
+| Any error, unsure whether it cost anything | Every error envelope (`--json`, MCP) carries `charged` (`yes`/`no`/`maybe`) and `next_action` | Follow `next_action`: `retry` is safe; `reconcile` means check the project in Flow before re-running (a billed request is never resent); `reauth` means sign in again. See `docs/ERRORS.md` |
 
 ## Important constraints
 
@@ -307,15 +315,15 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | Mistake | Correct behaviour |
 |---|---|
 | `gflow video generate` or `gflow video create` | `gflow video t2v` (text→video) or `gflow video i2v` (image→video) |
-| `--output DIR` (a directory) as the output location | `-o`/`--output PATH` is an explicit FILE path on `image t2i`/`i2i` and `video t2v`/`i2v` (v0.48.0+, single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. `r2v`/`chain` have no `-o` |
-| An absolute MCP `output` / `out_dir` outside the output dir, or a path as MCP `profile` | MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` (v0.92.0+): pass `output` relative to it; anything else returns 400 `Invalid Output` / `Invalid out_dir`. `profile` is a plain name (400 `Invalid Profile`). The CLI `-o` is unchanged |
+| `--output DIR` (a directory) as the output location | `--out-file PATH` is an explicit FILE path (legacy `-o/--output`, single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. |
+| An absolute MCP `out_file` / `output` / `out_dir` outside the output dir, or a path as MCP `profile` | MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` (v0.92.0+): pass `out_file` (or legacy `output`) relative to it; anything else returns 400 `Invalid Output` / `Invalid out_dir`. `profile` is a plain name (400 `Invalid Profile`). The CLI `--out-file` is unchanged |
 | `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |
 | `gflow auth refresh` (doesn't exist), or `gflow auth login` as the first move on an expired session | `gflow auth renew` renews an expired session headlessly with no sign-in; `gflow auth login` only when renew reports the session could not be renewed (revoked) |
 | `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |
 | Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
 | `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
 | Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` (i2i) or `--initial-frame/--end-frame UUID` (i2v, with `--project`) — no re-upload needed |
-| `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 4, no longer in Flow's menu), `--model nano-pro` (Nano Banana Pro), `--model nano2` (Nano Banana 2.1; `nano2.1` also works). `gflow models` lists each model's Flow name |
+| `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 4, no longer in Flow's menu), `--model nano-pro` (Nano Banana Pro), `--model nano2` (Nano Banana 2.1; `nano2.1` also works). `gflow models` lists each model's Flow name; `gflow models show <alias>` prints one model's limits |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |
 | Python: `from gflow_cli import FlowApiClient` | `from gflow_cli.api.client import FlowApiClient` |
 | `gflow video t2v`/`i2v`/`r2v` with an unported UUID/entity reference or model on an account served `flow.google.com` (exit 36) | Pass local files instead — migrated hosts support video t2v, local-file i2v/r2v, single-segment video extend, and image t2i/i2i (local refs, a same-`--project` catalogued UUID ref (#995), plus `@Character` mentions on images, #723), and r2v with a named character (`--reference-entity` + `--reference-entity-name`, #723) only — and an agent-only composer (#799) image t2i and video t2v only; exit 36 is non-retryable, `GFLOW_CLI_FLOW_HOST=labs.google` is the kill switch (see USAGE § gflow video t2v / i2v / r2v and image sections) |

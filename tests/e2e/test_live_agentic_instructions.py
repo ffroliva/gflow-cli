@@ -33,6 +33,7 @@ import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
+from tests.e2e.conftest import skip_on_migrated_host
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_image]
 
@@ -68,6 +69,7 @@ def _image_kind(path: Path) -> str | None:
 
 
 @pytest.mark.asyncio
+@skip_on_migrated_host
 async def test_enabled_card_steers_agentic_generation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

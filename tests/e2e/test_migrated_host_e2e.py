@@ -249,7 +249,9 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
             # would resolve against the developer's own catalog and profile store
             # (#86's pollution mode, reintroduced mid-test).
             with monkeypatch.context() as m:
-                m.setattr(migrated_composer, "AGENT_MODE_CHIP", "button.gflow-no-such-chip")
+                from gflow_cli.api.transports import _mc_editor_gate
+
+                m.setattr(_mc_editor_gate, "AGENT_MODE_CHIP", "button.gflow-no-such-chip")
                 # Pinned to the message, not just the class: without this the control
                 # passes on ANY drift, including one raised by the recovery firing
                 # wrongly, and stops discriminating the moment it matters.

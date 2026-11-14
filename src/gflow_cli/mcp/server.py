@@ -90,8 +90,6 @@ def _redirect_stdout_to_stderr() -> None:
     This prevents any stray print() call from corrupting the JSON-RPC
     channel. Called once at server boot for stdio transport.
     """
-    if "pytest" in sys.modules:
-        return
     if sys.stdout is not sys.stderr:
         # Wrap stderr in a TextIOWrapper that matches stdout's interface if possible
         if hasattr(sys.stderr, "buffer") and sys.stderr.buffer is not None:

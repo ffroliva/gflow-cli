@@ -25,7 +25,6 @@ import pytest
 from playwright.async_api import Page, Route, async_playwright
 from pytest_bdd import given, scenarios, then, when
 
-from gflow_cli.api.transports import migrated_composer
 from gflow_cli.api.transports.migrated_composer import (
     BOUND_CHIP,
     EMPTY_CHIP,
@@ -158,8 +157,10 @@ def _lists_something_else(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
     # The miss path is three searches of FRAME_PICKER_OPEN_S with a pause between --
     # half a minute of waiting for a page that mounts synchronously. The timeout is
     # not what this scenario is about, so it is shortened rather than served.
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.5)
-    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
+    from gflow_cli.api.transports import _mc_upload_frame
+
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_PICKER_OPEN_S", 0.5)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
 
 
 # ---------------------------------------------------------------------------- when
