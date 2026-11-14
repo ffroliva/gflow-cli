@@ -375,7 +375,7 @@ async def test_enforce_count_opens_panel_clicks_and_saves() -> None:
             new=AsyncMock(return_value=False),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):
@@ -398,7 +398,7 @@ async def test_enforce_count_skips_click_and_save_when_already_correct() -> None
             new=AsyncMock(return_value=False),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):
@@ -421,7 +421,7 @@ async def test_enforce_count_does_not_reopen_already_open_panel() -> None:
             new=AsyncMock(return_value=True),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):
@@ -439,7 +439,7 @@ async def test_enforce_count_closes_panel_on_target_not_found() -> None:
             new=AsyncMock(return_value=False),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):
@@ -459,7 +459,7 @@ async def test_enforce_count_closes_panel_when_click_never_converges() -> None:
             new=AsyncMock(return_value=False),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):
@@ -480,7 +480,7 @@ async def test_enforce_count_closes_panel_when_save_not_found() -> None:
             new=AsyncMock(return_value=False),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):
@@ -515,7 +515,7 @@ async def test_enforce_count_swallows_exceptions_and_still_closes_panel() -> Non
             new=AsyncMock(return_value=False),
         ),
         patch(
-            "gflow_cli.api.transports.ui_automation._count_tabs_locator",
+            "gflow_cli.api.transports._ui_settings._count_tabs_locator",
             return_value=tabs,
         ),
     ):

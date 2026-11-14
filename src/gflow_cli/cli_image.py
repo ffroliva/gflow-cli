@@ -35,6 +35,7 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     default_project,
+    out_file_option,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
@@ -786,14 +787,7 @@ _ui_mode_option = click.option(
         "files are written flat as <dir>/<media_name>_<n>.png."
     ),
 )
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated asset.",
-)
+@out_file_option(help="Explicit output file path for the generated asset.")
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
 @click.option(
@@ -849,7 +843,7 @@ def t2i(  # NOSONAR
 
     if is_multi_prompt and output_file is not None:
         msg = (
-            "--output is single-prompt only; remove the extra prompts or use --out for"
+            "--out-file is single-prompt only; remove the extra prompts or use --out for"
             " directory output."
         )
         raise click.UsageError(msg)
@@ -1678,14 +1672,7 @@ class _I2IParams:
     is_flag=True,
     help="Emit a machine-readable JSON result instead of a Rich table.",
 )
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated asset.",
-)
+@out_file_option(help="Explicit output file path for the generated asset.")
 @click.option(
     "--instruction",
     "-i",

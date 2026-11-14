@@ -4,7 +4,32 @@
 
 ## Current release
 
-**v0.98.0 — alpha.** Errors say whether Flow may have billed, billed requests are never resent, and
+**v0.99.0 — alpha.** Output flags start moving to the convention of the major CLIs, and exit
+codes get a stable core you can opt in to now. Nothing breaks in this release.
+
+**`--out-file PATH` (#1158).** Nine commands that write a file (`data errors export`, `image t2i`,
+`image i2i`, `scene create`, `video t2v`, `i2v`, `r2v`, `chain`, `extend`) take `--out-file PATH`.
+`-o/--output PATH` still works and prints one deprecation line on stderr: in a later release
+`-o/--output` selects the output format (`-o json|table|id`, as in kubectl, az and aws). The MCP
+generate tools take `out_file`; `output` is deprecated. Under a cloud `GFLOW_CLI_STORAGE_URI`,
+`video t2v`/`i2v`/`r2v --out-file` (and MCP video `out_file`) is still refused before anything is
+billed, whichever spelling is used.
+
+**Stable exit codes, opt-in (#1202).** `GFLOW_CLI_EXIT_CODES=2` (environment or `.env`) moves
+rate limit, content policy, network, wire format and timeout to `40`–`44` and merges missing auth
+into `3`. The default stays the legacy codes; `--json` errors carry both `exit_code` and
+`exit_code_legacy`. The table is in [ERRORS.md](ERRORS.md).
+
+**Changed.** `video chain` has never written to `-o PATH`; it now says so on stderr instead of staying
+silent (#1293 tracks writing the file).
+Internally, `UiAutomationTransport` and `MigratedComposer` are split into single-purpose mixins
+(#1249 wave 2).
+
+Full ledger: [LIVE_VERIFICATION_v0.99.0](LIVE_VERIFICATION_v0.99.0.md).
+
+<details><summary>v0.98.0 — errors say whether you were charged, billed requests sent once</summary>
+
+Errors say whether Flow may have billed, billed requests are never resent, and
 gflow reports what it can do and which models exist.
 
 **Errors that say whether you were charged (#1201).** Every error envelope carries `charged`
@@ -27,6 +52,8 @@ depend on the UI language, and an ambiguous include button fails loudly instead 
 change (#1249 wave 2).
 
 Full ledger: [LIVE_VERIFICATION_v0.98.0](LIVE_VERIFICATION_v0.98.0.md).
+
+</details>
 
 <details><summary>v0.97.0 — credit balances without a browser, Chrome closes promptly</summary>
 
@@ -864,6 +891,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `--out-file PATH` with `-o/--output PATH` deprecated (#1158), opt-in stable exit-code core `GFLOW_CLI_EXIT_CODES=2` (#1202) | ✅ done (v0.99.0) |
 | Errors carry `charged` / `next_action` (#1201), billed requests and image submits sent once (#1260, #1274, #1275), `gflow capabilities` + `capabilities://self` (#1197), `gflow models list/show` (#1196), caption heal on flow.google.com (#546), language-independent classic selectors (#1273) | ✅ done (v0.98.0) |
 | Credits read without a browser, wire health in `doctor` and `gflow_auth_status`, Chrome close no longer waits 30 s, `video extend` reports its model, no httpx request URL logged (#1229, #1140, #1180) | ✅ done (v0.97.0) |
 | Omni 1.2 start+end, video submits refused before they are billed, 10s end-frame cap (#1178) | ✅ done (v0.96.1) |

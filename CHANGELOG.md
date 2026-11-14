@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.0] — 2026-11-14
+
+### Added
+
+- **Opt-in stable exit-code core (`GFLOW_CLI_EXIT_CODES=2`).** Opt in to a standardized core
+  (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted; 4 is reserved for "accepted, still running") with specific causes moved to
+  `40`–`44` (`40`–`63` is reserved for specific causes). In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
+  preserves the legacy code ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)).
+- **`--out-file PATH` on generation/export commands and `out_file` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  The explicit file destination is `--out-file PATH` on `data errors export`, `image t2i`,
+  `image i2i`, `scene create`, `video t2v`, `video i2v`, `video r2v`, `video chain`, and
+  `video extend`. In MCP, `gflow_generate_image` and `gflow_generate_video` gain `out_file`.
+  `video chain` has never written to this path; it now says so on stderr instead of staying
+  silent, and the clips still land under `--out-dir` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+
+### Deprecated
+
+- **`-o/--output PATH` on generation/export commands and `output` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  Passing `-o` or `--output PATH` still works and prints one stderr deprecation warning.
+  Passing `-o DIR` to `video upscale` still works with a warning; use `--out DIR`.
+  In MCP `gflow_generate_image` and `gflow_generate_video`, `output` is deprecated in favor of `out_file`.
+  Passing both old and new options is refused with exit 2 (or an MCP validation error).
+
+### Changed
+
+- **Internal: `UiAutomationTransport` and `MigratedComposer` are split into single-purpose mixins ([#1249](https://github.com/ffroliva/gflow-cli/issues/1249)).**
+  The two classes are now chains of mixins, one job each; every name other modules read is still
+  importable from the same place. No behaviour change.
+- **Locked `opentelemetry-api` 1.45.2** (transitive only).
+
+### Upcoming breaking change
+
+- In a future release `-o/--output` selects the output format (`-o json|table|id`).
+  Replace -o/--output PATH with --out-file PATH (and video upscale -o DIR with --out DIR).
+- **Exit-code core will become the default in a later release ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
+  - `4` (`RateLimitError`) moves to `40`.
+  - `5` (`ContentPolicyError`) moves to `41`.
+  - `6` (`NetworkError`) moves to `42`.
+  - `7` (`WireFormatError`) moves to `43`.
+  - `8` (`AuthMissingError`) moves to `3` (unified auth exit code with `AuthExpiredError`).
+  - `9` (`TransportTimeoutError`) moves to `44`.
+  - `4` is reserved for "accepted, still running" (resumable jobs).
+  - `5–9` are reserved.
+  - `0`, `1`, `2`, `3`, `130`, and `10–39` are unchanged.
+  Set GFLOW_CLI_EXIT_CODES=2 now to test your scripts against the new codes.
+
 ## [0.98.0] — 2026-11-12
 
 ### Added
@@ -7042,7 +7088,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...HEAD
+[0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
 [0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1

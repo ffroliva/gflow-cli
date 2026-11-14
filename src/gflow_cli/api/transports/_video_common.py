@@ -648,7 +648,7 @@ _EDITOR_READY_ANCHOR = "div[role='textbox'][data-slate-editor='true'], div[conte
 
 async def _capture_debug_screenshot(page: Any, out_dir: Path | None, filename: str) -> Path | None:
     """Best-effort viewport screenshot for debugging. Duplicated from
-    `ui_automation.py` to keep this module free of a circular import."""
+    `_ui_common.py` to keep this module free of a circular import."""
     from gflow_cli.config import get_settings  # noqa: PLC0415 - import cycle
 
     # A page capture outside the incident bundle: opting out of incident capture

@@ -40,7 +40,7 @@ So the rule is conditional. **When the staged object is the mechanism of the sho
 
 Use `extend` where a cut would break the effect: a continuous camera move, an unbroken performance, footage timed to a narration beat. Use `chain` when a cut is what you want.
 
-**An extend segment carries about 7 s of real content though 8 s is billed [CONSTRAINT].** Concatenating several leaves a frozen, silent second before every internal seam. Render without `-o` and trim each segment to `0-7` in `scene create`.
+**An extend segment carries about 7 s of real content though 8 s is billed [CONSTRAINT].** Concatenating several leaves a frozen, silent second before every internal seam. Render without `--out-file` and trim each segment to `0-7` in `scene create`.
 
 ## Chain 1 — one-off sequence
 
@@ -52,8 +52,8 @@ gflow project create --name "<piece>" --json > project.json     # redirect, neve
 # assets (free)
 gflow character create --project P --name Lead \
   --face-prompt "<canon, plain background>" --body-prompt "<wardrobe, no print>" --voice <preset>
-gflow image t2i "<location, geometry only, no people>" --aspect 16:9 --project P -o plate_wide.png
-gflow image i2i "<same room, reverse angle>" --ref <ANCHOR_UUID> --aspect 16:9 --project P -o plate_rev.png
+gflow image t2i "<location, geometry only, no people>" --aspect 16:9 --project P --out-file plate_wide.png
+gflow image i2i "<same room, reverse angle>" --ref <ANCHOR_UUID> --aspect 16:9 --project P --out-file plate_rev.png
 
 # trial ONE beat, gate it, fix the template, then continue in pairs
 gflow video r2v "<style + geometry + cast + setup + action + dialogue + avoid>" \
@@ -63,7 +63,7 @@ gflow video r2v "<style + geometry + cast + setup + action + dialogue + avoid>" 
 python clip_qa.py clips/
 
 # assemble (free)
-gflow scene create <wf1> <wf2> <wf3> -o final.mp4 --project P
+gflow scene create <wf1> <wf2> <wf3> --out-file final.mp4 --project P
 ```
 
 ## Chain 2 — manifest-driven, re-run as the script is edited
@@ -96,7 +96,7 @@ gflow video r2v "<opening beat>" --reference-entity <ID> --ref <PLATE> \
 
 gflow video extend <media_id> "<next beat>" "<beat after>" --project P --aspect 16:9
 
-gflow scene create <wf1> <wf2>:0-7 <wf3>:0-7 -o shot.mp4 --project P
+gflow scene create <wf1> <wf2>:0-7 <wf3>:0-7 --out-file shot.mp4 --project P
 ```
 
 Trim every extension to `0-7`; see the 7-second constraint above. `1:1` is refused — there is no square extend model.
@@ -111,7 +111,7 @@ The pattern to reach for when a shot needs **both** a specific person and a spec
 #    and a prop sheet in one call is the normal case, not an advanced one. Free.
 gflow image i2i "<close crop, the action's start state, stated exactly>" \
   --reference-entity <CHARACTER_ID> --ref <PLATE_UUID> --ref <PROP_UUID> \
-  --model nano2 --aspect 16:9 --project P -o frame_approved.png
+  --model nano2 --aspect 16:9 --project P --out-file frame_approved.png
 
 # 2. a human looks at it. This is the gate the whole pattern exists for.
 #    Crop to the prop and confirm the beat's start state is literally true in the
@@ -128,7 +128,7 @@ Use it for a mechanism-critical prop, a precise start state, or a shot that must
 
 ```bash
 gflow data list videos --json                  # workflow ids
-gflow scene create <wf1> <wf2>:2.0-6.5 <wf3> -o cut.mp4 --project P
+gflow scene create <wf1> <wf2>:2.0-6.5 <wf3> --out-file cut.mp4 --project P
 ```
 
 Free, server-side, no re-encode, per-clip trim windows in seconds.

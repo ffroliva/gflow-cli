@@ -510,13 +510,10 @@ class FlowWorker:
 
             if isinstance(exc, GFlowError):
                 error_payload = dict(exc.to_problem_details())
-                from gflow_cli.errors import EXIT_CODE_MAP, is_retryable
+                from gflow_cli.errors import exit_code_for, is_retryable, legacy_exit_code_for
 
-                exit_code = next(
-                    (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)),
-                    1,
-                )
-                error_payload["exit_code"] = exit_code
+                error_payload["exit_code"] = exit_code_for(exc)
+                error_payload["exit_code_legacy"] = legacy_exit_code_for(exc)
                 # §6.5: same shared retry classification as CLI --json / MCP.
                 error_payload["retryable"] = is_retryable(exc)
                 if "status" not in error_payload:
@@ -534,6 +531,7 @@ class FlowWorker:
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
+                    "exit_code_legacy": 1,
                     # #1201: same members as a typed failure; nothing is proven.
                     **outcome_members("maybe", "none"),
                 }

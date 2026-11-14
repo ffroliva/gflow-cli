@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gflow_cli.api.transports import ui_automation as uia_mod
+from gflow_cli.api.transports import _ui_navigation as uinav_mod
 from gflow_cli.api.transports._common import await_url_settled
 from gflow_cli.api.transports.base import TransportSetup
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
@@ -107,7 +107,7 @@ async def test_settle_wait_runs_before_any_dom_action(monkeypatch: pytest.Monkey
     async def _dismiss(*_a: Any, **_k: Any) -> None:
         order.append("dismiss")
 
-    monkeypatch.setattr(uia_mod, "await_url_settled", _settle)
+    monkeypatch.setattr(uinav_mod, "await_url_settled", _settle)
     monkeypatch.setattr(t, "_dismiss_blocking_overlays", _dismiss)
 
     await t._enter_editor(page, None, project_id=PID)
