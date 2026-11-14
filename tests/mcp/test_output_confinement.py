@@ -71,6 +71,16 @@ async def _call(tool: str, output: str) -> tuple[dict[str, Any], AsyncMock]:
     return result, run
 
 
+async def _call_out_file(tool: str, out_file: str) -> tuple[dict[str, Any], AsyncMock]:
+    run = AsyncMock(return_value={"status": "completed"})
+    with (
+        patch.object(tools_mod, "_run_generation_task", run),
+        patch.object(tools_mod, "_resolve_and_validate_profile", return_value="default"),
+    ):
+        result = await getattr(tools_mod, tool)(prompt="a dog", out_file=out_file)
+    return result, run
+
+
 _TOOLS = ["gflow_generate_image", "gflow_generate_video"]
 
 
@@ -130,6 +140,47 @@ async def test_tool_queues_a_relative_output_resolved_inside(output_dir: Path, t
     assert run.call_args.kwargs["payload"]["output_file"] == str(
         (output_dir / "sub" / "x.bin").resolve()
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _TOOLS)
+async def test_tool_queues_a_relative_out_file_resolved_inside(output_dir: Path, tool: str) -> None:
+    _, run = await _call_out_file(tool, "sub/custom.png")
+    run.assert_called_once()
+    assert run.call_args.kwargs["payload"]["output_file"] == str(
+        (output_dir / "sub" / "custom.png").resolve()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _TOOLS)
+async def test_tool_refuses_both_out_file_and_output(tool: str) -> None:
+    run = AsyncMock(return_value={"status": "completed"})
+    with (
+        patch.object(tools_mod, "_run_generation_task", run),
+        patch.object(tools_mod, "_resolve_and_validate_profile", return_value="default"),
+    ):
+        result = await getattr(tools_mod, tool)(
+            prompt="a dog", out_file="custom.png", output="legacy.png"
+        )
+    assert result["status"] == "error"
+    assert result["error"]["status"] == 400
+    assert result["error"]["title"] == "Conflicting Output Options"
+    assert "out_file" in result["error"]["detail"]
+    assert "output" in result["error"]["detail"]
+    run.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", _TOOLS)
+@pytest.mark.parametrize("bad", ["../escaped/x.bin", "a/../../x.bin"])
+async def test_tool_refuses_an_escaping_out_file_before_queueing(
+    output_dir: Path, tool: str, bad: str
+) -> None:
+    result, run = await _call_out_file(tool, bad)
+    assert result["status"] == "error"
+    assert result["error"]["title"] == "Invalid Output"
+    run.assert_not_called()
 
 
 _MEDIA = "11111111-2222-3333-4444-555555555555"
