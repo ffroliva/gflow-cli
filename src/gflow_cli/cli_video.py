@@ -1869,11 +1869,6 @@ def _print_extend_plan(
     comes from the (free) capability listing once the run starts; the balance
     check that uses it aborts before the first submit.
     """
-    # Report CONTENT seconds, not billed seconds. This is the last screen before
-    # the confirm prompt, so quoting Flow's advertised 8s here would contradict
-    # --help, USAGE and KNOWN_ISSUES on the one line a user cannot skip.
-    footage = segments * _EXTEND_CONTENT_SECONDS
-    billed = segments * _EXTEND_SEGMENT_SECONDS
     console.print("[bold]Extend plan[/bold]")
     console.print(f"  source clip : {media_id}")
     console.print(f"  prompt      : {prompt}")
@@ -1890,6 +1885,11 @@ def _print_extend_plan(
             "grows the source clip in place by ~4s (a Veo key adds a separate ~7s segment)"
         )
         return
+    # Report CONTENT seconds, not billed seconds. This is the last screen before
+    # the confirm prompt, so quoting Flow's advertised 8s here would contradict
+    # --help, USAGE and KNOWN_ISSUES on the one line a user cannot skip.
+    footage = segments * _EXTEND_CONTENT_SECONDS
+    billed = segments * _EXTEND_SEGMENT_SECONDS
     console.print(
         f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
         f"footage (Flow bills {billed}s)"
