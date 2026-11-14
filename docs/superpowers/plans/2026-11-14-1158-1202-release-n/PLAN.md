@@ -51,6 +51,7 @@ Verdict: **CAUTION, proceed**.
 | S9 | Exit codes, default mode | identical to today; `--json` error gains `exit_code_legacy` (= `exit_code`) | MCP error payloads gain the same field |
 | S10 | `GFLOW_CLI_EXIT_CODES=2` | 4→40, 5→41, 6→42, 7→43, 8→3, 9→44; `exit_code` equals the real process status | MCP reports the same mapped code |
 | S11 | `GFLOW_CLI_EXIT_CODES=bogus` | treated as legacy, never crashes | same |
+| S12 | Cloud storage (`GFLOW_CLI_STORAGE_URI=s3://…`, #1008) | `video t2v/i2v --out-file` is refused before submit with exit 11 exactly like `-o/--output`, and the message names `--out-file`; nothing billed. Image and other commands keep today's behaviour | MCP video `out_file` refused before queueing, naming `out_file`; `output` still refused, naming `output` |
 
 ## Tasks
 
@@ -60,4 +61,5 @@ Verdict: **CAUTION, proceed**.
 4. [ ] e2e: `tests/e2e/test_out_file_e2e.py`, `e2e_image` ($0): CLI `--out-file`, CLI `-o` (warning + file), MCP `out_file`.
 5. [ ] Docs, skills + plugin byte copies, plugin commands, examples, llms.txt, README, CHANGELOG "Upcoming breaking change".
 6. [ ] #1202: one exit-code function, `GFLOW_CLI_EXIT_CODES=2` opt-in, `exit_code_legacy`, table test, `docs/ERRORS.md` old→new table (separate PR).
-7. [ ] `/gflow:check`, reviews, Sonar 0, e2e on denon82, release.
+7. [ ] S12 cloud storage: refusal names the spelling used (CLI `cli_video.py` refusal site, MCP `gflow_generate_video`), tests in `tests/cli/test_cloud_storage_local_output.py`, `docs/EXTERNAL_STORAGE.md`.
+8. [ ] `/gflow:check`, reviews, Sonar 0, e2e on denon82, release.
