@@ -248,6 +248,8 @@ def _run_command(
         text=True,
         encoding="utf-8",
         errors="replace",
+        # pip / pipx on Windows otherwise write the console code page; uv is UTF-8 anyway.
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     ) as proc:
         try:
             stdout, stderr = proc.communicate()

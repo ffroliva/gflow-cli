@@ -818,6 +818,17 @@ class TestRunUpdate:
         uc._run_command(("fake",), capture_output=True)
         assert _FakeProc.kwargs.get("stdin") is subprocess.DEVNULL, _FakeProc.kwargs
 
+    def test_capture_asks_the_child_for_utf8(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """pip / pipx on Windows write the console code page unless told otherwise."""
+        monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+        monkeypatch.setenv("GFLOW_TEST_SENTINEL", "kept")
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        uc._run_command(("fake",), capture_output=True)
+        env = _FakeProc.kwargs.get("env")
+        assert isinstance(env, dict), f"no env passed: {_FakeProc.kwargs}"
+        assert env.get("PYTHONIOENCODING") == "utf-8"
+        assert env.get("GFLOW_TEST_SENTINEL") == "kept"  # a copy, not a replacement
+
     def test_run_command_decodes_utf8_with_replacement(self) -> None:
         cmd = (
             sys.executable,
