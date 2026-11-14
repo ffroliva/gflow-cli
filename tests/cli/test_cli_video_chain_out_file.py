@@ -8,24 +8,16 @@ extraction and ``--json``.
 
 from __future__ import annotations
 
-import inspect
 import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from click.testing import CliRunner as _CliRunner
 
 from gflow_cli._cli_helpers import _OUT_FILE_DEPRECATION_WARNING
 from gflow_cli.cli import main
-
-
-def _runner() -> _CliRunner:
-    """stderr captured apart on every Click version pyproject allows (>=8.1)."""
-    if "mix_stderr" in inspect.signature(_CliRunner.__init__).parameters:
-        return _CliRunner(mix_stderr=False)  # type: ignore[call-arg]  # Click < 8.2
-    return _CliRunner()
+from tests.cli.test_out_file_deprecation import CliRunner
 
 
 def _invoke_chain(
@@ -77,7 +69,7 @@ def _invoke_chain(
         patch("gflow_cli.cli_video.FlowApiClient", return_value=client),
         patch.dict(real_run_chain.__kwdefaults__, {"extractor": _extract}),
     ):
-        result = _runner().invoke(
+        result = CliRunner().invoke(
             main,
             [
                 "video",
@@ -133,9 +125,8 @@ def test_chain_out_file_move_failure_keeps_the_billed_clip_recorded(tmp_path: Pa
 
     The link is already billed: losing its chain row would make --resume-from bill it again.
     """
-    from gflow_cli import cli_video
+    from gflow_cli.paths import relocate_video as real_move
 
-    real_move = cli_video._relocate_single_video  # pyright: ignore[reportPrivateUsage]
     calls = 0
 
     def _move(item: Any, target: Path) -> Any:
@@ -146,7 +137,7 @@ def test_chain_out_file_move_failure_keeps_the_billed_clip_recorded(tmp_path: Pa
         return real_move(item, target)
 
     target = tmp_path / "out" / "clip.mp4"
-    with patch("gflow_cli.cli_video._relocate_single_video", _move):
+    with patch("gflow_cli.cli_video.relocate_video", _move):
         result, chain_recorder, catalog, _ = _invoke_chain(
             tmp_path, links=2, completed=0, args=["--out-file", str(target)]
         )

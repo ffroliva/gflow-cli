@@ -53,11 +53,13 @@ from gflow_cli.errors import (
     SceneConcatError,
 )
 from gflow_cli.image_batch import resolve_jitter_range
+from gflow_cli.paths import numbered_path, relocate_video, relocate_video_output
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from gflow_cli.api.video import VideoResult
     from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.tools.invocation import AppliedTool
@@ -238,44 +240,6 @@ def _reject_duration_without_control(
         raise click.UsageError(f"{named}: {exc}") from exc
 
 
-def _relocate_single_video(item: Any, target: Path) -> Any:
-    from dataclasses import replace
-    from typing import cast
-
-    local_p = cast("Path | None", getattr(item, "local_path", None))
-    if local_p is None or not local_p.exists():
-        return item
-    if local_p != target:
-        import shutil
-
-        # shutil.move, not Path.replace: a rename across mounts raises EXDEV (#1114).
-        shutil.move(local_p, target)
-        return replace(item, local_path=target)
-    return item
-
-
-def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
-    if output_file is None:
-        return result
-    from typing import cast
-
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(result, (list, tuple)):
-        items = cast("tuple[Any, ...] | list[Any]", result)
-        relocated: list[Any] = []
-        is_single = len(items) == 1
-        for i, item in enumerate(items, start=1):
-            target = (
-                output_file
-                if is_single
-                else output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
-            )
-            relocated.append(_relocate_single_video(item, target))
-        return relocated
-
-    return _relocate_single_video(result, output_file)
-
-
 async def _generate_and_report(
     request: Any,
     *,
@@ -365,7 +329,7 @@ async def _generate_and_report(
                 **resolver_kw,
             )
 
-        result = _relocate_video_output(result, output_file)
+        result = relocate_video_output(result, output_file)
 
         try:
             recorder.record_completed_video(
@@ -788,10 +752,12 @@ class _ChainExecConfig:
     jitter: float
     chain_id: str
     as_json: bool
-    relocate: Any = None
+    relocate: Callable[[int, VideoResult], VideoResult] | None = None
 
 
-def _chain_clip_relocator(output_file: Path | None, skipped: int) -> Any:
+def _chain_clip_relocator(
+    output_file: Path | None, skipped: int
+) -> Callable[[int, VideoResult], VideoResult] | None:
     """``--out-file`` for a chain (#1293): link i (1-based) goes to ``<stem>_<i><suffix>``.
 
     ``skipped`` makes i count the whole manifest, so a resumed run names its links as a full
@@ -801,11 +767,10 @@ def _chain_clip_relocator(output_file: Path | None, skipped: int) -> Any:
         return None
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def relocate(index: int, result: Any) -> Any:
-        name = f"{output_file.stem}_{skipped + index + 1}{output_file.suffix}"
-        target = output_file.parent / name
+    def relocate(index: int, result: VideoResult) -> VideoResult:
+        target = numbered_path(output_file, skipped + index + 1)
         try:
-            return _relocate_single_video(result, target)
+            return relocate_video(result, target)
         except OSError as exc:  # billed already: keep and record the clip where it is
             logger.warning("chain_out_file_move_failed", target=str(target), error=str(exc))
             return result
@@ -838,7 +803,7 @@ async def _execute_chain_links(
     chain_id = cfg.chain_id
     as_json = cfg.as_json
 
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
     from gflow_cli.errors import ChainPartialError
 
     # (request, media_id) pairs — matched by object IDENTITY in _on_link_failed.

@@ -109,7 +109,7 @@ from gflow_cli.image_batch import (
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
-from gflow_cli.paths import image_output_path, resolve_batch_output_dir
+from gflow_cli.paths import image_output_path, numbered_path, resolve_batch_output_dir
 from gflow_cli.profile_store import account_locale_for
 from gflow_cli.refresh_resolver import (
     _build_name_resolver as _build_name_resolver,  # pyright: ignore[reportPrivateUsage]
@@ -1123,7 +1123,7 @@ async def _download_images(
             if len(images) == 1:
                 target = output_file
             else:
-                target = output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
+                target = numbered_path(output_file, i)
         elif out is not None:
             target = out / f"{img.media_name}_{i}.png"
         else:

@@ -31,7 +31,7 @@ from gflow_cli.errors import (
     outcome_members,
 )
 from gflow_cli.observability import exception_message_hash
-from gflow_cli.paths import image_output_path
+from gflow_cli.paths import image_output_path, numbered_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
@@ -269,10 +269,7 @@ class FlowWorker:
                                     if len(images) == 1:
                                         target = output_file
                                     else:
-                                        target = (
-                                            output_file.parent
-                                            / f"{output_file.stem}_{i}{output_file.suffix}"
-                                        )
+                                        target = numbered_path(output_file, i)
                                     target.parent.mkdir(parents=True, exist_ok=True)
                                 else:
                                     target = image_output_path(

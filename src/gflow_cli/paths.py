@@ -20,8 +20,11 @@ These are the defaults — overridable per-process via env vars
 from __future__ import annotations
 
 import re
+import shutil
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
+from typing import Any, cast
 
 from platformdirs import user_data_dir, user_downloads_dir
 
@@ -276,3 +279,41 @@ def correct_image_extension(path: Path) -> Path:
         return path
     path.rename(target)
     return target
+
+
+def numbered_path(path: Path, number: int) -> Path:
+    """File ``number`` (1-based) of several written from one ``--out-file PATH``.
+
+    The one naming rule for every command that fans one ``--out-file`` out to several
+    files (``hero.png`` -> ``hero_1.png``, ``hero_2.png``; #1158, #1293).
+    """
+    return path.parent / f"{path.stem}_{number}{path.suffix}"
+
+
+def relocate_video(item: Any, target: Path) -> Any:
+    """Move ``item.local_path`` to ``target``; ``item`` unchanged when there is no file."""
+    local_p = cast("Path | None", getattr(item, "local_path", None))
+    if local_p is None or not local_p.exists():
+        return item
+    if local_p != target:
+        # shutil.move, not Path.replace: a rename across mounts raises EXDEV (#1114).
+        shutil.move(local_p, target)
+        return replace(item, local_path=target)
+    return item
+
+
+def relocate_video_output(result: Any, output_file: Path | None) -> Any:
+    """Apply ``--out-file`` to one result or a list: one file keeps PATH, several are numbered."""
+    if output_file is None:
+        return result
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(result, (list, tuple)):
+        items = cast("tuple[Any, ...] | list[Any]", result)
+        relocated: list[Any] = []
+        is_single = len(items) == 1
+        for i, item in enumerate(items, start=1):
+            target = output_file if is_single else numbered_path(output_file, i)
+            relocated.append(relocate_video(item, target))
+        return relocated
+
+    return relocate_video(result, output_file)
