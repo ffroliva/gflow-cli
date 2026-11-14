@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from datetime import date
 from pathlib import Path
+from uuid import uuid4
 
 from platformdirs import user_data_dir, user_downloads_dir
 
@@ -120,6 +121,17 @@ def video_output_path(
     """`<output_dir>/videos/<YYYY-MM-DD>/<job_id>.mp4`."""
     on = on or date.today()
     return output_dir / "videos" / on.isoformat() / f"{validate_job_id(job_id)}.mp4"
+
+
+def extend_output_path(output_dir: Path, *, media_id: str) -> Path:
+    """`<output_dir>/videos/<YYYY-MM-DD>/<media_id>_extend.mp4`, tagged if it already exists.
+
+    An in-place extend keeps the source id (#1184), so the name repeats for every extend of
+    that clip; the tag is the one ``_unique_display_name`` gives a re-uploaded file (#792).
+    shortcut: checks the local file only, so a cloud ``storage_uri`` key is still reused.
+    """
+    path = output_dir / "videos" / date.today().isoformat() / f"{media_id}_extend.mp4"
+    return path.with_name(f"{path.stem}-{uuid4().hex[:8]}.mp4") if path.exists() else path
 
 
 def character_output_path(

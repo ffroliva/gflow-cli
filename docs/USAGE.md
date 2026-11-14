@@ -1059,17 +1059,26 @@ reach for it before spending anything.
 > and signs the request itself. Before any click, Flow's project read must list
 > `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
 > is checked at the route and aborted, before Flow sees it, if it names another clip. The
-> new segment is downloaded to `-o` (default: the output directory). Not ported to
+> result is downloaded to `-o` (default: `videos/<date>/<media-id>_extend.mp4` in the output
+> directory, with a random tag added when that file already exists, so a same-day re-run
+> keeps the earlier file). **Measured 2026-11-08 with
+> the Omni extend key `macaron_cookie_extend_4s`:** Flow grew the source clip **in place**
+> by about 4 s (7.93 s became 11.83 s), under the source's own media id, for 12 credits. So
+> the file is the whole extended clip, the project lists no separate extension or earlier
+> version, and `--json` reports `seconds_added`/`seconds_billed` from the key (4/4; `null`
+> when the key names no length). The catalog notes the extend on the source's row once Flow
+> reports it done (`extended_by`, `extend_workflow_id`, `extended_at`)
+> ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)). A page that still orders a
+> Veo extend key was not observed that day. Not ported to
 > flow.google.com yet, each refused with exit 36 before anything is billed: more than one
 > PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
-> source clip's (leave `--aspect` off; the extension keeps the source's). Each run leaves a
-> new "Untitled Scene" in the project, and the plan shows no price because that host does
-> not report one before submitting — compare `gflow credits user` before and after. To go
-> further, extend the new clip again. "Cost and safety" and "What it produces" below
+> source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
+> price because that host does not report one before submitting — compare
+> `gflow credits user` before and after. To go further, extend the same clip again. "Cost and safety" and "What it produces" below
 > describe the labs.google arm.
 
-Continue an existing clip by another 8 seconds, then optionally render the whole
-thing to one file.
+Continue an existing clip (on labs.google by another 8 seconds), then optionally render
+the whole thing to one file.
 
 ```bash
 # one continuation
@@ -1122,7 +1131,7 @@ server-side concat, which is credit-free. Without `--out-file`, render later wit
 | Flag | Meaning |
 |---|---|
 | `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
-| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save only the new extension clip — scene concat is not ported there yet (legacy `-o/--output` supported) |
+| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save the clip Flow returns; with the Omni key (measured 2026-11-08) Flow grows the source clip in place by ~4s, so that is the whole extended clip (legacy `-o/--output` supported) |
 | `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model. Default 9:16 on labs.google; flow.google.com keeps the source clip's aspect |
 | `--project ID` | Required — the project owning `MEDIA_ID` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
