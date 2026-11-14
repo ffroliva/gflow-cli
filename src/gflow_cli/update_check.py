@@ -323,6 +323,27 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     )
 
 
+def _require_runnable(inst: Installer, shown: str) -> None:
+    """Raise ConfigurationError (exit 11) when the manager cannot be started here."""
+    from gflow_cli.errors import ConfigurationError
+
+    if inst.name != "pip" and shutil.which(inst.command[0]) is None:
+        raise ConfigurationError(
+            f"`{inst.command[0]}` is not on PATH, so gflow cannot run `{shown}` for you",
+            remediation_hint=f"Run `{shown}` from a shell where `{inst.command[0]}` is available.",
+        )
+    if inst.name == "pip" and importlib.util.find_spec("pip") is None:
+        # A `uv venv` ships no pip module: `python -m pip` would fail and the
+        # remediation would then recommend the same broken command.
+        raise ConfigurationError(
+            "This venv has no `pip` module, so gflow cannot upgrade itself here",
+            remediation_hint=(
+                f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
+                "(or reinstall the way you installed it)."
+            ),
+        )
+
+
 def run_update(
     *,
     check: bool,
@@ -368,27 +389,12 @@ def run_update(
     if check or available is False:
         return report
 
+    shown = " ".join(inst.command)
+    _require_runnable(inst, shown)
+    playwright_before = _version_in_venv("playwright")
     if status_callback is not None:
         target = f"{__version__} -> {latest}" if latest else __version__
         status_callback(f"Updating gflow-cli {target} via {inst.name}...")
-
-    shown = " ".join(inst.command)
-    if inst.name != "pip" and shutil.which(inst.command[0]) is None:
-        raise ConfigurationError(
-            f"`{inst.command[0]}` is not on PATH, so gflow cannot run `{shown}` for you",
-            remediation_hint=f"Run `{shown}` from a shell where `{inst.command[0]}` is available.",
-        )
-    if inst.name == "pip" and importlib.util.find_spec("pip") is None:
-        # A `uv venv` ships no pip module: `python -m pip` would fail and the
-        # remediation would then recommend the same broken command.
-        raise ConfigurationError(
-            "This venv has no `pip` module, so gflow cannot upgrade itself here",
-            remediation_hint=(
-                f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
-                "(or reinstall the way you installed it)."
-            ),
-        )
-    playwright_before = _version_in_venv("playwright")
     res = _run_command(inst.command, capture_output=not stream_output)
     returncode = res.returncode
 

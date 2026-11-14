@@ -571,6 +571,18 @@ class TestRunUpdate:
             uc.run_update(check=False)
         assert uv_install == []
 
+    def test_no_updating_line_when_the_manager_cannot_start(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ConfigurationError
+
+        status: list[str] = []
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.shutil, "which", lambda name: None)
+        with pytest.raises(ConfigurationError, match="not on PATH"):
+            uc.run_update(check=False, status_callback=status.append)
+        assert status == [], f"announced a run that cannot start: {status}"
+
     def test_playwright_bump_yields_hint(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
