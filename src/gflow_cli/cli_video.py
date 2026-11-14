@@ -773,7 +773,8 @@ def _chain_clip_relocator(
     """``--out-file`` for a chain (#1293): link ``index`` goes to ``<stem>_<index + 1><suffix>``.
 
     ``index`` counts the whole manifest (#1300), so a resumed run names its links as a full
-    run would. Always numbered, even for one link, so a resume never renames a clip.
+    run would. Always numbered, even for one link, so a resume never renames a clip. Raises
+    instead of replacing an existing target; ``run_chain`` then keeps the clip where it is.
     """
     if output_file is None:
         return None
@@ -781,13 +782,13 @@ def _chain_clip_relocator(
 
     def relocate(index: int, result: VideoResult) -> VideoResult:
         target = numbered_path(output_file, index + 1)
+        if target.exists():  # an earlier run's clip, or a folder: never replace it
+            raise FileExistsError(f"{target} already exists")
         try:
-            if target.exists():  # an earlier run's clip, or a folder: never replace it
-                raise FileExistsError(f"{target} already exists")
             return relocate_video(result, target)
-        except OSError as exc:  # billed already: keep and record the clip where it is
-            logger.warning("chain_out_file_move_failed", target=str(target), error=str(exc))
-            return result
+        except OSError:
+            target.unlink(missing_ok=True)  # a partial copy: the check above saw no file here
+            raise
 
     return relocate
 

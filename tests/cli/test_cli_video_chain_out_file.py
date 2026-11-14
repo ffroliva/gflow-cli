@@ -192,7 +192,9 @@ def test_a_resume_whose_seed_clip_is_gone_is_refused_before_submit(tmp_path: Pat
     catalog.flow_client_cls.assert_not_called()
 
 
-def test_an_existing_target_is_never_overwritten(tmp_path: Path) -> None:
+def test_an_existing_target_is_never_overwritten(
+    tmp_path: Path, _capture: structlog.testing.LogCapture
+) -> None:
     """A second run with the same --out-file keeps the old files and its own clips."""
     flow = _Flow(tmp_path)
     out = tmp_path / "out"
@@ -210,3 +212,44 @@ def test_an_existing_target_is_never_overwritten(tmp_path: Path) -> None:
     assert [Path(link["local_path"]) for link in payload["links"]] == kept
     assert _rows(tmp_path, payload["chain_id"]) == list(enumerate(kept))
     assert _catalog_paths(catalog) == kept
+    warnings = [e for e in _capture.entries if e["event"] == _KEPT_EVENT]
+    assert [(w["link"], w["media_id"], w["kept_at"]) for w in warnings] == [
+        (1, "m0", str(kept[0])),
+        (2, "m1", str(kept[1])),
+    ]
+
+
+def test_a_failed_move_keeps_the_clip_and_removes_its_partial_copy(
+    tmp_path: Path, _capture: structlog.testing.LogCapture
+) -> None:
+    """A move that dies mid-copy leaves no half file, and the paid clip stays recorded."""
+    import shutil
+
+    real_move = shutil.move
+    calls = 0
+
+    def _move(src: Any, dst: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            Path(dst).write_bytes(b"half")
+            raise OSError(28, "No space left on device")
+        return real_move(src, dst)
+
+    flow = _Flow(tmp_path)
+    out = tmp_path / "out"
+    with patch("shutil.move", _move):
+        result, catalog = _invoke(
+            tmp_path, flow, links=2, args=["--out-file", str(out / "clip.mp4")]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert not (out / "clip_2.mp4").exists()
+    expected = [out / "clip_1.mp4", flow.download_dir / "m1.mp4"]
+    payload = json.loads(result.stdout)
+    assert _rows(tmp_path, payload["chain_id"]) == list(enumerate(expected))
+    assert _catalog_paths(catalog) == expected
+    warnings = [e for e in _capture.entries if e["event"] == _KEPT_EVENT]
+    assert [(w["link"], w["media_id"], w["kept_at"]) for w in warnings] == [
+        (2, "m1", str(expected[1]))
+    ]

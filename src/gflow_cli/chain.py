@@ -325,6 +325,28 @@ def _build_link_result(
     )
 
 
+async def _relocate_guarded(
+    relocate: Callable[[int, VideoResult], VideoResult], index: int, result: VideoResult
+) -> VideoResult:
+    """Run the ``--out-file`` move off the loop; on any failure keep the clip where it is.
+
+    The clip is already paid for, so it must reach the recorder whatever the hook does: a
+    link without a chain row is billed again on ``--resume-from``. Same rule as
+    :func:`_notify_link_failed`.
+    """
+    try:
+        return await asyncio.to_thread(relocate, index, result)
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        _log.warning(
+            "chain_clip_kept_at_download_path",
+            link=index + 1,
+            media_id=result.status.media_id,
+            kept_at=str(result.local_path),
+            reason=str(exc),
+        )
+        return result
+
+
 async def _resume_seed(
     extractor: FrameExtractor,
     *,
@@ -390,10 +412,11 @@ async def run_chain(
         jitter: When > 0, sleep a random ``[0, jitter)`` seconds BETWEEN links
             (anti-bot cadence); never before link 0.
         relocate: Optional ``(index, result) -> result`` that moves a downloaded
-            clip (``--out-file``, #1293). It runs before anything reads the
-            path, so the recorders, the seed extraction and the return value
-            all see where the clip ended up. A result with no ``local_path``
-            must come back unchanged.
+            clip (``--out-file``, #1293). It runs off the event loop before
+            anything reads the path, so the recorders, the seed extraction and
+            the return value all see where the clip ended up. If it raises, the
+            clip stays at its download path and a warning says so. A result with
+            no ``local_path`` must come back unchanged.
         start_index: The manifest index of ``links[0]`` (``--resume-from``, #1300). Request
             mode, ``ChainLinkResult.index`` and the recorded ``link_index`` all count from it.
         seed_clip: The clip of link ``start_index - 1``; its last frame seeds ``links[0]``.
@@ -444,7 +467,7 @@ async def run_chain(
             on_link_failed=on_link_failed,
         )
         if relocate is not None:  # a missing clip is left as is and refused just below
-            result = relocate(index, result)
+            result = await _relocate_guarded(relocate, index, result)
 
         if result.local_path is None:
             msg = f"link {index} returned no local_path (download failed)"

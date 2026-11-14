@@ -560,3 +560,32 @@ async def test_a_resumed_link_without_a_seed_is_refused_not_sent_as_t2v(tmp_path
             start_index=1,
         )
     client.generate_video.assert_not_awaited()
+
+
+async def test_a_raising_relocate_leaves_the_downloaded_clip_recorded(tmp_path: Path) -> None:
+    """#1293 review: the relocate hook runs off the loop, and any error it raises is
+    absorbed so the paid clip is still recorded and returned at its download path."""
+    import threading
+
+    clip = tmp_path / "link0.mp4"
+    client = _make_client([_ok_result("m0", clip)])
+    recorder = MagicMock()
+    threads: list[int] = []
+
+    def _relocate(index: int, result: VideoResult) -> VideoResult:
+        threads.append(threading.get_ident())
+        raise RuntimeError("relocate bug")
+
+    out = await run_chain(
+        client=client,
+        links=[ChainLinkSpec(prompt="p0")],
+        out_dir=tmp_path,
+        model=VideoModel.VEO_3_1_LITE,
+        extractor=_fake_extractor([]),
+        recorder=recorder,
+        relocate=_relocate,
+    )
+
+    assert threads and threads[0] != threading.get_ident(), "relocate ran on the event loop"
+    assert [r.local_path for r in out] == [clip]
+    assert recorder.record_chain_link.call_args.args[0].local_path == clip
