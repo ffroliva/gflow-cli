@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
+  accepted and ignored. Link i's clip goes to `<stem>_<i><suffix>` next to PATH
+  (`out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`), numbered over the whole manifest so
+  `--resume-from` keeps each link's name; `--json`, the chain table and the videos catalog report
+  those paths, and seed frames stay under `--out-dir`. The stderr notice is gone
+  ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+
 ## [0.99.0] — 2026-11-14
 
 ### Added

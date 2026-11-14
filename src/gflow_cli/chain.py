@@ -54,7 +54,7 @@ from gflow_cli.errors import (
 from gflow_cli.media import extract_last_frame
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from gflow_cli.api.client import FlowApiClient
@@ -339,6 +339,7 @@ async def run_chain(
     aspect: Aspect = Aspect.PORTRAIT,
     seed_offset_ms: int = 0,
     jitter: float = 0.0,
+    relocate: Callable[[int, VideoResult], VideoResult] | None = None,
 ) -> list[ChainLinkResult]:
     """Render ``links`` as a sequential last-frame I2V chain.
 
@@ -368,6 +369,11 @@ async def run_chain(
             before EOF (the fade-to-black mitigation).
         jitter: When > 0, sleep a random ``[0, jitter)`` seconds BETWEEN links
             (anti-bot cadence); never before link 0.
+        relocate: Optional ``(index, result) -> result`` that moves a downloaded
+            clip (``--out-file``, #1293). It runs before anything reads the
+            path, so the recorders, the seed extraction and the return value
+            all see where the clip ended up. A result with no ``local_path``
+            must come back unchanged.
 
     Returns:
         One :class:`ChainLinkResult` per link, in order.
@@ -405,6 +411,8 @@ async def run_chain(
             on_link_started=on_link_started,
             on_link_failed=on_link_failed,
         )
+        if relocate is not None:  # a missing clip is left as is and refused just below
+            result = relocate(index, result)
 
         if result.local_path is None:
             msg = f"link {index} returned no local_path (download failed)"

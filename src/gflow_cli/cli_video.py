@@ -788,6 +788,26 @@ class _ChainExecConfig:
     jitter: float
     chain_id: str
     as_json: bool
+    relocate: Any = None
+
+
+def _chain_clip_relocator(output_file: Path | None, skipped: int) -> Any:
+    """``--out-file`` for a chain (#1293): link i (1-based) goes to ``<stem>_<i><suffix>``.
+
+    ``skipped`` makes i count the whole manifest, so a resumed run names its links as a full
+    run would. Always numbered, even for one link, so a resume never renames a clip.
+    """
+    if output_file is None:
+        return None
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def relocate(index: int, result: Any) -> Any:
+        number = skipped + index + 1
+        return _relocate_single_video(
+            result, output_file.parent / f"{output_file.stem}_{number}{output_file.suffix}"
+        )
+
+    return relocate
 
 
 async def _execute_chain_links(
@@ -897,6 +917,7 @@ async def _execute_chain_links(
             aspect=aspect_enum,
             seed_offset_ms=seed_offset,
             jitter=jitter,
+            relocate=cfg.relocate,
         )
         return results, False, completed_paths
     except ChainPartialError as exc:
@@ -1107,6 +1128,7 @@ async def _run_chain(
                     jitter=jitter,
                     chain_id=chain_id,
                     as_json=as_json,
+                    relocate=_chain_clip_relocator(output_file, skipped),
                 ),
             )
     finally:
@@ -1782,7 +1804,9 @@ def r2v(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
-@out_file_option(help="Explicit output file path for the generated chain clips.")
+@out_file_option(
+    help="Write link i's clip to FILE's stem plus _i (clip.mp4 -> clip_1.mp4, clip_2.mp4)."
+)
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1813,11 +1837,6 @@ def chain(
     as_json: bool,
 ) -> None:
     """Render the chain MANIFEST (one continuous last-frame I2V sequence)."""
-    if output_file is not None:  # _run_chain has never written there; say so (#1293)
-        click.echo(
-            "video chain does not apply --out-file yet (#1293); clips are saved under --out-dir.",
-            err=True,
-        )
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
