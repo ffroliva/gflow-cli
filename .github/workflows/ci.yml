@@ -4,6 +4,9 @@ on:
   push:
     branches: [develop, main]
   pull_request:
+  # A run that ends in startup_failure cannot be re-run (measured 2026-11-11 on the v0.97.0
+  # merge). This lets a fresh run be started on main: gh workflow run ci.yml --ref main
+  workflow_dispatch:
 
 # Least-privilege default token for every job (OpenSSF Scorecard:
 # Token-Permissions). Jobs that need more elevate per-job below.
@@ -541,6 +544,13 @@ jobs:
             echo "::warning::SonarCloud is unreachable or degraded — skipping the scan for this run (not a code quality failure). Verify locally with scripts/dev/sonar-local-scan.sh before merging if this persists, and re-run this job once SonarCloud recovers."
           fi
 
+      # main's new-code window is "since the previous version". Without a version on the
+      # analysis it never moved past 2026-05-16, so a SonarSource rule update on 2026-11-10
+      # re-flagged six months of unchanged code as new bugs and turned main red.
+      - name: Read package version
+        id: pkg
+        run: echo "version=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
       - name: SonarCloud scan
         if: steps.sonarcloud_health.outputs.up == 'true'
         # sonarcloud-github-action is ARCHIVED upstream (dependabot never bumps
@@ -552,6 +562,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR decoration
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}    # set in repo → Settings → Secrets
           SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          args: -Dsonar.projectVersion=${{ steps.pkg.outputs.version }}
 
   # Fails on N+1 queries and swallowed programming errors (see dev/sharpit_app.py). sharpit is pinned: a new release
   # can add findings, so upgrading it is a change of its own.
