@@ -45,106 +45,48 @@ FIXTURE = Path(__file__).parent / "fixtures" / "ui_transport_contract.json"
 PARTS = ("session", "navigation", "prompt", "settings", "capture", "character", "image")
 
 MODULE_NAMES = (
-    "Aspect",
-    "AuthExpiredError",
-    "BatchPartialError",
-    "BatchSubmissionResult",
     "CHANGELOG_IFRAME_SELECTORS",
-    "CharacterImageRequest",
-    "ConfigurationError",
-    "ContentPolicyError",
-    "ENTITY_ATTACH_DRIFT_HINT",
     "FLOW_URL",
-    "FlowAppError",
-    "GEN_SETTINGS_BUTTON_SELECTORS",
-    "GFlowError",
-    "GenerateImageRequest",
-    "GeneratedImage",
     "IMAGE_MODEL_OPTION_SELECTORS",
     "IMAGE_MODEL_PICKER_TRIGGER",
     "IMAGE_TAB_IN_MENU_SELECTORS",
-    "ImageRef",
-    "MENU_ITEM",
     "MODE_SWITCH_TRIGGER_SELECTORS",
-    "MentionIndexUnavailableError",
-    "Model",
-    "ModelMenuMatcher",
     "NEW_PROJECT_SELECTORS",
     "ONBOARDING_SELECTORS",
     "OVERLAY_CLOSE_BUTTON_SELECTORS",
     "PROMPT_FORMAT_SELECTORS",
     "PROMPT_INPUT_SELECTORS",
-    "ProfileLease",
-    "RateLimitError",
     "SUBMIT_BUTTON_SELECTORS",
     "TOP_BANNER_SELECTORS",
     "UiAutomationTransport",
-    "UiSelectorDriftError",
-    "VideoGenerationMixin",
     "WELCOME_SCREEN_SELECTORS",
-    "WafRejectionError",
-    "WireFormatError",
-    "_ALLOWED_DOWNLOAD_HOST_SUFFIXES",
-    "_ASPECT_TAB_CANDIDATES",
-    "_AnyList",
-    "_BLOCK_PROBE_JS",
-    "_BODY_SLOT_MOUNT_POLL_MS",
-    "_BODY_SLOT_MOUNT_TIMEOUT_S",
     "_BODY_TRIPTYCH_PREAMBLE",
-    "_CHANGELOG_SCOPED_CLOSE",
-    "_CLI_FROM_ASPECT",
-    "_COUNT_TAB_COUNT",
     "_COUNT_TAB_TEXT_RE",
-    "_DIAGNOSTICS_SUBDIR",
-    "_EVT_COUNT_SETTER_COMPLETED",
-    "_EVT_OVERLAY_DISMISSED",
-    "_FORMAT_REWRITE_MIN_DELTA",
-    "_FORMAT_REWRITE_POLL_MS",
-    "_FORMAT_REWRITE_TIMEOUT_S",
-    "_GENERIC_CLOSE",
-    "_JsonObj",
-    "_NEW_PROJECT_PROBE_TIMEOUT_MS",
     "_ONBOARDING_STRUCTURAL_SELECTORS",
     "_ONBOARDING_TEXT_SELECTORS",
-    "_PROJECT_URL_FRAGMENT",
-    "_REF_VALUE_MAX_CHARS",
-    "_SUPPORTED_COUNTS",
-    "_VIEWPORT",
     "_capture_debug_screenshot",
-    "_collect_images_from_body",
-    "_count_tab_locator_for",
     "_count_tabs_locator",
     "_elide_large_value",
     "_entity_ids_from_request_body",
-    "_extract_project_id",
     "_images_from_responses",
     "_is_allowed_download_host",
     "_jitter_ms",
-    "_prompt_hash_stable",
     "_reference_field_count",
     "_summarize_batch_request_body",
-    "_try_iframe_close_button",
     "aspect_cli_from_enum",
     "async_playwright",
-    "await_url_settled",
-    "close_menu",
-    "count_visible",
-    "extract_project_id",
-    "flow_host_kind",
-    "generation_error",
     "log",
-    "migrated_images_prefer",
-    "migrated_route",
-    "offered_menu_labels",
-    "parse_retry_after",
-    "raise_if_known_landing",
-    "raise_if_migrated",
-    "screenshot_clause",
-    "selector_drift_detail",
-    "zip_entity_refs",
 )
 
 _ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")
+
+UI_MODULES = frozenset(
+    {
+        "gflow_cli.api.transports.ui_automation",
+        "gflow_cli.api.transports._ui_common",
+        *(f"gflow_cli.api.transports._ui_{p}" for p in PARTS),
+    }
+)
 
 
 def _function(obj: Any) -> types.FunctionType | None:
@@ -169,7 +111,9 @@ def _describe(obj: Any) -> str:
 def _resolved() -> dict[str, Any]:
     """Every attribute ``UiAutomationTransport`` resolves through its class chain, first wins."""
     found: dict[str, Any] = {}
-    for klass in UiAutomationTransport.__mro__[:-1]:  # everything but ``object``
+    for klass in UiAutomationTransport.__mro__:
+        if klass.__module__ not in UI_MODULES:
+            continue
         for name, value in vars(klass).items():
             if name.startswith("__") and _function(value) is None:
                 continue
@@ -179,15 +123,6 @@ def _resolved() -> dict[str, Any]:
 
 def method_contract() -> dict[str, str]:
     return {name: _describe(value) for name, value in sorted(_resolved().items())}
-
-
-UI_MODULES = frozenset(
-    {
-        "gflow_cli.api.transports.ui_automation",
-        "gflow_cli.api.transports._ui_common",
-        *(f"gflow_cli.api.transports._ui_{p}" for p in PARTS),
-    }
-)
 
 
 def _describe_name(obj: Any) -> str:
@@ -233,10 +168,7 @@ def _functions_to_resolve() -> list[types.FunctionType]:
     """The transport's methods and every function the UI modules define, decorators unwrapped."""
     found = [f for f in map(_function, _resolved().values()) if f is not None]
     for name in UI_MODULES:
-        try:
-            module = importlib.import_module(name)
-        except ModuleNotFoundError:
-            continue
+        module = importlib.import_module(name)
         found += [
             f
             for f in vars(module).values()
@@ -292,6 +224,7 @@ PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
 def test_patched_module_globals_reach_their_readers() -> None:
     """Every method in the UI transport chain reading a patched global gets it from that module."""
     mismatches = []
+    matched_keys: set[tuple[str, str]] = set()
     for klass in UiAutomationTransport.__mro__:
         if klass.__module__ not in UI_MODULES:
             continue
@@ -305,6 +238,7 @@ def test_patched_module_globals_reach_their_readers() -> None:
                 global_name,
             ), expected_module_name in PATCHED_GLOBAL_READERS.items():
                 if name == target_func_name:
+                    matched_keys.add((target_func_name, global_name))
                     assert global_name in reads, f"{name} does not read {global_name}"
                     actual_module_name = func.__globals__.get("__name__")
                     if actual_module_name != expected_module_name:
@@ -312,6 +246,8 @@ def test_patched_module_globals_reach_their_readers() -> None:
                             f"{klass.__name__}.{name} reads '{global_name}' from "
                             f"'{actual_module_name}', but patch targets '{expected_module_name}'"
                         )
+    missing = set(PATCHED_GLOBAL_READERS.keys()) - matched_keys
+    assert not missing, f"PATCHED_GLOBAL_READERS contains unmatched keys: {sorted(missing)}"
     assert mismatches == []
 
 

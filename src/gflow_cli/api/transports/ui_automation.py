@@ -18,293 +18,48 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from gflow_cli.api._retry import parse_retry_after as parse_retry_after
-from gflow_cli.api.character import CharacterImageRequest as CharacterImageRequest
-from gflow_cli.api.dto import (
-    BatchSubmissionResult as BatchSubmissionResult,
-)
-from gflow_cli.api.dto import (
-    GeneratedImage as GeneratedImage,
-)
-from gflow_cli.api.image import (
-    Aspect as Aspect,
-)
-from gflow_cli.api.image import (
-    GenerateImageRequest as GenerateImageRequest,
-)
-from gflow_cli.api.image import (
-    ImageRef as ImageRef,
-)
-from gflow_cli.api.image import (
-    Model as Model,
-)
 from gflow_cli.api.transports import (
     _ui_capture,
     _ui_settings,
 )
-from gflow_cli.api.transports._common import (
-    await_url_settled as await_url_settled,
-)
-from gflow_cli.api.transports._common import (
-    close_menu as close_menu,
-)
-from gflow_cli.api.transports._common import (
-    count_visible as count_visible,
-)
-from gflow_cli.api.transports._common import (
-    extract_project_id as extract_project_id,
-)
-from gflow_cli.api.transports._common import (
-    flow_host_kind as flow_host_kind,
-)
-from gflow_cli.api.transports._common import (
-    generation_error as generation_error,
-)
-from gflow_cli.api.transports._common import (
-    migrated_route as migrated_route,
-)
-from gflow_cli.api.transports._common import (
-    offered_menu_labels as offered_menu_labels,
-)
-from gflow_cli.api.transports._common import (
-    raise_if_known_landing as raise_if_known_landing,
-)
-from gflow_cli.api.transports._common import (
-    raise_if_migrated as raise_if_migrated,
-)
-from gflow_cli.api.transports._ui_capture import BatchCaptureMixin as BatchCaptureMixin
-from gflow_cli.api.transports._ui_character import (
-    CharacterGenerationMixin as CharacterGenerationMixin,
-)
-from gflow_cli.api.transports._ui_common import (
-    _ALLOWED_DOWNLOAD_HOST_SUFFIXES as _ALLOWED_DOWNLOAD_HOST_SUFFIXES,
-)
-from gflow_cli.api.transports._ui_common import (
-    _ASPECT_TAB_CANDIDATES as _ASPECT_TAB_CANDIDATES,
-)
-from gflow_cli.api.transports._ui_common import (
-    _BLOCK_PROBE_JS as _BLOCK_PROBE_JS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _BODY_SLOT_MOUNT_POLL_MS as _BODY_SLOT_MOUNT_POLL_MS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _BODY_SLOT_MOUNT_TIMEOUT_S as _BODY_SLOT_MOUNT_TIMEOUT_S,
-)
-from gflow_cli.api.transports._ui_common import (
-    _BODY_TRIPTYCH_PREAMBLE as _BODY_TRIPTYCH_PREAMBLE,
-)
-from gflow_cli.api.transports._ui_common import (
-    _CHANGELOG_SCOPED_CLOSE as _CHANGELOG_SCOPED_CLOSE,
-)
-from gflow_cli.api.transports._ui_common import (
-    _CLI_FROM_ASPECT as _CLI_FROM_ASPECT,
-)
-from gflow_cli.api.transports._ui_common import (
-    _COUNT_TAB_COUNT as _COUNT_TAB_COUNT,
-)
-from gflow_cli.api.transports._ui_common import (
-    _COUNT_TAB_TEXT_RE as _COUNT_TAB_TEXT_RE,
-)
-from gflow_cli.api.transports._ui_common import (
-    _DIAGNOSTICS_SUBDIR as _DIAGNOSTICS_SUBDIR,
-)
-from gflow_cli.api.transports._ui_common import (
-    _EVT_COUNT_SETTER_COMPLETED as _EVT_COUNT_SETTER_COMPLETED,
-)
-from gflow_cli.api.transports._ui_common import (
-    _EVT_OVERLAY_DISMISSED as _EVT_OVERLAY_DISMISSED,
-)
-from gflow_cli.api.transports._ui_common import (
-    _FORMAT_REWRITE_MIN_DELTA as _FORMAT_REWRITE_MIN_DELTA,
-)
-from gflow_cli.api.transports._ui_common import (
-    _FORMAT_REWRITE_POLL_MS as _FORMAT_REWRITE_POLL_MS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _FORMAT_REWRITE_TIMEOUT_S as _FORMAT_REWRITE_TIMEOUT_S,
-)
-from gflow_cli.api.transports._ui_common import (
-    _GENERIC_CLOSE as _GENERIC_CLOSE,
-)
-from gflow_cli.api.transports._ui_common import (
-    _NEW_PROJECT_PROBE_TIMEOUT_MS as _NEW_PROJECT_PROBE_TIMEOUT_MS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _ONBOARDING_STRUCTURAL_SELECTORS as _ONBOARDING_STRUCTURAL_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _ONBOARDING_TEXT_SELECTORS as _ONBOARDING_TEXT_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _PROJECT_URL_FRAGMENT as _PROJECT_URL_FRAGMENT,
-)
-from gflow_cli.api.transports._ui_common import (
-    _REF_VALUE_MAX_CHARS as _REF_VALUE_MAX_CHARS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _SUPPORTED_COUNTS as _SUPPORTED_COUNTS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _VIEWPORT as _VIEWPORT,
-)
 from gflow_cli.api.transports._ui_common import (
     CHANGELOG_IFRAME_SELECTORS as CHANGELOG_IFRAME_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     FLOW_URL as FLOW_URL,
-)
-from gflow_cli.api.transports._ui_common import (
-    GEN_SETTINGS_BUTTON_SELECTORS as GEN_SETTINGS_BUTTON_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     IMAGE_MODEL_OPTION_SELECTORS as IMAGE_MODEL_OPTION_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     IMAGE_MODEL_PICKER_TRIGGER as IMAGE_MODEL_PICKER_TRIGGER,
-)
-from gflow_cli.api.transports._ui_common import (
     IMAGE_TAB_IN_MENU_SELECTORS as IMAGE_TAB_IN_MENU_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     NEW_PROJECT_SELECTORS as NEW_PROJECT_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     ONBOARDING_SELECTORS as ONBOARDING_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     OVERLAY_CLOSE_BUTTON_SELECTORS as OVERLAY_CLOSE_BUTTON_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     PROMPT_FORMAT_SELECTORS as PROMPT_FORMAT_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     PROMPT_INPUT_SELECTORS as PROMPT_INPUT_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     SUBMIT_BUTTON_SELECTORS as SUBMIT_BUTTON_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     TOP_BANNER_SELECTORS as TOP_BANNER_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
     WELCOME_SCREEN_SELECTORS as WELCOME_SCREEN_SELECTORS,
-)
-from gflow_cli.api.transports._ui_common import (
-    _AnyList as _AnyList,
-)
-from gflow_cli.api.transports._ui_common import (
+    _BODY_TRIPTYCH_PREAMBLE as _BODY_TRIPTYCH_PREAMBLE,
+    _COUNT_TAB_TEXT_RE as _COUNT_TAB_TEXT_RE,
+    _ONBOARDING_STRUCTURAL_SELECTORS as _ONBOARDING_STRUCTURAL_SELECTORS,
+    _ONBOARDING_TEXT_SELECTORS as _ONBOARDING_TEXT_SELECTORS,
+    _VIEWPORT,
     _capture_debug_screenshot as _capture_debug_screenshot,
-)
-from gflow_cli.api.transports._ui_common import (
-    _collect_images_from_body as _collect_images_from_body,
-)
-from gflow_cli.api.transports._ui_common import (
-    _count_tab_locator_for as _count_tab_locator_for,
-)
-from gflow_cli.api.transports._ui_common import (
     _count_tabs_locator as _count_tabs_locator,
-)
-from gflow_cli.api.transports._ui_common import (
     _elide_large_value as _elide_large_value,
-)
-from gflow_cli.api.transports._ui_common import (
-    _extract_project_id as _extract_project_id,
-)
-from gflow_cli.api.transports._ui_common import (
     _images_from_responses as _images_from_responses,
-)
-from gflow_cli.api.transports._ui_common import (
     _is_allowed_download_host as _is_allowed_download_host,
-)
-from gflow_cli.api.transports._ui_common import (
     _jitter_ms as _jitter_ms,
-)
-from gflow_cli.api.transports._ui_common import (
-    _JsonObj as _JsonObj,
-)
-from gflow_cli.api.transports._ui_common import (
-    _prompt_hash_stable as _prompt_hash_stable,
-)
-from gflow_cli.api.transports._ui_common import (
     _reference_field_count as _reference_field_count,
-)
-from gflow_cli.api.transports._ui_common import (
     _summarize_batch_request_body as _summarize_batch_request_body,
-)
-from gflow_cli.api.transports._ui_common import (
-    _try_iframe_close_button as _try_iframe_close_button,
-)
-from gflow_cli.api.transports._ui_common import (
     aspect_cli_from_enum as aspect_cli_from_enum,
 )
-from gflow_cli.api.transports._ui_image import ImageGenerationMixin as ImageGenerationMixin
-from gflow_cli.api.transports._ui_prompt import PromptInputMixin as PromptInputMixin
-from gflow_cli.api.transports._ui_settings import GenerationSettingsMixin as GenerationSettingsMixin
-from gflow_cli.api.transports.migrated_composer import (
-    MENU_ITEM as MENU_ITEM,
-)
-from gflow_cli.api.transports.migrated_composer import (
-    ModelMenuMatcher as ModelMenuMatcher,
-)
-from gflow_cli.api.transports.migrated_composer import (
-    migrated_images_prefer as migrated_images_prefer,
-)
+from gflow_cli.api.transports._ui_image import ImageGenerationMixin
 from gflow_cli.api.transports.ui_automation_entities import (
     entity_ids_from_request_body as _entity_ids_from_request_body,  # noqa: F401  # pyright: ignore[reportUnusedImport]
 )
 from gflow_cli.api.transports.ui_automation_video import (
-    ENTITY_ATTACH_DRIFT_HINT as ENTITY_ATTACH_DRIFT_HINT,
-)
-from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS as MODE_SWITCH_TRIGGER_SELECTORS,
+    VideoGenerationMixin,
 )
-from gflow_cli.api.transports.ui_automation_video import (
-    VideoGenerationMixin as VideoGenerationMixin,
-)
-from gflow_cli.api.transports.ui_automation_video import (
-    screenshot_clause as screenshot_clause,
-)
-from gflow_cli.api.transports.ui_automation_video import (
-    selector_drift_detail as selector_drift_detail,
-)
-from gflow_cli.api.transports.ui_automation_video import (
-    zip_entity_refs as zip_entity_refs,
-)
-from gflow_cli.errors import (
-    AuthExpiredError as AuthExpiredError,
-)
-from gflow_cli.errors import (
-    BatchPartialError as BatchPartialError,
-)
-from gflow_cli.errors import (
-    ConfigurationError as ConfigurationError,
-)
-from gflow_cli.errors import (
-    ContentPolicyError as ContentPolicyError,
-)
-from gflow_cli.errors import (
-    FlowAppError as FlowAppError,
-)
-from gflow_cli.errors import (
-    GFlowError as GFlowError,
-)
-from gflow_cli.errors import (
-    MentionIndexUnavailableError as MentionIndexUnavailableError,
-)
-from gflow_cli.errors import (
-    RateLimitError as RateLimitError,
-)
-from gflow_cli.errors import (
-    UiSelectorDriftError as UiSelectorDriftError,
-)
-from gflow_cli.errors import (
-    WafRejectionError as WafRejectionError,
-)
-from gflow_cli.errors import (
-    WireFormatError as WireFormatError,
-)
-from gflow_cli.profile_lease import ProfileLease as ProfileLease
+from gflow_cli.profile_lease import ProfileLease
 
 if TYPE_CHECKING:
     from pathlib import Path
