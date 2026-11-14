@@ -7,6 +7,7 @@ seam the command imports it through (``gflow_cli.cli_update.run_update``).
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import pytest
 from click.testing import CliRunner
@@ -15,6 +16,9 @@ from gflow_cli import __version__, cli, cli_update
 from gflow_cli.cli import main
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.update_check import UpdateNotice, UpdateReport
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _report(**overrides: object) -> UpdateReport:
@@ -30,10 +34,25 @@ def _report(**overrides: object) -> UpdateReport:
     return UpdateReport(**base)  # type: ignore[arg-type]
 
 
+def _returns(report: UpdateReport) -> Callable[..., UpdateReport]:
+    """A `run_update` fake with the real keyword signature."""
+
+    def _fake(
+        *,
+        check: bool,
+        verbose: bool = False,
+        as_json: bool = False,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> UpdateReport:
+        return report
+
+    return _fake
+
+
 def test_check_text(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[bool] = []
 
-    def _fake(*, check: bool) -> UpdateReport:
+    def _fake(*, check: bool, **_kwargs: object) -> UpdateReport:
         seen.append(check)
         return _report()
 
@@ -48,7 +67,7 @@ def test_check_text(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_check_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(cli_update, "run_update", lambda *, check: _report())
+    monkeypatch.setattr(cli_update, "run_update", _returns(_report()))
     res = CliRunner().invoke(main, ["update", "--check", "--json"])
     assert res.exit_code == 0, res.output
     payload = json.loads(res.output)
@@ -65,7 +84,7 @@ def test_up_to_date_text(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli_update,
         "run_update",
-        lambda *, check: _report(latest=__version__, update_available=False),
+        _returns(_report(latest=__version__, update_available=False)),
     )
     res = CliRunner().invoke(main, ["update"])
     assert res.exit_code == 0, res.output
@@ -76,7 +95,7 @@ def test_upgraded_text_with_notes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         cli_update,
         "run_update",
-        lambda *, check: _report(upgraded=True, notes=("Playwright changed: run X",)),
+        _returns(_report(upgraded=True, notes=("Playwright changed: run X",))),
     )
     res = CliRunner().invoke(main, ["update"])
     assert res.exit_code == 0, res.output
@@ -88,7 +107,7 @@ def test_check_pypi_unreachable_names_next_step(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         cli_update,
         "run_update",
-        lambda *, check: _report(latest=None, update_available=None),
+        _returns(_report(latest=None, update_available=None)),
     )
     res = CliRunner().invoke(main, ["update", "--check"])
     assert res.exit_code == 0, res.output
@@ -123,7 +142,7 @@ def test_banner_panel_when_stderr_is_a_terminal(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_source_install_exits_11(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _fake(*, check: bool) -> UpdateReport:
+    def _fake(*, check: bool, **_kwargs: object) -> UpdateReport:
         raise ConfigurationError("gflow-cli here is not a PyPI install")
 
     monkeypatch.setattr(cli_update, "run_update", _fake)
@@ -148,7 +167,7 @@ def test_manager_failure_exits_11_json_envelope(monkeypatch: pytest.MonkeyPatch)
 def test_update_suppresses_banner_with_and_without_check(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "maybe_notify_update", _notice)
     monkeypatch.setattr(cli, "_stderr_is_terminal", lambda: True)
-    monkeypatch.setattr(cli_update, "run_update", lambda *, check, **kw: _report())
+    monkeypatch.setattr(cli_update, "run_update", _returns(_report()))
 
     # gflow update --check suppresses the banner
     res_check = CliRunner().invoke(main, ["update", "--check"])

@@ -318,6 +318,22 @@ class TestInstaller:
         assert uc.installer() is None
 
 
+def _done(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+    """What `_run_command` returns: a finished manager run."""
+    return subprocess.CompletedProcess(["fake"], returncode, stdout, stderr)
+
+
+def _exits(
+    returncode: int, stdout: str = "", stderr: str = ""
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """A `_run_command` fake with the real signature, finishing as given."""
+
+    def _run(command: tuple[str, ...], *, capture_output: bool) -> subprocess.CompletedProcess[str]:
+        return _done(returncode, stdout, stderr)
+
+    return _run
+
+
 @pytest.fixture
 def uv_install(index_install: Path, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
     """uv-tool install, `uv` on PATH, subprocess seam captured, Playwright stable."""
@@ -325,9 +341,9 @@ def uv_install(index_install: Path, monkeypatch: pytest.MonkeyPatch) -> list[tup
     monkeypatch.setattr(uc.shutil, "which", lambda name: f"/bin/{name}")
     calls: list[tuple[str, ...]] = []
 
-    def _run(command: tuple[str, ...]) -> int:
+    def _run(command: tuple[str, ...], *, capture_output: bool) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        return 0
+        return _done(0)
 
     monkeypatch.setattr(uc, "_run_command", _run)
     # The venv after the manager ran: gflow-cli moved to 999.0.0, Playwright stable.
@@ -345,7 +361,9 @@ class TestRunUpdate:
         from gflow_cli.errors import ConfigurationError
 
         monkeypatch.setattr(uc, "_installed_from_index", lambda: False)
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: pytest.fail("must not spawn"))
+        monkeypatch.setattr(
+            uc, "_run_command", lambda cmd, *, capture_output: pytest.fail("must not spawn")
+        )
         with pytest.raises(ConfigurationError, match="not a PyPI install"):
             uc.run_update(check=False)
 
@@ -396,13 +414,45 @@ class TestRunUpdate:
         assert report.upgraded is True
         assert report.latest == "999.0.0"
 
+    def test_type_error_after_install_propagates_and_runs_installer_once(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bug after the manager ran must surface, never re-run the whole update."""
+        from click.testing import CliRunner
+
+        from gflow_cli.cli import main
+
+        def _boom() -> str | None:
+            raise TypeError("bug after the install")
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", _boom)
+        res = CliRunner().invoke(main, ["update"])
+        assert res.exit_code != 0
+        assert len(uv_install) == 1, f"installer ran {len(uv_install)} times"
+
+    def test_type_error_from_the_manager_run_is_not_retried(
+        self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[bool] = []
+
+        def _run(command: tuple[str, ...], *, capture_output: bool = True) -> object:
+            calls.append(capture_output)
+            raise TypeError("bug inside the run")
+
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc, "_run_command", _run)
+        with pytest.raises(TypeError, match="bug inside the run"):
+            uc.run_update(check=False)
+        assert len(calls) == 1, f"manager ran {len(calls)} times"
+
     def test_manager_failure_without_a_new_version_is_configuration_error(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from gflow_cli.errors import ConfigurationError
 
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: 3)
+        monkeypatch.setattr(uc, "_run_command", _exits(3))
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         with pytest.raises(ConfigurationError, match="exited 3"):
             uc.run_update(check=False)
@@ -445,7 +495,7 @@ class TestRunUpdate:
         from gflow_cli.errors import ConfigurationError
 
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: 2)
+        monkeypatch.setattr(uc, "_run_command", _exits(2))
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         monkeypatch.setattr(uc, "_import_failure", lambda: "ImportError: DLL load failed")
         with pytest.raises(ConfigurationError, match="unusable"):
@@ -457,7 +507,7 @@ class TestRunUpdate:
         """Measured on Windows: uv installs the wheel, then exits 1 copying the
         in-use `gflow.exe` launcher. The venv moved, so it IS an upgrade."""
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: 1)
+        monkeypatch.setattr(uc, "_run_command", _exits(1))
         report = uc.run_update(check=False)
         assert report.upgraded is True
         assert report.latest == "999.0.0"
@@ -514,7 +564,7 @@ class TestRunUpdate:
             stderr="",
         )
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
         report = uc.run_update(check=False, verbose=False)
         assert report.upgraded is True
         captured = capsys.readouterr()
@@ -536,7 +586,7 @@ class TestRunUpdate:
             stderr="",
         )
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
         report = uc.run_update(check=False, verbose=True)
         assert report.upgraded is True
         captured = capsys.readouterr()
@@ -559,7 +609,7 @@ class TestRunUpdate:
             stderr="error: could not resolve dependencies",
         )
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: __version__)
         with pytest.raises(ConfigurationError):
             uc.run_update(check=False, verbose=False)
@@ -610,7 +660,7 @@ class TestRunUpdate:
             stderr="warning: some stderr notice",
         )
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
         monkeypatch.setattr(uc, "_import_failure", lambda: None)
 
@@ -655,7 +705,7 @@ class TestRunUpdate:
             stderr="launcher notice",
         )
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: fake_process)
+        monkeypatch.setattr(uc, "_run_command", lambda cmd, *, capture_output: fake_process)
         monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
         monkeypatch.setattr(uc, "_import_failure", lambda: None)
 
@@ -754,7 +804,9 @@ class TestPipWithoutPipModule:
 
         monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
         monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: None)
-        monkeypatch.setattr(uc, "_run_command", lambda cmd: pytest.fail("must not spawn"))
+        monkeypatch.setattr(
+            uc, "_run_command", lambda cmd, *, capture_output: pytest.fail("must not spawn")
+        )
         with pytest.raises(ConfigurationError, match="no `pip` module") as info:
             uc.run_update(check=False)
         # The remediation must not recommend the very `python -m pip` that failed.

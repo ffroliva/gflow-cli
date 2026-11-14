@@ -388,23 +388,14 @@ def run_update(
         )
     playwright_before = _version_in_venv("playwright")
     capture = not (verbose and not as_json)
-    try:
-        res = _run_command(inst.command, capture_output=capture)  # type: ignore[call-arg]
-    except TypeError:
-        res = _run_command(inst.command)
-
-    if isinstance(res, int):
-        returncode = res
-        installer_output = ""
-        output_printed = False
-    else:
-        returncode = res.returncode
-        stdout = getattr(res, "stdout", None) or ""
-        stderr = getattr(res, "stderr", None) or ""
-        installer_output = (
-            f"{stdout}\n{stderr}".strip() if (stdout and stderr) else (stdout or stderr).strip()
-        )
-        output_printed = (not capture) and not bool(installer_output)
+    res = _run_command(inst.command, capture_output=capture)
+    returncode = res.returncode
+    stdout = res.stdout or ""
+    stderr = res.stderr or ""
+    installer_output = (
+        f"{stdout}\n{stderr}".strip() if (stdout and stderr) else (stdout or stderr).strip()
+    )
+    output_printed = (not capture) and not bool(installer_output)
 
     if verbose and installer_output and not output_printed:
         sys.stderr.write(f"{installer_output}\n")
