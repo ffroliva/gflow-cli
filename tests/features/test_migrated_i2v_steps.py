@@ -63,7 +63,6 @@ def _png(directory: Path, name: str) -> Path:
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
-    from gflow_cli.api.transports import migrated_composer
 
     page = FakePage(url=_LABS)
     page.dom.picker_options = ["hero.png", "Blue sphere on table"]
@@ -95,12 +94,14 @@ def world(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     monkeypatch.setattr(VideoGenerationMixin, "_wait_video_editor_ready", AsyncMock())
     monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
     monkeypatch.setattr("gflow_cli.api.transports.drivers.factory.get_ui_driver", _labs_bind)
+    from gflow_cli.api.transports import _mc_upload_frame
+
     # Wait budgets that the fake page can never satisfy are shortened, not skipped.
     # `raising` stays on: a renamed constant must fail loudly here rather than leave
     # the real 8 s/60 s budgets in place and surface as a slow test.
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1)
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
-    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_PICKER_OPEN_S", 0.1)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
     monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "auto")
     reset_settings()
     return w
