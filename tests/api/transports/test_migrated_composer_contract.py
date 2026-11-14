@@ -271,13 +271,13 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
     "AGENT_MODE_CHIP": "gflow_cli.api.transports._mc_editor_gate",
     "AGENT_ONLY_RELOAD_WAIT_S": "gflow_cli.api.transports._mc_editor_gate",
     "AGENT_ONLY_SETTLE_S": "gflow_cli.api.transports._mc_editor_gate",
-    "EXISTING_REF_WAIT_S": "gflow_cli.api.transports.migrated_composer",
+    "EXISTING_REF_WAIT_S": "gflow_cli.api.transports._mc_mention",
     "FRAME_COMMIT_GRACE_S": "gflow_cli.api.transports._mc_upload_frame",
     "FRAME_COMMIT_HIDDEN_S": "gflow_cli.api.transports._mc_upload_frame",
     "FRAME_PICKER_OPEN_S": "gflow_cli.api.transports._mc_upload_frame",
     "FRAME_SEARCH_RETRY_PAUSE_S": (
-        "gflow_cli.api.transports.migrated_composer",
         "gflow_cli.api.transports._mc_upload_frame",
+        "gflow_cli.api.transports._mc_mention",
     ),
     "FRAME_THUMB_VISIBLE_S": "gflow_cli.api.transports._mc_upload_frame",
     "FRAME_UPLOAD_S": "gflow_cli.api.transports._mc_upload_frame",
@@ -313,6 +313,7 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
     "time": (
         "gflow_cli.api.transports.migrated_composer",
         "gflow_cli.api.transports._mc_common",
+        "gflow_cli.api.transports._mc_mention",
     ),
 }
 
