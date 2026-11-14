@@ -30,18 +30,18 @@ PARENT = "3f4272fd-2897-4621-b0cd-0fb9576758d3"
 @pytest.fixture(autouse=True)
 def _short_grid_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     # The fake page's waits return at once; keep the real-clock budget short.
-    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports import _mc_mention
 
-    monkeypatch.setattr(migrated_composer, "EXISTING_REF_WAIT_S", 0.2)
+    monkeypatch.setattr(_mc_mention, "EXISTING_REF_WAIT_S", 0.2)
 
 
 @pytest.fixture
 def _reload_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """For a test that MUST reach the reload: 0.2 s of real clock expired before it
     under a loaded parallel suite (seen 2026-10-24, -n 6), raising the miss instead."""
-    from gflow_cli.api.transports import migrated_composer
+    from gflow_cli.api.transports import _mc_mention
 
-    monkeypatch.setattr(migrated_composer, "EXISTING_REF_WAIT_S", 30.0)
+    monkeypatch.setattr(_mc_mention, "EXISTING_REF_WAIT_S", 30.0)
 
 
 OTHER = "90879017-ff54-4232-9186-f6a61298a6cc"
