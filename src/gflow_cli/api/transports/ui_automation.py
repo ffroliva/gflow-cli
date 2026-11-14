@@ -23,32 +23,84 @@ from gflow_cli.api.transports import (
     _ui_settings,
 )
 from gflow_cli.api.transports._ui_common import (
-    CHANGELOG_IFRAME_SELECTORS as CHANGELOG_IFRAME_SELECTORS,
-    FLOW_URL as FLOW_URL,
-    IMAGE_MODEL_OPTION_SELECTORS as IMAGE_MODEL_OPTION_SELECTORS,
-    IMAGE_MODEL_PICKER_TRIGGER as IMAGE_MODEL_PICKER_TRIGGER,
-    IMAGE_TAB_IN_MENU_SELECTORS as IMAGE_TAB_IN_MENU_SELECTORS,
-    NEW_PROJECT_SELECTORS as NEW_PROJECT_SELECTORS,
-    ONBOARDING_SELECTORS as ONBOARDING_SELECTORS,
-    OVERLAY_CLOSE_BUTTON_SELECTORS as OVERLAY_CLOSE_BUTTON_SELECTORS,
-    PROMPT_FORMAT_SELECTORS as PROMPT_FORMAT_SELECTORS,
-    PROMPT_INPUT_SELECTORS as PROMPT_INPUT_SELECTORS,
-    SUBMIT_BUTTON_SELECTORS as SUBMIT_BUTTON_SELECTORS,
-    TOP_BANNER_SELECTORS as TOP_BANNER_SELECTORS,
-    WELCOME_SCREEN_SELECTORS as WELCOME_SCREEN_SELECTORS,
     _BODY_TRIPTYCH_PREAMBLE as _BODY_TRIPTYCH_PREAMBLE,
+)
+from gflow_cli.api.transports._ui_common import (
     _COUNT_TAB_TEXT_RE as _COUNT_TAB_TEXT_RE,
+)
+from gflow_cli.api.transports._ui_common import (
     _ONBOARDING_STRUCTURAL_SELECTORS as _ONBOARDING_STRUCTURAL_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
     _ONBOARDING_TEXT_SELECTORS as _ONBOARDING_TEXT_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
     _VIEWPORT,
+)
+from gflow_cli.api.transports._ui_common import (
+    CHANGELOG_IFRAME_SELECTORS as CHANGELOG_IFRAME_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    FLOW_URL as FLOW_URL,
+)
+from gflow_cli.api.transports._ui_common import (
+    IMAGE_MODEL_OPTION_SELECTORS as IMAGE_MODEL_OPTION_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    IMAGE_MODEL_PICKER_TRIGGER as IMAGE_MODEL_PICKER_TRIGGER,
+)
+from gflow_cli.api.transports._ui_common import (
+    IMAGE_TAB_IN_MENU_SELECTORS as IMAGE_TAB_IN_MENU_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    NEW_PROJECT_SELECTORS as NEW_PROJECT_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    ONBOARDING_SELECTORS as ONBOARDING_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    OVERLAY_CLOSE_BUTTON_SELECTORS as OVERLAY_CLOSE_BUTTON_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    PROMPT_FORMAT_SELECTORS as PROMPT_FORMAT_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    PROMPT_INPUT_SELECTORS as PROMPT_INPUT_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    SUBMIT_BUTTON_SELECTORS as SUBMIT_BUTTON_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    TOP_BANNER_SELECTORS as TOP_BANNER_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
+    WELCOME_SCREEN_SELECTORS as WELCOME_SCREEN_SELECTORS,
+)
+from gflow_cli.api.transports._ui_common import (
     _capture_debug_screenshot as _capture_debug_screenshot,
+)
+from gflow_cli.api.transports._ui_common import (
     _count_tabs_locator as _count_tabs_locator,
+)
+from gflow_cli.api.transports._ui_common import (
     _elide_large_value as _elide_large_value,
+)
+from gflow_cli.api.transports._ui_common import (
     _images_from_responses as _images_from_responses,
+)
+from gflow_cli.api.transports._ui_common import (
     _is_allowed_download_host as _is_allowed_download_host,
+)
+from gflow_cli.api.transports._ui_common import (
     _jitter_ms as _jitter_ms,
+)
+from gflow_cli.api.transports._ui_common import (
     _reference_field_count as _reference_field_count,
+)
+from gflow_cli.api.transports._ui_common import (
     _summarize_batch_request_body as _summarize_batch_request_body,
+)
+from gflow_cli.api.transports._ui_common import (
     aspect_cli_from_enum as aspect_cli_from_enum,
 )
 from gflow_cli.api.transports._ui_image import ImageGenerationMixin
@@ -57,6 +109,8 @@ from gflow_cli.api.transports.ui_automation_entities import (
 )
 from gflow_cli.api.transports.ui_automation_video import (
     MODE_SWITCH_TRIGGER_SELECTORS as MODE_SWITCH_TRIGGER_SELECTORS,
+)
+from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.profile_lease import ProfileLease

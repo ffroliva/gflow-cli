@@ -93,8 +93,7 @@ def _settle_lines(path: Path) -> set[int]:
 
 
 _UI_PARTS = sorted(
-    p.relative_to(_TRANSPORTS).as_posix()
-    for p in (_TRANSPORTS / "transports").glob("_ui_*.py")
+    p.relative_to(_TRANSPORTS).as_posix() for p in (_TRANSPORTS / "transports").glob("_ui_*.py")
 )
 
 

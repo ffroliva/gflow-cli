@@ -223,20 +223,12 @@ def test_tests_that_patch_the_mixin_class_still_reach_the_transport() -> None:
         if c is not object
     ]
 
-    video_names = {
-        name
-        for cls in video_classes
-        for name in vars(cls)
-        if not name.startswith("__")
-    }
-    ui_names = {
-        name
-        for cls in ui_classes
-        for name in vars(cls)
-        if not name.startswith("__")
-    }
+    video_names = {name for cls in video_classes for name in vars(cls) if not name.startswith("__")}
+    ui_names = {name for cls in ui_classes for name in vars(cls) if not name.startswith("__")}
     collision = video_names & ui_names
-    assert not collision, f"Attribute name collision between video and UI chains: {sorted(collision)}"
+    assert not collision, (
+        f"Attribute name collision between video and UI chains: {sorted(collision)}"
+    )
 
 
 @pytest.mark.skipif(
