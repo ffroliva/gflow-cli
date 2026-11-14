@@ -13,7 +13,17 @@ gate verdict. This command answers one question: **is the SonarCloud gate green
 (zero new issues) for this PR, and if not, exactly what must be fixed?**
 
 `$ARGUMENTS` is the PR number. If empty, resolve it from the current branch
-(`gh pr view --json number -q .number`).
+(`gh pr view --json number -q .number`). **`main` or `develop`** means the branch gate:
+swap `&pullRequest=<N>` for `&branch=<name>` in every call below, and look for the CI run
+with `gh run list --branch <name> --workflow ci.yml --commit <sha> --limit 1` (the commit
+you are checking, not just the latest run). A branch can go red with
+no code change: if the last analysis has a `QUALITY_PROFILE` event
+(`GET /api/project_analyses/search?project=ffroliva_gflow-cli&branch=<name>`), SonarSource
+changed the rules, and the new issues sit on unchanged code. Mark an issue false positive
+only when the code is provably valid (2026-11-11: 55 x S6663 on `sqlite3.Row["col"]`), via
+`POST /api/issues/bulk_change` with `do_transition=falsepositive` and the reason in `comment`.
+The transition does not repaint the red check, so re-run the Sonar job afterwards
+(`gh run rerun <run-id> --job <job-id>`) and read step 1 again.
 
 Project: key `ffroliva_gflow-cli`, org `ffroliva-github` (see `sonar-project.properties`).
 The CI scan sets `sonar.qualitygate.wait=true`, so a **green `SonarCloud analysis`
@@ -29,9 +39,18 @@ gh pr checks <N> --json name,state,bucket | \
   jq -r '.[] | select(.name=="SonarCloud analysis") | "\(.bucket) \(.state)"'
 ```
 
-- `pass` → **gate is GREEN / zero new issues. Done.** Report GREEN and stop.
+For a branch there is no PR check: read the job of the run found above instead,
+`gh run view <run-id> --json jobs -q '.jobs[] | select(.name=="SonarCloud analysis")'`.
+
+- `pass` → GREEN **only if the `SonarCloud scan` step ran**. When SonarCloud is
+  unreachable, CI skips that step and the job still passes with a warning. Check
+  `gh run view <run-id> --json jobs -q '.jobs[] | select(.name=="SonarCloud analysis")
+  | .steps[] | select(.name=="SonarCloud scan") | .conclusion'` is `success` (for a PR,
+  the run id is in the check's `link`); `skipped`
+  (or a cancelled or missing job) means no gate result exists for this commit, so report
+  that, not GREEN.
 - `pending` → the SonarCloud job (~50s) runs *after* the ~3.5min test matrix; wait
-  (`gh pr checks <N> --watch`) before reading the API, or the API returns the
+  (`gh pr checks <N> --watch`; for a branch, `gh run watch <run-id>`) before reading the API, or the API returns the
   previous commit's verdict.
 - `fail` → continue to step 2 to enumerate the exact failing conditions.
 
