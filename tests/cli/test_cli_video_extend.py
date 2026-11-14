@@ -1053,7 +1053,8 @@ def test_a_resumed_rerender_keeps_the_instruction_out_of_the_command() -> None:
     from gflow_cli.cli_video import _free_rerender_hint
 
     hint = _free_rerender_hint("proj", "p", ["wf-1"], resumed=True)
-    command, _, rest = hint.partition("--output <path>")
+    flag = "--out-file <path>" if "--out-file" in hint else "--output <path>"
+    command, _, rest = hint.partition(flag)
     assert command.startswith("gflow scene create --project proj --profile p wf-1")
     assert "(" not in command
     assert "earlier clips" in rest
