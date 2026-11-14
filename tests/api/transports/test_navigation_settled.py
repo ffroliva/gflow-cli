@@ -92,13 +92,17 @@ def _settle_lines(path: Path) -> set[int]:
     }
 
 
+_UI_PARTS = sorted(
+    p.relative_to(_TRANSPORTS).as_posix()
+    for p in (_TRANSPORTS / "transports").glob("_ui_*.py")
+)
+
+
 @pytest.mark.parametrize(
     "relpath",
     [
         "transports/ui_automation.py",
-        "transports/_ui_session.py",
-        "transports/_ui_navigation.py",
-        "transports/_ui_character.py",
+        *_UI_PARTS,
         "transports/experimental/evaluate_fetch.py",
         "transports/experimental/sapisidhash.py",
         "transports/experimental/bearer.py",
