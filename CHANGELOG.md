@@ -39,6 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after the new version is installed (on Windows, usually the running `gflow.exe`
   launcher), you get its output and a one-line note instead of an error followed by a
   success. Thanks to @nitishkp001.
+
+- **`video extend` on flow.google.com no longer fails its catalog write, and reports the
+  length it added.** Measured 2026-11-08 with the Omni extend key, Flow grows the source clip
+  in place, under the source's media id. An extend is in place when Flow returns the
+  source's own id. Nothing is written for it at submit, so a failed or timed-out run leaves
+  the source row as it was; once Flow reports it done, the existing row gets `extended_by`,
+  `extend_workflow_id` and `extended_at` instead of a failing duplicate insert (a source the
+  catalog does not hold stays unrecorded). In that case `--json` reads
+  `seconds_added`/`seconds_billed` from the key's `_<n>s` token (4/4 for
+  `macaron_cookie_extend_4s`), or reports `null` when the key names no length; a separate
+  segment keeps 7/8. The default output file gets a random tag when
+  `<date>/<media-id>_extend.mp4` already exists, so a same-day re-run keeps the earlier
+  file. The help no longer says the extension alone is downloaded or that each run leaves a
+  new scene (#1184).
 - **Usage telemetry recorded the wrong command after a root flag ([#1209](https://github.com/ffroliva/gflow-cli/issues/1209)).**
   `gflow -v auth list` counted as `gflow`, because a flag was treated as taking a value.
 

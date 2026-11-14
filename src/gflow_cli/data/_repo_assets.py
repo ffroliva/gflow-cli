@@ -106,6 +106,31 @@ class AssetsRepo(RepositoryBase):
                 (status, profile_name, flow_media_id),
             )
 
+    def note_asset_extended(
+        self, profile_name: str, flow_media_id: str, *, model_key: str | None, workflow_id: str
+    ) -> None:
+        """Record a finished extend that grew this clip in place (#1184).
+
+        Status, model and the clip's own workflow are kept; the stored duration is cleared
+        because the clip is now longer. ``extend_workflow_id`` is the billed generation. A
+        later extend overwrites these keys: they describe the latest extend. No row, no-op.
+        """
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                """
+                UPDATE assets
+                SET duration_seconds = NULL,
+                    metadata_json = json_set(
+                        COALESCE(metadata_json, '{}'),
+                        '$.extended_by', ?,
+                        '$.extend_workflow_id', ?,
+                        '$.extended_at', ?
+                    )
+                WHERE profile_name = ? AND flow_media_id = ?
+                """,
+                (model_key, workflow_id, _utc_now(), profile_name, flow_media_id),
+            )
+
     def set_asset_display_name(
         self,
         profile_name: str,
