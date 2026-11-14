@@ -90,6 +90,7 @@ EXPECTED_TREE: dict[str, bool] = {
     "models list": False,
     "models show": False,
     "capabilities": False,
+    "cancel": False,
     "scene create": False,
     "scene show": False,
     "telemetry status": False,

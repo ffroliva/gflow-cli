@@ -19,6 +19,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `auth use`/`logout`, `data errors export`/`prune`, `project show` and `project rename` are
   now documented there.
 
+- **`gflow cancel <id>`: local abort, honest about server-side cancel.** A queued job, or
+  one a worker claimed but has not submitted yet, is cancelled (state `cancelled`, exit 0,
+  nothing charged): the worker re-reads its row just before submitting and stops. A job a
+  gflow worker already submitted is marked `abandoned` (exit 22): Flow cannot be told to
+  cancel it, so it may still run and be charged (a worker still running it keeps polling,
+  so the result is recorded), and `--json` says
+  `cancel.server: no`, `charged: maybe`, `next_action: reconcile`. A finished job is left
+  as it is (exit 0); an unknown id is a `TaskNotFoundError` (exit 1). MCP `tasks/cancel`
+  calls the same function. Migration `0010` adds the two queue states; error type
+  `server-cancel-unavailable` shares exit 22 (#1198).
+
+### Changed
+
+- **MCP `tasks/cancel` stores what happened, not `failed`/`indeterminate`.** A task not
+  yet submitted is now stored `cancelled` (it used to be `failed` with `reason: cancelled`);
+  one already submitted is stored `abandoned`, whether this server or another process runs
+  it (it used to be `indeterminate`, or left as it was). Both states are sticky: a worker
+  that finishes later records its media id and catalog entry but does not flip the row, so
+  `tasks/get` keeps answering `cancelled`, as SEP-2663 requires. A script that reads the
+  queue table and matched `failed`/`indeterminate` for a cancel must also match these two
+  (#1198).
+
 ### Fixed
 
 - **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was

@@ -67,7 +67,7 @@ code's output.
 | `wait` | Block until a submitted generation finishes, by id. | `partial`: CLI generation commands block until done and MCP `tasks/get` carries a finished result; no CLI `wait <id>` yet (#1194). |
 | `download` | Fetch a finished asset to a local file. | `partial`: generation commands download on completion; `data download` (MCP `gflow_download_media`) recovers a failed **video** download only, and refuses an image id (exit 11, [#877](https://github.com/ffroliva/gflow-cli/issues/877)). |
 | `upload` | Upload a local file to Flow for reuse. | `partial`: `image upload` (CLI only) prints an asset id; the MCP generate tools upload local reference paths themselves; no top-level `upload` yet ([#1200](https://github.com/ffroliva/gflow-cli/issues/1200)). On flow.google.com an uploaded id is not taken as a video frame or reference (exit 36), and as an image reference only when the catalog records it in the same `--project`. |
-| `abort.local` | Stop gflow's own wait or job. Does **not** stop Flow. | `partial`: Ctrl-C stops a CLI run and MCP `tasks/cancel` (SEP-2663 client) stops a `wait=false` task; a generation Flow already accepted may still be charged; no `cancel <id>` yet ([#1198](https://github.com/ffroliva/gflow-cli/issues/1198)). |
+| `abort.local` | Stop gflow's own wait or job. Does **not** stop Flow. | `partial`: Ctrl-C stops a CLI run; `gflow cancel <id>` and MCP `tasks/cancel` (SEP-2663 client) abort a queued `wait=false` job ([#1198](https://github.com/ffroliva/gflow-cli/issues/1198)); a generation Flow already accepted may still be charged. |
 | `cancel.server` | Stop a generation Flow has already accepted, so it is not charged. | `no`: once Flow accepts a generation it runs and may still be charged. |
 | `idempotent_submit` | Retry a submit safely: the same request id never starts a second generation. | `no`: a retried submit is a new generation and may be charged again. |
 | `reconcile` | Bring the local catalog back in line with what Flow holds. | `partial`: `data sync --names` refreshes names and presence (CLI only); no `reconcile <id>` yet ([#1199](https://github.com/ffroliva/gflow-cli/issues/1199)). |
@@ -94,6 +94,6 @@ both arms. There is no `--probe` yet; per-profile resolution is
   configuration, docs, the servers, prompt tooling, credit-free composition such as
   `scene create`, and post-processing such as upscale). It fails when a command is added
   without an entry, so a new command forces the question.
-- The same file fails when `status`, `wait`, `cancel`, `reconcile`, a top-level `upload`
-  or a `--no-wait` option appears, so the notes above that say "not yet" cannot go stale
-  silently when #1194, #1198, #1199 or #1200 land.
+- The same file fails when `status`, `wait`, `reconcile`, a top-level `upload` or a
+  `--no-wait` option appears, so the notes above that say "not yet" cannot go stale
+  silently when #1194, #1199 or #1200 land.

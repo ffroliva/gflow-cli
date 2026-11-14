@@ -106,6 +106,13 @@ _MCP_EXEMPT: dict[str, str] = {
         "long-running billed chain; not worker-enqueued, and its cost "
         "confirmation has no MCP equivalent (#481)"
     ),
+    # Not a gap: the twin is a protocol method, not a tool. SEP-2663 `tasks/cancel` and
+    # `gflow cancel` store the same row state through worker.queue.abort_task, and the
+    # MCP side also stops a job running in its own server. What differs is the report:
+    # tasks/get says cancelled plus a statusMessage, while the CLI's --json carries the
+    # charged/next_action members. Both runs are tested: tests/test_cli_cancel_subprocess.py
+    # and tests/mcp/test_tasks_extension.py::test_tasks_cancel_then_get_on_the_wire_per_state.
+    "cancel": "twin is the MCP protocol method tasks/cancel (same abort_task, #1198)",
     # Not a gap: the twin is a resource, not a tool (a document an agent reads before
     # planning, like gflow://docs/*). tests/mcp/test_capabilities.py holds the two
     # surfaces to the same JSON document (#1197).
