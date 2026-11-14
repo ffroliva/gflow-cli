@@ -1,46 +1,77 @@
 # Roadmap
 
-> Themes, not deadlines. `gflow-cli` is an independent CLI tracking a private Google Flow API — a single upstream UI change can rearrange a sprint, so we publish themed milestones with deliverables and let velocity emerge.
+> Themes, not deadlines. `gflow-cli` drives a product it does not own: a single change
+> upstream in Google Flow can rearrange the order of everything below. Each theme names
+> its tracking issue; the issue, not this file, holds the current state.
 
-## v0.9.0 — Maturity & Visibility (current)
+The previous edition of this file described v0.9–v0.11 and is preserved in git history.
+Everything it listed has shipped or been superseded; see [CHANGELOG.md](CHANGELOG.md).
 
-The release that makes the underlying data layer visible to the user. Adds `gflow data list` for read-only catalog browsing, publishes this roadmap, wires sponsorship, and refreshes the documentation surface to reflect everything that shipped through v0.8.x.
+## Generation lifecycle & automation
 
-- Local SQLite catalog (shipped in PR #58, surfaced here)
-- `gflow video t2v` model picker (`omni-flash` / `veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`)
-- `gflow video i2v` — image-to-video with optional end frame
-- `gflow video r2v` — reference-to-video (Flow ingredients)
-- `gflow data list {projects,images,videos,profiles}` — read-only catalog query
-- Locale-agnostic media-dialog selectors (fixes non-English Chrome profiles)
-- `ROADMAP.md` (sponsorship wiring deferred to a follow-up patch release)
+**Tracking: [#1191](https://github.com/ffroliva/gflow-cli/issues/1191)** ·
+milestone "Generation lifecycle & automation"
 
-## v0.10.0 — Data Query Surface
+Give gflow the lifecycle that hosted generative-media APIs and mature cloud CLIs share:
+**submit → status → wait → download**. Capabilities are reported honestly, errors are
+something a pipeline can act on, and a small exit-code core is stable.
 
-Extends the data layer surface from read-only listing to inspection and selective export. Same local SQLite catalog, richer ways to interrogate it.
+- Machine-readable discovery: `gflow capabilities` + MCP `capabilities://self` ([#1197](https://github.com/ffroliva/gflow-cli/issues/1197)),
+  `--help --json` command tree ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)), `models list` / `models show` ([#1196](https://github.com/ffroliva/gflow-cli/issues/1196)).
+- Actionable errors: `charged`, `next_action`, `operation_id` on every problem
+  document ([#1201](https://github.com/ffroliva/gflow-cli/issues/1201)), and a stable exit-code core with a deprecation cycle ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202), breaking).
+- Lifecycle verbs: `--no-wait`, `status`, `wait` ([#1194](https://github.com/ffroliva/gflow-cli/issues/1194)); `download` and `generations`
+  ([#1195](https://github.com/ffroliva/gflow-cli/issues/1195)); `cancel`, local only and explicit that a submitted generation cannot be cancelled
+  on the server ([#1198](https://github.com/ffroliva/gflow-cli/issues/1198)); `reconcile` ([#1199](https://github.com/ffroliva/gflow-cli/issues/1199)); `upload` ([#1200](https://github.com/ffroliva/gflow-cli/issues/1200)); `image gen` / `video gen`
+  bridge verbs ([#1193](https://github.com/ffroliva/gflow-cli/issues/1193)).
+- **Browser to submit, HTTP to observe.** The [#1192](https://github.com/ffroliva/gflow-cli/issues/1192) spike measured that `flow.google.com`'s
+  own read calls (status, listing, balance) answer without a page, and that the signed clip
+  URL downloads with no credential (results on [#1192](https://github.com/ffroliva/gflow-cli/issues/1192)). Submitting stays in the
+  browser because of reCAPTCHA.
 
-- `gflow data show <media_id>` — full record for one image / video / project
-- `gflow data search` — filter by prompt substring, model, aspect, date range
-- `gflow data export` — JSON / CSV / TSV
-- `gflow data prune` — retention controls (`--older-than`, `--keep-last-n`)
+## flow.google.com parity
 
-## v0.11.0 — Local Studio, Background Worker & MCP SSE Service (in progress / develop)
+**Tracking: [#639](https://github.com/ffroliva/gflow-cli/issues/639)**
 
-The local Web UI Filmmaking Studio, background task worker, and MCP HTTP/SSE service are integrated into a single unified daemon interface under `gflow serve`.
+Google is moving Flow accounts to `flow.google.com`, a rewritten frontend. gflow already
+drives text-to-video, image-to-video, reference-to-video, text-to-image, image-to-image,
+characters and a single-segment extend there. Still to port: local-file image-to-image on
+the agent-only composer ([#1190](https://github.com/ffroliva/gflow-cli/issues/1190)), `--ref <media uuid>` ([#933](https://github.com/ffroliva/gflow-cli/issues/933)), a 4th+ reference ([#997](https://github.com/ffroliva/gflow-cli/issues/997)),
+custom voices ([#826](https://github.com/ffroliva/gflow-cli/issues/826)), and honest extend lengths for the Omni model ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)).
 
-- [x] **Uvicorn Daemon:** `gflow serve` starts the local FastAPI/Uvicorn server with background task loop.
-- [x] **MCP SSE Server:** Exposes the MCP server over HTTP/SSE, allowing IDE clients and external tools to run JSON-RPC commands.
-- [x] **Flow Worker Daemon:** Local queue manager and `FlowWorker` background task processor reading from SQLite queue tables and managing sequential profile-locked generation runs.
-- [ ] **REST & Static UI:** FastAPI endpoints for asset management and hosting of the Filmmaking Studio (single-page app).
-- [ ] **Aggregated Management:** Full view of accounts, profiles, projects, and active storyboarding queues.
+## Reliability against a blackbox
 
-## v1.0.0 — Stable API
+gflow reverse-engineers Flow, so every claim is measured before it is encoded
+(`/gflow:spike`). Ongoing work:
 
-The point at which `FlowApiClient` carries a SemVer commitment and the documentation reaches "production-ready" standard.
+- Failures that keep Flow's own reason and say whether credits were spent: [#1111](https://github.com/ffroliva/gflow-cli/issues/1111), [#1159](https://github.com/ffroliva/gflow-cli/issues/1159),
+  [#1160](https://github.com/ffroliva/gflow-cli/issues/1160), [#1110](https://github.com/ffroliva/gflow-cli/issues/1110).
+- Visibility into queued and unknown outcomes: [#741](https://github.com/ffroliva/gflow-cli/issues/741), [#897](https://github.com/ffroliva/gflow-cli/issues/897).
+- Drift detection on the surfaces with an outage history: [#622](https://github.com/ffroliva/gflow-cli/issues/622), [#730](https://github.com/ffroliva/gflow-cli/issues/730), and the nightly canary
+  ([#559](https://github.com/ffroliva/gflow-cli/issues/559)).
+- Auth edge cases: [#796](https://github.com/ffroliva/gflow-cli/issues/796), [#773](https://github.com/ffroliva/gflow-cli/issues/773), [#768](https://github.com/ffroliva/gflow-cli/issues/768) (macOS), [#480](https://github.com/ffroliva/gflow-cli/issues/480).
 
-- `FlowApiClient` SemVer commitment
-- HTTP transport revival path (community-contrib; if feasible)
-- Production-ready documentation
+## MCP and agents
+
+The CLI and the MCP server are two doors onto one product, and every CLI capability has an
+MCP twin or a recorded reason it does not.
+
+- Server-directed tasks and bounded waits: [#1105](https://github.com/ffroliva/gflow-cli/issues/1105), [#481](https://github.com/ffroliva/gflow-cli/issues/481).
+- Missing twins: video extend ([#884](https://github.com/ffroliva/gflow-cli/issues/884)), character create ([#691](https://github.com/ffroliva/gflow-cli/issues/691)).
+- Distribution: Docker MCP Catalog ([#822](https://github.com/ffroliva/gflow-cli/issues/822)).
+
+## Onboarding and evidence
+
+- Walk install → auth → first command → failure as a stranger would ([#601](https://github.com/ffroliva/gflow-cli/issues/601)).
+- User-facing evidence capture for reproducible bug reports ([#707](https://github.com/ffroliva/gflow-cli/issues/707)).
+- Kubectl-style output flags ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158), breaking; to be scheduled with [#1202](https://github.com/ffroliva/gflow-cli/issues/1202)'s deprecation cycle).
+
+## Out of scope
+
+Google's separately billed Gemini / Vertex AI generation APIs. gflow drives Flow, with the
+user's own Google account.
 
 ---
 
-*Themes, not deadlines. An independent CLI tracking a private API can have its sprint broken by a single UI change upstream — fixed dates would be dishonest.*
+*Themes, not deadlines. An independent CLI tracking a private API can have its plans broken
+by a single change upstream, so fixed dates would be dishonest.*

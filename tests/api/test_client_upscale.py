@@ -283,7 +283,7 @@ async def test_upsample_video_storage_uri(tmp_path: Path, monkeypatch) -> None:
 
     local_target = tmp_path / "cloud_dest" / "video.mp4"
     monkeypatch.setattr(
-        "gflow_cli.api.client.storage_path",
+        "gflow_cli.api._flow_session.storage_path",
         lambda uri, out_dir, key: local_target,
     )
 

@@ -141,6 +141,8 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     monkeypatch.setenv("GFLOW_CLI_UPDATE_CHECK", "0")
     # #1164: usage counters stay off in tests; tests/test_telemetry.py unsets this.
     monkeypatch.setenv("GFLOW_CLI_TELEMETRY", "0")
+    # A developer testing the #1202 opt-in must not change every exit code the suite pins.
+    monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
     # #864: the MCP entry points write a lease-wait default straight into os.environ
     # (production wants it process-wide). Recording the variable here makes teardown
     # remove it, so a test that runs `run_http` unpatched cannot turn every later
@@ -171,6 +173,9 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
         monkeypatch.setenv(var, "127.0.0.1,localhost,::1")
     # urllib ignores HTTP_PROXY when REQUEST_METHOD is set (the httpoxy guard)
     monkeypatch.delenv("REQUEST_METHOD", raising=False)
+    # #1229: the credits read tries the profile's cookie jar and flow.google.com first. Off
+    # here, so a credits test reaches the page fake it installs; the wire tests turn it on.
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "0")
 
 
 @pytest.fixture
@@ -200,3 +205,15 @@ def install_log_capture() -> Iterator[structlog.testing.LogCapture]:
     # the snapshot: a fixture that mutates global state should undo it at its own
     # boundary, not rely on a sibling fixture's ordering.
     structlog.reset_defaults()
+
+
+@pytest.fixture
+def fresh_wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Empty per-process state for the direct credits read (#1229), and no proxy: the
+    offline suite points HTTPS_PROXY at a dead port, which the wire would refuse to use."""
+    from gflow_cli.api import flow_wire
+
+    flow_wire.reset_state()
+    monkeypatch.setattr(flow_wire, "getproxies", dict)
+    yield
+    flow_wire.reset_state()

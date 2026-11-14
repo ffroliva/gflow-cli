@@ -160,6 +160,10 @@ would settle it, so the next person who sees the condition live knows what to ca
 - Findings → `docs/superpowers/spikes/<date>-<slug>.md`. The finding is durable; the
   bytes that produced it are not.
 - The spike script itself → committed. A question worth asking once gets asked again.
+- A `batchexecute` RPC id you observed and named → a row in
+  [`docs/FLOW_WIRE_RPCS.md`](../../docs/FLOW_WIRE_RPCS.md) (or its "seen, not used" list).
+  A test already forces a row for every `*_RPC`, `*_RPCS`, `*_RPCID` or `*_RPCIDS` constant in
+  `src/`; this covers every other id, including ids named only in comments or docstrings.
 
 ## When you are done
 

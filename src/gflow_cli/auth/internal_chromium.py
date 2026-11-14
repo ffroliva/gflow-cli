@@ -7,7 +7,11 @@ import structlog
 from playwright.async_api import Error as PlaywrightError
 from rich.console import Console
 
-from gflow_cli.browser_manager import browser_proxy_kwargs, profile_in_use_error
+from gflow_cli.browser_manager import (
+    browser_proxy_kwargs,
+    disable_features_args,
+    profile_in_use_error,
+)
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
@@ -127,6 +131,7 @@ def login_launch_kwargs(
             # Load-bearing beyond auth: keeps the profile off the macOS
             # keychain, which api/client.py also depends on (#222).
             "--password-store=basic",
+            *disable_features_args(),
         ],
         **browser_proxy_kwargs(proxy),
     }

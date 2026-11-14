@@ -130,7 +130,8 @@ use `cloud_uri` as the authoritative location. See
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│ OperationRecorder (gflow_cli/data/recorder.py)          │
+│ OperationRecorder (gflow_cli/data/recorder.py,          │
+│   parts in _recorder_core.py + _recording_*.py)         │
 │ Public methods:                                         │
 │   record_upload_image(...)                              │
 │   record_generated_images(...)                          │
@@ -141,7 +142,8 @@ use `cloud_uri` as the authoritative location. See
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────┐
-│ DataRepository (gflow_cli/data/repository.py)           │
+│ DataRepository (gflow_cli/data/repository.py,           │
+│   table groups in _repo_*.py)                           │
 │ Row-level upserts + read queries                        │
 │ Wraps sqlite3.IntegrityError → DataIntegrityError       │
 │ All writes use ON CONFLICT(...) upserts                 │
@@ -223,7 +225,7 @@ async worker (which mirrors its `generation_queue.error_json` failure into
 - `failed` rows have **no automatic cap** by design — there is no background
   pruning. Use `gflow data errors prune --older-than <age>` for explicit
   retention and `gflow data errors export` to archive history first (see
-  [`data errors`](#gflow-data-errors--bounded-retention--export-345) below,
+  [`data errors`](#gflow-data-errors-bounded-retention-export-345) below,
   [#345](https://github.com/ffroliva/gflow-cli/issues/345)). Note `gflow data
   prune` is unrelated: it targets stale `local_files`, not failure history.
 
@@ -374,10 +376,10 @@ pruning**.
 
 ```bash
 # Archive every failure as JSONL (unbounded; newest-first) before deleting
-gflow data errors export -o failures.jsonl
+gflow data errors export --out-file failures.jsonl
 
 # Archive only the slice you are about to prune
-gflow data errors export --older-than 90d -o old-failures.jsonl
+gflow data errors export --older-than 90d --out-file old-failures.jsonl
 
 # Preview what a retention prune would delete (no changes)
 gflow data errors prune --older-than 90d --dry-run
@@ -391,7 +393,7 @@ gflow data errors prune --older-than 90d
   deletion is always a deliberate age choice; on `export` it is optional
   (default: all failures).
 - `--profile NAME` scopes either command to one profile.
-- `export` writes JSONL to `-o/--output FILE`, or to stdout when omitted —
+- `export` writes JSONL to `--out-file FILE` (or legacy `-o/--output`), or to stdout when omitted —
   reusing the same serialization as `data list errors --json`.
 - Deletion errors map to **exit 16** (`DataStoreError`), consistent with the
   rest of `gflow data`.
@@ -474,7 +476,7 @@ Cloud-only assets have `LocalFileRecord.path is None` and carry their object
 location in `LocalFileRecord.cloud_uri`; path-based seed-image resolution is
 local-only.
 
-The public read API is documented in [`src/gflow_cli/data/repository.py`](../src/gflow_cli/data/repository.py); all read methods return typed `SeedImage` / `AssetLookup` dataclasses, not raw SQLite rows.
+The public read API is `DataRepository` ([`src/gflow_cli/data/repository.py`](../src/gflow_cli/data/repository.py)), whose methods live in the table-group modules `data/_repo_*.py`; all read methods return typed `SeedImage` / `AssetLookup` dataclasses, not raw SQLite rows.
 
 ---
 

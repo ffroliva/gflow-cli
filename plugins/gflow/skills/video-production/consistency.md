@@ -88,13 +88,13 @@ It is fixable.
 ```bash
 # 1. the anchor angle — geometry only, no people, from text
 gflow image t2i "<room, furniture left to right, light source, materials>" \
-  --aspect 16:9 --project <id> -o plate_wide.png            # free
+  --aspect 16:9 --project <id> --out-file plate_wide.png            # free
 
 # 2. every other angle, chained off the anchor — never a second t2i
 gflow image i2i "<same room, reverse angle from the door>" \
-  --ref <ANCHOR_UUID> --aspect 16:9 --project <id> -o plate_reverse.png
+  --ref <ANCHOR_UUID> --aspect 16:9 --project <id> --out-file plate_reverse.png
 gflow image i2i "<same room, close angle on the bench>" \
-  --ref <ANCHOR_UUID> --aspect 16:9 --project <id> -o plate_bench.png
+  --ref <ANCHOR_UUID> --aspect 16:9 --project <id> --out-file plate_bench.png
 ```
 
 Serial, and free — image generation draws on a daily cap, not credits. The only cost is that the set must be built in order.

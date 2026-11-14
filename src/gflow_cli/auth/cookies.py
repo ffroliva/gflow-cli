@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -11,6 +12,7 @@ import structlog
 from gflow_cli.browser_manager import (
     browser_proxy_kwargs,
     channel_for_profile,
+    disable_features_args,
     profile_in_use_error,
 )
 from gflow_cli.config import get_settings
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _FLOW_COOKIE_DOMAIN = "labs.google"
+_LOCAL_STATE = "Local State"  # the profile's key file (Windows)
 _FLOW_COOKIE_URL = f"https://{_FLOW_COOKIE_DOMAIN}"
 _GOOGLE_SESSION_COOKIE = "SAPISID"
 
@@ -73,6 +76,22 @@ def _has_google_session_cookie(cookies: Iterable[object]) -> bool:
     return any(_cookie_field(cookie, "name") == _GOOGLE_SESSION_COOKIE for cookie in cookies)
 
 
+def _browser_cookie3() -> Any:
+    """browser_cookie3, loaded without its ``shadowcopy`` dependency (#1229 review).
+
+    On Windows browser_cookie3 imports ``shadowcopy`` (WMI over COM) for a last-resort
+    method that snapshots the volume to read a jar Chrome holds locked. gflow wants that
+    bypass on no path (it needs admin, and a locked jar means "Chrome is using this
+    profile"), and the COM objects it leaves behind print "Win32 exception occurred
+    releasing IUnknown" at interpreter exit, on every command that read cookies.
+    """
+    sys.modules.setdefault("shadowcopy", None)  # type: ignore[assignment]  # import -> ImportError
+    import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
+
+    browser_cookie3.shadowcopy = None  # in case it was imported before us
+    return browser_cookie3
+
+
 def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     """Fast path: extract cookies directly from the SQLite store via browser_cookie3.
 
@@ -95,9 +114,7 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     settled), browser_cookie3 may raise ``KeyError`` from its ``__methods_map``
     lookup — we treat this as a decryption failure and fall back to Playwright.
     """
-    import sys
-
-    import browser_cookie3  # pyright: ignore[reportMissingTypeStubs]
+    browser_cookie3 = _browser_cookie3()
 
     try:
         cookies_file = get_cookies_path(profile_dir)
@@ -107,7 +124,7 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     # Only pass key_file on Windows — browser_cookie3 only uses it on win32.
     # On Linux/macOS the key comes from the system keyring; passing Local State
     # there can hit the Windows DPAPI branch and raise KeyError.
-    key_file = profile_dir.joinpath("Local State") if sys.platform == "win32" else None
+    key_file = profile_dir.joinpath(_LOCAL_STATE) if sys.platform == "win32" else None
 
     try:
         cookies = list(
@@ -164,7 +181,7 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
                 user_data_dir=str(profile_dir),
                 channel=channel,
                 headless=True,
-                args=["--password-store=basic"],
+                args=["--password-store=basic", *disable_features_args()],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )
         except Exception as exc:
@@ -206,3 +223,70 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     except PermissionError:
         logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
+
+
+# Named for what it signals (fall back to the browser), not as an error: hence N818.
+class CookieStoreUnreadable(Exception):  # noqa: N818
+    """The profile's cookie jar could not be read. Carries only the cause's class name."""
+
+
+_WIRE_HOST = "flow.google.com"
+
+
+def require_in_home(profile_dir: Path) -> None:
+    """Raise SecurityError for a profile outside GFLOW_CLI_HOME (the browser path's check)."""
+    home = get_settings().home.resolve()
+    if not profile_dir.resolve().is_relative_to(home):
+        msg = f"Profile directory {profile_dir} is outside of GFLOW_CLI_HOME ({home})."
+        raise SecurityError(msg)
+
+
+def _domain_match(domain: str) -> bool:
+    """RFC 6265 5.1.3 against flow.google.com: a leading dot is a domain cookie, none is
+    host-only."""
+    domain = domain.lower()
+    if domain.startswith("."):
+        return f".{_WIRE_HOST}".endswith(domain)
+    return _WIRE_HOST == domain
+
+
+def read_cookies_for(profile_dir: Path) -> list[tuple[str, str]]:
+    """The (name, value) pairs a browser on this profile sends on ``GET https://flow.google.com/``.
+
+    For the direct read (``api/flow_wire.py``, #1229). Unlike
+    :func:`get_chrome_cookie_snapshot`, every failure raises :class:`CookieStoreUnreadable`
+    and nothing falls back: not to Playwright (that starts Chrome to avoid starting
+    Chrome), and not to browser_cookie3's volume shadow copy, which would read a jar
+    Chrome holds locked (spike 2026-11-10, E1). Pairs, not a dict: a name may sit on two
+    domains (``_ga_*`` on ``flow.google.com`` and ``.flow.google.com``), and a browser
+    sends both.
+    """
+    require_in_home(profile_dir)
+    browser_cookie3 = _browser_cookie3()
+    try:
+        cookie_file = get_cookies_path(profile_dir)
+        key_file = None
+        if sys.platform == "win32":
+            # browser_cookie3 reads the USER's own Chrome key when this is None.
+            key_file = profile_dir / _LOCAL_STATE
+            if not key_file.is_file():
+                raise FileNotFoundError(_LOCAL_STATE)
+        # Chrome holds the jar exclusively while it runs; fail here, before any fallback.
+        with open(cookie_file, "rb") as probe:
+            probe.read(1)
+        jar = list(
+            browser_cookie3.chrome(  # pyright: ignore[reportUnknownMemberType]
+                cookie_file=cookie_file, domain_name="google.com", key_file=key_file
+            )
+        )
+    # Every failure is the same answer for the direct read: the store is unreadable.
+    except Exception as exc:  # noqa: BLE001
+        raise CookieStoreUnreadable(type(exc).__name__) from None
+    return [
+        (cookie.name, cookie.value)
+        for cookie in jar
+        if cookie.value is not None
+        and cookie.path == "/"
+        and not cookie.is_expired()
+        and _domain_match(cookie.domain)
+    ]

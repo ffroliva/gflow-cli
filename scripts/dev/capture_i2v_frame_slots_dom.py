@@ -12,7 +12,7 @@ Reuses production helpers via ``FlowApiClient`` /
 ``_switch_to_video_mode`` — no selector drift.
 
 Zero credits: enters the editor, switches to video mode, waits for the editor
-to mount, counts how many ``FRAME_SLOTS_STRUCT`` and ``FRAME_SLOT_BY_LABEL``
+to mount, counts how many ``FRAME_SLOTS_STRUCT``
 matches Playwright resolves, and writes a JSON evidence file + a screenshot.
 
 Usage:
@@ -39,7 +39,6 @@ sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.ui_automation_video import (
-    FRAME_SLOT_BY_LABEL,
     FRAME_SLOTS_STRUCT,
     VideoGenerationMixin,
 )
@@ -89,18 +88,14 @@ async def capture(profile_name: str, out_dir: Path) -> int:
 
             # Probe the selector tiers. `SWAP_CONTAINER_PR70` is the broken PR #70
             # anchor — kept for forensic comparison (must match 0 on real Flow DOMs).
-            # `FRAME_SLOTS_STRUCT` is the post-#63 production primary; the text
-            # fallback only fires on EN profiles.
+            # `FRAME_SLOTS_STRUCT` is the only production anchor (the English
+            # label fallback was removed in #1273).
             swap_pr70_count = await page.locator(SWAP_CONTAINER_PR70).count()
             struct_count = await page.locator(FRAME_SLOTS_STRUCT).count()
-            text_start = await page.locator(FRAME_SLOT_BY_LABEL.format(label="Start")).count()
-            text_end = await page.locator(FRAME_SLOT_BY_LABEL.format(label="End")).count()
             print()
             print("=== Selector cascade match counts ===")
             print(f"  SWAP_CONTAINER_PR70 (historical, broken)     → {swap_pr70_count}")
             print(f"  FRAME_SLOTS_STRUCT  (post-#63 primary)        → {struct_count}")
-            print(f"  FRAME_SLOT_BY_LABEL (Start text, EN-only)     → {text_start}")
-            print(f"  FRAME_SLOT_BY_LABEL (End text, EN-only)       → {text_end}")
             print()
 
             # If Tier 1 found at least 2 dialog-divs inside the swap_horiz
@@ -161,8 +156,6 @@ async def capture(profile_name: str, out_dir: Path) -> int:
                 "locale": locale,
                 "swap_container_pr70_count": swap_pr70_count,
                 "frame_slots_struct_count": struct_count,
-                "frame_slot_by_label_start_count": text_start,
-                "frame_slot_by_label_end_count": text_end,
                 "verdict": verdict,
                 "frame_slots_struct_outer_html": struct_html,
                 "forensics_haspopup_dialog": forensics["haspopups"],

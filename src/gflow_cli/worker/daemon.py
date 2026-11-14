@@ -23,7 +23,13 @@ from gflow_cli.data.recorder import (
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataIntegrityError, DataStoreError, GFlowError
+from gflow_cli.errors import (
+    DataIntegrityError,
+    DataStoreError,
+    FlowApiError,
+    GFlowError,
+    outcome_members,
+)
 from gflow_cli.observability import exception_message_hash
 from gflow_cli.paths import image_output_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
@@ -441,7 +447,18 @@ class FlowWorker:
                             if result.status.failure_reasons
                             else result.status.error_message or "Unknown reason"
                         )
-                        raise GFlowError(f"Video generation failed: {reasons}")
+                        raise FlowApiError(
+                            f"Video generation failed: {reasons}",
+                            # #1201: Flow took the submit; same answer as CLI video_result.
+                            next_action="reconcile",
+                            operation_id=flow_media_id or None,
+                            # Not the class's "retry the API call": Flow may have billed it.
+                            remediation_hint=(
+                                "Flow took this job and then reported it failed, so it may "
+                                "have charged for it. Check the project on Flow before "
+                                "running it again."
+                            ),
+                        )
                 except Exception as exc:
                     logger.warning("Failed during video generation or recording", exc_info=exc)
                     raise
@@ -493,13 +510,10 @@ class FlowWorker:
 
             if isinstance(exc, GFlowError):
                 error_payload = dict(exc.to_problem_details())
-                from gflow_cli.errors import EXIT_CODE_MAP, is_retryable
+                from gflow_cli.errors import exit_code_for, is_retryable, legacy_exit_code_for
 
-                exit_code = next(
-                    (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)),
-                    1,
-                )
-                error_payload["exit_code"] = exit_code
+                error_payload["exit_code"] = exit_code_for(exc)
+                error_payload["exit_code_legacy"] = legacy_exit_code_for(exc)
                 # §6.5: same shared retry classification as CLI --json / MCP.
                 error_payload["retryable"] = is_retryable(exc)
                 if "status" not in error_payload:
@@ -517,6 +531,9 @@ class FlowWorker:
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
                     "exit_code": 1,
+                    "exit_code_legacy": 1,
+                    # #1201: same members as a typed failure; nothing is proven.
+                    **outcome_members("maybe", "none"),
                 }
 
             # #341: mirror the queue's failure record into the operations table

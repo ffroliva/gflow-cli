@@ -4,6 +4,81 @@
 
 ## Current release
 
+**v0.99.0 — alpha.** Output flags start moving to the convention of the major CLIs, and exit
+codes get a stable core you can opt in to now. Nothing breaks in this release.
+
+**`--out-file PATH` (#1158).** Nine commands that write a file (`data errors export`, `image t2i`,
+`image i2i`, `scene create`, `video t2v`, `i2v`, `r2v`, `chain`, `extend`) take `--out-file PATH`.
+`-o/--output PATH` still works and prints one deprecation line on stderr: in a later release
+`-o/--output` selects the output format (`-o json|table|id`, as in kubectl, az and aws). The MCP
+generate tools take `out_file`; `output` is deprecated. Under a cloud `GFLOW_CLI_STORAGE_URI`,
+`video t2v`/`i2v`/`r2v --out-file` (and MCP video `out_file`) is still refused before anything is
+billed, whichever spelling is used.
+
+**Stable exit codes, opt-in (#1202).** `GFLOW_CLI_EXIT_CODES=2` (environment or `.env`) moves
+rate limit, content policy, network, wire format and timeout to `40`–`44` and merges missing auth
+into `3`. The default stays the legacy codes; `--json` errors carry both `exit_code` and
+`exit_code_legacy`. The table is in [ERRORS.md](ERRORS.md).
+
+**Changed.** `video chain` has never written to `-o PATH`; it now says so on stderr instead of staying
+silent (#1293 tracks writing the file).
+Internally, `UiAutomationTransport` and `MigratedComposer` are split into single-purpose mixins
+(#1249 wave 2).
+
+Full ledger: [LIVE_VERIFICATION_v0.99.0](LIVE_VERIFICATION_v0.99.0.md).
+
+<details><summary>v0.98.0 — errors say whether you were charged, billed requests sent once</summary>
+
+Errors say whether Flow may have billed, billed requests are never resent, and
+gflow reports what it can do and which models exist.
+
+**Errors that say whether you were charged (#1201).** Every error envelope carries `charged`
+(`yes` / `no` / `maybe`) and `next_action` (for example `retry`, `reauth`, `reconcile`), so a
+script or an agent knows what happened and what to do next.
+
+**Sent once, never resent (#1260, #1274, #1275).** A billed `video extend` or `image upscale`
+request, and an image submit on the HTTP transports, are sent once. After a server error, a
+timeout or a connection reset, gflow exits 6 with `charged: maybe`, `next_action: reconcile` and a
+hint to check the project in Flow, instead of resending a single-use reCAPTCHA token.
+
+**What gflow can do, and which models exist.** `gflow capabilities` and the MCP resource
+`capabilities://self` (#1197) answer yes / no / partial per capability with no call to Flow;
+`gflow models list` / `show` (#1196) list the image and video models with their aliases,
+durations and reference caps.
+
+**Fixed.** A renamed image heals on flow.google.com too (#546); classic-editor selectors no longer
+depend on the UI language, and an ambiguous include button fails loudly instead of being clicked
+(#1273). Internally, `VideoGenerationMixin` is split into single-purpose parts with no behaviour
+change (#1249 wave 2).
+
+Full ledger: [LIVE_VERIFICATION_v0.98.0](LIVE_VERIFICATION_v0.98.0.md).
+
+</details>
+
+<details><summary>v0.97.0 — credit balances without a browser, Chrome closes promptly</summary>
+
+**v0.97.0 — alpha.** Credit balances without a browser, and Chrome closes promptly.
+
+**Credits without a browser (#1229).** `gflow credits user`, `credits list` and the MCP
+`gflow_get_credits` tool now ask flow.google.com for the balance directly with the profile's saved
+session: two HTTP requests, no Chrome. Measured on the release tree: 2.4–2.9 s per read (p50 2.7 s),
+against about 10.7 s through the browser. When the direct read cannot answer (signed out, a
+network error, an unexpected reply) the browser read runs as before; when Flow throttles the
+account nothing falls back. `GFLOW_CLI_WIRE_READS=0` turns it off; it is off by default on macOS
+and behind any proxy. The account-risk note is in KNOWN_ISSUES.
+
+**Wire health.** `gflow doctor` (`auth.wire_read`) and the MCP `gflow_auth_status` tool (`wire`)
+report whether the direct read works, with Flow's build label.
+
+**Fixed.** Closing Chrome no longer waits out the 30 s close timeout on Windows (#1140, #1233);
+no gflow process logs an httpx request URL; `video extend` reports the model it ran with (#1180).
+
+Full ledger: [LIVE_VERIFICATION_v0.97.0](LIVE_VERIFICATION_v0.97.0.md).
+
+</details>
+
+<details><summary>v0.96.1 — Omni 1.2 start+end, refused video submits not billed</summary>
+
 **v0.96.1 — alpha.** Omni 1.2 start+end frames, and refused video submits are no longer billed.
 
 **Fixed (#1178, by @Eighty20Digital).** `video i2v --model omni-1.2-flash --end-frame` is no longer
@@ -14,6 +89,8 @@ Flow bills nothing; before, the check only saw requests already sent. An Omni 1.
 start-only clip (reporter's measurement on a Google AI plan).
 
 Full ledger: [LIVE_VERIFICATION_v0.96.1](LIVE_VERIFICATION_v0.96.1.md).
+
+</details>
 
 <details><summary>v0.96.0 — Omni 1.2 Flash, Omni r2v lengths, agent-only reload</summary>
 
@@ -814,6 +891,9 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `--out-file PATH` with `-o/--output PATH` deprecated (#1158), opt-in stable exit-code core `GFLOW_CLI_EXIT_CODES=2` (#1202) | ✅ done (v0.99.0) |
+| Errors carry `charged` / `next_action` (#1201), billed requests and image submits sent once (#1260, #1274, #1275), `gflow capabilities` + `capabilities://self` (#1197), `gflow models list/show` (#1196), caption heal on flow.google.com (#546), language-independent classic selectors (#1273) | ✅ done (v0.98.0) |
+| Credits read without a browser, wire health in `doctor` and `gflow_auth_status`, Chrome close no longer waits 30 s, `video extend` reports its model, no httpx request URL logged (#1229, #1140, #1180) | ✅ done (v0.97.0) |
 | Omni 1.2 start+end, video submits refused before they are billed, 10s end-frame cap (#1178) | ✅ done (v0.96.1) |
 | Omni 1.2 Flash 3–15s (#1168), Omni r2v 4/6/10s (#1167), agent-only composer reload (#1142) | ✅ done (v0.96.0) |
 | Weekly usage reports after a one-time notice, EU/EEA consent, `gflow telemetry on\|off` (#1164) | ✅ done (v0.95.0) |

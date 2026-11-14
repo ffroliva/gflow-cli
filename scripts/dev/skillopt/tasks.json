@@ -54,7 +54,7 @@
     "expected": {
       "must_include": ["gflow video t2v"],
       "must_not_include": ["gflow video generate", "gflow video create", "gflow t2v", "gflow video i2v"],
-      "partial_credit": ["--aspect 9:16", "-o "]
+      "partial_credit": ["--aspect 9:16", "--out-file "]
     },
     "tags": ["video", "t2v"],
     "notes": "The subcommand is 'gflow video t2v', not 'gflow video generate'. Vertical (9:16) is the default aspect."
@@ -64,12 +64,12 @@
     "question": "Generate a landscape (16:9) video of 'a timelapse of clouds over mountains' and save it to ./output/clouds.mp4.",
     "context": null,
     "expected": {
-      "must_include": ["gflow video t2v", "--aspect 16:9", "-o "],
-      "must_not_include": ["--output ", "--format", "--save"],
+      "must_include": ["gflow video t2v", "--aspect 16:9", "--out-file "],
+      "must_not_include": ["-o ", "--output ", "--format", "--save"],
       "partial_credit": ["clouds.mp4"]
     },
     "tags": ["video", "t2v", "aspect"],
-    "notes": "Output path uses '-o', not '--output'. Aspect uses '--aspect 16:9'."
+    "notes": "Output path uses '--out-file' (-o/--output is deprecated, #1158). Aspect uses '--aspect 16:9'."
   },
   {
     "id": "video-003",
@@ -78,7 +78,7 @@
     "expected": {
       "must_include": ["gflow video i2v", "./hero.png"],
       "must_not_include": ["gflow video t2v", "--image", "--start-image", "--input"],
-      "partial_credit": ["-o ", "--aspect"]
+      "partial_credit": ["--out-file ", "--aspect"]
     },
     "tags": ["video", "i2v"],
     "notes": "Image-to-video uses 'gflow video i2v IMAGE PROMPT'. The image path is a positional argument, not a flag."

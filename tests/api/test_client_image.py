@@ -166,7 +166,7 @@ class TestGenerateImage:
         """
         cap = structlog.testing.LogCapture()
         with patch(
-            "gflow_cli.api.client.logger",
+            "gflow_cli.api._flow_generation.logger",
             structlog.wrap_logger(None, processors=[cap]),
         ):
             extra = dataclasses.replace(_FAKE_IMAGE, media_name="media-uuid-2")
@@ -189,7 +189,7 @@ class TestGenerateImage:
         """count=1 and transport returns 1 → no extra-returned warning (negative case)."""
         cap = structlog.testing.LogCapture()
         with patch(
-            "gflow_cli.api.client.logger",
+            "gflow_cli.api._flow_generation.logger",
             structlog.wrap_logger(None, processors=[cap]),
         ):
             transport = _FakeTransport()  # default single image
@@ -471,7 +471,7 @@ class TestDownloadImage:
         signed = "https://flow-content.google/image/abc-123?Expires=1778380305&Signature=XYZ"
         image = _make_image(fife_url=signed)
 
-        with patch("gflow_cli.api.client.routes") as mock_routes:
+        with patch("gflow_cli.api._flow_generation.routes") as mock_routes:
             await client.download_image(image, tmp_path / "out.png")
             # The redirect helper must NOT be involved.
             mock_routes.media_download_url.assert_not_called()
@@ -660,7 +660,7 @@ class TestDownloadImage:
             output_dir=tmp_path / "out",
         )
 
-        with patch("gflow_cli.api.client.storage_path", side_effect=fake_storage_path):
+        with patch("gflow_cli.api._flow_generation.storage_path", side_effect=fake_storage_path):
             result = await client.download_image(
                 _make_image(),
                 client.settings.output_dir / "images" / "2026-05-28" / "abc_1.png",

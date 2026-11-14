@@ -16,6 +16,7 @@ This directory ships installable agent skill docs for `gflow-cli`. Each `SKILL.m
 | changelog | [`changelog/SKILL.md`](changelog/SKILL.md) | 1.0 |
 | known-issues | [`known-issues/SKILL.md`](known-issues/SKILL.md) | 1.0 |
 | sonar | [`sonar/SKILL.md`](sonar/SKILL.md) | 1.0 |
+| optimize | [`optimize/SKILL.md`](optimize/SKILL.md) | 1.0 |
 | doc-review | [`doc-review/SKILL.md`](doc-review/SKILL.md) | 1.0 |
 | release | [`release/SKILL.md`](release/SKILL.md) | 1.0 |
 | video-production | [`video-production/SKILL.md`](video-production/SKILL.md) + [`clip_qa.py`](video-production/clip_qa.py) | 1.0 |

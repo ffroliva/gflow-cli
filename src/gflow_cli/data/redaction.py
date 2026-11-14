@@ -28,16 +28,20 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE), "<redacted:secret>"),
     # Google auth cookie pairs — both header ("SAPISID=x") and equals forms.
     # SAPISIDHASH before SAPISID before the bare SID family so the longest
-    # name wins; \b keeps bare SID from firing inside unrelated words.
+    # name wins; the lookbehind keeps bare SID from firing inside unrelated words
+    # or on the batchexecute `f.sid=` field, which has its own rule below.
     (
         re.compile(
-            r"\b(?:__Secure-(?:next-auth\.session-token|[13]PSID[A-Z]*)"
-            r"|SAPISIDHASH|SAPISID|APISID|SSID|HSID|OSID|LSID|SID)"
+            r"(?<![\w.])(?:__Secure-(?:next-auth\.session-token|[13]PSID[A-Z]*|[13]PAPISID)"
+            r"|SAPISIDHASH|SAPISID|APISID|SSID|HSID|OSID|LSID|SIDCC|SID|NID|AEC)"
             r"\s*=\s*\S+",
             re.IGNORECASE,
         ),
         "<redacted:secret>",
     ),
+    # batchexecute form/query fields (#1229): the page's `at` token and session id. No
+    # spaces around "=" and stops at "&", so prose and the next field survive.
+    (re.compile(r"(?<![\w.])(at|f\.sid)=[^&\s]+"), r"\1=<redacted:secret>"),
     # Account addresses (chooser/login identity in error details and logs).
     # Kept distinct from <redacted:secret>: an address is correlatable PII,
     # not a credential, and operators triage chooser failures by cohort.

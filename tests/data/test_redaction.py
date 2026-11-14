@@ -79,3 +79,32 @@ class TestEmailRedactionScope:
 
     def test_a_posix_path_is_not_an_address(self) -> None:
         assert redact_error_detail("read /var/x@y.io/cache") == "read /var/x@y.io/cache"
+
+
+def test_wire_read_secrets_are_redacted() -> None:
+    """#1229: the cookies and form fields the direct credits read carries (fake values)."""
+    detail = (
+        "cookie: __Secure-1PAPISID=fake1papisid; __Secure-3PAPISID=fake3papisid; "
+        "SIDCC=fakesidcc; __Secure-1PSIDCC=fake1psidcc; NID=fakenid; AEC=fakeaec "
+        "body f.req=%5B%5D&at=AFAKEAT%3A1700000000000&f.sid=-123456789&bl=boq_x"
+    )
+
+    out = redact_error_detail(detail)
+
+    for secret in (
+        "fake1papisid",
+        "fake3papisid",
+        "fakesidcc",
+        "fake1psidcc",
+        "fakenid",
+        "fakeaec",
+        "AFAKEAT",
+        "-123456789",
+    ):
+        assert secret not in out
+    assert "bl=boq_x" in out  # a build label is not a secret
+
+
+def test_ordinary_words_ending_in_at_are_not_redacted() -> None:
+    assert redact_error_detail("format=json data=ok") == "format=json data=ok"
+    assert redact_error_detail("chat=1 at=AFAKE") == "chat=1 at=<redacted:secret>"

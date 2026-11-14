@@ -33,7 +33,6 @@ from gflow_cli.data.recorder import (
     record_undownloaded_images_safe,
 )
 from gflow_cli.errors import (
-    EXIT_CODE_MAP,
     BatchIntegrityError,
     BatchPartialError,
     ConfigurationError,
@@ -42,6 +41,9 @@ from gflow_cli.errors import (
     GFlowError,
     MediaAttributionError,
     RpcResponseUnavailableError,
+    active_exit_code,
+    exit_code_for,
+    legacy_exit_code_for,
 )
 from gflow_cli.storage import cloud_info_from_path
 
@@ -251,10 +253,7 @@ class BatchOutcome:
 
 
 def resolve_exit_code(exc: GFlowError) -> int:
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
+    return exit_code_for(exc)
 
 
 def safe_terminal_text(value: str) -> str:
@@ -603,7 +602,7 @@ async def run_one_image_prompt(
             prompt=item,
             status="fail",
             error=f"{type(exc).__name__}: {exc}",
-            exit_code=resolve_exit_code(exc),
+            exit_code=legacy_exit_code_for(exc),
         )
 
     saved: list[Path] = []
@@ -646,7 +645,7 @@ async def run_one_image_prompt(
             saved_paths=saved,
             images=list(images),
             error=f"download failed: {type(exc).__name__}: {exc}",
-            exit_code=resolve_exit_code(exc) if isinstance(exc, GFlowError) else 1,
+            exit_code=legacy_exit_code_for(exc) if isinstance(exc, GFlowError) else 1,
         )
     if recorder is not None and profile_name is not None and profile_dir is not None and project_id:
         try:
@@ -672,7 +671,7 @@ async def run_one_image_prompt(
                 saved_paths=saved,
                 images=list(images),
                 error=f"{type(exc).__name__}: {exc}",
-                exit_code=resolve_exit_code(exc),
+                exit_code=legacy_exit_code_for(exc),
             )
     return BatchOutcome(index=idx, prompt=item, status="ok", saved_paths=saved, images=list(images))
 
@@ -806,7 +805,7 @@ async def run_image_batch(
                         prompt=item,
                         status="fail",
                         error=f"reference upload failed: {type(exc).__name__}: {exc}",
-                        exit_code=resolve_exit_code(exc) if isinstance(exc, GFlowError) else 1,
+                        exit_code=legacy_exit_code_for(exc) if isinstance(exc, GFlowError) else 1,
                     )
                     results[item.index] = outcome
                     return outcome
@@ -1365,7 +1364,7 @@ async def _download_results(
                 prompt=item,
                 status="fail",
                 error=f"{type(exc).__name__}: {exc}",
-                exit_code=resolve_exit_code(exc),
+                exit_code=legacy_exit_code_for(exc),
             )
         outcomes.append(outcome)
 
@@ -1563,4 +1562,5 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
         f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped"
         + (f" · {resumed} resumed" if resumed else ""),
     )
-    return max((outcome.exit_code for outcome in outcomes), default=0)
+    # Rows hold legacy codes so the priority between failures never depends on the mode.
+    return active_exit_code(max((outcome.exit_code for outcome in outcomes), default=0))

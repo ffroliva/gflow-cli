@@ -104,7 +104,26 @@ def test_consent_region_from_iana_timezone(
     zone: str, expected: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("TZ", zone)
+    # This tests the name -> region mapping, not the machine's zone database: Ubuntu
+    # 24.04's tzdata 2026e moved backward links (Atlantic/Faeroe, Portugal, Eire, ...)
+    # into tzdata-legacy, which CI runners do not install.
+    monkeypatch.setattr(telemetry, "ZoneInfo", lambda name: object())
     assert telemetry.consent_region() is expected
+
+
+def test_tz_name_the_zone_database_cannot_load_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A TZ alias missing from the installed tzdata asks for consent rather than guessing."""
+
+    def no_such_zone(name: str) -> object:
+        raise telemetry.ZoneInfoNotFoundError(name)
+
+    monkeypatch.setenv("TZ", "Atlantic/Faeroe")
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(telemetry, "ZoneInfo", no_such_zone)
+    monkeypatch.setattr(telemetry, "_posix_timezone_name", lambda: None)
+    assert telemetry.consent_region() is True
 
 
 @pytest.mark.parametrize(

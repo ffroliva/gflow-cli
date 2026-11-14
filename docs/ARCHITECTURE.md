@@ -44,6 +44,15 @@ The hexagonal target above is the steady state. The **current** package — and 
 - Cross-module communication goes through public interfaces, never private internals.
 - Modules don't share global mutable state. Configuration is read-only at the boundary (`Settings`).
 - When a module file grows past 400 lines, prefer extraction to a sub-package over inline growth.
+- **Enforced (#1249):** `scripts/ci/check_size.py` fails a file over 2,000 lines, a class over 1,000 lines, and any ruff `C901` (complexity over 10), `PLR0915` (over 50 statements) or `PLR0904` (over 20 public methods) hit, with the thresholds set once in `pyproject.toml`. The line limits are loose on purpose (a tight one forces wrappers and extra hops) and are tightened one step at a time. Existing offenders sit in `scripts/ci/size_baseline.json`, a ratchet that can only shrink (`--update-baseline` lowers, drops or moves entries, never adds or raises them; `# noqa` exempts nothing). A function moved to another file keeps its entry when its value did not grow. CI also runs `--base-ref`, which fails a hand edit that adds or raises an entry. It runs in `/gflow:check`, as a pre-commit hook, and as a CI step.
+
+**`FlowApiClient` composition (#1249 wave 1).** `api/client.py` keeps the session lifecycle (launch, page pool, transport setup, close) and composes the rest from single-responsibility classes, one module each: `_flow_session.FlowSession` (page checkout, recorder hooks, incidents, access token, the JSON verbs), `_flow_bootstrap.AccountBootstrap` (account chooser, locale), `_flow_workspace.WorkspaceSurface` (projects, agent info, uploads, workflows, scenes), `_flow_generation.GenerationSurface` (image and video generation, the reCAPTCHA mint, polling, downloads, credits), `_flow_media_edit.MediaEditSurface` (upscale, extend) and `_flow_characters.CharacterSurface` (character entities and images). Four of them form one chain on `FlowSession`, each inheriting everything before it: `WorkspaceSurface` → `GenerationSurface` → `MediaEditSurface` → `CharacterSurface`. Generation needs the workspace (`generate_*` create a project), character images need generation (they download), and media edits sit between those two. So none of the four can be reused alone without the ones before it. `AccountBootstrap` is a second branch on `FlowSession`, and `FlowApiClient(CharacterSurface, AccountBootstrap)` joins the two. Every method kept its body and its name on `FlowApiClient`, so callers and tests that patch `client._post_json` or `client._mint_recaptcha_token` are unchanged. `client.py` re-exports every name other code imports from it; a test that patches a module global (`patch("gflow_cli.api.client.storage_path")`) has to follow the code to its new module, and each such edit is listed in the PR. A re-exported constant or helper (`MAX_IMAGE_BYTES`, `MAX_CONCAT_B64_LEN`, `_is_target_closed`) still imports from `client`, but patching it there no longer reaches the code that moved; patch the module that defines it. A narrow provider port is later work: it needs a second implementation to justify it.
+
+**`VideoGenerationMixin` composition (#1249 wave 2).** `VideoGenerationMixin` keeps the orchestration (`generate_video`, `_submit_and_poll`, `_generate_video_locked`) in `api/transports/ui_automation_video.py`. Its other methods are a linear chain of mixins, one module each, every link inheriting the one before: `_video_network.FlowNetworkMixin` (entity interception, status polling, clip download) → `_video_editor_mode.EditorModeMixin` (selector cascade, agent mode, Flow-crash detection) → `_video_settings.VideoSettingsMixin` (model, duration, sub-mode, count, aspect) → `_video_picker_project.PickerProjectMixin` (the asset picker's project sync and grid scrolling) → `_video_references.ReferenceAttachMixin` (uploads, existing assets, image UUIDs, characters, audio) → `_video_frames.FrameAttachMixin` (start and end frames) → `VideoGenerationMixin`. The order puts every callee before its callers, so pyright sees each call. The shared selectors and helpers moved verbatim to `_video_common`, and `ui_automation_video` re-exports every name other code reads from it. Moved bodies still call siblings as `VideoGenerationMixin._x(...)`, because tests patch them on that class; `ui_automation_video` binds that name into each part's module once the class exists, and `tests/api/transports/test_video_mixin_contract.py` fails if a method reads a name its module cannot resolve. A test that patches a module global follows the method that reads it: `_PROBE_TIMEOUT_MS` is patched on `_video_editor_mode`, `write_asset_async` on `_video_network`.
+
+**`UiAutomationTransport` composition (#1249 wave 2).** `UiAutomationTransport(VideoGenerationMixin, ImageGenerationMixin)` in `api/transports/ui_automation.py` keeps only `setup` (the persistent-context launch and stealth init script, which tests patch through `ui_automation.async_playwright`) and the re-exports. The rest is a second linear chain, callee first: `_ui_session.UiSessionMixin` (init, login check, onboarding, park, refresh, teardown) → `_ui_navigation.PageNavigationMixin` (overlays, redirect settle, entering the editor) → `_ui_prompt.PromptInputMixin` (image mode, prompt box, character prompts) → `_ui_settings.GenerationSettingsMixin` (model, aspect, count) → `_ui_capture.BatchCaptureMixin` (response listeners, captured batches, downloads) → `_ui_character.CharacterGenerationMixin` → `_ui_image.ImageGenerationMixin`. `VideoGenerationMixin` stays first after the transport in the MRO, so `setattr(VideoGenerationMixin, ...)` patches still reach it; it calls up into `_enter_editor` and the park methods through `self`. Shared selectors and helpers moved verbatim to `_ui_common`. `tests/api/transports/test_ui_transport_contract.py` pins every method's source and signature, the names other code reads from `ui_automation`, and which module each patched global is read from. `tests/api/transports/test_navigation_settled.py` scans every part that holds a `goto`.
+
+**`MigratedComposer` composition (#1249 wave 2).** `MigratedComposer` (the flow.google.com composer driver, no instance state) is a linear chain of stage mixins, callee first: `_mc_media.MediaMixin` (clip bytes, downloads) → `_mc_editor_gate.EditorGateMixin` (entering the editor, agent-mode chip, click diagnosis, cookie bar) → `_mc_settings_pane.SettingsPaneMixin` → `_mc_upload_frame.UploadFrameMixin` (uploads, frame pickers) → `_mc_mention.MentionMixin` (`@` mentions, existing references) → `_mc_submit_observe.SubmitObserveMixin` (submit and observe) → `MigratedComposer`. Selectors, constants, error translators and the project RPC helpers moved verbatim to `_mc_common`. `run_video`, `run_images`, `create_project`, `rename_project` and the other functions that construct `MigratedComposer()` stay in `api/transports/migrated_composer.py`, which re-exports every name other code reads from it (the selector registry reads several). `migrated_composer.py` binds `MigratedComposer` into `_mc_media` once the class exists. `tests/api/transports/test_migrated_composer_contract.py` pins every method's and public function's source and signature, all 206 importable names, and the module each patched global is read from. A test that patches a constant (`FRAME_*`, `SUBMIT_REPLY_BUDGET_S`, `AGENT_ONLY_RELOAD_WAIT_S`) patches the part that reads it.
 
 **Phase 4 module additions (in v0.4.0a1):**
 
@@ -52,7 +61,7 @@ The hexagonal target above is the steady state. The **current** package — and 
 
 **Data layer module (shipped in v0.9.0):**
 
-- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Records all new image/video operations, asset provenance, and final asset locations (local paths or cloud URIs). Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
+- `gflow_cli/data/` — local SQLite persistence layer (`DataStore` + `DataRepository` + `OperationRecorder` + redaction + read-only `queries` for `gflow data list`). Since #1249 wave 2, `DataRepository` is five table-group classes over one store (`_repo_projects`, `_repo_assets`, `_repo_operations`, `_repo_scenes`, `_repo_local_files`, sharing `_repo_base.RepositoryBase`). `OperationRecorder` is `_recorder_core.RecorderCore` plus image, video and character recording parts (`_recording_*`). Both keep their public API and import path; `open` stays a classmethod on `OperationRecorder`. Records all new image/video operations, asset provenance, and final asset locations (local paths or cloud URIs). Default DB path is resolved from `$GFLOW_CLI_DB_PATH` (default: `~/.local/share/gflow-cli/data.db` on POSIX, the equivalent platformdirs user-data dir on Windows). Migrations versioned via SHA-256 checksums; safe forward-only semantics with newer-schema detection. T2V now flows through `FlowApiClient.generate_video`, sharing the client boundary with image commands.
 
 **External storage module (shipped after v0.9.1):**
 
@@ -382,18 +391,16 @@ The dependency direction is inviolate. Everything else is preference, not religi
 └────────┬────────┘
          │
 ┌────────▼────────┐
-│  Provider       │ ← protocol (planned abstraction — see ROADMAP; not yet a `providers/` package)
+│  Provider       │ ← protocol (planned abstraction; not yet a `providers/` package)
 │  abstraction    │
 └────────┬────────┘
          │
-   ┌─────┴─────┬───────────────┐
-   │           │               │
-┌──▼──┐    ┌────────┐       ┌───────┐
-│Flow │    │Official│       │ Mock  │
-│(now)│    │ Veo    │       │(tests)│
-│     │    │(planned│       │       │
-│     │    │ later) │       │       │
-└──┬──┘    └────────┘       └───────┘
+   ┌─────┴─────┐
+   │           │
+┌──▼──┐    ┌───────┐
+│Flow │    │ Mock  │
+│(now)│    │(tests)│
+└──┬──┘    └───────┘
    │
    │   POST /v1/flow/uploadImage
    │   POST /v1/video:batchAsyncGenerateVideoText
@@ -403,7 +410,7 @@ The dependency direction is inviolate. Everything else is preference, not religi
 aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. A future release may add `OfficialVeoProvider` (via [`googleapis/python-genai`](https://github.com/googleapis/python-genai) against `generativelanguage.googleapis.com`) — same code path, swap with `GFLOW_CLI_PROVIDER=official`.
+The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvider`. Google's separately billed Gemini / Vertex AI generation APIs are out of scope ([ROADMAP](../ROADMAP.md#out-of-scope)).
 
 ## Auth strategy
 
@@ -413,9 +420,33 @@ The `Provider` interface keeps backends interchangeable. v0.1 shipped `FlowProvi
 - macOS: `~/Library/Application Support/gflow-cli/profile_default/`
 - Linux: `~/.local/share/gflow-cli/profile_default/`
 
-Subsequent commands launch a Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction users see, and it is a one-time event.
+Subsequent commands launch a Playwright context using that profile and call REST endpoints via Playwright's HTTP client — which auto-attaches the cookies. No tokens to refresh manually, no SSO scraping. Auth is the only browser interaction users see, and it is a one-time event. One read skips the browser when it can: the credit balance (see [Reads without a browser](#reads-without-a-browser)).
 
 See [docs/AUTHENTICATION.md](AUTHENTICATION.md) for the full lifecycle, multi-account workflows, and recovery paths.
+
+## Reads without a browser
+
+Since [#1229](https://github.com/ffroliva/gflow-cli/issues/1229), one read, the credit balance, is first made without starting Chrome. Everything else still goes through the browser: generation submits, uploads, reCAPTCHA, and every other read.
+
+**Where it sits.** `services/credits.py::_fetch_once` calls `api/flow_wire.py::read_credits` **before** it builds a `FlowApiClient`, because building one launches Chrome. Putting the choice lower, inside the client, would launch the browser anyway. The kill switch (`GFLOW_CLI_WIRE_READS`) is checked at the same spot.
+
+**What it sends.** The profile's saved cookies, read from its own cookie file (`auth/cookies.py::read_cookies_for`: the profile's own cookie file, and on Windows its own key file, named explicitly so the user's personal Chrome jar is never read; only cookies a browser would send to `https://flow.google.com/`, kept in memory, never written back). With them: one GET of the app shell, for the page's `at` token, session id and build label, then one batchexecute POST of `nzlxg`, whose reply `CreditsInfo.from_nzlxg` already decodes for the browser path. The rules in code:
+
+- an rpcid allow-list that holds only `nzlxg`
+- no redirect is followed and no 4xx is retried (one retry only for a connect error, when nothing reached Flow)
+- two time limits in sequence: 5 s for the cookie read, then 5 s for both requests (3 s to connect), so a read that hangs gives way to the browser after about 10 s at most
+- a reject-all cookie jar, so every cookie Flow sets in a reply is dropped
+- the User-Agent of the profile's own Chrome version
+
+**Fallback.** Any failure raises `WireReadUnavailable` carrying one `WireFallbackReason` value and nothing else (no body, no exception text: replies on this wire can carry signed URLs). The service logs `credits.wire_fallback reason=<value>` and reads in the browser as before. The reasons are `signed_out_shell`, `http_401`, `http_400`, `http_error`, `unparseable`, `store_unreadable` (Chrome runs on the profile and holds the cookie file, the profile has no saved session, or the cookie read did not finish within 5 s), `no_chrome_version`, `proxy_configured`, `network`, `redirect`, `disabled`, and `unexpected` (a bug in the direct read, logged with its class name). Which path answered is logged as `credits.read source=wire|page`; the JSON result has no such field.
+
+**Not a fallback.** A profile outside `GFLOW_CLI_HOME` raises `SecurityError` before anything is read. HTTP 429 and 503 are back-pressure: they raise the browser path's own `RateLimitError` / `NetworkError` and open a throttle window for that profile (`Retry-After`, capped at 60 s; 60 s when Flow names none), because a browser read would send the same requests to a throttled account. The other knobs: [CONFIGURATION § `GFLOW_CLI_WIRE_READS`](CONFIGURATION.md#gflow_cli_wire_reads).
+
+**Per-profile state, per process.** The shell's tokens are cached, so a second read in the same process sends only the POST; any non-200 or unparseable reply drops them. A profile Flow answered signed out (no `at` in the shell, or a 401) is not tried again in that process until a `--refresh` renewal that Flow authenticated (`flow_wire.session_recovered`) or a `gflow_auth_status` probe in that process that Flow accepts lifts the mark (`gflow doctor` is its own process, so it cannot); a browser read that succeeds does not, because the cookies the direct read sends are unchanged. One lock per profile keeps concurrent reads to one shell GET. One profile's state never affects another's.
+
+**Where it is off.** On macOS by default, where reading Chrome's cookies can raise a Keychain prompt; while any proxy is configured (`GFLOW_CLI_BROWSER_PROXY`, or an environment/system proxy found by `urllib.request.getproxies()`), so the cookies never leave from a different address than the browser's; and wherever `GFLOW_CLI_WIRE_READS=0`. The account risk of using the saved session outside Chrome is written up in [KNOWN_ISSUES](../KNOWN_ISSUES.md#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome).
+
+**No port yet.** `flow_wire` is plain functions with one caller. A `FlowReader` port (a `Protocol`, per [Ports & adapters](#ports--adapters)) is introduced together with its second consumer, the job-status reads of [#1194](https://github.com/ffroliva/gflow-cli/issues/1194), not before.
 
 ## Headed-browser dependency — current limitation
 
@@ -438,6 +469,19 @@ We attempted three pure-HTTP transport strategies before settling on `ui_automat
 All three now live as standalone modules under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch.py` / `bearer.py` / `sapisidhash.py`), preserved for reference and future iteration. None survives Google's anti-bot stack for mutation/generation endpoints, so the production path is `ui_automation`.
 
 **The migrated `flow.google.com` host (#639, v0.67.0).** Google is moving accounts off `labs.google` onto `flow.google.com`, a rewritten frontend with a different widget toolkit and a `batchexecute` wire instead of `aisandbox-pa` REST. `src/gflow_cli/api/transports/migrated_composer.py` drives that editor for text-to-video, local-file image-to-video/reference-to-video, text-to-image, and local-file image-to-image — still through the same real-Chrome Playwright session — by operating the composer UI and then *observing* the app's own replies. Video uses `YhhmEf`/`eb1hJf`/`MZZa6b` submit plus `jwpduf`/`as29s` status/result; image uses synchronous `ogiZ0b` replies carrying signed JPEG URLs. **Both mechanisms are measured, and neither is a push channel**: `ogiZ0b` is one response held open ~19.7 s, while `jwpduf` is a fixed 5.00 s timer owned by *Flow's page* — gflow observes it and adds no traffic, so the interval is a floor we read rather than a latency knob we hold, and "subscribe instead of polling" is refuted on both paths (`docs/superpowers/spikes/2026-09-14-generation-wire-no-push-channel.md`, `docs/superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md`). Local files go through the editor's own `maseQ` upload and the resulting media ids are asserted in the outgoing submit body before the run is trusted (`WireFormatError` otherwise). The migrated page owns image reCAPTCHA minting; the client skips the labs token path so moved accounts no longer fail with `RecaptchaError` on the root grid. `GFLOW_CLI_FLOW_HOST` routes between the two (`auto` keeps migrated images on moved accounts and uses labs for them on unmoved accounts; `--project` is required on the migrated path); unsupported UUID/entity/instruction/Imagen-4 image forms still fail before submit. Recon: `docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md`.
+
+**Observing without a page (measured 2026-11-09, #1192).** Submitting stays on the page
+(reCAPTCHA Enterprise). Reading need not, but not over the old `aisandbox-pa` Bearer route:
+on the host Flow served, `labs.google/fx/api/auth/session` answers 410 and the
+`flow.google.com` app sends no Bearer anywhere, so there is no token to replay. The read side
+of `flow.google.com` itself works from plain `httpx` with the profile's Google cookies plus
+the `at` token scraped from the app shell: `as29s` (status + signed URL, keyed by workflow
+id), `Zzl0ze` (listing), `nzlxg` (balance); the signed `flow-content.google` URL answered a
+ranged read with no cookie or header (a full download was not measured). That URL is itself
+a credential until it expires, so it is never logged. The intended split for the lifecycle commands (#1191) is therefore
+**browser to submit, `batchexecute` over HTTP to observe**, falling back to the page when the
+shell carries no `at`. Caveats and controls:
+`docs/superpowers/spikes/2026-11-09-page-free-reads.md`.
 
 **Standalone-only transports.** `bearer` and `sapisidhash` discard any caller-supplied Playwright page and launch their own browser under a fresh `ProfileLease`, so they are **standalone-only** — they cannot run inside a `FlowApiClient` that already holds the profile lease (the second acquire would self-lock with `ProfileLockedError`). Selecting either via `GFLOW_CLI_TRANSPORT` (or the Python API) while the client owns the profile now fails fast with a clear `ConfigurationError` naming the transport, rather than the opaque lock error. `evaluate_fetch` is exempt: it reuses the client's shared page and takes no second lease. The standalone-only set lives in `STANDALONE_ONLY_TRANSPORTS` (`api/transports/__init__.py`); to drive `bearer`/`sapisidhash`, run them outside an owning client.
 
