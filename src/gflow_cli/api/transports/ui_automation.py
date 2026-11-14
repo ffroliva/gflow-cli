@@ -498,57 +498,6 @@ class UiAutomationTransport(VideoGenerationMixin, ImageGenerationMixin):
                 self._lease = None
             raise
 
-    # ------------------------------------------------------------------
-    # Internal helpers — auth detection (unit 3.3)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Internal helpers — gallery → editor navigation (unit 3.4)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Internal helpers — prompt submission (unit 3.5)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Internal helpers — generation settings (aspect ratio + count)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Internal helpers — generation settings (aspect ratio + count)
-    # Moved to _ui_settings.GenerationSettingsMixin (#1249 wave 2)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Internal helpers — batchGenerateImages capture (unit 3.6)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Internal helpers — batchGenerateImages capture and image download
-    # Moved to _ui_capture.BatchCaptureMixin (#1249 wave 2)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Protocol — generate_images (unit 3.9)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Protocol — generate_images (single and batch)
-    # Moved to _ui_image.ImageGenerationMixin (#1249 wave 2)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Character editor — navigation + passive-capture entry (T4)
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Character editor — navigation + passive-capture entry (T4)
-    # Moved to _ui_character.CharacterGenerationMixin (#1249 wave 2)
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # Protocol — refresh_auth (unit 3.10) + teardown (unit 3.11)
-    # ------------------------------------------------------------------
-
 
 # Bind class into mixin modules for tests that patch UiAutomationTransport._x
 _ui_session.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
