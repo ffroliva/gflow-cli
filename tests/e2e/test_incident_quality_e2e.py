@@ -186,9 +186,13 @@ async def test_a_failed_generation_bundle_is_not_hollow(e2e_profile_dir: Path) -
     assert projects, "the catalog holds no project for this profile; run any image e2e first"
 
     # The real CLI entry point, with one selector renamed so the composer's wait misses.
+    # Renamed in every transports module holding it: #1249 split its readers across the
+    # composer's parts, and renaming it on `migrated_composer` alone let generation succeed.
     driver = (
-        "import sys; from gflow_cli.api.transports import migrated_composer as m; "
-        "m.READY_ANCHOR = '.gflow-e2e-no-such-trigger'; "
+        "import sys; import gflow_cli.api.transports.migrated_composer; "
+        "[setattr(mod, 'READY_ANCHOR', '.gflow-e2e-no-such-trigger') "
+        "for name, mod in list(sys.modules.items()) "
+        "if name.startswith('gflow_cli.api.transports') and hasattr(mod, 'READY_ANCHOR')]; "
         "from gflow_cli.cli import main; sys.argv[0] = 'gflow'; main()"
     )
     result = subprocess.run(  # noqa: S603
