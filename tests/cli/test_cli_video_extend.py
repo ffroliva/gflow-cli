@@ -14,6 +14,7 @@ command and an expensive one:
 
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -638,8 +639,9 @@ def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> Non
 
 
 class _MigratedClient:
-    def __init__(self, *, done: bool) -> None:
+    def __init__(self, *, done: bool, media: str = "new-media") -> None:
         self.done = done
+        self.media = media  # MEDIA = Flow grew the source in place (#1184)
         self.calls: list[dict[str, Any]] = []
 
     async def __aenter__(self) -> _MigratedClient:
@@ -655,12 +657,12 @@ class _MigratedClient:
 
         self.calls.append(kwargs)
         kwargs["on_started"](
-            ExtendStarted(media_id="new-media", workflow_id="new-wf", model_key="k"), "16:9"
+            ExtendStarted(media_id=self.media, workflow_id="new-wf", model_key="k"), "16:9"
         )
         record = GenerationRecord(
             workflow_id="new-wf",
             project_id=PROJECT,
-            media_id="new-media",
+            media_id=self.media,
             status=3 if self.done else 4,
             video_url=None,
             poster_url=None,
@@ -718,6 +720,44 @@ async def test_the_migrated_session_reports_one_video_result(
     assert payload["scene_id"] == SCENE
     assert rows == [("new-media", "16:9")]  # recorded at submit, with the page's aspect
     assert fake.calls[0]["aspect"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("done", [True, False])
+async def test_an_in_place_session_notes_the_clip_only_after_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, done: bool
+) -> None:
+    """#1184: the submit hook is told the source id (so it can skip the in-place clip),
+    and the extend note lands only once Flow reports the clip done."""
+    from gflow_cli.cli_video import _extend_migrated_session
+
+    fake = _MigratedClient(done=done, media=MEDIA)
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+    sources: list[str | None] = []
+    notes: list[dict[str, Any]] = []
+
+    class _Recorder:
+        def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
+            sources.append(source_media_id)
+
+        def record_extended_in_place(self, **kw: Any) -> None:
+            notes.append(kw)
+
+    with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="go",
+            aspect=None,
+            output_file=tmp_path / "out.mp4",
+            project_id=PROJECT,
+            as_json=True,
+            recorder=_Recorder(),  # type: ignore[arg-type]
+        )
+    assert sources == [MEDIA]
+    expected = {"profile_name": "p", "media_id": MEDIA, "workflow_id": "new-wf", "model_key": "k"}
+    assert notes == ([expected] if done else [])
 
 
 @pytest.mark.parametrize(

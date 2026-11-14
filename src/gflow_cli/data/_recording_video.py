@@ -149,6 +149,7 @@ class VideoRecordingMixin(RecorderCore):
         project_id: str,
         aspect: str,
         started: ExtendStarted,
+        source_media_id: str | None = None,
     ) -> None:
         """Persist an extend segment at SUBMIT time.
 
@@ -162,7 +163,12 @@ class VideoRecordingMixin(RecorderCore):
         written only after download would leave an interrupted run's paid media
         invisible to ``gflow data`` — and ``data sync`` cannot recover it, since
         sync reconciles rows that already exist rather than creating them.
+
+        An extend that grows ``source_media_id`` in place (#1184) writes nothing here: the
+        clip already exists, and :meth:`record_extended_in_place` notes it after success.
         """
+        if started.media_id == source_media_id:
+            return
         repo = self.repository
         repo.upsert_profile(profile_name, profile_dir)
         repo.upsert_project(
@@ -174,15 +180,6 @@ class VideoRecordingMixin(RecorderCore):
                 source="generated",
             ),
         )
-        if repo.get_asset_by_flow_media_id(profile_name, started.media_id) is not None:
-            # #1184: the Omni extend grows the source clip in place, under its own id.
-            repo.note_asset_extended(
-                profile_name,
-                started.media_id,
-                model_key=started.model_key,
-                unit_cost=started.unit_cost,
-            )
-            return
         repo.upsert_asset(
             AssetRecord(
                 id=_new_id(),
@@ -205,6 +202,15 @@ class VideoRecordingMixin(RecorderCore):
                 # redact_metadata(...) or {}.
                 metadata_json={"unit_cost": started.unit_cost},
             ),
+        )
+
+    def record_extended_in_place(
+        self, *, profile_name: str, media_id: str, workflow_id: str, model_key: str | None
+    ) -> None:
+        """Note a finished extend that grew ``media_id`` in place (#1184). A clip the
+        catalog does not hold (made in Flow's UI, or elsewhere) is left unrecorded."""
+        self.repository.note_asset_extended(
+            profile_name, media_id, model_key=model_key, workflow_id=workflow_id
         )
 
     def record_started_video(

@@ -2015,11 +2015,22 @@ async def _extend_migrated_session(  # noqa: PLR0913
                 profile_name=profile_name,
                 profile_dir=profile_dir,
                 project_id=project_id,
+                source_media_id=media_id,
                 aspect=aspect,
                 as_json=as_json,
                 recorder=recorder,
             ),
         )
+    if recorder is not None and target is not None and outcome.record.media_id == media_id:
+        try:  # #1184: grown in place — noted only now that Flow reports it done
+            recorder.record_extended_in_place(
+                profile_name=profile_name,
+                media_id=media_id,
+                workflow_id=outcome.record.workflow_id,
+                model_key=outcome.model_key,
+            )
+        except DataStoreError as exc:
+            logger.warning("extend_record_failed", error_class=type(exc).__name__)
     _report_migrated_extend(
         outcome,
         target,
@@ -2036,6 +2047,7 @@ def _migrated_extend_on_started(  # noqa: PLR0913
     profile_name: str,
     profile_dir: Path,
     project_id: str,
+    source_media_id: str,
     aspect: str | None,
     as_json: bool,
     recorder: OperationRecorder | None,
@@ -2053,6 +2065,7 @@ def _migrated_extend_on_started(  # noqa: PLR0913
                     project_id=project_id,
                     aspect=page_aspect or aspect or "unknown",
                     started=started,
+                    source_media_id=source_media_id,
                 )
             except DataStoreError as exc:
                 logger.warning("extend_record_failed", error_class=type(exc).__name__)
