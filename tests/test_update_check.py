@@ -812,6 +812,14 @@ class TestRunUpdate:
         captured = capsys.readouterr()
         assert "partially downloaded bytes" in captured.err
 
+    def test_interrupt_drain_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A grandchild still holding the pipe must not block the Ctrl+C forever."""
+        monkeypatch.setattr(subprocess, "Popen", _FakeProc)
+        _FakeProc.interrupt_with = subprocess.TimeoutExpired("fake", 5)
+        with pytest.raises(KeyboardInterrupt):
+            uc._run_command(("fake",), capture_output=True)
+        assert _FakeProc.timeouts[-1] is not None, f"drain timeouts: {_FakeProc.timeouts}"
+
     def test_capture_never_waits_on_a_hidden_prompt(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With both pipes captured, a pip `User for host:` prompt would be invisible."""
         monkeypatch.setattr(subprocess, "Popen", _FakeProc)
