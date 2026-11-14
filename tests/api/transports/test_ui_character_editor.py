@@ -1124,9 +1124,9 @@ class TestSubmitBodyPrompt:
     async def test_raises_when_body_box_never_mounts(self, monkeypatch: Any) -> None:
         """If no NEW box mounts after slot-add, the body step must ABORT before
         typing — typing would land in the portrait box (the live corruption)."""
-        from gflow_cli.api.transports import ui_automation as _uia
+        from gflow_cli.api.transports import _ui_prompt as _uip
 
-        monkeypatch.setattr(_uia, "_BODY_SLOT_MOUNT_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(_uip, "_BODY_SLOT_MOUNT_TIMEOUT_S", 0.05)
         page, _boxes, inserted, submit_clicks = _make_body_prompt_page(box_count=1)
         t = _make_transport(page=page)
 
@@ -1260,11 +1260,11 @@ class TestSubmitBodyPrompt:
     async def test_logs_self_contained_template(self, monkeypatch: Any) -> None:
         """``ui_automation.body_prompt_templated`` is logged with
         ``template='self_contained'`` and a length — NO body text."""
-        from gflow_cli.api.transports import ui_automation as _uia
+        from gflow_cli.api.transports import _ui_prompt as _uip
 
         events: list[tuple[str, dict[str, Any]]] = []
         monkeypatch.setattr(
-            _uia.log,
+            _uip.log,
             "info",
             lambda event, **kw: events.append((event, kw)),
         )
@@ -1405,7 +1405,7 @@ class TestFormatCharacterPrompt:
         never-lands cases at 30s each is a minute added to every run. The VALUE is
         not what these tests are about; the observe-or-report-failure behaviour is.
         """
-        from gflow_cli.api.transports import ui_automation as mod
+        from gflow_cli.api.transports import _ui_prompt as mod
 
         monkeypatch.setattr(mod, "_FORMAT_REWRITE_TIMEOUT_S", 0.3)
         monkeypatch.setattr(mod, "_FORMAT_REWRITE_POLL_MS", 1)
@@ -1604,7 +1604,7 @@ class TestFormatCharacterPrompt:
         Lengths and the stable hash only — never the text, and never a truncated
         head, which is exactly where the physical description lands.
         """
-        from gflow_cli.api.transports import ui_automation as mod
+        from gflow_cli.api.transports import _ui_prompt as mod
 
         recorded: list[tuple[str, dict[str, Any]]] = []
 

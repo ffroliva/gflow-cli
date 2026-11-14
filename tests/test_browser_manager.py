@@ -15,6 +15,7 @@ Run with:
 
 from __future__ import annotations
 
+import ast
 import os
 import tempfile
 from collections.abc import Iterator
@@ -446,7 +447,11 @@ class TestLaunchSitesGuarded:
         offenders = []
         for py in src.rglob("*.py"):
             text = py.read_text(encoding="utf-8")
-            if "launch_persistent_context" not in text:
+            # A real call site, not a comment naming it (#1249 moved one such comment).
+            if not any(
+                isinstance(node, ast.Attribute) and node.attr == "launch_persistent_context"
+                for node in ast.walk(ast.parse(text))
+            ):
                 continue
             rel = py.relative_to(src).as_posix()
             if rel in allowlist:
