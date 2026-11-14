@@ -268,9 +268,9 @@ MODULE_NAMES = (
 )
 
 PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
-    "AGENT_MODE_CHIP": "gflow_cli.api.transports.migrated_composer",
-    "AGENT_ONLY_RELOAD_WAIT_S": "gflow_cli.api.transports.migrated_composer",
-    "AGENT_ONLY_SETTLE_S": "gflow_cli.api.transports.migrated_composer",
+    "AGENT_MODE_CHIP": "gflow_cli.api.transports._mc_editor_gate",
+    "AGENT_ONLY_RELOAD_WAIT_S": "gflow_cli.api.transports._mc_editor_gate",
+    "AGENT_ONLY_SETTLE_S": "gflow_cli.api.transports._mc_editor_gate",
     "EXISTING_REF_WAIT_S": "gflow_cli.api.transports.migrated_composer",
     "FRAME_COMMIT_GRACE_S": "gflow_cli.api.transports.migrated_composer",
     "FRAME_COMMIT_HIDDEN_S": "gflow_cli.api.transports.migrated_composer",

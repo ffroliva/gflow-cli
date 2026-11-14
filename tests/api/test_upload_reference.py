@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gflow_cli.api.image import ImageRef
-from gflow_cli.api.transports import migrated_composer
+from gflow_cli.api.transports import _mc_editor_gate, migrated_composer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
@@ -106,7 +106,7 @@ async def test_an_upload_reloads_past_an_agent_only_composer(
 ) -> None:
     """#1142: a local `--ref` uploads here, before `run_images`, so the reload must be here."""
     t = _transport("https://flow.google.com/project/p", monkeypatch)
-    monkeypatch.setattr(migrated_composer, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     page = _ReloadingPage("https://flow.google.com/project/p")
     t._page = page  # type: ignore[assignment]  # noqa: SLF001
     monkeypatch.setattr(
@@ -125,7 +125,7 @@ async def test_an_upload_is_refused_when_the_agent_only_composer_stays(  # #799:
     from gflow_cli.errors import FlowHostMigratedError
 
     t = _transport("https://flow.google.com/project/p", monkeypatch)
-    monkeypatch.setattr(migrated_composer, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     page = _ReloadingPage("https://flow.google.com/project/p")
     t._page = page  # type: ignore[assignment]  # noqa: SLF001
     monkeypatch.setattr(
@@ -146,7 +146,7 @@ async def test_a_failed_reload_still_refuses_with_exit_36(
     from gflow_cli.errors import FlowHostMigratedError
 
     t = _transport("https://flow.google.com/project/p", monkeypatch)
-    monkeypatch.setattr(migrated_composer, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     page = _ReloadingPage("https://flow.google.com/project/p")
     page.reload = AsyncMock(side_effect=PlaywrightTimeoutError("reload timed out"))
     t._page = page  # type: ignore[assignment]  # noqa: SLF001
@@ -165,7 +165,7 @@ async def test_a_slow_remount_after_a_reload_spends_the_attempt(
     from gflow_cli.errors import UiSelectorDriftError
 
     t = _transport("https://flow.google.com/project/p", monkeypatch)
-    monkeypatch.setattr(migrated_composer, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     page = _ReloadingPage("https://flow.google.com/project/p")
     t._page = page  # type: ignore[assignment]  # noqa: SLF001
     drift = UiSelectorDriftError(detail="slow mount")

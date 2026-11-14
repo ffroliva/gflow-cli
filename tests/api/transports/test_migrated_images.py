@@ -657,8 +657,9 @@ async def test_references_reload_past_an_intermittent_agent_only_composer(
     """An account normally on the classic composer is sometimes served the agent-only one,
     which takes no references: a reload is free, so it comes before refusing."""
     import gflow_cli.api.transports.migrated_composer as mc
+    from gflow_cli.api.transports import _mc_editor_gate
 
-    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     editor = AsyncMock(side_effect=["agent_only", "agent_only", "classic"])
     monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", editor)
     # Past the composer choice is the classic path, which is covered elsewhere.
@@ -678,8 +679,9 @@ async def test_references_are_refused_when_the_agent_only_composer_stays(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     import gflow_cli.api.transports.migrated_composer as mc
+    from gflow_cli.api.transports import _mc_editor_gate
 
-    monkeypatch.setattr(mc, "AGENT_ONLY_RELOAD_WAIT_S", 0)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_RELOAD_WAIT_S", 0)
     monkeypatch.setattr(mc.MigratedComposer, "ensure_editor", AsyncMock(return_value="agent_only"))
     page = MagicMock(url="https://flow.google.com/project/p1", reload=AsyncMock())
     with pytest.raises(FlowHostMigratedError):
