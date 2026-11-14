@@ -4,7 +4,7 @@ A part of `MigratedComposer`, moved byte-identical from
 `migrated_composer.py` (#1249 wave 2).
 """
 
-# pyright: reportPrivateUsage=false, reportArgumentType=false
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import time
@@ -93,7 +93,7 @@ class MentionMixin(UploadFrameMixin):
                 return media_ids
             except ReferenceNotFoundError:
                 if look_up:  # one look, spent only when a tile could be matched
-                    found = await refreshed_from_picker(self, page, refs)
+                    found = await refreshed_from_picker(self, page, refs)  # pyright: ignore[reportArgumentType]
                     look_up, refs = found is None, found or refs
                 if time.monotonic() >= deadline:
                     raise
