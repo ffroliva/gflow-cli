@@ -1884,8 +1884,8 @@ def _print_extend_plan(
             "  cost        : spends credits — flow.google.com does not report the price "
             "before submitting; compare `gflow credits user` before and after"
         )
-        console.print("  length      : set by the key Flow picks; the Omni key grows the source")
-        console.print("                in place by ~4s (a Veo key adds a separate ~7s segment)")
+        console.print("  length      : set by the key; measured 2026-11-08, the Omni key grows")
+        console.print("                the source clip in place by ~4s (Veo: a separate ~7s clip)")
         return
     # Report CONTENT seconds, not billed seconds. This is the last screen before
     # the confirm prompt, so quoting Flow's advertised 8s here would contradict
