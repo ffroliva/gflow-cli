@@ -999,8 +999,8 @@ class ServerCancelUnavailableError(GFlowError):
     before submitting, and the row reads ``cancelled``.
 
     Shares exit 22 with :class:`UpscaleUnavailableError`: the existing code for "this
-    capability is not available, do not retry". #1202 owns any renumbering; the ``type``
-    URI is the precise discriminator meanwhile.
+    capability is not available, do not retry". The #1202 stable core
+    (``GFLOW_CLI_EXIT_CODES=2``) leaves 22 unchanged; the ``type`` URI tells the two apart.
     """
 
     problem_type = "https://gflow-cli.dev/errors/server-cancel-unavailable"
@@ -1712,7 +1712,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # subclass, so unconstrained by the ordering invariant.
     UpscaleUnavailableError: 22,
     # ServerCancelUnavailableError (#1198): shares 22, "capability unavailable, do not
-    # retry" -- no new code while #1202 redesigns them. Direct GFlowError subclass.
+    # retry"; the #1202 stable core keeps 22 as is. Direct GFlowError subclass.
     ServerCancelUnavailableError: 22,
     ExtendUnavailableError: 35,
     # UiSelectorDriftError (issue #183): Flow UI changed, selector probe failed.

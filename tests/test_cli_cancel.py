@@ -9,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
+from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import EXIT_CODE_MAP, ServerCancelUnavailableError
 from gflow_cli.worker.queue import QueueRepository
@@ -154,3 +155,29 @@ def test_an_abandoned_job_is_not_described_as_no_longer_waited_for(db: Path) -> 
     for text in (" ".join(plain.split()), str(error["remediation_hint"]), str(error["detail"])):
         assert "stopped waiting" not in text.lower()
     assert "record" in str(error["remediation_hint"])
+
+
+@pytest.mark.parametrize("mode", [None, "2"], ids=["default", "stable-core"])
+def test_cancel_envelopes_carry_both_exit_codes_in_either_mode(
+    db: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """#1202: exit 22 and exit 1 are unchanged by the stable core, and --json says so."""
+    if mode is None:
+        monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
+    else:
+        monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", mode)
+    get_settings.cache_clear()
+
+    code, doc = _run("r")
+    error = doc["error"]
+    assert isinstance(error, dict)
+    assert (code, error["exit_code"], error["exit_code_legacy"]) == (22, 22, 22)
+    with DataStore.open(db) as store:  # the stored record (MCP tasks/get) carries them too
+        task = QueueRepository(store).get_task("r")
+    assert task is not None and task.error is not None
+    assert (task.error["exit_code"], task.error["exit_code_legacy"]) == (22, 22)
+
+    code, doc = _run("nope")
+    error = doc["error"]
+    assert isinstance(error, dict)
+    assert (code, error["exit_code"], error["exit_code_legacy"]) == (1, 1, 1)

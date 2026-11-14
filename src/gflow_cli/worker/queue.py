@@ -11,7 +11,9 @@ from gflow_cli.errors import (
     GFlowError,
     QueueSchemaError,
     ServerCancelUnavailableError,
+    exit_code_for,
     is_retryable,
+    legacy_exit_code_for,
     outcome_members,
 )
 from gflow_cli.worker import codec
@@ -360,7 +362,13 @@ class QueueRepository:
 
 
 def _abort_record(exc: GFlowError) -> dict[str, Any]:
-    return {**exc.to_problem_details(), "retryable": is_retryable(exc)}
+    # The same members as a worker failure record (daemon.py), exit codes included (#1202).
+    return {
+        **exc.to_problem_details(),
+        "exit_code": exit_code_for(exc),
+        "exit_code_legacy": legacy_exit_code_for(exc),
+        "retryable": is_retryable(exc),
+    }
 
 
 @dataclass(frozen=True)

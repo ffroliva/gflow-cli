@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import run_with_handlers
+from gflow_cli._cli_helpers import run_with_handlers, spends_credits
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ServerCancelUnavailableError, TaskNotFoundError
@@ -26,6 +26,7 @@ from gflow_cli.worker.queue import AbortOutcome, QueueRepository, abort_task
 _console = Console()
 
 
+@spends_credits(False)
 @click.command("cancel")
 @click.argument("task_id")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON result.")
