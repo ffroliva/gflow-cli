@@ -53,6 +53,8 @@ does not, and say why — a reviewer can then start from your evidence instead o
 
 ### Reporting that something is broken? Spike it first
 
+File it with the [issue forms](https://github.com/ffroliva/gflow-cli/issues/new/choose): *Bug report*, *Feature request*, or *Flow surface change* when Flow itself seems to have moved. They ask for exactly what triage needs.
+
 An e2e test proves a **fix**. A spike proves a **diagnosis** — and it is what turns "this
 does not work for me" into something a maintainer can act on without owning your account.
 
@@ -78,8 +80,8 @@ day to undo.
 
 **Redact before you attach.** Raw captures carry cookies, Bearer tokens and prompts, and
 `*.har` is gitignored repo-wide for that reason. Run
-`python scripts/dev/har-spike/extract_har_summary.py <capture>.har --host <host>` and attach
-the **summary** — it is redacted by design and is what a maintainer needs anyway. Never paste
+`python scripts/dev/har-spike/extract_har_summary.py <capture>.har` (keep its default API host) and attach
+the **summary**, after reading it: it is redacted by design and is what a maintainer needs anyway. Never paste
 a raw HAR or an unredacted incident bundle into an issue.
 
 > **Windows-only today.** The CDP harness is nine PowerShell scripts; a portable Python twin
@@ -204,6 +206,7 @@ sweep that no command below can check. The mechanical subset it runs, in order:
 
 ```bash
 uv run python scripts/ci/check_repo_hygiene.py        # artefact + path hygiene
+uv run python scripts/ci/check_size.py                # file/class size + complexity ratchet
 uv run python scripts/ci/check_doc_links.py           # internal Markdown links
 uv run python scripts/ci/check_website_docs_pii.py    # no private identifiers in website/docs
 uv run python scripts/ci/generate_website_docs.py --check  # website mirror in sync
@@ -244,7 +247,7 @@ contributor is blocked for lacking the plugin.
 
 ### SonarCloud quality gate
 
-On top of the ten gates, CI runs a **SonarCloud** analysis whose quality gate must be
+On top of the eleven gates, CI runs a **SonarCloud** analysis whose quality gate must be
 **green** before a PR is merge-ready — the target is **zero new issues** on changed code
 (new bugs, vulnerabilities, and code smells = 0; coverage of new lines ≥ 80%; security
 hotspots reviewed = 100%). The local `--cov-fail-under=80` gate already pre-empts the
@@ -276,7 +279,7 @@ gate blocks this.
        result = await mock_client.new_route(...)
        assert result.some_field
    ```
-3. **Implement** in `src/gflow_cli/api/client.py` (and add helpers under `src/gflow_cli/api/` as needed) until green.
+3. **Implement** in the `FlowApiClient` surface the route belongs to (`src/gflow_cli/api/_flow_workspace.py`, `_flow_generation.py`, `_flow_media_edit.py` or `_flow_characters.py`; see docs/ARCHITECTURE.md) until green. The size gate stops any of them growing past its limit.
 4. **Add a `live` test** that runs the real flow end-to-end (skipped in CI by default).
 5. **Update `CHANGELOG.md`** under `[Unreleased] → Added`.
 6. **Document** the route in the README's Architecture section if it's a new capability.

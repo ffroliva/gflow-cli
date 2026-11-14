@@ -36,7 +36,7 @@ from pydantic import Field
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
-from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -51,7 +51,9 @@ from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError, is_retryable, outcome_members
+from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
+from gflow_cli.mcp.out_file import DeprecatedOutputParam, OutFileParam
+from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
 from gflow_cli.mcp.tasks_extension import detach
 from gflow_cli.profile_store import (
@@ -123,34 +125,6 @@ _EntityNamesParam = Annotated[
 # ---------------------------------------------------------------------------
 # Token bucket rate limiter
 # ---------------------------------------------------------------------------
-
-_BUCKET_CAPACITY = 8
-_BUCKET_REFILL_RATE = 1 / 20  # 1 token every 20 seconds
-
-
-class _TokenBucket:
-    """Simple token-bucket rate limiter for generation tools."""
-
-    def __init__(self, capacity: int = _BUCKET_CAPACITY, refill_rate: float = _BUCKET_REFILL_RATE):
-        self._capacity = capacity
-        self._tokens = float(capacity)
-        self._refill_rate = refill_rate
-        self._last_refill = time.monotonic()
-        self._lock = asyncio.Lock()
-
-    async def acquire(self) -> bool:
-        """Try to acquire a token. Returns True if acquired, False if rate-limited."""
-        async with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._last_refill
-            self._tokens = min(self._capacity, self._tokens + elapsed * self._refill_rate)
-            self._last_refill = now
-
-            if self._tokens >= 1:
-                self._tokens -= 1
-                return True
-            return False
-
 
 _rate_limiter = _TokenBucket()
 
@@ -272,7 +246,7 @@ def _guarded(
             try:
                 result = await fn(*args, **kwargs)
             except GFlowError as exc:
-                outcome = str(_exit_code_for(exc))
+                outcome = str(exit_code_for(exc))
                 log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
                 result = _error_payload(_gflow_error_dict(exc))
             except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
@@ -734,6 +708,27 @@ def _confined_output_file(output: str) -> str | dict[str, Any]:
     return str(path)
 
 
+def _resolve_out_file(
+    out_file: str | None, output: str | None, *, local_only: bool = False
+) -> str | None | dict[str, Any]:
+    """The confined file path from ``out_file`` or its deprecated twin ``output`` (#1158).
+
+    Refuses both at once, refuses a local file under cloud storage when ``local_only``
+    (naming the parameter the caller passed), and returns a 400 envelope or the path.
+    """
+    if out_file is not None and output is not None:
+        return _bad_param(
+            "Conflicting Output Options",
+            "Cannot specify both 'out_file' and 'output'. Use 'out_file' ('output' is deprecated).",
+        )
+    name, path = ("out_file", out_file) if out_file is not None else ("output", output)
+    if path is None:
+        return None
+    if local_only:
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, name)
+    return _confined_output_file(path)
+
+
 def _resolve_ref_local_path(
     data_repo: DataRepository,
     profile: str,
@@ -1009,7 +1004,8 @@ def _build_video_media_inputs(
     description=(
         "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
-        "output, if given, must resolve inside the configured output directory. "
+        "out_file, if given, must resolve inside the configured output directory "
+        "(output is deprecated: use out_file). "
         "Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), "
         "nano2-lite (Nano Banana 2 Lite), "
         "nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). "
@@ -1045,7 +1041,8 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
-    output: str | None = None,
+    out_file: OutFileParam = None,
+    output: DeprecatedOutputParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
@@ -1094,8 +1091,10 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
-        output: Optional file to write, inside the configured output dir: a relative path
+        out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
+        output: Deprecated: use out_file (removed in a future release). Optional file to write,
+            inside the configured output dir.
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
 
@@ -1109,12 +1108,9 @@ async def gflow_generate_image(
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
-
-    if output is not None:
-        confined = _confined_output_file(output)
-        if isinstance(confined, dict):
-            return confined
-        output = confined
+    if isinstance(resolved := _resolve_out_file(out_file, output), dict):
+        return resolved
+    output = resolved
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False)
@@ -1279,7 +1275,8 @@ def _build_video_payload(
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
-        "output, if given, must resolve inside the configured output directory. "
+        "out_file, if given, must resolve inside the configured output directory "
+        "(output is deprecated: use out_file). "
         "Returns the local file path to the generated video."
     ),
 )
@@ -1302,7 +1299,8 @@ async def gflow_generate_video(  # NOSONAR
     project: str | None = None,
     project_name: str | None = None,
     ui_mode: str | None = None,
-    output: str | None = None,
+    out_file: OutFileParam = None,
+    output: DeprecatedOutputParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -1391,8 +1389,10 @@ async def gflow_generate_video(  # NOSONAR
             agent-only flow.google.com composer (#799) is routed to its own
             driver before that check, so 't2v' runs there under 'auto' or
             'classic'.
-        output: Optional file to write, inside the configured output dir: a relative path
+        out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
+        output: Deprecated: use out_file (removed in a future release). Optional file to write,
+            inside the configured output dir.
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
@@ -1407,12 +1407,10 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
-    if output is not None:
-        refuse_cloud_storage_for_local_file(get_settings().storage_uri, "output")
-        confined = _confined_output_file(output)
-        if isinstance(confined, dict):
-            return confined
-        output = confined
+    # #1008: a video moved to a local file cannot live in a cloud bucket.
+    if isinstance(resolved := _resolve_out_file(out_file, output, local_only=True), dict):
+        return resolved
+    output = resolved
 
     if ui_mode is not None:
         # Normalize case to mirror the CLI's click.Choice(case_sensitive=False);

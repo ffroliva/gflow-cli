@@ -228,7 +228,7 @@ async def test_concatenate_scene_raises_when_success_has_no_video(tmp_path):
 
 
 async def test_concatenate_scene_enforces_size_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr("gflow_cli.api.client.MAX_CONCAT_B64_LEN", 4)
+    monkeypatch.setattr("gflow_cli.api._flow_workspace.MAX_CONCAT_B64_LEN", 4)
     c = _client_seq([_CONCAT_OP, _ok(_FAKE_MP4_B64)], tmp_path)
     with pytest.raises(SceneConcatError, match="size cap"):
         await c.concatenate_scene(_INPUTS, out_path=tmp_path / "x.mp4", poll_interval=0)

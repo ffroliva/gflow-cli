@@ -374,12 +374,14 @@ class AgenticFlowUiDriver:
         # Late imports — agentic.py must not import ui_automation or
         # drivers.factory at module load time (circular: factory imports
         # this module to build AgenticFlowUiDriver).
+        from gflow_cli.api.transports._ui_settings import (  # noqa: PLC0415
+            _count_tabs_locator,  # type: ignore[reportPrivateUsage]
+        )
         from gflow_cli.api.transports.drivers.factory import (  # noqa: PLC0415
             AGENT_TUNE_INDICATOR_SELECTOR,
         )
         from gflow_cli.api.transports.ui_automation import (  # noqa: PLC0415
             UiAutomationTransport,
-            _count_tabs_locator,  # type: ignore[reportPrivateUsage]
         )
 
         try:

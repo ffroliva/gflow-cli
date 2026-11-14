@@ -19,7 +19,7 @@ from rich.table import Table
 from rich.text import Text
 
 from gflow_cli import json_output, profile_store
-from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
+from gflow_cli._cli_helpers import out_file_option, run_with_handlers, safe_path_text
 from gflow_cli.api import routes
 from gflow_cli.config import LogLevel, get_settings
 from gflow_cli.data.queries import (
@@ -742,14 +742,7 @@ def errors_group() -> None:
     metavar="AGE",
     help=f"Only export failures older than this. {_OLDER_THAN_HELP} Default: all.",
 )
-@click.option(
-    "-o",
-    "--output",
-    "output",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Write JSONL to this file. Default: stdout.",
-)
+@out_file_option("output", help="Write JSONL to this file. Default: stdout.")
 @_guard
 def errors_export_cmd(profile: str | None, older_than: str | None, output: Path | None) -> None:
     """Export failed operations as JSONL — archive history before pruning (#345).

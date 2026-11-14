@@ -149,7 +149,7 @@ async def test_panel_miss_warns_loudly_and_names_the_unapplied_model() -> None:
             UiAutomationTransport, "_open_gen_settings_panel", AsyncMock(return_value=False)
         ),
         patch.object(UiAutomationTransport, "_capture_diag_screenshot", AsyncMock()),
-        patch("gflow_cli.api.transports.ui_automation.log") as mock_log,
+        patch("gflow_cli.api.transports._ui_settings.log") as mock_log,
     ):
         await UiAutomationTransport._configure_generation_settings(
             page, None, None, model=Model.GEM_PIX_2

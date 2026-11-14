@@ -245,8 +245,8 @@ def test_the_existing_landing_kinds_keep_their_codes(other: str) -> None:
 @pytest.mark.asyncio
 async def test_project_not_found_landing_is_exit_11_and_not_retryable() -> None:
     """#974: /404?reason=project was reported as selector drift (exit 23) after 30 s."""
-    from gflow_cli._cli_helpers import _exit_code_for
     from gflow_cli.errors import ConfigurationError, is_retryable
+    from gflow_cli.errors import exit_code_for as _exit_code_for
 
     exc = await _raise_on(_Page("https://flow.google.com/404?reason=project"))
 
