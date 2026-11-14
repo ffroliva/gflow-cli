@@ -253,3 +253,27 @@ def test_a_failed_move_keeps_the_clip_and_removes_its_partial_copy(
     assert [(w["link"], w["media_id"], w["kept_at"]) for w in warnings] == [
         (2, "m1", str(expected[1]))
     ]
+
+
+@pytest.mark.parametrize("gate", ["--yes", "--dry-run"])
+def test_an_out_file_under_a_file_is_a_usage_error_before_anything_runs(
+    tmp_path: Path, gate: str
+) -> None:
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x")
+    manifest = tmp_path / "chain.jsonl"
+    manifest.write_text('{"prompt": "a"}\n{"prompt": "b"}\n', encoding="utf-8")
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+        patch("gflow_cli.cli_video.FlowApiClient") as client_cls,
+    ):
+        result = CliRunner().invoke(
+            video, ["chain", str(manifest), gate, "--out-file", str(blocker / "clip.mp4")]
+        )
+
+    assert result.exit_code == 2, result.output
+    assert "--out-file" in result.stderr
+    assert str(blocker) in result.stderr
+    client_cls.assert_not_called()

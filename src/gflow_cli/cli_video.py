@@ -1824,6 +1824,11 @@ def chain(
     as_json: bool,
 ) -> None:
     """Render the chain MANIFEST (one continuous last-frame I2V sequence)."""
+    # Before the cost prompt and the browser: the clips' folder must be creatable.
+    blocker = next((p for p in output_file.parents if p.exists()), None) if output_file else None
+    if blocker is not None and not blocker.is_dir():
+        msg = f"{blocker} is a file, so {output_file} cannot be written under it."
+        raise click.BadParameter(msg, param_hint="'--out-file'")
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
