@@ -3599,7 +3599,7 @@ class TestCaptureDebugScreenshotFailure:
 
     @pytest.mark.asyncio
     async def test_image_module_copy_also_returns_none_on_failure(self, tmp_path: Path) -> None:
-        # The function is duplicated in ui_automation.py (circular-import
+        # The function is duplicated in _ui_common.py (circular-import
         # discipline) — the failure-path fix must hold in BOTH copies.
         from gflow_cli.api.transports.ui_automation import (
             _capture_debug_screenshot as ua_capture,

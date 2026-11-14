@@ -28,7 +28,7 @@ _TRANSPORTS = Path(__file__).resolve().parents[3] / "src" / "gflow_cli" / "api"
 #: decision on the record rather than an oversight.
 #:
 #: #836 proposed removing both, reading them as contradicting the "do NOT use
-#: networkidle" comment further down `ui_automation.py`. They do not: that comment
+#: networkidle" comment further down `_ui_navigation.py`. They do not: that comment
 #: governs the GALLERY navigation, which is followed by `_settle_if_redirecting`.
 #: The bootstrap cannot use that settle — it is gated on `self._account_locale`, and
 #: the bootstrap navigation is the call that RESOLVES the locale, so it is None at

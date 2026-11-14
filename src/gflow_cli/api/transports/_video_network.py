@@ -172,7 +172,7 @@ class FlowNetworkMixin:
 
         # CONTEXT, not page: these requests are Web-Worker-delegated in the current
         # Flow cohort, so `page.route` cannot see them at all (#615). The capture path
-        # already recorded this — see ui_automation.py "page-level network capture is
+        # already recorded this — see _ui_capture.py "page-level network capture is
         # dead in this cohort".
         #
         # ponytail: context-wide routing is only safe because every generation entry
