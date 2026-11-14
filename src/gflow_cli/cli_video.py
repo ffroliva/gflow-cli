@@ -1813,6 +1813,11 @@ def chain(
     as_json: bool,
 ) -> None:
     """Render the chain MANIFEST (one continuous last-frame I2V sequence)."""
+    if output_file is not None:  # _run_chain has never written there; say so (#1293)
+        click.echo(
+            "video chain does not apply --out-file yet (#1293); clips are saved under --out-dir.",
+            err=True,
+        )
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(

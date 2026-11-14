@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The explicit file destination is `--out-file PATH` on `data errors export`, `image t2i`,
   `image i2i`, `scene create`, `video t2v`, `video i2v`, `video r2v`, `video chain`, and
   `video extend`. In MCP, `gflow_generate_image` and `gflow_generate_video` gain `out_file`.
+  `video chain` has never written to this path; it now says so on stderr instead of staying
+  silent, and the clips still land under `--out-dir` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
 
 ### Deprecated
 

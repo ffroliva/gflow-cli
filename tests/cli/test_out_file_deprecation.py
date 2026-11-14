@@ -353,3 +353,26 @@ def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
         assert res_old.stderr.strip() == _EXPECTED_UPSCALE_DEPRECATION_WARNING
         out_path = mock_client.upsample_video.await_args.kwargs["out_path"]
         assert out_path.is_relative_to(dir2), out_path  # -o DIR reached out_dir
+
+
+@pytest.mark.parametrize("flag", ["--out-file", "-o"])
+def test_video_chain_says_the_file_path_is_not_applied(tmp_path: Path, flag: str) -> None:
+    """#1293: chain never wrote to the given path; it must say so instead of staying silent."""
+    manifest = tmp_path / "chain.jsonl"
+    manifest.write_text('{"prompt": "a"}\n{"prompt": "b"}\n', encoding="utf-8")
+
+    async def _ran(**_kwargs: object) -> None:
+        return None
+
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._run_chain", _ran),
+    ):
+        result = CliRunner().invoke(
+            main, ["video", "chain", str(manifest), "--yes", flag, str(tmp_path / "c.mp4")]
+        )
+
+    assert result.exit_code == 0, result.output
+    assert "video chain does not apply --out-file yet" in result.stderr
+    assert "#1293" in result.stderr
