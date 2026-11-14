@@ -324,11 +324,6 @@ def safe_path_text(path: Path) -> str:
         return str(path)
 
 
-def _exit_code_for(exc: GFlowError) -> int:
-    """Thin re-export delegating to :func:`gflow_cli.errors.exit_code_for` (#1202)."""
-    return exit_code_for(exc)
-
-
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     """Print user-facing message + remediation, emit ``error_raised`` event,
     return exit code.
@@ -343,7 +338,7 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
     _print_incident_ref(exc.incident_ref)
-    return _exit_code_for(exc)
+    return exit_code_for(exc)
 
 
 def _print_incident_ref(ref: Any) -> None:
@@ -430,7 +425,7 @@ def run_with_handlers(
         if as_json:
             emit_error_event(_logger, e, cli_command=cli_command)
             json_output.emit(json_output.error_payload(e))
-            sys.exit(_exit_code_for(e))
+            sys.exit(exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
         _report_interrupt()
