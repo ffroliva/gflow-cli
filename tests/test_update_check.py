@@ -629,7 +629,7 @@ class TestRunUpdate:
         with pytest.raises(ConfigurationError):
             uc.run_update(check=False)
         captured = capsys.readouterr()
-        assert "error: could not resolve dependencies" in captured.err
+        assert captured.err.count("error: could not resolve dependencies") == 1
 
     def test_status_callback_invoked(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch

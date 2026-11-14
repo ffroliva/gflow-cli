@@ -227,10 +227,17 @@ def installer() -> Installer | None:
     return Installer("pip", (sys.executable, "-m", "pip", "install", "--upgrade", "gflow-cli"))
 
 
+def _show_output(stdout: str | None, stderr: str | None) -> None:
+    """Put the manager's captured output on stderr (nothing when it streamed)."""
+    output = "\n".join(filter(None, (stdout, stderr))).strip()
+    if output:
+        sys.stderr.write(f"{output}\n")
+
+
 def _run_command(
-    command: tuple[str, ...], *, capture_output: bool = True
+    command: tuple[str, ...], *, capture_output: bool
 ) -> subprocess.CompletedProcess[str]:
-    """Run the manager subprocess, capturing output by default."""
+    """Run the manager subprocess: on the terminal, or captured."""
     if not capture_output:
         return subprocess.run(list(command), text=True, check=False)  # noqa: S603 — fixed argv
     with subprocess.Popen(  # noqa: S603 — fixed argv
@@ -246,14 +253,7 @@ def _run_command(
         except KeyboardInterrupt:
             proc.kill()
             stdout, stderr = proc.communicate()
-            if stdout or stderr:
-                output = (
-                    f"{stdout}\n{stderr}".strip()
-                    if (stdout and stderr)
-                    else (stdout or stderr).strip()
-                )
-                if output:
-                    sys.stderr.write(f"{output}\n")
+            _show_output(stdout, stderr)
             raise
         return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
@@ -389,15 +389,8 @@ def run_update(
             ),
         )
     playwright_before = _version_in_venv("playwright")
-    capture = not stream_output
-    res = _run_command(inst.command, capture_output=capture)
+    res = _run_command(inst.command, capture_output=not stream_output)
     returncode = res.returncode
-    stdout = res.stdout or ""
-    stderr = res.stderr or ""
-    installer_output = (
-        f"{stdout}\n{stderr}".strip() if (stdout and stderr) else (stdout or stderr).strip()
-    )
-    output_printed = (not capture) and not bool(installer_output)
 
     # The venv is the truth, not the manager's exit code: on Windows `uv tool
     # upgrade` installs the new wheel and THEN fails copying `gflow.exe` over
@@ -415,18 +408,14 @@ def run_update(
     broken = _import_failure()
     if broken is not None:
         log.warning("update.environment_broken", installer=inst.name, returncode=returncode)
-        if installer_output and not output_printed:
-            sys.stderr.write(f"{installer_output}\n")
-            output_printed = True
+        _show_output(res.stdout, res.stderr)
         raise ConfigurationError(
             f"`{shown}` left this gflow-cli install unusable: a fresh interpreter can no "
             f"longer import it ({broken})",
             remediation_hint=_reinstall_hint(inst, latest or after),
         )
     if after is None:
-        if installer_output and not output_printed:
-            sys.stderr.write(f"{installer_output}\n")
-            output_printed = True
+        _show_output(res.stdout, res.stderr)
         raise ConfigurationError(
             f"`{shown}` exited {returncode}, and the installed version could not be re-read "
             "afterwards",
@@ -435,9 +424,7 @@ def run_update(
     if after == __version__:
         if returncode == 0 and available is None:
             return report  # PyPI was unreachable and the manager found nothing newer
-        if installer_output and not output_printed:
-            sys.stderr.write(f"{installer_output}\n")
-            output_printed = True
+        _show_output(res.stdout, res.stderr)
         raise ConfigurationError(
             f"`{shown}` exited {returncode} and gflow-cli is still {__version__}",
             remediation_hint=f"Read its output above, then run `{shown}` yourself.",
