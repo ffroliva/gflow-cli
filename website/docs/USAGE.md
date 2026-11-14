@@ -76,6 +76,32 @@ Machine-readable output: the generation commands (`image t2i` / `image i2i`,
 emit a single parseable object on stdout instead of Rich tables. See
 [§ JSON output](#json-output-json).
 
+Machine-readable command tree ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)):
+`gflow --help --json` prints every command as one JSON object, and
+`gflow <group> [<cmd>] --help --json` narrows it to that part of the tree. Agents and scripts
+can discover commands from it instead of scraping `--help` text, which changes with wording.
+
+```bash
+gflow --help --json | jq -r '.commands[] | select(.spends_credits) | .path | join(" ")'
+gflow video t2v --help --json | jq '.commands[0].params[].name'
+```
+
+Shape: `{"schema": 1, "name": "gflow", "version": "...", "commands": [...]}`. Each command
+has `path` (e.g. `["video", "t2v"]`), `summary`, `aliases`, `params` and `spends_credits`.
+Each param has `name` as typed (`--json`, `PROMPT`), `opts` (every spelling, including the
+off switch of an on/off pair such as `--on/--off`), `type` (`flag` for an on/off switch),
+`choices`, `multiple` (repeatable), `nargs`, `default`, `required` and `help`. Paths and
+params are read from the CLI itself, so they cannot drift. `spends_credits` is set by hand on
+each command, and a test fails when a command has none or when it disagrees with the MCP
+server's spend gate. A bare group that runs on its own, such as `gflow auth`, is listed as a
+command too. **`spends_credits` is `true` for a command that submits a new Flow generation**: the
+video commands (`video t2v`/`i2v`/`r2v`/`chain`/`extend`) spend Veo credits; the image
+commands (`image t2i`/`i2i`/`batch`, `gflow run`, `character create`) and `movie run` submit
+generations too, and images bill the daily image quota rather than credits. Reads, exports
+(`image upscale`, `video upscale`), local catalog work and server-side composition
+(`scene create`) are `false`. The cost of `image upscale --scale 4k` (a subscription tier
+feature) has not been measured.
+
 Note: `--profile NAME` is **per-subcommand**, not global — pass it after the subcommand name (e.g. `gflow image t2i "..." --profile experiments`, not `gflow --profile experiments image t2i ...`).
 
 ## `gflow docs`
@@ -121,7 +147,17 @@ There is deliberately **no MCP twin** — see the note at the top of
 
 ## `gflow auth`
 
-See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands).
+See [AUTHENTICATION § Commands](AUTHENTICATION.md#commands). In short:
+
+```bash
+gflow auth                       # list profiles, or start the first login
+gflow auth login --browser chrome
+gflow auth status [--profile NAME]
+gflow auth renew [--profile NAME | --all] [--json]
+gflow auth list [--json]
+gflow auth use NAME              # make NAME the default profile
+gflow auth logout [--profile NAME] [--yes]   # delete a saved session (asks first)
+```
 
 ## `gflow credits`
 
@@ -947,6 +983,13 @@ gflow image t2i "a red bicycle"      # lands in my-batch
 gflow video t2v "a tram at dusk"     # so does this
 ```
 
+To read one project back from the local catalog, or rename it on Flow and in the catalog:
+
+```bash
+gflow project show PROJ123 [--json]
+gflow project rename PROJ123 "Storyboard v2" [--json]
+```
+
 ## Batch video generation (shell loop)
 
 `gflow video` has no `batch` subcommand — a manifest-driven video runner
@@ -1016,17 +1059,26 @@ reach for it before spending anything.
 > and signs the request itself. Before any click, Flow's project read must list
 > `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
 > is checked at the route and aborted, before Flow sees it, if it names another clip. The
-> new segment is downloaded to `-o` (default: the output directory). Not ported to
+> result is downloaded to `-o` (default: `videos/<date>/<media-id>_extend.mp4` in the output
+> directory, with a random tag added when that file already exists, so a same-day re-run
+> keeps the earlier file). **Measured 2026-11-08 with
+> the Omni extend key `macaron_cookie_extend_4s`:** Flow grew the source clip **in place**
+> by about 4 s (7.93 s became 11.83 s), under the source's own media id, for 12 credits. So
+> the file is the whole extended clip, the project lists no separate extension or earlier
+> version, and `--json` reports `seconds_added`/`seconds_billed` from the key (4/4; `null`
+> when the key names no length). The catalog notes the extend on the source's row once Flow
+> reports it done (`extended_by`, `extend_workflow_id`, `extended_at`)
+> ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)). A page that still orders a
+> Veo extend key was not observed that day. Not ported to
 > flow.google.com yet, each refused with exit 36 before anything is billed: more than one
 > PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
-> source clip's (leave `--aspect` off; the extension keeps the source's). Each run leaves a
-> new "Untitled Scene" in the project, and the plan shows no price because that host does
-> not report one before submitting — compare `gflow credits user` before and after. To go
-> further, extend the new clip again. "Cost and safety" and "What it produces" below
+> source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
+> price because that host does not report one before submitting — compare
+> `gflow credits user` before and after. To go further, extend the same clip again. "Cost and safety" and "What it produces" below
 > describe the labs.google arm.
 
-Continue an existing clip by another 8 seconds, then optionally render the whole
-thing to one file.
+Continue an existing clip (on labs.google by another 8 seconds), then optionally render
+the whole thing to one file.
 
 ```bash
 # one continuation
@@ -1079,7 +1131,7 @@ server-side concat, which is credit-free. Without `--out-file`, render later wit
 | Flag | Meaning |
 |---|---|
 | `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
-| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save only the new extension clip — scene concat is not ported there yet (legacy `-o/--output` supported) |
+| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save the clip Flow returns; with the Omni key (measured 2026-11-08) Flow grows the source clip in place by ~4s, so that is the whole extended clip (legacy `-o/--output` supported) |
 | `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model. Default 9:16 on labs.google; flow.google.com keeps the source clip's aspect |
 | `--project ID` | Required — the project owning `MEDIA_ID` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
@@ -1498,6 +1550,17 @@ or signed URLs). See
 
 For full schema details and JOIN semantics, see [`docs/DATA_LAYER.md § Querying the data layer`](DATA_LAYER.md#querying-the-data-layer).
 
+## `gflow data errors export | prune`
+
+`gflow data errors export` writes every recorded failed operation as JSONL, newest first
+(`--profile`, `--older-than 90d`, `-o FILE`; stdout by default). Archive with it, then
+reclaim the space with `gflow data errors prune`.
+
+```bash
+gflow data errors export --older-than 90d -o failures.jsonl
+gflow data errors prune --older-than 90d
+```
+
 ## `gflow data prune`
 
 Remove `local_files` database entries whose local paths no longer exist on
@@ -1816,7 +1879,7 @@ Upgrade gflow-cli in place, through the package manager that installed it.
 **Stop every other `gflow` process first** — see below.
 
 ```text
-gflow update [--check] [--json]
+gflow update [--check] [-v|--verbose] [--json]
 ```
 
 The installer is read off the install itself, never guessed from `PATH`:
@@ -1829,12 +1892,14 @@ The installer is read off the install itself, never guessed from `PATH`:
 
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs
-nothing. Otherwise it runs the manager with its output shown, then re-reads the
+nothing. Otherwise it runs the manager with output captured (pass `-v`/`--verbose` to view it, or see it on failure), then re-reads the
 venv's Playwright version: when the upgrade moved it, a hint gives you the exact
 `<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
 unreachable the manager still runs — it is the authority on what is installable.
 
 `--check` only reports installed vs latest plus the command that *would* run;
+`-v` / `--verbose` streams the package manager's output live (with `--json` it stays
+captured, so stdout is one JSON document; the root `gflow -v` only raises log verbosity);
 `--json` returns `{status: "ok", installed, latest, update_available, installer,
 command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
 be reached; after an upgrade `latest` is the version the venv actually reports;
@@ -1874,9 +1939,10 @@ and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
 its own file open, so it can be neither overwritten nor renamed while it runs.
 Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
 the launcher ("os error 32"). The upgrade *did* happen — the launcher only
-points at the venv's python — so `gflow update` reports it as upgraded with a
-note quoting the manager's exit code; the next update from another shell
-refreshes the launcher.
+points at the venv's python — so `gflow update` reports it as upgraded, prints
+the manager's captured output, and adds a note quoting its exit code. The old
+launcher keeps working. A later `gflow update` reports "up to date" and does not
+run the manager, so it does not replace the launcher either.
 
 **Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
 lock just above is the benign case: it is the `gflow.exe` *you* are running, and
@@ -1903,7 +1969,7 @@ Restart any running `gflow serve` / MCP server afterwards too; a long-lived
 process keeps the old code until it restarts. There is deliberately no MCP twin
 of this command: a server must not replace its own code underneath itself.
 
-Every command also prints an **update banner** on stderr (a one-line notice when
+Every command (other than `gflow update` itself) also prints an **update banner** on stderr (a one-line notice when
 stderr is not a terminal) when a newer release is known — see
 [CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
 for the once-a-day cache and how to silence it.

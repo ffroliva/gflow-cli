@@ -33,7 +33,12 @@ import structlog
 from rich.console import Console
 from rich.markup import escape
 
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
+from gflow_cli._cli_helpers import (
+    _make_provider_dir,
+    _resolve_profile,
+    run_with_handlers,
+    spends_credits,
+)
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -137,6 +142,7 @@ def movie() -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @movie.command("template")
 @click.argument("output", default="movie.toml", type=click.Path(dir_okay=False, path_type=Path))
 @click.option("--force", is_flag=True, default=False, help="Overwrite OUTPUT if it already exists.")
@@ -162,6 +168,7 @@ def template(output: Path, force: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(True)
 @movie.command("run")
 @click.argument(
     "manifest_path", metavar="MANIFEST", type=click.Path(dir_okay=False, path_type=Path)

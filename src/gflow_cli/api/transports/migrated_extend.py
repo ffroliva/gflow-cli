@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, urlsplit
@@ -121,7 +122,7 @@ def unported_refusal(
         ),
         remediation_hint=(
             "Run one segment at a time (one PROMPT, no --scene/--resume-from/--seed); "
-            "extend the new clip again to go further."
+            "extend the same clip again to go further."
         ),
     )
 
@@ -216,6 +217,13 @@ def url_rpcids(url: str) -> list[str]:
 def batch_rpcids(rpcids: list[str], body: str) -> list[str]:
     """``rpcids`` plus the id of every ``f.req`` frame, deduplicated in order."""
     return list(dict.fromkeys([*rpcids, *(str(_at(f, 0)) for f in _frames(body))]))
+
+
+def extend_key_seconds(model_key: str | None) -> int | None:
+    """The length an Omni extend key names (``macaron_cookie_extend_4s`` -> 4; +3.9 s
+    measured, #1184), or ``None`` when the key carries no ``_<n>s`` token."""
+    m = re.search(r"_extend_(\d+)s(?:_|$)", model_key or "")
+    return int(m.group(1)) if m else None
 
 
 def submit_facts(body: str) -> tuple[str | None, str | None]:
@@ -579,6 +587,7 @@ __all__ = [
     "ExtendOutcome",
     "SourceClip",
     "batch_request_problem",
+    "extend_key_seconds",
     "extend_request_problem",
     "require_video_source",
     "run_extend",

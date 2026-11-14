@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -226,9 +227,42 @@ def installer() -> Installer | None:
     return Installer("pip", (sys.executable, "-m", "pip", "install", "--upgrade", "gflow-cli"))
 
 
-def _run_command(command: tuple[str, ...]) -> int:
-    """Run the manager with inherited stdio so the user sees its own output."""
-    return subprocess.run(list(command), check=False).returncode  # noqa: S603 — fixed argv
+def _show_output(stdout: str | None, stderr: str | None) -> None:
+    """Put the manager's captured output on stderr (nothing when it streamed)."""
+    output = "\n".join(filter(None, (stdout, stderr))).strip()
+    if output:
+        sys.stderr.write(f"{output}\n")
+
+
+def _run_command(
+    command: tuple[str, ...], *, capture_output: bool
+) -> subprocess.CompletedProcess[str]:
+    """Run the manager subprocess: on the terminal, or captured."""
+    if not capture_output:
+        return subprocess.run(list(command), text=True, check=False)  # noqa: S603 — fixed argv
+    with subprocess.Popen(  # noqa: S603 — fixed argv
+        list(command),
+        stdin=subprocess.DEVNULL,  # a prompt would be invisible and look like a hang
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        # pip / pipx on Windows otherwise write the console code page; uv is UTF-8 anyway.
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    ) as proc:
+        try:
+            stdout, stderr = proc.communicate()
+        except KeyboardInterrupt:
+            proc.kill()
+            try:
+                _show_output(*proc.communicate(timeout=5))
+            except subprocess.TimeoutExpired:
+                # A grandchild still holds the pipes, and closing them in __exit__ would
+                # wait for it (measured on Windows). Leave them to the dying process.
+                proc.stdout = proc.stderr = None
+            raise
+        return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def _version_in_venv(dist: str) -> str | None:
@@ -296,8 +330,37 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     )
 
 
-def run_update(*, check: bool) -> UpdateReport:
+def _require_runnable(inst: Installer, shown: str) -> None:
+    """Raise ConfigurationError (exit 11) when the manager cannot be started here."""
+    from gflow_cli.errors import ConfigurationError
+
+    if inst.name != "pip" and shutil.which(inst.command[0]) is None:
+        raise ConfigurationError(
+            f"`{inst.command[0]}` is not on PATH, so gflow cannot run `{shown}` for you",
+            remediation_hint=f"Run `{shown}` from a shell where `{inst.command[0]}` is available.",
+        )
+    if inst.name == "pip" and importlib.util.find_spec("pip") is None:
+        # A `uv venv` ships no pip module: `python -m pip` would fail and the
+        # remediation would then recommend the same broken command.
+        raise ConfigurationError(
+            "This venv has no `pip` module, so gflow cannot upgrade itself here",
+            remediation_hint=(
+                f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
+                "(or reinstall the way you installed it)."
+            ),
+        )
+
+
+def run_update(
+    *,
+    check: bool,
+    stream_output: bool = False,
+    status_callback: Callable[[str], None] | None = None,
+) -> UpdateReport:
     """Upgrade gflow-cli in place, or with ``check`` only report.
+
+    ``stream_output`` runs the manager on the terminal; otherwise its output is
+    captured and shown only when the manager or the update fails.
 
     Raises :class:`~gflow_cli.errors.ConfigurationError` (exit 11) for a
     non-index install, a manager binary missing from PATH, or a manager that
@@ -332,24 +395,16 @@ def run_update(*, check: bool) -> UpdateReport:
     )
     if check or available is False:
         return report
+
     shown = " ".join(inst.command)
-    if inst.name != "pip" and shutil.which(inst.command[0]) is None:
-        raise ConfigurationError(
-            f"`{inst.command[0]}` is not on PATH, so gflow cannot run `{shown}` for you",
-            remediation_hint=f"Run `{shown}` from a shell where `{inst.command[0]}` is available.",
-        )
-    if inst.name == "pip" and importlib.util.find_spec("pip") is None:
-        # A `uv venv` ships no pip module: `python -m pip` would fail and the
-        # remediation would then recommend the same broken command.
-        raise ConfigurationError(
-            "This venv has no `pip` module, so gflow cannot upgrade itself here",
-            remediation_hint=(
-                f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
-                "(or reinstall the way you installed it)."
-            ),
-        )
+    _require_runnable(inst, shown)
     playwright_before = _version_in_venv("playwright")
-    returncode = _run_command(inst.command)
+    if status_callback is not None:
+        target = f"{__version__} -> {latest}" if latest else __version__
+        status_callback(f"Updating gflow-cli {target} via {inst.name}...")
+    res = _run_command(inst.command, capture_output=not stream_output)
+    returncode = res.returncode
+
     # The venv is the truth, not the manager's exit code: on Windows `uv tool
     # upgrade` installs the new wheel and THEN fails copying `gflow.exe` over
     # the launcher running this very command (os error 32 — the trampoline
@@ -366,12 +421,14 @@ def run_update(*, check: bool) -> UpdateReport:
     broken = _import_failure()
     if broken is not None:
         log.warning("update.environment_broken", installer=inst.name, returncode=returncode)
+        _show_output(res.stdout, res.stderr)
         raise ConfigurationError(
             f"`{shown}` left this gflow-cli install unusable: a fresh interpreter can no "
             f"longer import it ({broken})",
             remediation_hint=_reinstall_hint(inst, latest or after),
         )
     if after is None:
+        _show_output(res.stdout, res.stderr)
         raise ConfigurationError(
             f"`{shown}` exited {returncode}, and the installed version could not be re-read "
             "afterwards",
@@ -380,17 +437,18 @@ def run_update(*, check: bool) -> UpdateReport:
     if after == __version__:
         if returncode == 0 and available is None:
             return report  # PyPI was unreachable and the manager found nothing newer
+        _show_output(res.stdout, res.stderr)
         raise ConfigurationError(
             f"`{shown}` exited {returncode} and gflow-cli is still {__version__}",
             remediation_hint=f"Read its output above, then run `{shown}` yourself.",
         )
     notes: list[str] = []
     if returncode != 0:
+        _show_output(res.stdout, res.stderr)
         notes.append(
-            f"`{shown}` exited {returncode} AFTER installing {after} — see its output above. "
-            "On Windows this is the running `gflow.exe` launcher, which cannot be replaced "
-            "while in use; it keeps working, and the next update from another shell "
-            "refreshes it."
+            f"Note: `{shown}` exited {returncode} AFTER installing {after}. On Windows this is "
+            "usually the running `gflow.exe` launcher, which cannot be replaced while in use; "
+            "it keeps working."
         )
     playwright_after = _version_in_venv("playwright")
     if playwright_before != playwright_after:

@@ -21,12 +21,17 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 from platformdirs import user_data_dir, user_downloads_dir
+
+if TYPE_CHECKING:
+    from gflow_cli.api.video import VideoResult
 
 # Allow only alphanumerics, hyphens, and underscores up to 128 chars.
 # Prevents path traversal via API-returned job IDs.
@@ -123,6 +128,17 @@ def video_output_path(
     """`<output_dir>/videos/<YYYY-MM-DD>/<job_id>.mp4`."""
     on = on or date.today()
     return output_dir / "videos" / on.isoformat() / f"{validate_job_id(job_id)}.mp4"
+
+
+def extend_output_path(output_dir: Path, *, media_id: str) -> Path:
+    """`<output_dir>/videos/<YYYY-MM-DD>/<media_id>_extend.mp4`, tagged if it already exists.
+
+    An in-place extend keeps the source id (#1184), so the name repeats for every extend of
+    that clip; the tag is the one ``_unique_display_name`` gives a re-uploaded file (#792).
+    shortcut: checks the local file only, so a cloud ``storage_uri`` key is still reused.
+    """
+    path = output_dir / "videos" / date.today().isoformat() / f"{media_id}_extend.mp4"
+    return path.with_name(f"{path.stem}-{uuid4().hex[:8]}.mp4") if path.exists() else path
 
 
 def character_output_path(
@@ -317,3 +333,29 @@ def relocate_video_output(result: Any, output_file: Path | None) -> Any:
         return relocated
 
     return relocate_video(result, output_file)
+
+
+def chain_clip_relocator(
+    output_file: Path | None,
+) -> Callable[[int, VideoResult], VideoResult] | None:
+    """``--out-file`` for a chain (#1293): link ``index`` goes to ``<stem>_<index + 1><suffix>``.
+
+    ``index`` counts the whole manifest (#1300), so a resumed run names its links as a full
+    run would. Always numbered, even for one link, so a resume never renames a clip. Raises
+    instead of replacing an existing target; ``run_chain`` then keeps the clip where it is.
+    """
+    if output_file is None:
+        return None
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def relocate(index: int, result: VideoResult) -> VideoResult:
+        target = numbered_path(output_file, index + 1)
+        if target.exists():  # an earlier run's clip, or a folder: never replace it
+            raise FileExistsError(f"{target} already exists")
+        try:
+            return relocate_video(result, target)
+        except OSError:
+            target.unlink(missing_ok=True)  # a partial copy: the check above saw no file here
+            raise
+
+    return relocate

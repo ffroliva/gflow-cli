@@ -137,9 +137,12 @@ gflow instructions rm (TITLE | --id ID) --project ID
 gflow instructions apply FILE --project ID                # declarative full-sync (TOML/JSON)
 gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent switch
 
-# Keeping gflow-cli current (every command shows a banner when a newer release exists)
-gflow update [--check] [--json]
-gflow docs [TOPIC] [--search TERM] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
+# Discover every command, its params and whether it spends credits (stable JSON, #1203)
+gflow --help --json                                       # also: gflow <group> [<cmd>] --help --json
+
+# Keeping gflow-cli current (other commands show a banner when a newer release exists)
+gflow update [--check] [-v|--verbose] [--json]                         # upgrades via uv tool / pipx / pip; source installs refused (exit 11); -v streams the installer output
+gflow docs [TOPIC] [--search TERM] [--json]
 
 # Usage statistics and weekly telemetry (local counters; upload after interactive notice)
 gflow data stats [--weeks N] [--json]

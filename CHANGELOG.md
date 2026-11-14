@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow --help --json` prints the command tree as JSON ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)).**
+  `gflow <group> [<cmd>] --help --json` narrows it. Each command lists its path, summary,
+  params and `spends_credits`, which is true for a command that submits a new Flow
+  generation (video spends Veo credits, image the daily image quota). Paths and params are
+  read from Click; `spends_credits` is set per command, and tests fail when a command has no
+  decision, when the path-to-`spends_credits` snapshot changes, when a decision disagrees
+  with the MCP spend gate, or when a command is missing from `docs/USAGE.md`. `gflow auth`,
+  `auth use`/`logout`, `data errors export`/`prune`, `project show` and `project rename` are
+  now documented there.
+
 ### Fixed
 
 - **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
@@ -25,6 +37,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first one is an image-to-video seeded from the last completed clip, and a resume whose clip is
   gone is refused with exit 20 naming the file, before anything is billed
   ([#1300](https://github.com/ffroliva/gflow-cli/issues/1300)).
+
+- **`gflow update` says one thing about the result
+  ([#1163](https://github.com/ffroliva/gflow-cli/issues/1163)).** It no longer shows the
+  cached "update available" banner, which could name an older release than the one it then
+  installed. The package manager's output is captured: a successful run prints two short
+  lines, and the output is shown only when the update fails. `gflow update -v` streams it
+  live, and `--json` stdout stays a single JSON document. When the manager exits non-zero
+  after the new version is installed (on Windows, usually the running `gflow.exe`
+  launcher), you get its output and a one-line note instead of an error followed by a
+  success. Thanks to @nitishkp001.
+
+- **`video extend` on flow.google.com no longer fails its catalog write, and reports the
+  length it added.** Measured 2026-11-08 with the Omni extend key, Flow grows the source clip
+  in place, under the source's media id. An extend is in place when Flow returns the
+  source's own id. Nothing is written for it at submit, so a failed or timed-out run leaves
+  the source row as it was; once Flow reports it done, the existing row gets `extended_by`,
+  `extend_workflow_id` and `extended_at` instead of a failing duplicate insert (a source the
+  catalog does not hold stays unrecorded). In that case `--json` reads
+  `seconds_added`/`seconds_billed` from the key's `_<n>s` token (4/4 for
+  `macaron_cookie_extend_4s`), or reports `null` when the key names no length; a separate
+  segment keeps 7/8. The default output file gets a random tag when
+  `<date>/<media-id>_extend.mp4` already exists, so a same-day re-run keeps the earlier
+  file. The help no longer says the extension alone is downloaded or that each run leaves a
+  new scene (#1184).
+- **Usage telemetry recorded the wrong command after a root flag ([#1209](https://github.com/ffroliva/gflow-cli/issues/1209)).**
+  `gflow -v auth list` counted as `gflow`, because a flag was treated as taking a value.
 
 ## [0.99.0] — 2026-11-14
 

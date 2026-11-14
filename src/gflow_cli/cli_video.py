@@ -25,6 +25,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
+    spends_credits,
     tool_option,
     upscale_out_dir_option,
 )
@@ -53,7 +54,11 @@ from gflow_cli.errors import (
     SceneConcatError,
 )
 from gflow_cli.image_batch import resolve_jitter_range
-from gflow_cli.paths import numbered_path, relocate_video, relocate_video_output
+from gflow_cli.paths import (
+    chain_clip_relocator,
+    extend_output_path,
+    relocate_video_output,
+)
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
@@ -767,32 +772,6 @@ class _ChainExecConfig:
     seed_clip: Path | None = None
 
 
-def _chain_clip_relocator(
-    output_file: Path | None,
-) -> Callable[[int, VideoResult], VideoResult] | None:
-    """``--out-file`` for a chain (#1293): link ``index`` goes to ``<stem>_<index + 1><suffix>``.
-
-    ``index`` counts the whole manifest (#1300), so a resumed run names its links as a full
-    run would. Always numbered, even for one link, so a resume never renames a clip. Raises
-    instead of replacing an existing target; ``run_chain`` then keeps the clip where it is.
-    """
-    if output_file is None:
-        return None
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-
-    def relocate(index: int, result: VideoResult) -> VideoResult:
-        target = numbered_path(output_file, index + 1)
-        if target.exists():  # an earlier run's clip, or a folder: never replace it
-            raise FileExistsError(f"{target} already exists")
-        try:
-            return relocate_video(result, target)
-        except OSError:
-            target.unlink(missing_ok=True)  # a partial copy: the check above saw no file here
-            raise
-
-    return relocate
-
-
 async def _execute_chain_links(
     *,
     chain_mod: Any,
@@ -1113,7 +1092,7 @@ async def _run_chain(
                     jitter=jitter,
                     chain_id=chain_id,
                     as_json=as_json,
-                    relocate=_chain_clip_relocator(output_file),
+                    relocate=chain_clip_relocator(output_file),
                     start_index=skipped,
                     seed_clip=seed_clip,
                 ),
@@ -1190,6 +1169,7 @@ def video() -> None:
     """Generate and manage videos via Google Flow Veo."""
 
 
+@spends_credits(True)
 @video.command(
     "t2v",
     short_help="Generate a video from a text prompt.",
@@ -1357,6 +1337,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     return str(resolved), None
 
 
+@spends_credits(True)
 @video.command(
     "i2v",
     short_help="Generate a video from an initial image + motion prompt.",
@@ -1541,6 +1522,7 @@ def i2v(  # NOSONAR
     )
 
 
+@spends_credits(True)
 @video.command(
     "r2v",
     short_help="Generate a video from reference images + prompt (ingredients).",
@@ -1702,6 +1684,7 @@ def r2v(
     )
 
 
+@spends_credits(True)
 @video.command(
     "chain",
     short_help="Render a manifest of links into one continuous I2V chain.",
@@ -1879,27 +1862,28 @@ def _print_extend_plan(
     comes from the (free) capability listing once the run starts; the balance
     check that uses it aborts before the first submit.
     """
+    console.print("[bold]Extend plan[/bold]")
+    console.print(f"  source clip : {media_id}")
+    console.print(f"  prompt      : {prompt}")
+    console.print(f"  aspect      : {aspect}")
+    if migrated:
+        # No extend price is readable before submitting here; the length depends on the key.
+        console.print(
+            "  cost        : spends credits — flow.google.com does not report the price "
+            "before submitting; compare `gflow credits user` before and after"
+        )
+        console.print("  length      : set by the key; measured 2026-11-08, the Omni key grows")
+        console.print("                the source clip in place by ~4s (Veo: a separate ~7s clip)")
+        return
     # Report CONTENT seconds, not billed seconds. This is the last screen before
     # the confirm prompt, so quoting Flow's advertised 8s here would contradict
     # --help, USAGE and KNOWN_ISSUES on the one line a user cannot skip.
     footage = segments * _EXTEND_CONTENT_SECONDS
     billed = segments * _EXTEND_SEGMENT_SECONDS
-    console.print("[bold]Extend plan[/bold]")
-    console.print(f"  source clip : {media_id}")
-    console.print(f"  prompt      : {prompt}")
-    console.print(f"  aspect      : {aspect}")
     console.print(
         f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
         f"footage (Flow bills {billed}s)"
     )
-    if migrated:
-        # flow.google.com publishes no extend price gflow can read before submitting.
-        console.print(
-            "  cost        : spends credits — flow.google.com does not report the price "
-            "before submitting; compare `gflow credits user` before and after"
-        )
-        console.print("  leaves      : a new scene in the project (Flow creates it on submit)")
-        return
     console.print("  cost        : spends credits — exact amount is shown before submitting")
 
 
@@ -1993,11 +1977,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
     No price, scene read-back or resume exists on this arm yet (exit 36 refuses the
     forms that would need them before this runs).
     """
-    from datetime import date
-
-    out_path = output_file or (
-        get_settings().output_dir / "videos" / date.today().isoformat() / f"{media_id}_extend.mp4"
-    )
+    out_path = output_file or extend_output_path(get_settings().output_dir, media_id=media_id)
     async with FlowApiClient(profile_dir=profile_dir) as client:
         outcome, target = await client.extend_video_migrated(
             media_id=media_id,
@@ -2009,11 +1989,19 @@ async def _extend_migrated_session(  # noqa: PLR0913
                 profile_name=profile_name,
                 profile_dir=profile_dir,
                 project_id=project_id,
+                source_media_id=media_id,
                 aspect=aspect,
                 as_json=as_json,
                 recorder=recorder,
             ),
         )
+    if recorder is not None and target is not None and outcome.record.media_id == media_id:
+        try:  # #1184: grown in place — noted only now that Flow reports it done
+            recorder.record_extended_in_place(
+                profile_name, media_id, outcome.record.workflow_id, outcome.model_key
+            )
+        except DataStoreError as exc:
+            logger.warning("extend_record_failed", error_class=type(exc).__name__)
     _report_migrated_extend(
         outcome,
         target,
@@ -2030,6 +2018,7 @@ def _migrated_extend_on_started(  # noqa: PLR0913
     profile_name: str,
     profile_dir: Path,
     project_id: str,
+    source_media_id: str,
     aspect: str | None,
     as_json: bool,
     recorder: OperationRecorder | None,
@@ -2047,6 +2036,7 @@ def _migrated_extend_on_started(  # noqa: PLR0913
                     project_id=project_id,
                     aspect=page_aspect or aspect or "unknown",
                     started=started,
+                    source_media_id=source_media_id,
                 )
             except DataStoreError as exc:
                 logger.warning("extend_record_failed", error_class=type(exc).__name__)
@@ -2059,12 +2049,16 @@ def _migrated_extend_payload(
     rendered: str | None,
     *,
     profile_name: str,
+    media_id: str,
     project_id: str,
     aspect: str | None,
 ) -> dict[str, Any]:
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
+    added, billed = _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS  # a separate Veo segment
+    if record.media_id == media_id:  # #1184: grown in place; billed is the token, not measured
+        added = billed = migrated_extend.extend_key_seconds(outcome.model_key)
     return {
         "status": "ok" if ok else "fail",
         "command": _EXTEND_COMMAND,
@@ -2084,8 +2078,8 @@ def _migrated_extend_payload(
         "segments_completed": 1 if ok else 0,
         "media_ids": [record.media_id],
         "credits_spent": None,
-        "seconds_added": _EXTEND_CONTENT_SECONDS if ok else 0,
-        "seconds_billed": _EXTEND_SEGMENT_SECONDS,
+        "seconds_added": added if ok else 0,
+        "seconds_billed": billed,
         "aborted": not ok,
         "profile": profile_name,
         "host": "flow.google.com",
@@ -2095,7 +2089,7 @@ def _migrated_extend_payload(
             "model": outcome.model_key,
             "mode": "extend",
             "aspect": outcome.aspect or aspect,
-            "duration": _EXTEND_CONTENT_SECONDS,
+            "duration": added,
             "count": 1,
             "seed": None,
         },
@@ -2119,7 +2113,12 @@ def _report_migrated_extend(  # noqa: PLR0913
     if as_json:
         json_output.emit(
             _migrated_extend_payload(
-                outcome, rendered, profile_name=profile_name, project_id=project_id, aspect=aspect
+                outcome,
+                rendered,
+                profile_name=profile_name,
+                media_id=media_id,
+                project_id=project_id,
+                aspect=aspect,
             )
         )
     else:
@@ -2400,12 +2399,13 @@ async def _extend_session(  # noqa: PLR0913
             raise result.error
 
 
+@spends_credits(True)
 @video.command(
     "extend",
-    short_help="Continue an existing clip by another 8 seconds (costs credits).",
+    short_help="Continue an existing clip (costs credits).",
     help=(
-        "Continue an existing video by generating another 8-second segment that "
-        "carries its motion and audio forward.\n\n"
+        "Continue an existing video, carrying its motion and audio forward (by another "
+        "8-second segment on labs.google; for flow.google.com see below).\n\n"
         "MEDIA_ID is the clip to continue; PROMPT says what happens next.\n\n"
         "Unlike `video chain`, which restarts from an extracted still, extend is "
         "seeded server-side from the source clip, so the join is continuous. "
@@ -2425,10 +2425,10 @@ async def _extend_session(  # noqa: PLR0913
         "seam. See KNOWN_ISSUES.\n\n"
         "On flow.google.com gflow drives Flow's own extend UI: one segment per call "
         "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), in "
-        "the source clip's aspect; the new extension clip alone (not the joined "
-        "scene) is downloaded to --out-file or the output directory. "
-        "Each run leaves a new scene in the project, and the price is not shown "
-        "before submitting there."
+        "the source clip's aspect, downloaded to --out-file or the output directory. With "
+        "the Omni key (macaron_cookie_extend_4s, measured 2026-11-08) Flow grows the source "
+        "in place by ~4s under its own media id, so the file is the whole extended clip and "
+        "no earlier version is listed. The price is not shown before submitting there."
     ),
 )
 @click.argument("media_id")
@@ -2468,8 +2468,8 @@ async def _extend_session(  # noqa: PLR0913
 @out_file_option(
     help=(
         "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
-        "here (server-side concat, credit-free). flow.google.com: save only the new "
-        "extension clip here — scene concat is not ported there yet."
+        "here (server-side concat, credit-free). flow.google.com: save the clip Flow returns "
+        "here; with the Omni key (measured 2026-11-08), the source grown in place by ~4s."
     ),
 )
 @_project_option
@@ -2568,6 +2568,7 @@ def extend(  # noqa: PLR0913
     )
 
 
+@spends_credits(False)
 @video.command(
     "upscale",
     short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",

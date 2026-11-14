@@ -31,6 +31,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     default_project,
+    spends_credits,
 )
 from gflow_cli.api.client import FlowApiClient, validate_image_file
 from gflow_cli.api.dto import GeneratedImage
@@ -352,6 +353,7 @@ async def _run_batch(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(True)
 @click.command("run")
 @click.option(
     "--config",

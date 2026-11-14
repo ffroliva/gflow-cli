@@ -12,32 +12,50 @@ from __future__ import annotations
 import click
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import run_with_handlers
+from gflow_cli._cli_helpers import run_with_handlers, spends_credits
 
 # Bound in THIS module's namespace so tests can monkeypatch
 # ``gflow_cli.cli_update.run_update`` and never spawn a package manager.
 from gflow_cli.update_check import UpdateReport, run_update
 
 
+@spends_credits(False)
 @click.command("update")
 @click.option(
     "--check",
     is_flag=True,
     help="Only report the installed and latest versions; change nothing.",
 )
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Stream the package manager's output live (not with --json).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON report.")
-def update(check: bool, as_json: bool) -> None:
+def update(check: bool, verbose: bool, as_json: bool) -> None:
     """Upgrade gflow-cli to the latest PyPI release.
 
     Runs the package manager that installed gflow-cli (uv tool, pipx, or the
-    venv's own pip) and shows its output. Source / editable installs are
-    refused (exit 11) — update those the way they were installed.
+    venv's own pip). Raw installer output is hidden unless --verbose is given
+    or the upgrade fails. Source / editable installs are refused (exit 11) —
+    update those the way they were installed.
     """
-    run_with_handlers(lambda: _run(check, as_json), cli_command="update", as_json=as_json)
+    # --json keeps stdout one JSON document, so it always captures.
+    stream_output = verbose and not as_json
+    run_with_handlers(
+        lambda: _run(check, as_json, stream_output=stream_output),
+        cli_command="update",
+        as_json=as_json,
+    )
 
 
-async def _run(check: bool, as_json: bool) -> None:
-    report = run_update(check=check)
+async def _run(check: bool, as_json: bool, *, stream_output: bool) -> None:
+    def _status(msg: str) -> None:
+        if not as_json:
+            click.echo(msg)
+
+    report = run_update(check=check, stream_output=stream_output, status_callback=_status)
     if as_json:
         json_output.emit(
             {
@@ -61,8 +79,7 @@ def _render(report: UpdateReport) -> list[str]:
     shown = " ".join(report.command)
     if report.upgraded:
         return [
-            f"Upgraded gflow-cli {report.installed} -> {latest} via {report.installer}.",
-            "Restart any running `gflow serve` / MCP server to pick it up.",
+            f"Updated to {latest}. Restart any running `gflow serve` / MCP server.",
             *report.notes,
         ]
     if report.update_available is False:

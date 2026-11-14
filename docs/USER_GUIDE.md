@@ -50,8 +50,8 @@ uv tool install gflow-cli
 ```
 
 Both install `gflow` (and a `flow` alias) globally for your user. Later, `gflow update`
-upgrades in place through whichever installer you used, and every command shows a banner
-when a newer release is on PyPI — see [USAGE § `gflow update`](USAGE.md#gflow-update).
+upgrades in place through whichever installer you used, and every other command shows a
+banner when a newer release is on PyPI — see [USAGE § `gflow update`](USAGE.md#gflow-update).
 
 ### 1.2 One-time browser dependency
 
