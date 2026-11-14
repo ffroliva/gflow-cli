@@ -66,6 +66,7 @@ __all__ = [
     "VideoModelSelectionError",
     "WafRejectionError",
     "WireFormatError",
+    "active_exit_code",
     "active_exit_code_mode",
     "classify_content_safety",
     "exit_code_for",
@@ -1740,9 +1741,19 @@ _CORE_V2_EXIT_CODES: dict[int, int] = {
 
 
 def active_exit_code_mode() -> int:
-    """Return active exit-code mode: 2 if opted-in via GFLOW_CLI_EXIT_CODES=2, else 1."""
-    # Direct os.environ read: bad values or config issues must never crash error path (#1202).
-    return 2 if os.environ.get("GFLOW_CLI_EXIT_CODES", "").strip() == "2" else 1
+    """2 when ``GFLOW_CLI_EXIT_CODES=2`` (environment or ``.env``), else 1 (#1202)."""
+    try:
+        from gflow_cli.config import get_settings  # lazy: config must not import errors early
+
+        value = get_settings().exit_codes
+    except Exception:  # noqa: BLE001 - a broken config must never break the error path
+        value = os.environ.get("GFLOW_CLI_EXIT_CODES")
+    return 2 if (value or "").strip() == "2" else 1
+
+
+def active_exit_code(legacy: int) -> int:
+    """The legacy code *legacy* translated to the active mode (#1202)."""
+    return _CORE_V2_EXIT_CODES.get(legacy, legacy) if active_exit_code_mode() == 2 else legacy
 
 
 def legacy_exit_code_for(exc: GFlowError) -> int:
@@ -1760,10 +1771,7 @@ def legacy_exit_code_for(exc: GFlowError) -> int:
 
 def exit_code_for(exc: GFlowError) -> int:
     """Return the process exit code for *exc* in the active mode (#1202)."""
-    legacy = legacy_exit_code_for(exc)
-    if active_exit_code_mode() == 2:
-        return _CORE_V2_EXIT_CODES.get(legacy, legacy)
-    return legacy
+    return active_exit_code(legacy_exit_code_for(exc))
 
 
 # Transient failures the caller can retry without operator intervention — WAF

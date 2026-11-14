@@ -15,6 +15,7 @@ import structlog
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
+from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     AuthBrowserRejectedError,
@@ -124,30 +125,27 @@ def test_exit_code_for_both_modes(
 
     # 1. Unset env var -> default legacy mode
     monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
+    get_settings.cache_clear()
     assert legacy_exit_code_for(exc) == expected_legacy
     assert exit_code_for(exc) == expected_legacy
 
     # 2. Explicit GFLOW_CLI_EXIT_CODES=1 -> legacy mode
     monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", "1")
+    get_settings.cache_clear()
     assert legacy_exit_code_for(exc) == expected_legacy
     assert exit_code_for(exc) == expected_legacy
 
     # 3. Bogus value -> legacy mode (never crashes)
     monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", "invalid_value")
+    get_settings.cache_clear()
     assert legacy_exit_code_for(exc) == expected_legacy
     assert exit_code_for(exc) == expected_legacy
 
     # 4. Opt-in GFLOW_CLI_EXIT_CODES=2 -> stable core mode
     monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", "2")
+    get_settings.cache_clear()
     assert legacy_exit_code_for(exc) == expected_legacy
     assert exit_code_for(exc) == expected_v2
-
-
-@pytest.fixture
-def _cli_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    structlog.reset_defaults()
-    structlog.contextvars.clear_contextvars()
-    monkeypatch.setattr("gflow_cli.cli.configure_logging", lambda *a, **kw: None)
 
 
 def _make_async_raiser(exc: BaseException) -> Any:
@@ -174,6 +172,7 @@ def test_cli_rate_limit_json_exit_codes(
 
     # 1. GFLOW_CLI_EXIT_CODES=2 opts in to core: exits 40 and JSON carries 40 / 4
     monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", "2")
+    get_settings.cache_clear()
     res_v2 = runner.invoke(main, ["image", "t2i", "test prompt", "--json"])
     assert res_v2.exit_code == 40, res_v2.output
     data_v2 = json.loads(res_v2.stdout)
@@ -182,6 +181,7 @@ def test_cli_rate_limit_json_exit_codes(
 
     # 2. Default (unset) -> legacy: exits 4 and JSON carries 4 / 4
     monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
+    get_settings.cache_clear()
     res_def = runner.invoke(main, ["image", "t2i", "test prompt", "--json"])
     assert res_def.exit_code == 4, res_def.output
     data_def = json.loads(res_def.stdout)
@@ -190,8 +190,45 @@ def test_cli_rate_limit_json_exit_codes(
 
     # 3. Bogus value -> behaves as legacy: exits 4 and JSON carries 4 / 4
     monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", "bogus")
+    get_settings.cache_clear()
     res_bogus = runner.invoke(main, ["image", "t2i", "test prompt", "--json"])
     assert res_bogus.exit_code == 4, res_bogus.output
     data_bogus = json.loads(res_bogus.stdout)
     assert data_bogus["error"]["exit_code"] == 4
     assert data_bogus["error"]["exit_code_legacy"] == 4
+
+
+def test_opt_in_is_read_from_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1202: the opt-in works from .env like every other GFLOW_CLI_* setting."""
+    monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("GFLOW_CLI_EXIT_CODES=2\n", encoding="utf-8")
+    get_settings.cache_clear()
+    assert exit_code_for(RateLimitError.__new__(RateLimitError)) == 40
+
+
+def test_batch_priority_does_not_depend_on_the_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1202: out-of-credits (legacy 37) still outranks a network blip (legacy 6 -> 42)."""
+    from gflow_cli.image_batch import BatchOutcome, BatchPromptItem, render_image_batch_summary
+
+    prompt = BatchPromptItem(text="p")
+    rows = [
+        BatchOutcome(
+            0, prompt, "fail", exit_code=legacy_exit_code_for(NetworkError.__new__(NetworkError))
+        ),
+        BatchOutcome(
+            1,
+            prompt,
+            "fail",
+            exit_code=legacy_exit_code_for(
+                InsufficientCreditsError.__new__(InsufficientCreditsError)
+            ),
+        ),
+    ]
+    monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", "2")
+    get_settings.cache_clear()
+    assert render_image_batch_summary(rows, title="t") == 37
+    rows[1] = BatchOutcome(
+        1, prompt, "fail", exit_code=legacy_exit_code_for(RateLimitError.__new__(RateLimitError))
+    )
+    assert render_image_batch_summary(rows, title="t") == 42  # max legacy 6, translated

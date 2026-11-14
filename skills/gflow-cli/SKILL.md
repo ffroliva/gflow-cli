@@ -65,6 +65,7 @@ gflow auth logout                                         # delete a saved sessi
 # otherwise in the profile's browser. GFLOW_CLI_WIRE_READS=0 always uses the browser; the
 # direct read is also off by default on macOS and skipped while any proxy is configured.
 # Exit 4/6 = Flow is throttling the account (429/503): wait, do not retry in a loop.
+# (Under the opt-in GFLOW_CLI_EXIT_CODES=2 these are 40/42; see docs/ERRORS.md.)
 # Exit 3 = sign-in page (fix: --refresh); 31 = /about or no balance reply (NOT an auth
 # problem, do not loop on login); 11 = profile in use; 7 = unrecognised reply. Tier fields are null.
 gflow credits user [--profile NAME] [--refresh] [--json]

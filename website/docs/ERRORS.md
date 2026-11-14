@@ -246,13 +246,14 @@ Specific error causes move into the 40–63 range. Codes 10–39 remain unchange
 | `10–39` | `10–39` | Specific causes (WAF, config, data store, credits, etc.; unchanged) |
 | `130` | `130` | Interrupted by user (unchanged) |
 
-In `--json` envelopes, `exit_code` reports the active process exit code (40 under mode 2,
-or 4 by default). A companion field `exit_code_legacy` always reports the legacy code.
+In the shared `--json` error envelope (and MCP queued failures), `exit_code` reports the
+active process exit code (40 under mode 2, or 4 by default), and `exit_code_legacy` always
+reports the legacy code. The process exit status follows the active mode on every command.
 
 ### Deprecation cycle
 
-The migration follows a three-release deprecation track:
-1. **Release N (current):** Legacy exit codes remain default. Opt in via `GFLOW_CLI_EXIT_CODES=2`.
-2. **Release N+1:** The stable core becomes the default. `GFLOW_CLI_EXIT_CODES=1` restores legacy codes with a one-line stderr deprecation notice.
-3. **Release N+2:** Legacy exit codes are removed.
+The change ships over three releases:
+1. **This release:** the legacy codes stay the default. Opt in with `GFLOW_CLI_EXIT_CODES=2`, in the environment or in `.env`.
+2. **A later release:** the stable core becomes the default. `GFLOW_CLI_EXIT_CODES=1` restores the legacy codes and prints a one-line deprecation notice on stderr.
+3. **The release after that:** the legacy codes are removed.
 

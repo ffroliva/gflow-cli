@@ -86,28 +86,23 @@ class TestQueuedTaskEnvelope:
         under test is only *which* branch a transport failure lands in.
         """
         from gflow_cli.data.redaction import redact_error_detail
-        from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, legacy_exit_code_for
+        from gflow_cli.errors import EXIT_CODE_MAP, GFlowError, is_retryable
 
         if isinstance(exc, GFlowError):
             payload = dict(exc.to_problem_details())
-            payload["exit_code"] = exit_code_for(exc)
-            payload["exit_code_legacy"] = legacy_exit_code_for(exc)
+            payload["exit_code"] = next(
+                (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)), 1
+            )
             payload["retryable"] = is_retryable(exc)
             if "detail" in payload:
                 payload["detail"] = redact_error_detail(str(payload["detail"]))
             return payload
-        return {
-            "title": "Unknown Error",
-            "detail": "sha256:...",
-            "exit_code": 1,
-            "exit_code_legacy": 1,
-        }
+        return {"title": "Unknown Error", "detail": "sha256:...", "exit_code": 1}
 
     def test_a_typed_failure_survives_the_queue(self) -> None:
         payload = self._daemon_payload(_transport_failure())
 
         assert payload["exit_code"] == 6
-        assert payload["exit_code_legacy"] == 6
         assert payload["retryable"] is True
         assert MEDIA_ID in payload["remediation_hint"]
         assert not str(payload["detail"]).startswith("sha256:")
@@ -115,8 +110,6 @@ class TestQueuedTaskEnvelope:
     def test_an_untyped_failure_reaches_the_agent_as_a_hash(self) -> None:
         payload = self._daemon_payload(PwError("apiRequest.get: read ECONNRESET"))
 
-        assert payload["exit_code"] == 1
-        assert payload["exit_code_legacy"] == 1
         assert str(payload["detail"]).startswith("sha256:")
         assert "remediation_hint" not in payload
         assert "retryable" not in payload

@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Upcoming breaking change
 
-- **Exit-code core will become the default in release N+1 ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
+- **Exit-code core will become the default in a later release ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
   - `4` (`RateLimitError`) moves to `40`.
   - `5` (`ContentPolicyError`) moves to `41`.
   - `6` (`NetworkError`) moves to `42`.

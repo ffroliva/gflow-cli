@@ -51,7 +51,7 @@ from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError, is_retryable, legacy_exit_code_for, outcome_members
+from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.server import server
 from gflow_cli.mcp.tasks_extension import detach
 from gflow_cli.profile_store import (
@@ -272,7 +272,7 @@ def _guarded(
             try:
                 result = await fn(*args, **kwargs)
             except GFlowError as exc:
-                outcome = str(legacy_exit_code_for(exc))  # legacy: comparable telemetry (#1202)
+                outcome = str(exit_code_for(exc))
                 log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
                 result = _error_payload(_gflow_error_dict(exc))
             except Exception as exc:  # noqa: BLE001 — the funnel IS the handler
@@ -347,9 +347,9 @@ def outcome_of(result: dict[str, Any]) -> str:
         return "queued"
     if status in {"error", "failed", "rate_limited", "invalid_tools"}:
         error = result.get("error")
-        if "exit_code" not in result and isinstance(error, dict):
-            result = cast(dict[str, Any], error)
-        code: Any = result.get("exit_code_legacy", result.get("exit_code"))  # legacy (#1202)
+        code: Any = result.get("exit_code")
+        if code is None and isinstance(error, dict):
+            code = cast(dict[str, Any], error).get("exit_code")
         return str(code) if code is not None else "error"
     return "0"
 

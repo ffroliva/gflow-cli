@@ -17,7 +17,9 @@ import traceback
 from typing import TYPE_CHECKING, Any
 
 from gflow_cli.errors import GFlowError, is_retryable, legacy_exit_code_for
-from gflow_cli.errors import exit_code_for as _errors_exit_code_for
+
+# Re-exported: command modules emitting their own --json payload exit with the same code.
+from gflow_cli.errors import exit_code_for as exit_code_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,17 +39,6 @@ def emit(payload: dict[str, Any]) -> None:
     import click
 
     click.echo(dumps(payload))
-
-
-def exit_code_for(exc: GFlowError) -> int:
-    """Return the process exit code for *exc* in the active mode (#1202).
-
-    Public so command modules that emit their own ``--json`` payload (e.g.
-    ``video chain`` on a :class:`~gflow_cli.errors.ChainPartialError`) can exit
-    with the same mapped code the shared handler would have used, without
-    re-raising through the handler (which would emit a second JSON document).
-    """
-    return _errors_exit_code_for(exc)
 
 
 # Backwards-compatible private alias (kept for the existing error path call

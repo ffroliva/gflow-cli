@@ -232,9 +232,10 @@ async def test_missing_client_info_is_not_an_error(
 
 def test_returned_error_exit_code_is_preserved() -> None:
     assert tools.outcome_of({"status": "error", "error": {"exit_code": 37}}) == "37"
+    # #1202: telemetry records the code the process exits with, like the CLI does.
     assert (
         tools.outcome_of({"status": "error", "error": {"exit_code": 40, "exit_code_legacy": 4}})
-        == "4"
+        == "40"
     )
 
 

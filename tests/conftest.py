@@ -141,6 +141,8 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     monkeypatch.setenv("GFLOW_CLI_UPDATE_CHECK", "0")
     # #1164: usage counters stay off in tests; tests/test_telemetry.py unsets this.
     monkeypatch.setenv("GFLOW_CLI_TELEMETRY", "0")
+    # A developer testing the #1202 opt-in must not change every exit code the suite pins.
+    monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
     # #864: the MCP entry points write a lease-wait default straight into os.environ
     # (production wants it process-wide). Recording the variable here makes teardown
     # remove it, so a test that runs `run_http` unpatched cannot turn every later

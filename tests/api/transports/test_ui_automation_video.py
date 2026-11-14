@@ -1019,8 +1019,8 @@ class TestDownloadVideo:
     async def test_download_video_raises_on_http_error(self, tmp_path: Path) -> None:
         """#941 part 2: a non-2xx signed-URL answer is a failed download of a billed clip
         (MediaDownloadError, exit 6, names the clip), not a wire fault."""
-        from gflow_cli._cli_helpers import _exit_code_for
         from gflow_cli.errors import MediaDownloadError, is_retryable
+        from gflow_cli.errors import exit_code_for as _exit_code_for
 
         transport = UiAutomationTransport()
 
