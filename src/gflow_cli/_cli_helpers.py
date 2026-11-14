@@ -38,8 +38,9 @@ from __future__ import annotations
 import re
 import sys
 import traceback
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import click
 import structlog
@@ -75,7 +76,10 @@ _console = Console()
 # `reportPrivateUsage` rule does NOT honor the PEP 484 `from X import Y as Y`
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
+    "DeprecatedAliasOption",
+    "PrimaryOption",
     "_FLOW_ID_RE",
+    "_OUT_FILE_DEPRECATION_WARNING",
     "_handle_gflow_error",
     "_handle_unhandled_error",
     "_make_provider_dir",
@@ -83,6 +87,8 @@ __all__ = [
     "_validate_project_id",
     "apply_tool_option",
     "default_project",
+    "deprecated_alias_option",
+    "out_file_option",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
@@ -96,6 +102,149 @@ __all__ = [
 # `routes._PROJECT_ID_RE`. Relocated here (T4b follow-up) so the two call-site
 # modules can't drift out of sync.
 _FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
+
+_OUT_FILE_DEPRECATION_WARNING = (
+    "-o/--output PATH is deprecated and will select the output format in a future release "
+    "(-o json|table|id). Use --out-file PATH."
+)
+
+
+class DeprecatedAliasOption(click.Option):
+    """An option that is a deprecated alias for another option (#1158).
+
+    Emits a deprecation warning to stderr once per invocation when used,
+    arbitrates mutual exclusion with the primary option (raising click.UsageError),
+    and sets the primary option's parameter slot in ``ctx.params``.
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        primary_name: str,
+        warning_line: str,
+        conflict_message: str,
+        deprecated_for: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.primary_name = primary_name
+        self.warning_line = warning_line
+        self.conflict_message = conflict_message
+        self.deprecated_for = deprecated_for
+        self.is_deprecated_alias = True
+        self.is_deprecated_output = True
+
+    def handle_parse_result(
+        self, ctx: click.Context, opts: Mapping[str, Any], args: list[str]
+    ) -> tuple[Any, list[str]]:
+        if self.name and self.name in opts and self.primary_name in opts:
+            raise click.UsageError(self.conflict_message)
+        if self.name and self.name in opts:
+            warned_raw: object = getattr(ctx, "_deprecated_warned", None)
+            if not isinstance(warned_raw, set):
+                warned_raw = set[str]()
+                ctx._deprecated_warned = warned_raw  # type: ignore[attr-defined]
+            warned: set[str] = cast("set[str]", warned_raw)
+            if self.warning_line not in warned:
+                warned.add(self.warning_line)
+                click.echo(self.warning_line, err=True)
+            val, remaining_args = super().handle_parse_result(ctx, opts, args)
+            ctx.params[self.primary_name] = val
+            ctx.set_parameter_source(self.primary_name, ParameterSource.COMMANDLINE)
+            return val, remaining_args
+        return super().handle_parse_result(ctx, opts, args)
+
+
+class PrimaryOption(click.Option):
+    """The primary option that pairs with a DeprecatedAliasOption (#1158).
+
+    Arbitrates mutual exclusion with the deprecated option (raising click.UsageError).
+    """
+
+    def __init__(
+        self,
+        *args: Any,
+        dep_name: str,
+        conflict_message: str,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.dep_name = dep_name
+        self.conflict_message = conflict_message
+        self.is_primary_alias = True
+
+    def handle_parse_result(
+        self, ctx: click.Context, opts: Mapping[str, Any], args: list[str]
+    ) -> tuple[Any, list[str]]:
+        if self.name and self.name in opts and self.dep_name in opts:
+            raise click.UsageError(self.conflict_message)
+        return super().handle_parse_result(ctx, opts, args)
+
+
+def deprecated_alias_option(
+    primary_opts: Sequence[str],
+    deprecated_opts: Sequence[str],
+    dest: str,
+    *,
+    type: click.ParamType[Any] | type[object],
+    help: str,
+    deprecated_help: str,
+    warning_line: str,
+    conflict_message: str,
+) -> Callable[[Any], Any]:
+    """Create a pair of primary and deprecated options writing to the same dest."""
+    dep_name = f"_{dest}_deprecated"
+
+    def decorator(f: Any) -> Any:
+        f = click.option(
+            *deprecated_opts,
+            dep_name,
+            type=type,
+            default=None,
+            expose_value=False,
+            help=deprecated_help,
+            cls=DeprecatedAliasOption,
+            primary_name=dest,
+            warning_line=warning_line,
+            conflict_message=conflict_message,
+            deprecated_for=primary_opts[0],
+        )(f)
+        f = click.option(
+            *primary_opts,
+            dest,
+            type=type,
+            default=None,
+            help=help,
+            cls=PrimaryOption,
+            dep_name=dep_name,
+            conflict_message=conflict_message,
+        )(f)
+        return f
+
+    return decorator
+
+
+def out_file_option(
+    dest: str = "output_file",
+    *,
+    help: str,
+) -> Callable[[Any], Any]:
+    """Decorator adding ``--out-file PATH`` and keeping deprecated ``-o/--output PATH`` (#1158).
+
+    Writes to ``dest`` (e.g. ``output_file`` or ``output``). Warns on stderr when
+    the deprecated spelling is used, and raises ``click.UsageError`` (exit 2)
+    naming ``--out-file`` if both are provided.
+    """
+    return deprecated_alias_option(
+        primary_opts=("--out-file",),
+        deprecated_opts=("-o", "--output"),
+        dest=dest,
+        type=click.Path(dir_okay=False, path_type=Path),
+        help=help,
+        deprecated_help=f"Deprecated: use --out-file. {help}",
+        warning_line=_OUT_FILE_DEPRECATION_WARNING,
+        conflict_message="Cannot specify both --out-file and -o/--output. Use --out-file.",
+    )
 
 
 def _validate_project_id(

@@ -21,6 +21,7 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     default_project,
+    out_file_option,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -145,12 +146,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
                 type=click.Path(file_okay=False, path_type=Path),
                 help="Directory to save the generated mp4. Defaults to tmp/.",
             ),
-            click.option(
-                "-o",
-                "--output",
-                "output_file",
-                default=None,
-                type=click.Path(dir_okay=False, path_type=Path),
+            out_file_option(
                 help="Explicit output file path for the generated asset.",
             ),
             click.option(
@@ -1611,14 +1607,7 @@ def i2v(  # NOSONAR
 @_project_name_option
 @_reference_entity_option
 @_reference_entity_name_option
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated asset.",
-)
+@out_file_option(help="Explicit output file path for the generated asset.")
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1792,14 +1781,7 @@ def r2v(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated chain clips.",
-)
+@out_file_option(help="Explicit output file path for the generated chain clips.")
 @click.option(
     "--out-dir",
     "out_dir",
@@ -2466,12 +2448,7 @@ async def _extend_session(  # noqa: PLR0913
         "GFLOW_CLI_JITTER_RANGE setting; 0 disables pacing (not advised)."
     ),
 )
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    default=None,
-    type=click.Path(dir_okay=False, path_type=Path),
+@out_file_option(
     help=(
         "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
         "here (server-side concat, credit-free). flow.google.com: save only the new "

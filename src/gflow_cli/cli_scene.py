@@ -10,7 +10,12 @@ import structlog
 from rich.console import Console
 from rich.markup import escape
 
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
+from gflow_cli._cli_helpers import (
+    _make_provider_dir,
+    _resolve_profile,
+    out_file_option,
+    run_with_handlers,
+)
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.scene import Scene, SceneWorkflow, SceneWorkflowMetadata
 from gflow_cli.config import get_settings
@@ -63,12 +68,8 @@ def scene() -> None:
 @scene.command("create")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.argument("clip_refs", nargs=-1, required=True)
-@click.option(
-    "--output",
-    "-o",
+@out_file_option(
     "output",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
     help="Render the composed scene into a single extended .mp4 at this path "
     "(server-side, credit-free; takes up to ~3 min). Without it, only the "
     "Flow scene is composed (no local file).",
