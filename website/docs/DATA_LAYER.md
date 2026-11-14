@@ -376,10 +376,10 @@ pruning**.
 
 ```bash
 # Archive every failure as JSONL (unbounded; newest-first) before deleting
-gflow data errors export -o failures.jsonl
+gflow data errors export --out-file failures.jsonl
 
 # Archive only the slice you are about to prune
-gflow data errors export --older-than 90d -o old-failures.jsonl
+gflow data errors export --older-than 90d --out-file old-failures.jsonl
 
 # Preview what a retention prune would delete (no changes)
 gflow data errors prune --older-than 90d --dry-run
@@ -393,7 +393,7 @@ gflow data errors prune --older-than 90d
   deletion is always a deliberate age choice; on `export` it is optional
   (default: all failures).
 - `--profile NAME` scopes either command to one profile.
-- `export` writes JSONL to `-o/--output FILE`, or to stdout when omitted —
+- `export` writes JSONL to `--out-file FILE` (or legacy `-o/--output`), or to stdout when omitted —
   reusing the same serialization as `data list errors --json`.
 - Deletion errors map to **exit 16** (`DataStoreError`), consistent with the
   rest of `gflow data`.
