@@ -267,7 +267,7 @@ def test_mro_keeps_video_generation_mixin_ahead_of_moved_bases() -> None:
 # When a reader moves to a new module, its patch string is retargeted AND this map is updated.
 PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     ("setup", "async_playwright"): "gflow_cli.api.transports.ui_automation",
-    ("_is_settings_panel_open", "_count_tabs_locator"): "gflow_cli.api.transports.ui_automation",
+    ("_is_settings_panel_open", "_count_tabs_locator"): "gflow_cli.api.transports._ui_settings",
     ("_enter_editor", "_NEW_PROJECT_PROBE_TIMEOUT_MS"): "gflow_cli.api.transports._ui_navigation",
     ("_settle_if_redirecting", "await_url_settled"): "gflow_cli.api.transports._ui_navigation",
     (
@@ -281,9 +281,9 @@ PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     (
         "_select_image_model",
         "IMAGE_MODEL_OPTION_SELECTORS",
-    ): "gflow_cli.api.transports.ui_automation",
-    ("_select_image_model", "log"): "gflow_cli.api.transports.ui_automation",
-    ("_configure_generation_settings", "log"): "gflow_cli.api.transports.ui_automation",
+    ): "gflow_cli.api.transports._ui_settings",
+    ("_select_image_model", "log"): "gflow_cli.api.transports._ui_settings",
+    ("_configure_generation_settings", "log"): "gflow_cli.api.transports._ui_settings",
 }
 
 
