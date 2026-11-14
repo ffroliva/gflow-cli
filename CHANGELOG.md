@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.99.0] — 2026-11-14
+
 ### Added
 
 - **Opt-in stable exit-code core (`GFLOW_CLI_EXIT_CODES=2`).** Opt in to a standardized core
   (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted; 4 is reserved for "accepted, still running") with specific causes moved to
-  the 40–63 range. In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
+  `40`–`44` (`40`–`63` is reserved for specific causes). In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
   preserves the legacy code ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)).
 - **`--out-file PATH` on generation/export commands and `out_file` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
   The explicit file destination is `--out-file PATH` on `data errors export`, `image t2i`,
@@ -27,6 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Passing `-o DIR` to `video upscale` still works with a warning; use `--out DIR`.
   In MCP `gflow_generate_image` and `gflow_generate_video`, `output` is deprecated in favor of `out_file`.
   Passing both old and new options is refused with exit 2 (or an MCP validation error).
+
+### Changed
+
+- **Internal: `UiAutomationTransport` and `MigratedComposer` are split into single-purpose mixins ([#1249](https://github.com/ffroliva/gflow-cli/issues/1249)).**
+  The two classes are now chains of mixins, one job each; every name other modules read is still
+  importable from the same place. No behaviour change.
+- **Locked `opentelemetry-api` 1.45.2** (transitive only).
 
 ### Upcoming breaking change
 
@@ -7079,7 +7088,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...HEAD
+[0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
 [0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0
 [0.96.1]: https://github.com/ffroliva/gflow-cli/compare/v0.96.0...v0.96.1
