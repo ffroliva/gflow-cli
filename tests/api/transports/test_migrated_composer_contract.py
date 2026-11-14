@@ -281,7 +281,10 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
     "IMAGE_RECOVERY_S": "gflow_cli.api.transports._mc_common",
     "IMAGE_RECOVERY_SETTLE_S": "gflow_cli.api.transports._mc_common",
     "IMAGE_REPLY_BUDGET_S": "gflow_cli.api.transports.migrated_composer",
-    "MigratedComposer": "gflow_cli.api.transports.migrated_composer",
+    "MigratedComposer": (
+        "gflow_cli.api.transports.migrated_composer",
+        "gflow_cli.api.transports._mc_media",
+    ),
     "RESULT_URL_GRACE_S": "gflow_cli.api.transports.migrated_composer",
     "SUBMIT_ENABLE_BUDGET_S": "gflow_cli.api.transports.migrated_composer",
     "SUBMIT_ENABLE_POLL_S": "gflow_cli.api.transports.migrated_composer",
