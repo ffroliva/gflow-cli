@@ -44,22 +44,6 @@ class CharacterGenerationMixin(BatchCaptureMixin):
         @staticmethod
         async def _is_flow_app_crash(page: Page) -> bool: ...
 
-    # Selector for the character editor's Slate prompt textbox — used as the
-    # "editor mounted" readiness anchor.  Its first alternative IS
-    # PROMPT_INPUT_SELECTORS[0];
-    # duplicated here as a named constant so the character-editor path is
-    # self-documenting without importing the tuple.
-    # Two frontends, one feature. labs.google renders the character editor with
-    # React + Slate; flow.google.com renders the SAME editor — same tRPC backend,
-    # same aisandbox REST, same entities — with Angular + ProseMirror (recon
-    # 2026-09-06, scripts/dev/spike_migrated_character_editor_anchor.py). Asking
-    # only for Slate made a present feature look absent for 20 s and then get
-    # reported as "labs-only, ever", which was wrong. Both anchors are library
-    # build artefacts rather than display strings, so neither translates.
-    _CHARACTER_EDITOR_READY_SELECTOR = (
-        'div[role="textbox"][data-slate-editor="true"], div.ProseMirror[contenteditable="true"]'
-    )
-
     # Slot-add button for character image slots 1+ (body / accessories).
     #
     # Live DOM evidence (2026-06-02 spike, character editor with slot 0 filled)
