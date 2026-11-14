@@ -51,8 +51,8 @@ from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
-    EXIT_CODE_MAP,
     GFlowError,
+    exit_code_for,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
@@ -325,16 +325,8 @@ def safe_path_text(path: Path) -> str:
 
 
 def _exit_code_for(exc: GFlowError) -> int:
-    """Return the exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
-
-    Iteration order matters: subclasses inherit the parent class's code only
-    if they don't have their own entry, and the dict is ordered
-    most-specific-first (see ``errors.py``).
-    """
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
+    """Thin re-export delegating to :func:`gflow_cli.errors.exit_code_for` (#1202)."""
+    return exit_code_for(exc)
 
 
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:

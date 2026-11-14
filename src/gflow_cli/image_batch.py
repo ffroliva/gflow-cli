@@ -33,7 +33,6 @@ from gflow_cli.data.recorder import (
     record_undownloaded_images_safe,
 )
 from gflow_cli.errors import (
-    EXIT_CODE_MAP,
     BatchIntegrityError,
     BatchPartialError,
     ConfigurationError,
@@ -42,6 +41,7 @@ from gflow_cli.errors import (
     GFlowError,
     MediaAttributionError,
     RpcResponseUnavailableError,
+    exit_code_for,
 )
 from gflow_cli.storage import cloud_info_from_path
 
@@ -251,10 +251,7 @@ class BatchOutcome:
 
 
 def resolve_exit_code(exc: GFlowError) -> int:
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
+    return exit_code_for(exc)
 
 
 def safe_terminal_text(value: str) -> str:

@@ -86,13 +86,11 @@ class TestQueuedTaskEnvelope:
         under test is only *which* branch a transport failure lands in.
         """
         from gflow_cli.data.redaction import redact_error_detail
-        from gflow_cli.errors import EXIT_CODE_MAP, GFlowError, is_retryable
+        from gflow_cli.errors import GFlowError, exit_code_for, is_retryable
 
         if isinstance(exc, GFlowError):
             payload = dict(exc.to_problem_details())
-            payload["exit_code"] = next(
-                (code for cls, code in EXIT_CODE_MAP.items() if isinstance(exc, cls)), 1
-            )
+            payload["exit_code"] = exit_code_for(exc)
             payload["retryable"] = is_retryable(exc)
             if "detail" in payload:
                 payload["detail"] = redact_error_detail(str(payload["detail"]))

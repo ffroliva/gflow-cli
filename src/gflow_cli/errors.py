@@ -66,7 +66,9 @@ __all__ = [
     "WafRejectionError",
     "WireFormatError",
     "classify_content_safety",
+    "exit_code_for",
     "is_retryable",
+    "legacy_exit_code_for",
     "outcome_members",
 ]
 
@@ -1720,6 +1722,25 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     SceneConcatError: 19,
     # FlowApiError omitted — falls through to default 1
 }
+
+
+def legacy_exit_code_for(exc: GFlowError) -> int:
+    """Return the legacy exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
+
+    Iteration order matters: subclasses inherit the parent class's code only
+    if they don't have their own entry, and the dict is ordered
+    most-specific-first.
+    """
+    for cls, code in EXIT_CODE_MAP.items():
+        if isinstance(exc, cls):
+            return code
+    return 1
+
+
+def exit_code_for(exc: GFlowError) -> int:
+    """Return the process exit code for *exc* in the active mode (#1202)."""
+    return legacy_exit_code_for(exc)
+
 
 # Transient failures the caller can retry without operator intervention — WAF
 # bounce, rate-limit/quota, transport timeout, network blip, a dropped browser
