@@ -10,12 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Opt-in stable exit-code core (`GFLOW_CLI_EXIT_CODES=2`).** Opt in to a standardized core
-  (0 ok, 1 error, 2 usage, 3 auth, 4 accepted, 130 interrupted) with specific causes moved to
+  (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted; 4 is reserved for "accepted, still running") with specific causes moved to
   the 40–63 range. In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
   preserves the legacy code ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)).
+- **`--out-file PATH` on generation/export commands and `out_file` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  The explicit file destination is `--out-file PATH` on `data errors export`, `image t2i`,
+  `image i2i`, `scene create`, `video t2v`, `video i2v`, `video r2v`, `video chain`, and
+  `video extend`. In MCP, `gflow_generate_image` and `gflow_generate_video` gain `out_file`.
+  `video chain` has never written to this path; it now says so on stderr instead of staying
+  silent, and the clips still land under `--out-dir` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+
+### Deprecated
+
+- **`-o/--output PATH` on generation/export commands and `output` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  Passing `-o` or `--output PATH` still works and prints one stderr deprecation warning.
+  Passing `-o DIR` to `video upscale` still works with a warning; use `--out DIR`.
+  In MCP `gflow_generate_image` and `gflow_generate_video`, `output` is deprecated in favor of `out_file`.
+  Passing both old and new options is refused with exit 2 (or an MCP validation error).
 
 ### Upcoming breaking change
 
+- In a future release `-o/--output` selects the output format (`-o json|table|id`).
+  Replace -o/--output PATH with --out-file PATH (and video upscale -o DIR with --out DIR).
 - **Exit-code core will become the default in a later release ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
   - `4` (`RateLimitError`) moves to `40`.
   - `5` (`ContentPolicyError`) moves to `41`.

@@ -65,6 +65,26 @@ class TestMcpToolListing:
             "MCP video tool missing 'tools' (CLI parity)"
         )
 
+    @pytest.mark.parametrize("tool_name", ["gflow_generate_image", "gflow_generate_video"])
+    def test_generate_tools_schema_has_out_file_and_deprecated_output(
+        self, mcp_server: Any, tool_name: str
+    ) -> None:
+        """Both generate tools expose out_file and flag output as deprecated in schema."""
+        tool = mcp_server._tool_manager._tools[tool_name]
+        props = tool.parameters.get("properties", {})
+        assert "out_file" in props, f"{tool_name} missing 'out_file' property in schema"
+        assert "output" in props, f"{tool_name} missing 'output' property in schema"
+        output_desc = props["output"].get("description", "")
+        assert "Deprecated" in output_desc, (
+            f"{tool_name} output property description must contain 'Deprecated', "
+            f"got: {output_desc!r}"
+        )
+        assert output_desc.startswith("Deprecated: use out_file (removed in a future release).")
+        out_file_desc = props["out_file"].get("description", "")
+        assert out_file_desc, f"{tool_name} out_file property description must not be empty"
+        assert "inside the configured output directory" in (tool.description or "")
+        assert "deprecated" in (tool.description or "").lower()
+
 
 # ---------------------------------------------------------------------------
 # gflow_list_tools
