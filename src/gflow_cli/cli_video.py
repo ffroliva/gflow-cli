@@ -21,10 +21,12 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     default_project,
+    out_file_option,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
     tool_option,
+    upscale_out_dir_option,
 )
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
@@ -145,12 +147,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
                 type=click.Path(file_okay=False, path_type=Path),
                 help="Directory to save the generated mp4. Defaults to tmp/.",
             ),
-            click.option(
-                "-o",
-                "--output",
-                "output_file",
-                default=None,
-                type=click.Path(dir_okay=False, path_type=Path),
+            out_file_option(
                 help="Explicit output file path for the generated asset.",
             ),
             click.option(
@@ -306,7 +303,7 @@ async def _generate_and_report(
 
     settings = get_settings()
     if output_file is not None:
-        refuse_cloud_storage_for_local_file(settings.storage_uri, "-o/--output")
+        refuse_cloud_storage_for_local_file(settings.storage_uri, "--out-file")
     if not as_json:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     recorder = OperationRecorder.open(settings)
@@ -1137,7 +1134,7 @@ def _free_rerender_hint(project_id: str, profile: str, clips: list[str], *, resu
     """The `gflow scene create` command that renders this extend run without credits."""
     refs = " ".join(clips) if clips else "<clip-workflow-id> ..."
     command = (
-        f"gflow scene create --project {project_id} --profile {profile} {refs} --output <path>"
+        f"gflow scene create --project {project_id} --profile {profile} {refs} --out-file <path>"
     )
     if resumed:
         return (
@@ -1611,14 +1608,7 @@ def i2v(  # NOSONAR
 @_project_name_option
 @_reference_entity_option
 @_reference_entity_name_option
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated asset.",
-)
+@out_file_option(help="Explicit output file path for the generated asset.")
 @click.option(
     "--out-dir",
     "out_dir",
@@ -1792,14 +1782,7 @@ def r2v(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Explicit output file path for the generated chain clips.",
-)
+@out_file_option(help="Explicit output file path for the generated chain clips.")
 @click.option(
     "--out-dir",
     "out_dir",
@@ -2411,7 +2394,7 @@ async def _extend_session(  # noqa: PLR0913
         "Unlike `video chain`, which restarts from an extracted still, extend is "
         "seeded server-side from the source clip, so the join is continuous. "
         "The result lands as a Scene; render it to one file with "
-        "`gflow scene create --output`.\n\n"
+        "`gflow scene create --out-file`.\n\n"
         "\b\n"
         "Examples:\n"
         '  gflow video extend <media-id> "the wave recedes" --project <project-id>\n'
@@ -2427,7 +2410,7 @@ async def _extend_session(  # noqa: PLR0913
         "On flow.google.com gflow drives Flow's own extend UI: one segment per call "
         "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), in "
         "the source clip's aspect; the new extension clip alone (not the joined "
-        "scene) is downloaded to --output or the output directory. "
+        "scene) is downloaded to --out-file or the output directory. "
         "Each run leaves a new scene in the project, and the price is not shown "
         "before submitting there."
     ),
@@ -2466,12 +2449,7 @@ async def _extend_session(  # noqa: PLR0913
         "GFLOW_CLI_JITTER_RANGE setting; 0 disables pacing (not advised)."
     ),
 )
-@click.option(
-    "-o",
-    "--output",
-    "output_file",
-    default=None,
-    type=click.Path(dir_okay=False, path_type=Path),
+@out_file_option(
     help=(
         "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
         "here (server-side concat, credit-free). flow.google.com: save only the new "
@@ -2600,12 +2578,7 @@ def extend(  # noqa: PLR0913
         "or 270p (animated GIF export)."
     ),
 )
-@click.option(
-    "-o",
-    "--out",
-    "out_dir",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    default=None,
+@upscale_out_dir_option(
     help="Output directory (defaults to the configured gflow output dir).",
 )
 @click.option(
