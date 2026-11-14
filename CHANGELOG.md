@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Opt-in stable exit-code core (`GFLOW_CLI_EXIT_CODES=2`).** Opt in to a standardized core
+  (0 ok, 1 error, 2 usage, 3 auth, 4 accepted, 130 interrupted) with specific causes moved to
+  the 40–63 range. In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
+  preserves the legacy code ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)).
+
+### Upcoming breaking change
+
+- **Exit-code core will become the default in release N+1 ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
+  - `4` (`RateLimitError`) moves to `40`.
+  - `5` (`ContentPolicyError`) moves to `41`.
+  - `6` (`NetworkError`) moves to `42`.
+  - `7` (`WireFormatError`) moves to `43`.
+  - `8` (`AuthMissingError`) moves to `3` (unified auth exit code with `AuthExpiredError`).
+  - `9` (`TransportTimeoutError`) moves to `44`.
+  - `4` is reserved for "accepted, still running" (resumable jobs).
+  - `5–9` are reserved.
+  - `0`, `1`, `2`, `3`, `130`, and `10–39` are unchanged.
+  Set GFLOW_CLI_EXIT_CODES=2 now to test your scripts against the new codes.
+
 ## [0.98.0] — 2026-11-12
 
 ### Added
