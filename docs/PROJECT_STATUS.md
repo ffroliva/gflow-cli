@@ -20,8 +20,8 @@ rate limit, content policy, network, wire format and timeout to `40`–`44` and 
 into `3`. The default stays the legacy codes; `--json` errors carry both `exit_code` and
 `exit_code_legacy`. The table is in [ERRORS.md](ERRORS.md).
 
-**Changed.** `video chain` has never written to `-o PATH`; it now says so on stderr instead of staying
-silent (#1293 tracks writing the file).
+**Changed.** In this release `video chain` does not write to `-o PATH` and says so on stderr instead of
+staying silent; writing the file is fixed on `develop` for the next release (#1293).
 Internally, `UiAutomationTransport` and `MigratedComposer` are split into single-purpose mixins
 (#1249 wave 2).
 

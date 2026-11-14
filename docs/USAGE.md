@@ -735,8 +735,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > instead of proceeding on Flow's sticky default (typically x2) and silently
 > changing what the run bills.
 > `t2v`, `i2v`, `r2v`, `video chain`, and `video extend` additionally take `--out-file PATH` (explicit file destination).
-> `video chain` does not apply it yet: it says so on stderr and the clips land under `--out-dir` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
-> The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
+> `video chain` writes link i's clip to `<stem>_<i><suffix>` next to PATH (`--out-file out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`, …), numbered over the whole manifest even for one link, so `--resume-from` writes the remaining links under the names a full run would; seed frames stay under `--out-dir`, and `--json` and the catalog report the numbered paths. An existing file or folder at a numbered path is never replaced: that clip, like one whose move fails, stays at its `--out-dir` path, is recorded there, and a warning names it ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+> For `t2v`, `i2v` and `r2v` the mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
 > **`i2v` model rules (issues #125 / #626):** every model — `omni-flash`
 > included — supports i2v with a **start frame** and with an **end frame**
@@ -1191,14 +1191,19 @@ Options:
   --dry-run                 Resolve the manifest, print the plan + credit cost,
                             and spend nothing.
   --resume-from CHAIN_ID    Resume a prior chain by its id; already-paid links
-                            are skipped (not re-billed).
+                            are skipped (not re-billed), and the next link is
+                            seeded from the last paid clip, which must still be
+                            at its recorded path (exit 20 otherwise).
   --jitter FLOAT            Random 0..JITTER second pause between links
                             (anti-bot cadence).               [default: 0.0]
   --seed-offset INTEGER     Extract the seed frame this many ms before EOF
                             (fade-to-black guard).            [default: 0]
   --aspect [9:16|16:9]      Uniform aspect for every link.    [default: 9:16]
   --profile NAME            Profile name (overrides default).
-  --out-dir DIR             Directory for the link mp4s + seed frames.
+  --out-file FILE           Write link i's clip to FILE's stem plus _i
+                            (clip.mp4 -> clip_1.mp4, clip_2.mp4).
+  --out-dir DIR             Directory for the seed frames, and for the link
+                            mp4s unless --out-file is given.
   --json                    Emit a machine-readable JSON result.
 ```
 
@@ -1237,7 +1242,10 @@ the manifest is currently informational).
 ### Output — N clips, not one file
 
 Each link is saved as its own mp4 (plus a `linkN_lastframe.jpg` seed frame
-between links) under `--out-dir` (or the default output dir). **Stitching the
+between links) under `--out-dir` (or the default output dir). With
+`--out-file out/clip.mp4` link i's clip is written to `out/clip_<i>.mp4`
+instead (1-based over the whole manifest, so a `--resume-from` run keeps each
+link's number); the seed frames stay under `--out-dir`. **Stitching the
 clips into a single video is a separate step — use `gflow scene` to
 concatenate them server-side.** Chain does not auto-concat: see the
 *deferred auto-concat* entry in
@@ -2372,7 +2380,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` or `omni-1.2-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --out-file`) | Retry; the recorded compose survives, so re-render is safe |
-| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link | Check the source video downloaded intact; retry the link  |
+| `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link, or a `video chain --resume-from` whose last completed clip is no longer at its recorded path (refused before anything is billed, [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)) | Check the source video downloaded intact; retry the link. For a resume, put the clip back at the path named, or start a new chain |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
 | `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | If the detail says the model picker is **hidden**, nothing was submitted: turn the **Agent** chip off in a browser and re-run ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). Otherwise update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |

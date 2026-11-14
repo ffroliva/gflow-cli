@@ -151,13 +151,20 @@ def _mock_chain_aborts(
     chain_state["run_chain"] = mock_run
 
 
+def _done_link(tmp_path: Path, index: int) -> MagicMock:
+    """A recorded link whose clip is on disk, so a resume can seed from it (#1300)."""
+    clip = tmp_path / f"done{index}.mp4"
+    clip.touch()
+    return MagicMock(link_index=index, local_path=str(clip))
+
+
 @given(parsers.parse("the recorder reports {n:d} completed link"))
 @given(parsers.parse("the recorder reports {n:d} completed links"))
 def _recorder_completed(
-    chain_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch, n: int
+    chain_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, n: int
 ) -> None:
     recorder = MagicMock(name="ChainLinkRecorder")
-    recorder.completed_links.return_value = [MagicMock() for _ in range(n)]
+    recorder.completed_links.return_value = [_done_link(tmp_path, i) for i in range(n)]
     monkeypatch.setattr(
         "gflow_cli.data.chain_repo.ChainLinkRecorder.open", lambda *_a, **_kw: recorder
     )
@@ -167,16 +174,17 @@ def _recorder_completed(
 
 @given(parsers.parse("the recorder reports {n:d} completed link whose seed frame is absent"))
 def _recorder_completed_no_seed(
-    chain_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch, n: int
+    chain_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path, n: int
 ) -> None:
     """Models the record-before-extract guarantee: the link's clip is recorded
     (so ``completed_links`` counts it and resume skips regeneration) even though
     its seed frame file is absent. Resume must therefore re-submit only the
     remaining links — the recorded link is NOT regenerated."""
     recorder = MagicMock(name="ChainLinkRecorder")
-    completed_link = MagicMock()
-    completed_link.seed_frame_path = None  # extraction never completed
-    recorder.completed_links.return_value = [completed_link for _ in range(n)]
+    completed = [_done_link(tmp_path, i) for i in range(n)]
+    for link in completed:
+        link.seed_frame_path = None  # extraction never completed
+    recorder.completed_links.return_value = completed
     monkeypatch.setattr(
         "gflow_cli.data.chain_repo.ChainLinkRecorder.open", lambda *_a, **_kw: recorder
     )
