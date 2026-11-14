@@ -761,12 +761,21 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
 
 
 @pytest.mark.parametrize(
-    ("key", "added", "billed"),
-    [("macaron_cookie_extend_4s", 4, 4), ("veo_3_1_extension_lite", 7, 8)],
+    ("key", "media", "added", "billed"),
+    [
+        ("macaron_cookie_extend_4s", MEDIA, 4, 4),  # in place: the key names its length
+        ("macaron_cookie_extend", MEDIA, None, None),  # in place, no token: unknown
+        (None, MEDIA, None, None),  # in place, key unread: unknown, not Veo's 7/8
+        ("veo_3_1_extension_lite", "new-media", 7, 8),  # a separate Veo segment
+        ("macaron_cookie_extend_4s", "new-media", 7, 8),  # separate segment: name ignored
+    ],
 )
-def test_the_migrated_payload_reports_the_key_length(key: str, added: int, billed: int) -> None:
-    """#1184: an Omni key names its length (+3.9 s measured for ``_4s``); a Veo key keeps
-    the measured 7 s added / 8 s billed."""
+def test_the_migrated_payload_reports_the_length_by_identity(
+    key: str | None, media: str, added: int | None, billed: int | None
+) -> None:
+    """#1184: "in place" is the returned id being the source's, not the key's name. An
+    in-place extend reads its length from the key's ``_<n>s`` token (+3.9 s measured for
+    ``_4s``) or reports it unknown; a separate segment keeps the measured 7 s / 8 s."""
     from gflow_cli.api.transports.batchexecute import GenerationRecord
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome
     from gflow_cli.cli_video import _migrated_extend_payload
@@ -774,7 +783,7 @@ def test_the_migrated_payload_reports_the_key_length(key: str, added: int, bille
     record = GenerationRecord(
         workflow_id="wf",
         project_id=PROJECT,
-        media_id=MEDIA,
+        media_id=media,
         status=3,
         video_url=None,
         poster_url=None,
@@ -782,7 +791,7 @@ def test_the_migrated_payload_reports_the_key_length(key: str, added: int, bille
     )
     outcome = ExtendOutcome(record=record, video=None, model_key=key, aspect="9:16", scene_id=None)
     payload = _migrated_extend_payload(
-        outcome, "out.mp4", profile_name="p", project_id=PROJECT, aspect=None
+        outcome, "out.mp4", profile_name="p", media_id=MEDIA, project_id=PROJECT, aspect=None
     )
     assert (payload["seconds_added"], payload["seconds_billed"]) == (added, billed)
     assert payload["request"]["duration"] == added
@@ -794,15 +803,15 @@ def test_the_migrated_payload_reports_the_key_length(key: str, added: int, bille
         ("macaron_cookie_extend_4s", (4, 4)),
         ("macaron_cookie_extend_4s_low_priority", (4, 4)),  # `s_` is no word boundary
         ("macaron_cookie_extend_12s", (12, 12)),
-        ("macaron_cookie_extend_4sx", (7, 8)),  # not a length token
+        ("macaron_cookie_extend_4sx", (None, None)),  # not a length token
     ],
 )
 def test_the_extend_seconds_token_is_read_from_any_omni_key(
-    key: str, expected: tuple[int, int]
+    key: str, expected: tuple[int | None, int | None]
 ) -> None:
     from gflow_cli.cli_video import _migrated_extend_seconds
 
-    assert _migrated_extend_seconds(key) == expected
+    assert _migrated_extend_seconds(key, in_place=True) == expected
 
 
 def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:

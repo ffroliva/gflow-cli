@@ -1859,16 +1859,21 @@ _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
 
 
-def _migrated_extend_seconds(model_key: str | None) -> tuple[int, int]:
+def _migrated_extend_seconds(
+    model_key: str | None, *, in_place: bool
+) -> tuple[int | None, int | None]:
     """(seconds added, seconds billed) for one flow.google.com extend.
 
-    An Omni key names its length (``macaron_cookie_extend_4s``: +3.9 s measured, #1184);
-    billed seconds are read from that token, not measured (12 credits is the only billing
-    fact). Any other key keeps the measured Veo 7 s added / 8 s billed.
+    A separate segment keeps the measured Veo 7 s added / 8 s billed. An extend that grew
+    the source in place (#1184) reads its length from the key's ``_<n>s`` token
+    (``macaron_cookie_extend_4s``: +3.9 s measured; billed is the token, not measured —
+    12 credits is the only billing fact), and is unknown (``None``) without one.
     """
-    if model_key and (m := re.search(r"_extend_(\d+)s(?:_|$)", model_key)):
-        return int(m.group(1)), int(m.group(1))
-    return _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
+    if not in_place:
+        return _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
+    m = re.search(r"_extend_(\d+)s(?:_|$)", model_key or "")
+    seconds = int(m.group(1)) if m else None
+    return seconds, seconds
 
 
 def _print_extend_plan(
@@ -2078,13 +2083,16 @@ def _migrated_extend_payload(
     rendered: str | None,
     *,
     profile_name: str,
+    media_id: str,
     project_id: str,
     aspect: str | None,
 ) -> dict[str, Any]:
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
-    added, billed = _migrated_extend_seconds(outcome.model_key)
+    added, billed = _migrated_extend_seconds(
+        outcome.model_key, in_place=record.media_id == media_id
+    )
     return {
         "status": "ok" if ok else "fail",
         "command": _EXTEND_COMMAND,
@@ -2139,7 +2147,12 @@ def _report_migrated_extend(  # noqa: PLR0913
     if as_json:
         json_output.emit(
             _migrated_extend_payload(
-                outcome, rendered, profile_name=profile_name, project_id=project_id, aspect=aspect
+                outcome,
+                rendered,
+                profile_name=profile_name,
+                media_id=media_id,
+                project_id=project_id,
+                aspect=aspect,
             )
         )
     else:

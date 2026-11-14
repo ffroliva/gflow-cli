@@ -247,7 +247,12 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     if outcome.record.media_id == media:
         # #1184, measured 2026-11-08 with macaron_cookie_extend_4s: the extend grows the
         # source in place, so the same id now holds the source plus the extension.
-        added, _billed = _migrated_extend_seconds(outcome.model_key)
-        assert seconds >= source_seconds + added - 0.5, (outcome.model_key, source_seconds, seconds)
+        added, _billed = _migrated_extend_seconds(outcome.model_key, in_place=True)
+        grown = source_seconds + (added or 0) - 0.5  # a key without a length token: just longer
+        assert seconds >= grown and seconds > source_seconds, (
+            outcome.model_key,
+            source_seconds,
+            seconds,
+        )
     else:
         assert 6.5 <= seconds <= 8.5  # a separate Veo segment: Flow bills 8 s, ~7 s content
