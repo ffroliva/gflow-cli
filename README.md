@@ -49,7 +49,7 @@ Same Veo and Imagen models, same quality, same billing against your own Google a
 # 1 · Install (uv recommended; also: pip install gflow-cli)
 uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
-# later: `gflow update` upgrades in place (every command shows a banner when a newer release is out)
+# later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
 
 # 2 · Authenticate (one-time, opens a real Chrome window)
 # Behind a proxy (e.g. Clash)? Set GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897 first (docs/CONFIGURATION.md)

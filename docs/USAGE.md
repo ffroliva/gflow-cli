@@ -1862,7 +1862,7 @@ Upgrade gflow-cli in place, through the package manager that installed it.
 **Stop every other `gflow` process first** — see below.
 
 ```text
-gflow update [--check] [--json]
+gflow update [--check] [-v|--verbose] [--json]
 ```
 
 The installer is read off the install itself, never guessed from `PATH`:
@@ -1875,12 +1875,14 @@ The installer is read off the install itself, never guessed from `PATH`:
 
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs
-nothing. Otherwise it runs the manager with its output shown, then re-reads the
+nothing. Otherwise it runs the manager with output captured (pass `-v`/`--verbose` to view it, or see it on failure), then re-reads the
 venv's Playwright version: when the upgrade moved it, a hint gives you the exact
 `<that venv's python> -m playwright install chromium` so the browser build matches. If PyPI is
 unreachable the manager still runs — it is the authority on what is installable.
 
 `--check` only reports installed vs latest plus the command that *would* run;
+`-v` / `--verbose` streams the package manager's output live (with `--json` it stays
+captured, so stdout is one JSON document; the root `gflow -v` only raises log verbosity);
 `--json` returns `{status: "ok", installed, latest, update_available, installer,
 command, upgraded, notes}` (`latest` / `update_available` are `null` when PyPI could not
 be reached; after an upgrade `latest` is the version the venv actually reports;
@@ -1920,9 +1922,10 @@ and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
 its own file open, so it can be neither overwritten nor renamed while it runs.
 Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
 the launcher ("os error 32"). The upgrade *did* happen — the launcher only
-points at the venv's python — so `gflow update` reports it as upgraded with a
-note quoting the manager's exit code; the next update from another shell
-refreshes the launcher.
+points at the venv's python — so `gflow update` reports it as upgraded, prints
+the manager's captured output, and adds a note quoting its exit code. The old
+launcher keeps working. A later `gflow update` reports "up to date" and does not
+run the manager, so it does not replace the launcher either.
 
 **Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
 lock just above is the benign case: it is the `gflow.exe` *you* are running, and
@@ -1949,7 +1952,7 @@ Restart any running `gflow serve` / MCP server afterwards too; a long-lived
 process keeps the old code until it restarts. There is deliberately no MCP twin
 of this command: a server must not replace its own code underneath itself.
 
-Every command also prints an **update banner** on stderr (a one-line notice when
+Every command (other than `gflow update` itself) also prints an **update banner** on stderr (a one-line notice when
 stderr is not a terminal) when a newer release is known — see
 [CONFIGURATION § GFLOW_CLI_UPDATE_CHECK](CONFIGURATION.md#gflow_cli_update_check)
 for the once-a-day cache and how to silence it.
