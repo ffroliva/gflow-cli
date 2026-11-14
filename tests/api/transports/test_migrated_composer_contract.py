@@ -283,20 +283,20 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
     "FRAME_UPLOAD_S": "gflow_cli.api.transports._mc_upload_frame",
     "IMAGE_RECOVERY_S": "gflow_cli.api.transports._mc_common",
     "IMAGE_RECOVERY_SETTLE_S": "gflow_cli.api.transports._mc_common",
-    "IMAGE_REPLY_BUDGET_S": "gflow_cli.api.transports.migrated_composer",
+    "IMAGE_REPLY_BUDGET_S": "gflow_cli.api.transports._mc_submit_observe",
     "MigratedComposer": (
         "gflow_cli.api.transports.migrated_composer",
         "gflow_cli.api.transports._mc_media",
     ),
-    "RESULT_URL_GRACE_S": "gflow_cli.api.transports.migrated_composer",
-    "SUBMIT_ENABLE_BUDGET_S": "gflow_cli.api.transports.migrated_composer",
-    "SUBMIT_ENABLE_POLL_S": "gflow_cli.api.transports.migrated_composer",
-    "SUBMIT_REPLY_BUDGET_S": "gflow_cli.api.transports.migrated_composer",
+    "RESULT_URL_GRACE_S": "gflow_cli.api.transports._mc_submit_observe",
+    "SUBMIT_ENABLE_BUDGET_S": "gflow_cli.api.transports._mc_submit_observe",
+    "SUBMIT_ENABLE_POLL_S": "gflow_cli.api.transports._mc_submit_observe",
+    "SUBMIT_REPLY_BUDGET_S": "gflow_cli.api.transports._mc_submit_observe",
     "_project_snapshot": (
         "gflow_cli.api.transports.migrated_composer",
         "gflow_cli.api.transports._mc_upload_frame",
     ),
-    "_submit_body_problem": "gflow_cli.api.transports.migrated_composer",
+    "_submit_body_problem": "gflow_cli.api.transports._mc_submit_observe",
     "_unique_display_name": "gflow_cli.api.transports._mc_upload_frame",
     "_unported_image_form": (
         "gflow_cli.api.transports.migrated_composer",
@@ -314,6 +314,7 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
         "gflow_cli.api.transports.migrated_composer",
         "gflow_cli.api.transports._mc_common",
         "gflow_cli.api.transports._mc_mention",
+        "gflow_cli.api.transports._mc_submit_observe",
     ),
 }
 
