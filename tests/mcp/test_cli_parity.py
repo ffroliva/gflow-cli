@@ -219,7 +219,6 @@ _CLI_ONLY_PARAMS: frozenset[str] = frozenset(
         "as_json",  # MCP always returns structured data
         "out",
         "out_dir",
-        "output_file",  # the tool reports paths, it does not choose them
         "read_stdin",
         "prompts_file",  # shell-input plumbing
         "transport",  # operator concern
@@ -238,6 +237,9 @@ _PARAM_ALIASES: dict[str, str] = {
     "image": "initial_frame",
     "enable_mode": "enabled",  # CLI --enable-mode / tool `enabled`: same switch
     "disabled": "enabled",
+    "output_file": "out_file",  # --out-file PATH (#1158)
+    "output_file_deprecated": "output",  # deprecated -o/--output PATH, removed in N+1
+    "out_dir_deprecated": "out_dir",  # video upscale: deprecated -o DIR for --out DIR
 }
 
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked

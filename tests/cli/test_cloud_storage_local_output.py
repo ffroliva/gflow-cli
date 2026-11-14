@@ -35,7 +35,9 @@ def test_helper_refuses_only_with_cloud_storage() -> None:
 
 
 @pytest.mark.usefixtures("bucket")
-def test_t2v_output_with_cloud_storage_exits_11_before_submit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("flag", ["--out-file", "-o"])
+def test_t2v_output_with_cloud_storage_exits_11_before_submit(tmp_path: Path, flag: str) -> None:
+    """#1008, #1158: the new spelling is refused before submit exactly like the old one."""
     from gflow_cli.cli import main
 
     with (
@@ -44,11 +46,12 @@ def test_t2v_output_with_cloud_storage_exits_11_before_submit(tmp_path: Path) ->
         patch("gflow_cli.cli_video.FlowApiClient", _no_client),
     ):
         result = CliRunner().invoke(
-            main, ["video", "t2v", "a sunset", "-o", str(tmp_path / "clip.mp4")]
+            main, ["video", "t2v", "a sunset", flag, str(tmp_path / "clip.mp4")]
         )
 
     assert result.exit_code == 11, result.output
     assert "GFLOW_CLI_STORAGE_URI" in result.output
+    assert "--out-file needs the clip" in result.output
 
 
 @pytest.mark.usefixtures("bucket")

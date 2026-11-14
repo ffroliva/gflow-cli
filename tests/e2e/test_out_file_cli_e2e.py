@@ -63,3 +63,18 @@ def test_e2e_out_file_deprecated_flag(e2e_env: dict[str, str], tmp_path: Path) -
     assert target.exists(), f"Expected output file not found at {target}"
     assert _is_image(target), f"Output file {target} is neither PNG nor JPEG"
     assert proc.stderr.count(_OUT_FILE_DEPRECATION_WARNING) == 1
+
+
+def test_e2e_out_file_is_refused_under_cloud_storage(
+    e2e_env: dict[str, str], tmp_path: Path
+) -> None:
+    """S12 (#1008): with an s3:// storage URI, video t2v --out-file exits 11 before submit ($0)."""
+    env = {**e2e_env, "GFLOW_CLI_STORAGE_URI": "s3://gflow-e2e-refusal/gflow/"}
+    proc = _run_gflow(
+        ["video", "t2v", "a red kite over a beach", "--out-file", str(tmp_path / "c.mp4")],
+        env,
+    )
+    assert proc.returncode == 11, f"expected exit 11, got {proc.returncode}: {proc.stderr}"
+    assert "--out-file needs the clip" in proc.stdout + proc.stderr
+    assert "Nothing was submitted" in proc.stdout + proc.stderr
+    assert not (tmp_path / "c.mp4").exists()
