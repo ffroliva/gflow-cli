@@ -126,9 +126,7 @@ _OUT_FILE_DESCRIPTION = (
 _OutFileParam = Annotated[str | None, Field(description=_OUT_FILE_DESCRIPTION)]
 
 _DEPRECATED_OUTPUT_DESCRIPTION = (
-    "Deprecated: use out_file (removed in a future release). "
-    "Optional file to write, inside the configured output dir: a relative path "
-    "is taken relative to it; an escape or a directory is refused."
+    "Deprecated: use out_file (removed in a future release). " + _OUT_FILE_DESCRIPTION
 )
 _DeprecatedOutputParam = Annotated[str | None, Field(description=_DEPRECATED_OUTPUT_DESCRIPTION)]
 
@@ -1438,13 +1436,14 @@ async def gflow_generate_video(  # NOSONAR
             "Conflicting Output Options",
             "Cannot specify both 'out_file' and 'output'. Use 'out_file' ('output' is deprecated).",
         )
+    path_param = "out_file" if out_file is not None else "output"
     if out_file is not None:
         output = out_file
 
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
     if output is not None:
-        refuse_cloud_storage_for_local_file(get_settings().storage_uri, "output")
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, path_param)
         confined = _confined_output_file(output)
         if isinstance(confined, dict):
             return confined

@@ -104,6 +104,27 @@ async def test_mcp_video_output_with_cloud_storage_is_refused_before_queueing() 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("bucket")
+@pytest.mark.parametrize("param", ["out_file", "output"])
+async def test_mcp_video_refusal_names_the_parameter_passed(param: str) -> None:
+    """#1158: out_file is refused under cloud storage like output, naming what was passed."""
+    from gflow_cli.mcp import tools as tools_mod
+
+    async def _never(**_k: Any) -> dict[str, Any]:
+        raise AssertionError("refused before the worker")
+
+    with (
+        patch("gflow_cli.mcp.tools._rate_limiter", tools_mod._TokenBucket(8, 0.0)),
+        patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+        patch.object(tools_mod, "_run_generation_task", _never),
+    ):
+        result = await tools_mod.gflow_generate_video(prompt="a dog", **{param: "x.mp4"})
+
+    assert result["status"] == "error"
+    assert result["error"]["detail"].startswith(f"{param} needs the clip"), result
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("bucket")
 async def test_movie_stitch_with_cloud_storage_is_refused_before_the_browser(
     tmp_path: Path,
 ) -> None:
