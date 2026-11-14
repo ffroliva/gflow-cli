@@ -74,7 +74,7 @@ def scene() -> None:
     "(server-side, credit-free; takes up to ~3 min). Without it, only the "
     "Flow scene is composed (no local file).",
 )
-@click.option("--force", is_flag=True, default=False, help="Overwrite --output if it exists.")
+@click.option("--force", is_flag=True, default=False, help="Overwrite --out-file if it exists.")
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def create(
     project_id: str,
@@ -85,7 +85,7 @@ def create(
 ) -> None:
     """Compose a new scene from CLIP_REFS (each: workflowId[:start-end]).
 
-    With --output, also renders the scene into one extended .mp4 via Flow's
+    With --out-file, also renders the scene into one extended .mp4 via Flow's
     server-side concatenation (credit-free, no ffmpeg).
     """
     try:
@@ -97,7 +97,7 @@ def create(
     if output is not None:
         output = output.expanduser()
         if output.suffix.lower() != ".mp4":
-            console.print(f"[yellow]--output has no .mp4 suffix; using[/yellow] {output}.mp4")
+            console.print(f"[yellow]--out-file has no .mp4 suffix; using[/yellow] {output}.mp4")
             output = output.with_suffix(".mp4")
         if output.exists() and not force:
             msg = f"{output} already exists; pass --force to overwrite."

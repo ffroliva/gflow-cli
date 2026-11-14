@@ -843,7 +843,7 @@ def t2i(  # NOSONAR
 
     if is_multi_prompt and output_file is not None:
         msg = (
-            "--output is single-prompt only; remove the extra prompts or use --out for"
+            "--out-file is single-prompt only; remove the extra prompts or use --out for"
             " directory output."
         )
         raise click.UsageError(msg)
