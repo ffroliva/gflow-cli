@@ -268,7 +268,7 @@ def test_mro_keeps_video_generation_mixin_ahead_of_moved_bases() -> None:
 PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     ("setup", "async_playwright"): "gflow_cli.api.transports.ui_automation",
     ("_is_settings_panel_open", "_count_tabs_locator"): "gflow_cli.api.transports.ui_automation",
-    ("_enter_editor", "_NEW_PROJECT_PROBE_TIMEOUT_MS"): "gflow_cli.api.transports.ui_automation",
+    ("_enter_editor", "_NEW_PROJECT_PROBE_TIMEOUT_MS"): "gflow_cli.api.transports._ui_navigation",
     (
         "_select_image_model",
         "IMAGE_MODEL_OPTION_SELECTORS",
