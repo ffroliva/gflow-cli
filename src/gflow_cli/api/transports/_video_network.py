@@ -74,6 +74,7 @@ class FlowNetworkMixin:
             page: Page,
             prompt_text: str,
             out_dir: Path | None = None,
+            format_prompt: bool = False,
         ) -> None: ...
         @classmethod
         async def _dismiss_blocking_overlays(

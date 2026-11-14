@@ -269,6 +269,15 @@ PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     ("setup", "async_playwright"): "gflow_cli.api.transports.ui_automation",
     ("_is_settings_panel_open", "_count_tabs_locator"): "gflow_cli.api.transports.ui_automation",
     ("_enter_editor", "_NEW_PROJECT_PROBE_TIMEOUT_MS"): "gflow_cli.api.transports._ui_navigation",
+    ("_settle_if_redirecting", "await_url_settled"): "gflow_cli.api.transports._ui_navigation",
+    (
+        "_locate_body_prompt_box",
+        "_BODY_SLOT_MOUNT_TIMEOUT_S",
+    ): "gflow_cli.api.transports._ui_prompt",
+    ("_submit_body_prompt", "log"): "gflow_cli.api.transports._ui_prompt",
+    ("format_character_prompt", "_FORMAT_REWRITE_TIMEOUT_S"): "gflow_cli.api.transports._ui_prompt",
+    ("format_character_prompt", "_FORMAT_REWRITE_POLL_MS"): "gflow_cli.api.transports._ui_prompt",
+    ("format_character_prompt", "log"): "gflow_cli.api.transports._ui_prompt",
     (
         "_select_image_model",
         "IMAGE_MODEL_OPTION_SELECTORS",
