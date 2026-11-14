@@ -53,6 +53,7 @@ from gflow_cli.errors import (
     SceneConcatError,
 )
 from gflow_cli.image_batch import resolve_jitter_range
+from gflow_cli.paths import extend_output_path
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
@@ -1986,11 +1987,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
     No price, scene read-back or resume exists on this arm yet (exit 36 refuses the
     forms that would need them before this runs).
     """
-    from datetime import date
-
-    out_path = output_file or (
-        get_settings().output_dir / "videos" / date.today().isoformat() / f"{media_id}_extend.mp4"
-    )
+    out_path = output_file or extend_output_path(get_settings().output_dir, media_id=media_id)
     async with FlowApiClient(profile_dir=profile_dir) as client:
         outcome, target = await client.extend_video_migrated(
             media_id=media_id,

@@ -759,6 +759,49 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
     assert notes == ([("p", MEDIA, "new-wf", "k")] if done else [])  # profile, id, workflow, key
 
 
+@pytest.mark.asyncio
+async def test_a_same_day_rerun_does_not_overwrite_the_default_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1184: an in-place extend keeps the source id, so the default
+    ``<date>/<media_id>_extend.mp4`` repeats for every extend of that clip. An earlier
+    run's file there must survive; the first run of the day keeps the plain name."""
+    from datetime import date
+
+    from gflow_cli.cli_video import _extend_migrated_session
+
+    monkeypatch.setattr(
+        "gflow_cli.cli_video.get_settings", lambda: SimpleNamespace(output_dir=tmp_path)
+    )
+    day = tmp_path / "videos" / date.today().isoformat()
+    plain = day / f"{MEDIA}_extend.mp4"
+
+    async def _run() -> Path:
+        fake = _MigratedClient(done=True, media=MEDIA)
+        monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="go",
+            aspect=None,
+            output_file=None,
+            project_id=PROJECT,
+            as_json=True,
+            recorder=None,
+        )
+        return fake.calls[0]["out_path"]
+
+    assert await _run() == plain
+    day.mkdir(parents=True)
+    plain.write_bytes(b"earlier extend")
+    second = await _run()
+    assert second != plain
+    assert second.parent == day
+    assert second.name.startswith(f"{MEDIA}_extend-") and second.suffix == ".mp4"
+    assert plain.read_bytes() == b"earlier extend"
+
+
 @pytest.mark.parametrize(
     ("key", "media", "added", "billed"),
     [
