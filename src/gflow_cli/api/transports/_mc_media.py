@@ -23,13 +23,9 @@ from gflow_cli.api.transports.batchexecute import GenerationRecord
 from gflow_cli.errors import GFlowError, MediaDownloadError, WireFormatError
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from playwright.async_api import Page
 
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
-
-    ClipSaver = Callable[[str, bytes], Awaitable[Path]]
+    from gflow_cli.api.transports.migrated_composer import ClipSaver, MigratedComposer
 
 log = structlog.get_logger(__name__)
 

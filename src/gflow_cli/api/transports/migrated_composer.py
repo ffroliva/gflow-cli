@@ -30,204 +30,33 @@ matched with a Python-side ``filter(has_text=re.compile(...))`` instead.
 
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
-from __future__ import (
-    annotations as annotations,
-)
 
-import asyncio as asyncio
-import contextlib as contextlib
-import json as json
-import mimetypes as mimetypes
-import re as re
-import time as time
-from dataclasses import (
-    dataclass as dataclass,
-)
-from dataclasses import (
-    field as field,
-)
-from pathlib import (
-    Path as Path,
-)
-from typing import (
-    TYPE_CHECKING as TYPE_CHECKING,
-)
-from typing import (
-    Any as Any,
-)
-from typing import (
-    Literal as Literal,
-)
-from typing import (
-    cast as cast,
-)
-from urllib.parse import (
-    unquote_plus as unquote_plus,
-)
-from urllib.parse import (
-    urlsplit as urlsplit,
-)
-from uuid import (
-    uuid4 as uuid4,
-)
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
 
-import structlog as structlog
+import structlog
+from playwright.async_api import (
+    Page,
+)
 from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
 from gflow_cli.api.dto import (
-    CreditsInfo as CreditsInfo,
-)
-from gflow_cli.api.dto import (
-    GeneratedImage as GeneratedImage,
-)
-from gflow_cli.api.dto import (
-    ProjectInfo as ProjectInfo,
+    CreditsInfo,
+    GeneratedImage,
+    ProjectInfo,
 )
 from gflow_cli.api.image import (
-    ImageRef as ImageRef,
+    Model as ImageModel,  # noqa: F401 # pyright: ignore[reportUnusedImport]
 )
-from gflow_cli.api.transports._common import (
-    expired_link_hint as expired_link_hint,
-)
-from gflow_cli.api.transports._common import (
-    extract_project_id as extract_project_id,
-)
-from gflow_cli.api.transports._common import (
-    flow_landing_kind as flow_landing_kind,
-)
-from gflow_cli.api.transports._common import (
-    get_signed_media as get_signed_media,
-)
-from gflow_cli.api.transports._common import (
-    raise_if_known_landing as raise_if_known_landing,
-)
-from gflow_cli.api.transports._common import (
-    recoverable_clip_hint as recoverable_clip_hint,
-)
-from gflow_cli.api.transports._common import (
-    safe_page_url as safe_page_url,
-)
-from gflow_cli.api.transports.batchexecute import (
-    GenerationRecord as GenerationRecord,
-)
-from gflow_cli.api.transports.batchexecute import (
-    generation_record as generation_record,
-)
-from gflow_cli.api.transports.batchexecute import (
-    generation_records_carrying as generation_records_carrying,
-)
-from gflow_cli.api.transports.batchexecute import (
-    generation_records_matching as generation_records_matching,
-)
-from gflow_cli.api.transports.batchexecute import (
-    image_records as image_records,
-)
-from gflow_cli.api.transports.batchexecute import (
-    parse_frames as parse_frames,
-)
-from gflow_cli.api.transports.batchexecute import (
-    rpc_errors as rpc_errors,
-)
-from gflow_cli.api.video import (
-    I2V_DEFAULT_MODEL as I2V_DEFAULT_MODEL,
-)
-from gflow_cli.api.video import (
-    Aspect as Aspect,
-)
-from gflow_cli.api.video import (
-    Mode as Mode,
-)
-from gflow_cli.api.video import (
-    VideoModel as VideoModel,
-)
-from gflow_cli.api.video import (
-    VideoResult as VideoResult,
-)
-from gflow_cli.api.video import (
-    VideoStarted as VideoStarted,
-)
-from gflow_cli.api.video import (
-    VideoStatus as VideoStatus,
-)
-from gflow_cli.errors import (
-    CONTENT_SAFETY_REASONS as CONTENT_SAFETY_REASONS,
-)
-from gflow_cli.errors import (
-    ConfigurationError as ConfigurationError,
-)
-from gflow_cli.errors import (
-    ContentPolicyError as ContentPolicyError,
-)
-from gflow_cli.errors import (
-    FlowAppError as FlowAppError,
-)
-from gflow_cli.errors import (
-    FlowHostMigratedError as FlowHostMigratedError,
-)
-from gflow_cli.errors import (
-    GFlowError as GFlowError,
-)
-from gflow_cli.errors import (
-    InsufficientCreditsError as InsufficientCreditsError,
-)
-from gflow_cli.errors import (
-    MediaDownloadError as MediaDownloadError,
-)
-from gflow_cli.errors import (
-    MediaUploadRejectedError as MediaUploadRejectedError,
-)
-from gflow_cli.errors import (
-    ReferenceNotFoundError as ReferenceNotFoundError,
-)
-from gflow_cli.errors import (
-    RpcResponseUnavailableError as RpcResponseUnavailableError,
-)
-from gflow_cli.errors import (
-    TransportTimeoutError as TransportTimeoutError,
-)
-from gflow_cli.errors import (
-    UiSelectorDriftError as UiSelectorDriftError,
-)
-from gflow_cli.errors import (
-    WafRejectionError as WafRejectionError,
-)
-from gflow_cli.errors import (
-    WireFormatError as WireFormatError,
-)
-from gflow_cli.redaction import (
-    redact_sensitive_text as redact_sensitive_text,
-)
-
-if TYPE_CHECKING:
-    from collections.abc import (
-        Awaitable,
-        Callable,
-    )
-
-    from playwright.async_api import (
-        Page,
-    )
-
-    from gflow_cli.api.image import (
-        GenerateImageRequest,
-    )
-    from gflow_cli.api.video import (
-        GenerateVideoRequest,
-        VideoStartedCallback,
-    )
-
-    ClipSaver = Callable[[str, bytes], Awaitable[Path]]
 from gflow_cli.api.transports import _mc_media
-from gflow_cli.api.transports._mc_common import (
-    _CARET_TO_END_JS as _CARET_TO_END_JS,
-)
-from gflow_cli.api.transports._mc_common import (
-    _CLICK_POSTMORTEM_JS as _CLICK_POSTMORTEM_JS,
-)
-from gflow_cli.api.transports._mc_common import (
-    _DURATION_IN_KEY as _DURATION_IN_KEY,
+from gflow_cli.api.transports._common import (
+    extract_project_id,
+    flow_landing_kind,
+    raise_if_known_landing,
+    safe_page_url,
 )
 from gflow_cli.api.transports._mc_common import (
     _GRID_TOKEN_JS as _GRID_TOKEN_JS,
@@ -241,8 +70,6 @@ from gflow_cli.api.transports._mc_common import (
 from gflow_cli.api.transports._mc_common import (
     _OPTION_TOKENS_JS as _OPTION_TOKENS_JS,
 )
-
-# Re-export all selectors, constants and helpers from _mc_common (#1249 wave 2)
 from gflow_cli.api.transports._mc_common import (
     ABORTED_BEFORE_SEND as ABORTED_BEFORE_SEND,
 )
@@ -259,25 +86,10 @@ from gflow_cli.api.transports._mc_common import (
     AGENT_ONLY_EARLY_S as AGENT_ONLY_EARLY_S,
 )
 from gflow_cli.api.transports._mc_common import (
-    AGENT_ONLY_RELOAD_WAIT_S as AGENT_ONLY_RELOAD_WAIT_S,
-)
-from gflow_cli.api.transports._mc_common import (
     AGENT_ONLY_RELOADS as AGENT_ONLY_RELOADS,
 )
 from gflow_cli.api.transports._mc_common import (
-    AGENT_ONLY_SETTLE_S as AGENT_ONLY_SETTLE_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    AGENT_RECOVERY_S as AGENT_RECOVERY_S,
-)
-from gflow_cli.api.transports._mc_common import (
     ANCHOR_TIMEOUT_S as ANCHOR_TIMEOUT_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    ARROW_SETTLE_MS as ARROW_SETTLE_MS,
-)
-from gflow_cli.api.transports._mc_common import (
-    ARROW_STEP_MS as ARROW_STEP_MS,
 )
 from gflow_cli.api.transports._mc_common import (
     ASPECT_LIGATURE as ASPECT_LIGATURE,
@@ -310,37 +122,13 @@ from gflow_cli.api.transports._mc_common import (
     DIALOG as DIALOG,
 )
 from gflow_cli.api.transports._mc_common import (
-    DIALOG_CLOSE as DIALOG_CLOSE,
-)
-from gflow_cli.api.transports._mc_common import (
     EMPTY_CHIP as EMPTY_CHIP,
-)
-from gflow_cli.api.transports._mc_common import (
-    EXISTING_REF_RELOAD_PAUSE_S as EXISTING_REF_RELOAD_PAUSE_S,
 )
 from gflow_cli.api.transports._mc_common import (
     EXISTING_REF_WAIT_S as EXISTING_REF_WAIT_S,
 )
 from gflow_cli.api.transports._mc_common import (
-    FRAME_COMMIT_GRACE_S as FRAME_COMMIT_GRACE_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    FRAME_COMMIT_HIDDEN_S as FRAME_COMMIT_HIDDEN_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    FRAME_PICKER_OPEN_S as FRAME_PICKER_OPEN_S,
-)
-from gflow_cli.api.transports._mc_common import (
     FRAME_SEARCH_ATTEMPTS as FRAME_SEARCH_ATTEMPTS,
-)
-from gflow_cli.api.transports._mc_common import (
-    FRAME_SEARCH_RETRY_PAUSE_S as FRAME_SEARCH_RETRY_PAUSE_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    FRAME_THUMB_VISIBLE_S as FRAME_THUMB_VISIBLE_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    FRAME_UPLOAD_S as FRAME_UPLOAD_S,
 )
 from gflow_cli.api.transports._mc_common import (
     FRAMES_LIGATURE as FRAMES_LIGATURE,
@@ -355,34 +143,13 @@ from gflow_cli.api.transports._mc_common import (
     IMAGE_MODEL_MENU_MATCHERS as IMAGE_MODEL_MENU_MATCHERS,
 )
 from gflow_cli.api.transports._mc_common import (
-    IMAGE_MODEL_WIRE_TOKENS as IMAGE_MODEL_WIRE_TOKENS,
-)
-from gflow_cli.api.transports._mc_common import (
-    IMAGE_RECOVERY_S as IMAGE_RECOVERY_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    IMAGE_RECOVERY_SETTLE_S as IMAGE_RECOVERY_SETTLE_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    IMAGE_REPLY_BUDGET_S as IMAGE_REPLY_BUDGET_S,
-)
-from gflow_cli.api.transports._mc_common import (
     IMAGE_SUBMIT_RPC as IMAGE_SUBMIT_RPC,
-)
-from gflow_cli.api.transports._mc_common import (
-    INGREDIENTS_LIGATURE as INGREDIENTS_LIGATURE,
 )
 from gflow_cli.api.transports._mc_common import (
     INTERPOLATION_SUBMIT_RPC as INTERPOLATION_SUBMIT_RPC,
 )
 from gflow_cli.api.transports._mc_common import (
-    LISTING_READ_BUDGET_S as LISTING_READ_BUDGET_S,
-)
-from gflow_cli.api.transports._mc_common import (
     LISTING_RPC as LISTING_RPC,
-)
-from gflow_cli.api.transports._mc_common import (
-    LOWER_PRIORITY_TAG as LOWER_PRIORITY_TAG,
 )
 from gflow_cli.api.transports._mc_common import (
     MENTION_CHIP as MENTION_CHIP,
@@ -397,13 +164,12 @@ from gflow_cli.api.transports._mc_common import (
     MIGRATED_ROOT_URL as MIGRATED_ROOT_URL,
 )
 from gflow_cli.api.transports._mc_common import (
-    MIGRATED_SETTINGS_CONTRACT as MIGRATED_SETTINGS_CONTRACT,
-)
-from gflow_cli.api.transports._mc_common import (
     MODEL_KEY as MODEL_KEY,
 )
 from gflow_cli.api.transports._mc_common import (
-    NAVIGATION_GRACE_S as NAVIGATION_GRACE_S,
+    NAVIGATION_GRACE_S,
+    _as_list_any,
+    _write_outcome_unknown,
 )
 from gflow_cli.api.transports._mc_common import (
     NEW_PROJECT_BUTTON as NEW_PROJECT_BUTTON,
@@ -421,9 +187,6 @@ from gflow_cli.api.transports._mc_common import (
     PICKER as PICKER,
 )
 from gflow_cli.api.transports._mc_common import (
-    PICKER_CONFIRM as PICKER_CONFIRM,
-)
-from gflow_cli.api.transports._mc_common import (
     PICKER_OPTION as PICKER_OPTION,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -431,12 +194,6 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     PROJECT_TITLE_INPUT as PROJECT_TITLE_INPUT,
-)
-from gflow_cli.api.transports._mc_common import (
-    PROMPT_MATCH_MARGIN_S as PROMPT_MATCH_MARGIN_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    R2V_DURATION_S as R2V_DURATION_S,
 )
 from gflow_cli.api.transports._mc_common import (
     RADIO as RADIO,
@@ -451,34 +208,13 @@ from gflow_cli.api.transports._mc_common import (
     RENAME_PROJECT_RPC as RENAME_PROJECT_RPC,
 )
 from gflow_cli.api.transports._mc_common import (
-    RESULT_URL_GRACE_S as RESULT_URL_GRACE_S,
-)
-from gflow_cli.api.transports._mc_common import (
     STATUS_RPCS as STATUS_RPCS,
-)
-from gflow_cli.api.transports._mc_common import (
-    SUBMIT_BUTTON as SUBMIT_BUTTON,
-)
-from gflow_cli.api.transports._mc_common import (
-    SUBMIT_ENABLE_BUDGET_S as SUBMIT_ENABLE_BUDGET_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    SUBMIT_ENABLE_POLL_S as SUBMIT_ENABLE_POLL_S,
-)
-from gflow_cli.api.transports._mc_common import (
-    SUBMIT_REPLY_BUDGET_S as SUBMIT_REPLY_BUDGET_S,
 )
 from gflow_cli.api.transports._mc_common import (
     SUBMIT_RPCS as SUBMIT_RPCS,
 )
 from gflow_cli.api.transports._mc_common import (
-    TOOLBAR_ADD as TOOLBAR_ADD,
-)
-from gflow_cli.api.transports._mc_common import (
     UNUSUAL_ACTIVITY_REASON as UNUSUAL_ACTIVITY_REASON,
-)
-from gflow_cli.api.transports._mc_common import (
-    UPLOAD_MENU_ITEM as UPLOAD_MENU_ITEM,
 )
 from gflow_cli.api.transports._mc_common import (
     UPLOAD_RPC as UPLOAD_RPC,
@@ -493,37 +229,13 @@ from gflow_cli.api.transports._mc_common import (
     VIDEO_MODEL_MENU_MATCHERS as VIDEO_MODEL_MENU_MATCHERS,
 )
 from gflow_cli.api.transports._mc_common import (
-    VISIBLE_OVERLAY as VISIBLE_OVERLAY,
-)
-from gflow_cli.api.transports._mc_common import (
-    AgentModeExit as AgentModeExit,
-)
-from gflow_cli.api.transports._mc_common import (
-    ComposerKind as ComposerKind,
-)
-from gflow_cli.api.transports._mc_common import (
-    ImageAspect as ImageAspect,
-)
-from gflow_cli.api.transports._mc_common import (
     ModelMenuMatcher as ModelMenuMatcher,
-)
-from gflow_cli.api.transports._mc_common import (
-    _as_list_any as _as_list_any,
-)
-from gflow_cli.api.transports._mc_common import (
-    _ClipByPrompt as _ClipByPrompt,
 )
 from gflow_cli.api.transports._mc_common import (
     _duration as _duration,
 )
 from gflow_cli.api.transports._mc_common import (
-    _exact as _exact,
-)
-from gflow_cli.api.transports._mc_common import (
     _first_uuid as _first_uuid,
-)
-from gflow_cli.api.transports._mc_common import (
-    _grid_images as _grid_images,
 )
 from gflow_cli.api.transports._mc_common import (
     _guard_image_submit as _guard_image_submit,
@@ -547,15 +259,6 @@ from gflow_cli.api.transports._mc_common import (
     _navigated_project_id as _navigated_project_id,
 )
 from gflow_cli.api.transports._mc_common import (
-    _new_grid_images as _new_grid_images,
-)
-from gflow_cli.api.transports._mc_common import (
-    _outcome_unknown as _outcome_unknown,
-)
-from gflow_cli.api.transports._mc_common import (
-    _picker_pane as _picker_pane,
-)
-from gflow_cli.api.transports._mc_common import (
     _project_snapshot as _project_snapshot,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -565,22 +268,10 @@ from gflow_cli.api.transports._mc_common import (
     _raise_if_out_of_credits as _raise_if_out_of_credits,
 )
 from gflow_cli.api.transports._mc_common import (
-    _recover_images as _recover_images,
-)
-from gflow_cli.api.transports._mc_common import (
     _recovery_detail as _recovery_detail,
 )
 from gflow_cli.api.transports._mc_common import (
     _rpc_reply as _rpc_reply,
-)
-from gflow_cli.api.transports._mc_common import (
-    _select_resolution as _select_resolution,
-)
-from gflow_cli.api.transports._mc_common import (
-    _submit_body_problem as _submit_body_problem,
-)
-from gflow_cli.api.transports._mc_common import (
-    _submit_refusal as _submit_refusal,
 )
 from gflow_cli.api.transports._mc_common import (
     _unique_display_name as _unique_display_name,
@@ -592,16 +283,7 @@ from gflow_cli.api.transports._mc_common import (
     _unported_image_form as _unported_image_form,
 )
 from gflow_cli.api.transports._mc_common import (
-    _unreadable_rpc_error as _unreadable_rpc_error,
-)
-from gflow_cli.api.transports._mc_common import (
-    _visible_model_picker as _visible_model_picker,
-)
-from gflow_cli.api.transports._mc_common import (
     _wait_anchor as _wait_anchor,
-)
-from gflow_cli.api.transports._mc_common import (
-    _write_outcome_unknown as _write_outcome_unknown,
 )
 from gflow_cli.api.transports._mc_common import (
     body_rpcid as body_rpcid,
@@ -618,25 +300,38 @@ from gflow_cli.api.transports._mc_common import (
 from gflow_cli.api.transports._mc_common import (
     url_rpcid as url_rpcid,
 )
-from gflow_cli.api.transports._mc_media import (
-    PlaywrightError as PlaywrightError,
-)
-from gflow_cli.api.transports._mc_mention import (
-    _heal_catalog as _heal_catalog,
-)
-from gflow_cli.api.transports._mc_mention import (
-    _picker_query as _picker_query,
-)
-from gflow_cli.api.transports._mc_mention import (
-    _require_appended as _require_appended,
-)
-from gflow_cli.api.transports._mc_settings_pane import (
-    ImageModel as ImageModel,
-)
 from gflow_cli.api.transports._mc_submit_observe import SubmitObserveMixin
-from gflow_cli.api.transports.migrated_existing_refs import (
-    refreshed_from_picker as refreshed_from_picker,
+from gflow_cli.api.video import (
+    GenerateVideoRequest,
+    Mode,
+    VideoResult,
+    VideoStartedCallback,
+    VideoStatus,
 )
+from gflow_cli.errors import (
+    ConfigurationError,
+    FlowAppError,
+    FlowHostMigratedError,
+    ReferenceNotFoundError,
+    RpcResponseUnavailableError,
+    TransportTimeoutError,
+    UiSelectorDriftError,
+    WireFormatError,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import (
+        Awaitable,
+        Callable,
+    )
+
+    from gflow_cli.api.image import (
+        GenerateImageRequest,
+    )
+
+    # Stores a finished clip's bytes under its media id and returns where they went —
+    # the transport's one writer for both hosts, so a cloud storage_uri holds here too (#1003).
+    ClipSaver = Callable[[str, bytes], Awaitable[Path]]
 
 log = structlog.get_logger(__name__)
 
@@ -644,11 +339,8 @@ log = structlog.get_logger(__name__)
 class MigratedComposer(SubmitObserveMixin):
     """Settings → prompt → submit → observe, against the migrated editor."""
 
-    pass
 
-    # --- download ---------------------------------------------------------------
-
-
+# Moved bodies call MigratedComposer.fetch_mp4(...) and tests patch the class.
 _mc_media.MigratedComposer = MigratedComposer
 
 
