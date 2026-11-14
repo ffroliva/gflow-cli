@@ -58,7 +58,7 @@ segment finished, with the submitted segment's media id as `operation_id`.
 | `wait` | Wait for a condition to clear (credits, another process holding the profile) | `false` |
 | `reauth` | Run `gflow auth login` for the profile | `false` |
 | `fix_input` | Change the command, its inputs or the local setup | `false` |
-| `reconcile` | Settle the outcome first: find the result in Flow (`gflow data download <media_id>` for a billed clip, `gflow scene create --output` for a scene) before re-running | `false` |
+| `reconcile` | Settle the outcome first: find the result in Flow (`gflow data download <media_id>` for a billed clip, `gflow scene create --out-file` for a scene) before re-running | `false` |
 | `none` | Nothing a caller can do will change the result | `false` |
 
 `retryable` and `next_action` always agree: `retryable` is `true` exactly when
@@ -118,10 +118,10 @@ place today:
   unless it already names the in-flight link.
   An untyped one is wrapped in `ChainPartialError`. `ChainPartialError` reads `yes` only
   when it carries completed links, and lists them in `completed_media_ids`.
-- `video extend --output`: any failure while rendering billed segments (reading the
+- `video extend --out-file`: any failure while rendering billed segments (reading the
   scene back or the render itself) reads `yes` / `reconcile`. Its hint is the free
   re-render as a command that runs: `gflow scene create --project <id> <clip refs>
-  --output <path>`.
+  --out-file <path>`.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 

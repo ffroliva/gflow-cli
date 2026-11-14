@@ -305,7 +305,7 @@ class CharacterSurface(MediaEditSurface):
             media_id = character.thumbnail_media_id or ""
 
         # The ids are the character; the file is a convenience. Download it so
-        # `--output` and `image_paths` behave the same on both hosts, but never
+        # `--out-file` and `image_paths` behave the same on both hosts, but never
         # let a CDN hiccup cost the user a generation they already spent quota
         # on — a failed fetch degrades to `None`, it does not raise.
         #
