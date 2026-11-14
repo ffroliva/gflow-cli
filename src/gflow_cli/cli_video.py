@@ -2414,8 +2414,8 @@ async def _extend_session(  # noqa: PLR0913
     "extend",
     short_help="Continue an existing clip (costs credits).",
     help=(
-        "Continue an existing video by generating another 8-second segment that "
-        "carries its motion and audio forward.\n\n"
+        "Continue an existing video, carrying its motion and audio forward (by another "
+        "8-second segment on labs.google; for flow.google.com see below).\n\n"
         "MEDIA_ID is the clip to continue; PROMPT says what happens next.\n\n"
         "Unlike `video chain`, which restarts from an extracted still, extend is "
         "seeded server-side from the source clip, so the join is continuous. "

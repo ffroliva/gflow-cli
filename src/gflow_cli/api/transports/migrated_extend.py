@@ -122,7 +122,7 @@ def unported_refusal(
         ),
         remediation_hint=(
             "Run one segment at a time (one PROMPT, no --scene/--resume-from/--seed); "
-            "extend the new clip again to go further."
+            "extend the same clip again to go further."
         ),
     )
 
