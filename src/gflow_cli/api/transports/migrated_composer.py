@@ -618,6 +618,9 @@ from gflow_cli.api.transports._mc_common import (
 from gflow_cli.api.transports._mc_common import (
     url_rpcid as url_rpcid,
 )
+from gflow_cli.api.transports._mc_media import (
+    PlaywrightError as PlaywrightError,
+)
 from gflow_cli.api.transports._mc_mention import (
     _heal_catalog as _heal_catalog,
 )
@@ -642,7 +645,6 @@ class MigratedComposer(SubmitObserveMixin):
     """Settings → prompt → submit → observe, against the migrated editor."""
 
     pass
-    """Settings → prompt → submit → observe, against the migrated editor."""
 
     # --- download ---------------------------------------------------------------
 
