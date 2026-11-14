@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -1859,23 +1858,6 @@ _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
 
 
-def _migrated_extend_seconds(
-    model_key: str | None, *, in_place: bool
-) -> tuple[int | None, int | None]:
-    """(seconds added, seconds billed) for one flow.google.com extend.
-
-    A separate segment keeps the measured Veo 7 s added / 8 s billed. An extend that grew
-    the source in place (#1184) reads its length from the key's ``_<n>s`` token
-    (``macaron_cookie_extend_4s``: +3.9 s measured; billed is the token, not measured —
-    12 credits is the only billing fact), and is unknown (``None``) without one.
-    """
-    if not in_place:
-        return _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
-    m = re.search(r"_extend_(\d+)s(?:_|$)", model_key or "")
-    seconds = int(m.group(1)) if m else None
-    return seconds, seconds
-
-
 def _print_extend_plan(
     *, media_id: str, prompt: str, aspect: str, segments: int, migrated: bool = False
 ) -> None:
@@ -2029,10 +2011,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
     if recorder is not None and target is not None and outcome.record.media_id == media_id:
         try:  # #1184: grown in place — noted only now that Flow reports it done
             recorder.record_extended_in_place(
-                profile_name=profile_name,
-                media_id=media_id,
-                workflow_id=outcome.record.workflow_id,
-                model_key=outcome.model_key,
+                profile_name, media_id, outcome.record.workflow_id, outcome.model_key
             )
         except DataStoreError as exc:
             logger.warning("extend_record_failed", error_class=type(exc).__name__)
@@ -2090,9 +2069,10 @@ def _migrated_extend_payload(
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
-    added, billed = _migrated_extend_seconds(
-        outcome.model_key, in_place=record.media_id == media_id
-    )
+    added: int | None = _EXTEND_CONTENT_SECONDS  # a separate Veo segment: 7 s added, 8 billed
+    billed: int | None = _EXTEND_SEGMENT_SECONDS
+    if record.media_id == media_id:  # #1184: grown in place; billed is the token, not measured
+        added = billed = migrated_extend.extend_key_seconds(outcome.model_key)
     return {
         "status": "ok" if ok else "fail",
         "command": _EXTEND_COMMAND,

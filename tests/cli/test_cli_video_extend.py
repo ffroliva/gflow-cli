@@ -734,14 +734,14 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
     fake = _MigratedClient(done=done, media=MEDIA)
     monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
     sources: list[str | None] = []
-    notes: list[dict[str, Any]] = []
+    notes: list[tuple[Any, ...]] = []
 
     class _Recorder:
         def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
             sources.append(source_media_id)
 
-        def record_extended_in_place(self, **kw: Any) -> None:
-            notes.append(kw)
+        def record_extended_in_place(self, *args: Any) -> None:
+            notes.append(args)
 
     with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
         await _extend_migrated_session(
@@ -756,8 +756,7 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
             recorder=_Recorder(),  # type: ignore[arg-type]
         )
     assert sources == [MEDIA]
-    expected = {"profile_name": "p", "media_id": MEDIA, "workflow_id": "new-wf", "model_key": "k"}
-    assert notes == ([expected] if done else [])
+    assert notes == ([("p", MEDIA, "new-wf", "k")] if done else [])  # profile, id, workflow, key
 
 
 @pytest.mark.parametrize(
@@ -800,18 +799,19 @@ def test_the_migrated_payload_reports_the_length_by_identity(
 @pytest.mark.parametrize(
     ("key", "expected"),
     [
-        ("macaron_cookie_extend_4s", (4, 4)),
-        ("macaron_cookie_extend_4s_low_priority", (4, 4)),  # `s_` is no word boundary
-        ("macaron_cookie_extend_12s", (12, 12)),
-        ("macaron_cookie_extend_4sx", (None, None)),  # not a length token
+        ("macaron_cookie_extend_4s", 4),
+        ("macaron_cookie_extend_4s_low_priority", 4),  # `s_` is no word boundary
+        ("macaron_cookie_extend_12s", 12),
+        ("macaron_cookie_extend_4sx", None),  # not a length token
+        (None, None),
     ],
 )
 def test_the_extend_seconds_token_is_read_from_any_omni_key(
-    key: str, expected: tuple[int | None, int | None]
+    key: str | None, expected: int | None
 ) -> None:
-    from gflow_cli.cli_video import _migrated_extend_seconds
+    from gflow_cli.api.transports.migrated_extend import extend_key_seconds
 
-    assert _migrated_extend_seconds(key, in_place=True) == expected
+    assert extend_key_seconds(key) == expected
 
 
 def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:

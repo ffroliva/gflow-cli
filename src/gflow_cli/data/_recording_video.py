@@ -205,7 +205,7 @@ class VideoRecordingMixin(RecorderCore):
         )
 
     def record_extended_in_place(
-        self, *, profile_name: str, media_id: str, workflow_id: str, model_key: str | None
+        self, profile_name: str, media_id: str, workflow_id: str, model_key: str | None
     ) -> None:
         """Note a finished extend that grew ``media_id`` in place (#1184). A clip the
         catalog does not hold (made in Flow's UI, or elsewhere) is left unrecorded."""

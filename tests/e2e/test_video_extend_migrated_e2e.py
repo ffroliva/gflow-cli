@@ -215,8 +215,8 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
         pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
     from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.transports.migrated_extend import extend_key_seconds
     from gflow_cli.api.transports.migrated_recover import read_clip
-    from gflow_cli.cli_video import _migrated_extend_seconds
 
     project, media = _ids()
     monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
@@ -247,7 +247,7 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     if outcome.record.media_id == media:
         # #1184, measured 2026-11-08 with macaron_cookie_extend_4s: the extend grows the
         # source in place, so the same id now holds the source plus the extension.
-        added, _billed = _migrated_extend_seconds(outcome.model_key, in_place=True)
+        added = extend_key_seconds(outcome.model_key)
         grown = source_seconds + (added or 0) - 0.5  # a key without a length token: just longer
         assert seconds >= grown and seconds > source_seconds, (
             outcome.model_key,
