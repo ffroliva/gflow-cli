@@ -29,6 +29,14 @@ def _is_image(path: Path) -> bool:
     return data.startswith(_PNG_MAGIC) or data.startswith(_JPEG_MAGIC)
 
 
+def _saved(target: Path) -> Path:
+    """The file written for *target*: gflow corrects the extension from the bytes (PNG/JPEG)."""
+    found = sorted(target.parent.glob(f"{target.stem}.*"))
+    assert len(found) == 1, f"expected one file for {target}, found {found}"
+    assert _is_image(found[0]), f"{found[0]} is neither PNG nor JPEG"
+    return found[0]
+
+
 def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
@@ -47,8 +55,7 @@ def test_e2e_out_file_new_flag(e2e_env: dict[str, str], tmp_path: Path) -> None:
         e2e_env,
     )
     assert proc.returncode == 0, f"gflow image t2i failed: {proc.stderr}"
-    assert target.exists(), f"Expected output file not found at {target}"
-    assert _is_image(target), f"Output file {target} is neither PNG nor JPEG"
+    _saved(target)
     assert _OUT_FILE_DEPRECATION_WARNING not in proc.stderr
 
 
@@ -60,8 +67,7 @@ def test_e2e_out_file_deprecated_flag(e2e_env: dict[str, str], tmp_path: Path) -
         e2e_env,
     )
     assert proc.returncode == 0, f"gflow image t2i failed: {proc.stderr}"
-    assert target.exists(), f"Expected output file not found at {target}"
-    assert _is_image(target), f"Output file {target} is neither PNG nor JPEG"
+    _saved(target)
     assert proc.stderr.count(_OUT_FILE_DEPRECATION_WARNING) == 1
 
 

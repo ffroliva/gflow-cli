@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import click
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner as _CliRunner
 
 from gflow_cli._cli_helpers import (
     _OUT_DIR_SHORT_DEPRECATION_WARNING,
@@ -22,6 +23,15 @@ from tests.cli.test_cli_image import _make_generated_image, _make_t2i_client
 from tests.mcp._cli_tree import cli_leaves
 
 _EXPECTED_DEPRECATION_WARNING = _OUT_FILE_DEPRECATION_WARNING
+
+
+def CliRunner() -> _CliRunner:  # noqa: N802 - drop-in for click.testing.CliRunner
+    """A runner with stderr captured apart on every Click version pyproject allows (>=8.1)."""
+    if "mix_stderr" in inspect.signature(_CliRunner.__init__).parameters:
+        return _CliRunner(mix_stderr=False)  # type: ignore[call-arg]  # Click < 8.2
+    return _CliRunner()
+
+
 _EXPECTED_UPSCALE_DEPRECATION_WARNING = _OUT_DIR_SHORT_DEPRECATION_WARNING
 _MEDIA_ID = "3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14"
 
@@ -123,17 +133,7 @@ def test_click_tree_guard() -> None:
 
     _walk(main)
 
-    expected_nine = {
-        "data errors export",
-        "image t2i",
-        "image i2i",
-        "scene create",
-        "video t2v",
-        "video i2v",
-        "video r2v",
-        "video chain",
-        "video extend",
-    }
+    expected_nine = {" ".join(path) for path in _NINE_COMMANDS}
 
     leaves = cli_leaves(main)
     assert expected_nine.issubset(leaves)
@@ -157,75 +157,44 @@ def test_click_tree_guard() -> None:
                         )
 
 
-def test_cli_runner_image_t2i(tmp_path: Path) -> None:
-    runner = CliRunner()
-    file_new = tmp_path / "new.png"
-    file_old = tmp_path / "old.png"
-
-    u1 = str(uuid.uuid4())
-    client_new = _make_t2i_client(images=[_make_generated_image(media_name=u1)])
+@pytest.mark.parametrize(
+    ("argv", "count", "exit_code", "warned", "written"),
+    [
+        (["--out-file", "new.png"], 1, 0, False, ["new.png"]),
+        (["-o", "old.png"], 1, 0, True, ["old.png"]),
+        (["--out-file", "new.png", "-o", "old.png"], 1, 2, False, []),
+        (
+            ["-n", "4", "--out-file", "multi.png"],
+            4,
+            0,
+            False,
+            [f"multi_{i}.png" for i in range(1, 5)],
+        ),
+    ],
+    ids=["new-flag", "deprecated-flag", "both-refused", "multi-image-naming"],
+)
+def test_cli_runner_image_t2i(  # one invocation per case: sharpit counts queries per test
+    tmp_path: Path, argv: list[str], count: int, exit_code: int, warned: bool, written: list[str]
+) -> None:
+    media = str(uuid.uuid4())
+    images = [_make_generated_image(media_name=f"{media}_{i}") for i in range(count)]
+    client = _make_t2i_client(images=images)
+    args = [str(tmp_path / a) if a.endswith(".png") else a for a in argv]
 
     with (
-        patch("gflow_cli.cli_image.FlowApiClient", return_value=client_new),
+        patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
         patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
         patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
     ):
-        res_new = runner.invoke(
-            main, ["image", "t2i", "a dog", "--out-file", str(file_new)], catch_exceptions=False
-        )
-        assert res_new.exit_code == 0, res_new.output
-        assert file_new.exists()
-        assert _EXPECTED_DEPRECATION_WARNING not in res_new.stderr
+        result = CliRunner().invoke(main, ["image", "t2i", "a dog", *args])
 
-    u2 = str(uuid.uuid4())
-    client_old = _make_t2i_client(images=[_make_generated_image(media_name=u2)])
-
-    with (
-        patch("gflow_cli.cli_image.FlowApiClient", return_value=client_old),
-        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
-    ):
-        res_old = runner.invoke(
-            main, ["image", "t2i", "a cat", "-o", str(file_old)], catch_exceptions=False
-        )
-        assert res_old.exit_code == 0, res_old.output
-        assert file_old.exists()
-        assert res_old.stderr.strip() == _EXPECTED_DEPRECATION_WARNING
-
-    # Both flags -> exit 2 before generation
-    client_both = _make_t2i_client()
-    with (
-        patch("gflow_cli.cli_image.FlowApiClient", return_value=client_both),
-        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
-    ):
-        res_both = runner.invoke(
-            main,
-            ["image", "t2i", "a bird", "--out-file", str(file_new), "-o", str(file_old)],
-        )
-        assert res_both.exit_code == 2
-        assert "--out-file" in res_both.stderr
-        client_both.generate_image.assert_not_called()
-
-    # Multi-image: -n 4 --out-file multi.png yields multi_1.png..multi_4.png
-    multi_file = tmp_path / "multi.png"
-    u_multi = str(uuid.uuid4())
-    client_multi = _make_t2i_client(
-        images=[_make_generated_image(media_name=f"{u_multi}_{i}") for i in range(4)]
-    )
-    with (
-        patch("gflow_cli.cli_image.FlowApiClient", return_value=client_multi),
-        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
-        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
-    ):
-        res_multi = runner.invoke(
-            main,
-            ["image", "t2i", "a lion", "-n", "4", "--out-file", str(multi_file)],
-            catch_exceptions=False,
-        )
-        assert res_multi.exit_code == 0, res_multi.output
-        for i in range(1, 5):
-            assert (tmp_path / f"multi_{i}.png").exists()
+    assert result.exit_code == exit_code, result.output
+    assert (result.stderr.strip() == _EXPECTED_DEPRECATION_WARNING) is warned, result.stderr
+    if exit_code == 2:
+        assert "--out-file" in result.stderr
+        client.generate_image.assert_not_called()
+    for name in written:
+        assert (tmp_path / name).exists(), name
 
 
 def test_cli_runner_video_t2v(tmp_path: Path) -> None:
@@ -382,3 +351,5 @@ def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
         )
         assert res_old.exit_code == 0, res_old.output
         assert res_old.stderr.strip() == _EXPECTED_UPSCALE_DEPRECATION_WARNING
+        out_path = mock_client.upsample_video.await_args.kwargs["out_path"]
+        assert out_path.is_relative_to(dir2), out_path  # -o DIR reached out_dir

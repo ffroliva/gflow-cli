@@ -2578,9 +2578,7 @@ def extend(  # noqa: PLR0913
         "or 270p (animated GIF export)."
     ),
 )
-@upscale_out_dir_option(
-    help="Output directory (defaults to the configured gflow output dir).",
-)
+@upscale_out_dir_option()
 @click.option(
     "--project",
     "project_id",

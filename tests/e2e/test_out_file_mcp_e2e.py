@@ -25,29 +25,23 @@ _PROMPT = "a single red origami bird against a plain white background, minimalis
 
 
 async def test_mcp_generate_image_writes_to_out_file(
-    e2e_profile_dir: Path,
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """gflow_generate_image with out_file writes the image to the configured output dir."""
+    """gflow_generate_image with out_file writes the image there (extension follows the bytes)."""
     profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
     if not profile:
         pytest.skip("GFLOW_CLI_E2E_PROFILE must name a logged-in profile")
-
-    settings = get_settings()
-    out_filename = "test_mcp_out_file_output.png"
-    expected_path = (settings.output_dir / out_filename).resolve()
-    if expected_path.exists():
-        expected_path.unlink()
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(out_dir))  # never the user's real folder
+    get_settings.cache_clear()
 
     result: dict[str, Any] = await tools.gflow_generate_image(
-        prompt=_PROMPT,
-        aspect="1:1",
-        profile=profile,
-        out_file=out_filename,
-        wait=True,
+        prompt=_PROMPT, aspect="1:1", profile=profile, out_file="mcp_out_file.png", wait=True
     )
 
     assert result.get("status") == "completed", f"MCP image generation failed: {result}"
-    assert expected_path.is_file(), f"Expected output file not found: {expected_path}"
-    assert str(expected_path) in result.get("files", []), (
-        f"Generated file path {expected_path} missing from result files: {result.get('files')}"
-    )
+    files = [Path(f) for f in result.get("files", [])]
+    assert len(files) == 1, result
+    assert files[0].parent == out_dir.resolve(), files[0]
+    assert files[0].stem == "mcp_out_file", files[0]
+    assert files[0].is_file(), files[0]

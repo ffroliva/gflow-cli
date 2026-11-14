@@ -1,0 +1,3972 @@
+{
+  "schema": "sharpit-report/1",
+  "tool": {
+    "name": "sharpit",
+    "version": "0.4.0"
+  },
+  "generatedAt": 1794688443293,
+  "status": "pass",
+  "statusReasons": [],
+  "mode": "gate",
+  "unknownReasons": [],
+  "baseline": null,
+  "warnings": [],
+  "gates": {
+    "maxQueriesPerTest": null,
+    "nPlusOneThreshold": 5,
+    "failOnSeverity": "HIGH",
+    "allowUnknown": false,
+    "maxUnattributedPercent": 10.0
+  },
+  "sources": [
+    {
+      "name": "sqlite3",
+      "attached": true,
+      "reason": null,
+      "limitations": []
+    },
+    {
+      "name": "exceptions",
+      "attached": true,
+      "reason": null,
+      "limitations": []
+    },
+    {
+      "name": "swallowed-exceptions",
+      "attached": true,
+      "reason": null,
+      "limitations": []
+    }
+  ],
+  "workers": [
+    {
+      "id": "master",
+      "status": "ok"
+    }
+  ],
+  "severityCounts": [
+    {
+      "severity": "CRITICAL",
+      "count": 0
+    },
+    {
+      "severity": "HIGH",
+      "count": 0
+    },
+    {
+      "severity": "MEDIUM",
+      "count": 0
+    },
+    {
+      "severity": "LOW",
+      "count": 0
+    },
+    {
+      "severity": "INFO",
+      "count": 0
+    }
+  ],
+  "totals": {
+    "tests": 129,
+    "queries": 248,
+    "filtered": 332,
+    "unattributed": 0,
+    "unattributedShare": 0.0,
+    "exceptions": 0
+  },
+  "tests": [
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_out_file_decorator_direct",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path0]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path1]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path2]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path3]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path4]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path5]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path6]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path7]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_nine_commands_have_out_file_option[cmd_path8]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_click_tree_guard",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_image_t2i[new-flag]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 42,
+          "filtered": 55,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_image_t2i[deprecated-flag]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 42,
+          "filtered": 55,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_image_t2i[both-refused]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_image_t2i[multi-image-naming]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 54,
+          "filtered": 73,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_video_t2v",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_scene_create",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_cli_runner_data_errors_export",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 38,
+          "filtered": 57,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_out_file_deprecation.py::test_video_upscale_out_deprecation",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 36,
+          "filtered": 47,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_helper_refuses_only_with_cloud_storage",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_t2v_output_with_cloud_storage_exits_11_before_submit[--out-file]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_t2v_output_with_cloud_storage_exits_11_before_submit[-o]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_t2v_without_output_still_runs_with_cloud_storage",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 36,
+          "filtered": 45,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_chain_with_cloud_storage_exits_11_before_submit",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_mcp_video_output_with_cloud_storage_is_refused_before_queueing",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_mcp_video_refusal_names_the_parameter_passed[out_file]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_mcp_video_refusal_names_the_parameter_passed[output]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/cli/test_cloud_storage_local_output.py::test_movie_stitch_with_cloud_storage_is_refused_before_the_browser",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_rejects_relative_escape[../x.png]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_rejects_relative_escape[a/../../x.png]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_rejects_relative_escape[..]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_rejects_absolute_path_elsewhere",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_rejects_a_link_that_leads_out",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_accepts_inside[x.png]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_accepts_inside[sub/dir/x.png]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_accepts_inside[.]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_accepts_an_absolute_path_inside",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_output_before_queueing[../escaped/x.bin-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_output_before_queueing[../escaped/x.bin-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_output_before_queueing[a/../../x.bin-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_output_before_queueing[a/../../x.bin-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_absolute_output_outside[gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_absolute_output_outside[gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_output_naming_a_directory_in_the_output_dir[-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_output_naming_a_directory_in_the_output_dir[-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_output_naming_a_directory_in_the_output_dir[.-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_output_naming_a_directory_in_the_output_dir[.-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_output_naming_a_directory_in_the_output_dir[clips-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_output_naming_a_directory_in_the_output_dir[clips-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_the_output_dir_itself_before_it_exists[-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_the_output_dir_itself_before_it_exists[-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_the_output_dir_itself_before_it_exists[.-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_the_output_dir_itself_before_it_exists[.-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_queues_a_relative_output_resolved_inside[gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_queues_a_relative_output_resolved_inside[gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_queues_a_relative_out_file_resolved_inside[gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_queues_a_relative_out_file_resolved_inside[gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_both_out_file_and_output[gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_both_out_file_and_output[gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_out_file_before_queueing[../escaped/x.bin-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_out_file_before_queueing[../escaped/x.bin-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_out_file_before_queueing[a/../../x.bin-gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_tool_refuses_an_escaping_out_file_before_queueing[a/../../x.bin-gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_download_media_refuses_an_escaping_out_dir",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_upscale_refuses_an_escaping_out_dir[gflow_upscale_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_upscale_refuses_an_escaping_out_dir[gflow_upscale_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_profile_resolver_refuses_a_name_that_walks_out_of_home[alice/../../victim]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_profile_resolver_refuses_a_name_that_walks_out_of_home[alice/../../victim/]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_profile_resolver_keeps_a_plain_name",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_output_confinement.py::test_a_tool_refuses_a_traversing_profile_before_launching",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpToolListing::test_server_has_expected_tools",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpToolListing::test_generate_image_tool_has_required_params",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpToolListing::test_generate_video_tool_has_required_params",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpToolListing::test_generate_tools_schema_has_out_file_and_deprecated_output[gflow_generate_image]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpToolListing::test_generate_tools_schema_has_out_file_and_deprecated_output[gflow_generate_video]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestListTools::test_list_tools_registered",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestListTools::test_list_tools_payload_shape",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestStdoutRedirection::test_redirect_stdout_to_stderr",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestStdoutRedirection::test_utf8_pipes_configured",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestTokenBucketRateLimiter::test_acquire_succeeds_within_capacity",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestTokenBucketRateLimiter::test_acquire_fails_when_empty",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestTokenBucketRateLimiter::test_bucket_refills_over_time",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestTokenBucketRateLimiter::test_rate_limiter_concurrent_access",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_generate_image_returns_structured_response",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_generate_video_returns_structured_response",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_generate_image_adapts_tools_to_specs",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_generate_image_rejects_malformed_tools",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_generate_video_adapts_tools_to_specs",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_list_projects_returns_empty_list",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestToolExecution::test_list_characters_stub_is_gone",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpResources::test_mcp_guide_returns_content",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpResources::test_db_schema_resource",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpResources::test_server_has_resources_registered",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpResources::test_known_issues_resource_returns_bounded_index",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestCliMcpParameterSymmetry::test_image_t2i_params_mirrored",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestCliMcpParameterSymmetry::test_image_tool_has_no_seed_param",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestCliMcpParameterSymmetry::test_video_t2v_params_mirrored",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpPrompts::test_expand_prompt_returns_formula",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpPrompts::test_expand_prompt_is_marked_deprecated",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpPrompts::test_expand_prompt_with_all_params",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpPrompts::test_create_character_returns_profile",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpPrompts::test_create_character_with_all_params",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_run_stdio_is_coroutine_function",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_run_sse_is_coroutine_function",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_main_stdio_is_callable",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_main_sse_is_callable",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_run_stdio_invokes_server",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_run_http_starts_streamable_http_on_mcp_path",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestMcpServerEntryPoints::test_run_sse_configures_and_starts",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::test_mcp_retryable_matches_cli",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::test_mcp_error_envelope_omits_local_path",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestProtocolEras::test_server_serves_both_protocol_eras[2026-07-28-2026-07-28]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestProtocolEras::test_server_serves_both_protocol_eras[legacy-2025-11-25]",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestProtocolEras::test_cache_hints_are_advertised_on_the_modern_wire",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestProtocolEras::test_legacy_wire_does_not_carry_2026_cache_fields",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeParity::test_both_generate_tools_expose_ui_mode",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeParity::test_video_tool_rejects_agentic_ui_mode",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeParity::test_video_tool_rejects_unknown_ui_mode",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_invalid_ui_mode_returns_dict_envelope",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_ui_mode_is_case_insensitive",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_duration_10_on_veo_lite_is_a_400",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_duration_10_on_i2v_without_model_is_a_400",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_duration_8_on_veo_lite_is_not_rejected",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_duration_on_omni_flash_is_not_rejected",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_image_invalid_ui_mode_returns_dict_envelope",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::TestUiModeEnvelopeShape::test_image_ui_mode_is_case_insensitive",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::test_generate_video_rejects_unsupported_duration_without_model",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::test_omni12_end_frame_above_10s_is_a_400",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    },
+    {
+      "nodeId": "tests/mcp/test_server.py::test_omni12_start_only_15s_reaches_generation",
+      "worker": "master",
+      "attempt": 1,
+      "outcome": "passed",
+      "budget": {
+        "maxQueries": null,
+        "allowNPlusOne": false,
+        "maxExceptions": 0
+      },
+      "phases": {
+        "setup": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "call": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        },
+        "teardown": {
+          "queries": 0,
+          "filtered": 0,
+          "exceptions": 0
+        }
+      },
+      "nPlusOne": [],
+      "findings": []
+    }
+  ],
+  "unattributed": {
+    "queries": 0,
+    "topStatements": []
+  },
+  "filtered": {
+    "count": 332,
+    "rules": [
+      "PRAGMA",
+      "sqlite_schema",
+      "migration tables",
+      "transaction control"
+    ]
+  },
+  "advisors": [
+    {
+      "advisor": "rest-api",
+      "status": "UNKNOWN",
+      "reason": "advisors disabled",
+      "apps": [],
+      "findings": []
+    }
+  ],
+  "findings": []
+}

@@ -41,7 +41,7 @@ Verdict: **CAUTION, proceed**.
 | # | Scenario | CLI expectation | MCP twin |
 |---|---|---|---|
 | S1 | New flag | `--out-file a.png` writes there, no warning | `out_file="a.png"` writes there, no deprecation note |
-| S2 | Old flag | `-o a.png` / `--output a.png` writes there, ONE stderr warning naming `--out-file` | `output="a.png"` works; result carries a `deprecations` note |
+| S2 | Old flag | `-o a.png` / `--output a.png` writes there, ONE stderr warning naming `--out-file` | `output="a.png"` works; its schema `description` and the tool `description=` say it is deprecated (what MCP clients read; no runtime field, per the owner's ask) |
 | S3 | Both | `--out-file a.png -o b.png` exits 2, nothing generated | both params set: refused with a bad-param problem, nothing queued |
 | S4 | `--json` | warning on stderr, stdout stays one valid JSON document | n/a (tools always return structured data) |
 | S5 | Multi-image | `-n 4 --out-file a.png` keeps today's `a_0.png`..`a_3.png` | same through the daemon |
@@ -61,5 +61,5 @@ Verdict: **CAUTION, proceed**.
 4. [ ] e2e: `tests/e2e/test_out_file_e2e.py`, `e2e_image` ($0): CLI `--out-file`, CLI `-o` (warning + file), MCP `out_file`.
 5. [ ] Docs, skills + plugin byte copies, plugin commands, examples, llms.txt, README, CHANGELOG "Upcoming breaking change".
 6. [ ] #1202: one exit-code function, `GFLOW_CLI_EXIT_CODES=2` opt-in, `exit_code_legacy`, table test, `docs/ERRORS.md` old→new table (separate PR).
-7. [ ] S12 cloud storage: refusal names the spelling used (CLI `cli_video.py` refusal site, MCP `gflow_generate_video`), tests in `tests/cli/test_cloud_storage_local_output.py`, `docs/EXTERNAL_STORAGE.md`.
+7. [x] S12 cloud storage: the CLI refusal names `--out-file` (the deprecation line already maps `-o` to it); MCP names the parameter passed, tests in `tests/cli/test_cloud_storage_local_output.py`, `docs/EXTERNAL_STORAGE.md`.
 8. [ ] `/gflow:check`, reviews, Sonar 0, e2e on denon82, release.
