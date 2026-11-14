@@ -278,8 +278,8 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
     "FRAME_SEARCH_RETRY_PAUSE_S": "gflow_cli.api.transports.migrated_composer",
     "FRAME_THUMB_VISIBLE_S": "gflow_cli.api.transports.migrated_composer",
     "FRAME_UPLOAD_S": "gflow_cli.api.transports.migrated_composer",
-    "IMAGE_RECOVERY_S": "gflow_cli.api.transports.migrated_composer",
-    "IMAGE_RECOVERY_SETTLE_S": "gflow_cli.api.transports.migrated_composer",
+    "IMAGE_RECOVERY_S": "gflow_cli.api.transports._mc_common",
+    "IMAGE_RECOVERY_SETTLE_S": "gflow_cli.api.transports._mc_common",
     "IMAGE_REPLY_BUDGET_S": "gflow_cli.api.transports.migrated_composer",
     "MigratedComposer": "gflow_cli.api.transports.migrated_composer",
     "RESULT_URL_GRACE_S": "gflow_cli.api.transports.migrated_composer",
@@ -289,13 +289,22 @@ PATCHED_GLOBALS: dict[str, str | tuple[str, ...]] = {
     "_project_snapshot": "gflow_cli.api.transports.migrated_composer",
     "_submit_body_problem": "gflow_cli.api.transports.migrated_composer",
     "_unique_display_name": "gflow_cli.api.transports.migrated_composer",
-    "_unported_image_form": "gflow_cli.api.transports.migrated_composer",
-    "_wait_anchor": "gflow_cli.api.transports.migrated_composer",
+    "_unported_image_form": (
+        "gflow_cli.api.transports.migrated_composer",
+        "gflow_cli.api.transports._mc_common",
+    ),
+    "_wait_anchor": (
+        "gflow_cli.api.transports.migrated_composer",
+        "gflow_cli.api.transports._mc_common",
+    ),
     "create_project": "gflow_cli.api.transports.migrated_composer",
     "read_credits": "gflow_cli.api.transports.migrated_composer",
     "rename_project": "gflow_cli.api.transports.migrated_composer",
     "run_video": "gflow_cli.api.transports.migrated_composer",
-    "time": "gflow_cli.api.transports.migrated_composer",
+    "time": (
+        "gflow_cli.api.transports.migrated_composer",
+        "gflow_cli.api.transports._mc_common",
+    ),
 }
 
 _ADDRESS = re.compile(r" at 0x[0-9a-fA-F]+")

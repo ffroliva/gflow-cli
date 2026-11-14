@@ -3537,10 +3537,11 @@ async def test_an_unreadable_image_submit_body_is_a_typed_not_retryable_error(
     """#1010: the raw Playwright error reached the client's retry loop, which re-ran the
     billed submit. It must arrive typed, named, and marked not retryable — when no new
     tile on the grid recovers the image (#1075)."""
+    from gflow_cli.api.transports import _mc_common
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
     from gflow_cli.errors import is_retryable
 
-    monkeypatch.setattr(migrated_composer, "IMAGE_RECOVERY_S", 0.05)
+    monkeypatch.setattr(_mc_common, "IMAGE_RECOVERY_S", 0.05)
 
     page = FakePage()
     page.dom.prompt = "a blue cup"
@@ -3571,8 +3572,10 @@ NEW_TILE = "22222222-2222-2222-2222-222222222222"
 
 @pytest.fixture
 def _fast_recovery(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(migrated_composer, "IMAGE_RECOVERY_S", 0.05)
-    monkeypatch.setattr(migrated_composer, "IMAGE_RECOVERY_SETTLE_S", 0.01)
+    from gflow_cli.api.transports import _mc_common
+
+    monkeypatch.setattr(_mc_common, "IMAGE_RECOVERY_S", 0.05)
+    monkeypatch.setattr(_mc_common, "IMAGE_RECOVERY_SETTLE_S", 0.01)
 
 
 @pytest.mark.usefixtures("_fast_recovery")
