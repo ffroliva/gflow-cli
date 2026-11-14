@@ -98,6 +98,7 @@ def _settle_lines(path: Path) -> set[int]:
         "transports/ui_automation.py",
         "transports/_ui_session.py",
         "transports/_ui_navigation.py",
+        "transports/_ui_character.py",
         "transports/experimental/evaluate_fetch.py",
         "transports/experimental/sapisidhash.py",
         "transports/experimental/bearer.py",
