@@ -358,7 +358,7 @@ def run_update(
     """Upgrade gflow-cli in place, or with ``check`` only report.
 
     ``stream_output`` runs the manager on the terminal; otherwise its output is
-    captured and shown only when the update fails.
+    captured and shown only when the manager or the update fails.
 
     Raises :class:`~gflow_cli.errors.ConfigurationError` (exit 11) for a
     non-index install, a manager binary missing from PATH, or a manager that
