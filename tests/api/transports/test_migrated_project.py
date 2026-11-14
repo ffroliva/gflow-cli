@@ -8,6 +8,7 @@ project header's `flow-editable-text` input renames through `o8DA4`, answering `
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -497,7 +498,10 @@ async def test_snapshot_gives_up_at_its_deadline_and_still_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = iter([0.0, 0.0, 100.0])
-    monkeypatch.setattr(mc, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+    # The clock is read from whichever module defines `_project_snapshot` (#1249 moved it);
+    # patching `mc` alone left the real 15 s deadline running.
+    reader = sys.modules[mc._project_snapshot.__module__]
+    monkeypatch.setattr(reader, "time", SimpleNamespace(monotonic=lambda: next(clock)))
     probe = _Probe([[{"name": "other.png", "id": MEDIA}]], title="t")
     owner = _Owner(probe)
     _, tiles = await mc._project_snapshot(owner, PID, upload_name="u.png")  # type: ignore[arg-type]

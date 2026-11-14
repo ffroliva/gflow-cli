@@ -465,7 +465,7 @@ def test_every_global_a_method_reads_still_resolves_where_it_lives() -> None:
 def test_reach_guard_for_patched_module_globals() -> None:
     """Reach guard (S1): reading a patched global resolves from the patched module."""
     mismatches = []
-    funcs = _functions_to_resolve()
+    funcs = [(f, _global_reads(f.__code__)) for f in _functions_to_resolve()]
     for name, mod_names in PATCHED_GLOBALS.items():
         allowed = (mod_names,) if isinstance(mod_names, str) else mod_names
         allowed_dicts = []
@@ -476,8 +476,8 @@ def test_reach_guard_for_patched_module_globals() -> None:
                 mismatches.append(
                     f"Target module {mod_name} for patched global {name} cannot be imported"
                 )
-        for func in funcs:
-            if name in _global_reads(func.__code__):
+        for func, reads in funcs:
+            if name in reads:
                 if not any(func.__globals__ is d for d in allowed_dicts):
                     actual_mod = func.__globals__.get("__name__", "unknown")
                     mismatches.append(
