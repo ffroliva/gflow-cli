@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.tools.registry import get_tool, iter_tools
 from gflow_cli.tools.runtime import apply_tool
 
@@ -18,9 +19,11 @@ def tools() -> None:
     """Discover and run prompt tools."""
 
 
+@spends_credits(False)
 @tools.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a table.")
 def list_tools(as_json: bool) -> None:
+    """List the prompt tools available on this install."""
     specs = iter_tools()
     if as_json:
         json_output.emit(
@@ -46,9 +49,11 @@ def list_tools(as_json: bool) -> None:
     console.print(table)
 
 
+@spends_credits(False)
 @tools.command("show")
 @click.argument("name")
 def show_tool(name: str) -> None:
+    """Show one prompt tool: what it does and what it needs."""
     spec = get_tool(name)
     console.print(f"[bold]{spec.title}[/bold] ({spec.name}) — {spec.category}")
     console.print(spec.description)
@@ -66,12 +71,14 @@ def show_tool(name: str) -> None:
         )
 
 
+@spends_credits(False)
 @tools.command("run")
 @click.argument("name")
 @click.argument("text")
 @click.option("--style", default=None, help="Domain style mode (see `tools show`).")
 @click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
 def run_tool(name: str, text: str, style: str | None, as_json: bool) -> None:
+    """Run a prompt tool on TEXT and print the rewritten prompt."""
     spec = get_tool(name)
     options = {"style": style} if style else {}
     result = apply_tool(spec, text, options)

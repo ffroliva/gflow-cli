@@ -58,7 +58,8 @@ def _run(world: dict[str, Any]) -> None:
 
 
 def _execute(world: dict[str, Any], *extra: str) -> None:
-    env = {**world["env"], "GFLOW_CLI_LOG_FORMAT": "json"}
+    # INFO: the asserted events are info-level; a command logs WARNING+ by default (#1041).
+    env = {**world["env"], "GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"}
     proc = subprocess.run(
         [
             sys.executable,

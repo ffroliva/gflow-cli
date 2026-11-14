@@ -185,7 +185,7 @@ reference and worked examples (Google, OpenRouter, a local Docker proxy, keyless
 ## 8. Provenance — what history records
 
 When a tool rewrites a prompt, the generation is recorded with full provenance
-([`data/recorder.py`](../src/gflow_cli/data/recorder.py)):
+([`data/_recorder_core.py`](../src/gflow_cli/data/_recorder_core.py), `_tool_metadata`):
 
 - **`prompt`** column = the user's **original** prompt.
 - **`expanded_prompt`** column = the **submitted** (rewritten) prompt.

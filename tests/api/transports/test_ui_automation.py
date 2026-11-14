@@ -2604,11 +2604,33 @@ class TestSelectorLocaleInvariance:
         """
         import inspect
 
-        from gflow_cli.api.transports import ui_automation
+        from gflow_cli.api.transports import (
+            _ui_capture,
+            _ui_character,
+            _ui_common,
+            _ui_image,
+            _ui_navigation,
+            _ui_prompt,
+            _ui_session,
+            _ui_settings,
+            ui_automation,
+        )
 
+        modules = (
+            ui_automation,
+            _ui_capture,
+            _ui_character,
+            _ui_common,
+            _ui_image,
+            _ui_navigation,
+            _ui_prompt,
+            _ui_session,
+            _ui_settings,
+        )
         non_comment_lines = [
             line
-            for line in inspect.getsource(ui_automation).splitlines()
+            for mod in modules
+            for line in inspect.getsource(mod).splitlines()
             if not line.lstrip().startswith("#")
         ]
         assert "--lang=en-US" not in "\n".join(non_comment_lines), (
@@ -2712,7 +2734,7 @@ class TestSelectImageModel:
     async def test_happy_path_selects_and_does_not_escape(self) -> None:
         sel = IMAGE_MODEL_OPTION_SELECTORS[Model.GEM_PIX_2][0]
         page = self._page({sel: 1})
-        with patch("gflow_cli.api.transports.ui_automation.log") as mock_log:
+        with patch("gflow_cli.api.transports._ui_settings.log") as mock_log:
             await UiAutomationTransport._select_image_model(page, Model.GEM_PIX_2)
         assert mock_log.info.call_args[0][0] == "ui_automation.image_model_selected"
         page.keyboard.press.assert_not_called()
@@ -2725,10 +2747,10 @@ class TestSelectImageModel:
         page = self._page({two[1]: 1})
         with (
             patch(
-                "gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS",
+                "gflow_cli.api.transports._ui_settings.IMAGE_MODEL_OPTION_SELECTORS",
                 patched,
             ),
-            patch("gflow_cli.api.transports.ui_automation.log") as mock_log,
+            patch("gflow_cli.api.transports._ui_settings.log") as mock_log,
         ):
             await UiAutomationTransport._select_image_model(page, Model.IMAGEN_3_5)
         assert mock_log.info.call_args[1]["via"] == two[1]
@@ -2752,7 +2774,7 @@ class TestSelectImageModel:
         """WAS: warned and returned, so --model was a silent no-op."""
         page = self._page({})
         with (
-            patch("gflow_cli.api.transports.ui_automation.IMAGE_MODEL_OPTION_SELECTORS", {}),
+            patch("gflow_cli.api.transports._ui_settings.IMAGE_MODEL_OPTION_SELECTORS", {}),
             pytest.raises(UiSelectorDriftError),
         ):
             await UiAutomationTransport._select_image_model(page, Model.NARWHAL)

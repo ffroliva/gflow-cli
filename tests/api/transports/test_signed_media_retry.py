@@ -284,7 +284,7 @@ class TestAnHttpErrorOnTheSignedUrlIsADownloadFailure:
         with pytest.raises(MediaDownloadError) as ei:
             await MigratedComposer.fetch_mp4(page, _record())  # pyright: ignore[reportArgumentType]
         assert ei.value.media_id == MEDIA_ID
-        from gflow_cli._cli_helpers import _exit_code_for
+        from gflow_cli.errors import exit_code_for as _exit_code_for
 
         assert _exit_code_for(ei.value) == 6
         assert not is_retryable(ei.value)

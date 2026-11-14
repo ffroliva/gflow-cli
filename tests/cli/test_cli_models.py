@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli_models import build_catalog
@@ -122,3 +125,142 @@ def test_nano_2_1_spellings_select_the_nano2_tier() -> None:
     for alias in ("nano21", "nano2.1", "nano-2.1"):
         assert alias in ALLOWED_MODELS
         assert Model.from_cli(alias) is Model.NARWHAL
+
+
+# --- #1196: `models list` / `models show <id>` --------------------------------
+
+
+def _invoke(*args: str) -> Any:
+    from gflow_cli.cli import main
+
+    return CliRunner().invoke(main, ["models", *args], catch_exceptions=False)
+
+
+@pytest.mark.parametrize("extra", [[], ["--json"]])
+def test_bare_models_is_an_alias_of_models_list(extra: list[str]) -> None:
+    bare = _invoke(*extra)
+    listed = _invoke("list", *extra)
+
+    assert bare.exit_code == listed.exit_code == 0, bare.output + listed.output
+    assert bare.output == listed.output
+
+
+def _mcp_entries() -> list[dict[str, Any]]:
+    from gflow_cli.mcp.tools import gflow_list_models
+
+    catalog = asyncio.run(gflow_list_models())
+    return [m for kind in ("image", "video") for m in catalog[kind]["models"]]
+
+
+def test_models_show_json_is_the_mcp_entry_for_that_model() -> None:
+    """One serializer: `show --json` emits exactly what gflow_list_models carries."""
+    for entry in _mcp_entries():
+        for model_id in (entry["name"], *entry["aliases"]):
+            result = _invoke("show", model_id, "--json")
+            assert result.exit_code == 0, result.output
+            assert json.loads(result.output) == entry, model_id
+
+
+def test_models_show_matches_case_insensitively() -> None:
+    result = _invoke("show", "narwhal", "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["name"] == "NARWHAL"
+
+
+def test_group_json_flag_reaches_show() -> None:
+    result = _invoke("--json", "show", "omni-flash")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["name"] == "omni_flash"
+
+
+def test_models_show_table_names_the_model() -> None:
+    result = _invoke("show", "omni-flash")
+
+    assert result.exit_code == 0, result.output
+    assert "omni_flash" in result.output
+    assert "16:9" in result.output
+
+
+@pytest.mark.parametrize(("typo", "expected"), [("narwal", "NARWHAL"), ("omni-flsh", "omni-flash")])
+def test_unknown_model_exits_2_with_closest_matches(typo: str, expected: str) -> None:
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(main, ["models", "show", typo])
+
+    assert result.exit_code == 2, result.output
+    assert expected in result.output
+
+
+def test_model_ids_are_unique_across_kinds_ignoring_case() -> None:
+    """`show` looks ids up case-insensitively across image AND video."""
+    ids = [i.lower() for e in _mcp_entries() for i in {e["name"], *e["aliases"]}]
+    assert len(ids) == len(set(ids))
+
+
+# --- #1196 review: durations, lookup spellings, suggestions, table labels -----
+
+
+def test_video_entries_carry_their_selectable_durations() -> None:
+    from gflow_cli.api import video as video_api
+
+    for entry in _mcp_entries():
+        if "max_duration" not in entry:
+            continue
+        model = video_api.VideoModel(entry["name"])
+        assert entry["durations"] == list(video_api.duration_choices_for(model))
+        assert max(entry["durations"]) == entry["max_duration"]
+
+    shown = json.loads(_invoke("show", "veo-lite", "--json").output)
+    assert shown["durations"] == [4, 6, 8]
+
+
+@pytest.mark.parametrize(
+    ("spelling", "name"),
+    [
+        ("Omni-Flash", "omni_flash"),
+        ("veo_lite", "veo_3_1_lite"),
+        (" omni-flash", "omni_flash"),
+        ("Omni Flash", "omni_flash"),
+        ("NARWHAL", "NARWHAL"),
+    ],
+)
+def test_show_accepts_every_spelling_the_generate_commands_accept(spelling: str, name: str) -> None:
+    result = _invoke("show", spelling, "--json")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["name"] == name
+
+
+def _unknown(model_id: str) -> str:
+    from gflow_cli.cli import main
+
+    result = CliRunner().invoke(main, ["models", "show", model_id])
+    assert result.exit_code == 2, result.output
+    return result.output
+
+
+def test_unknown_prefix_still_gets_a_substring_suggestion() -> None:
+    assert "veo" in _unknown("veo").split("Did you mean:")[1]
+
+
+def test_suggestions_name_each_model_at_most_once() -> None:
+    from gflow_cli.cli_models import find_model
+
+    catalog = build_catalog()
+    hint = _unknown("nano").split("Did you mean:")[1].split("?")[0]
+    names = [find_model(catalog, s.strip())[1]["name"] for s in hint.split(",")]
+    assert len(names) == len(set(names)), hint
+
+
+def test_show_table_uses_list_labels_and_no_tiers() -> None:
+    video = _invoke("show", "omni-flash").output
+    image = _invoke("show", "nano2").output
+
+    assert "max dur (s)" in video
+    assert "ref cap" in video
+    assert "4, 6, 8, 10" in video
+    assert "tiers" not in video
+    assert "Flow name" in image
+    assert "True" not in image

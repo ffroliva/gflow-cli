@@ -65,7 +65,7 @@ updates:
       # driver CVE fix does not require a gflow release. Raising a MINOR is a
       # deliberate, live-verified act (AGENTS.md "verify before you act") and
       # also means hand-editing SUPPORTED_PLAYWRIGHT_RANGE in
-      # src/gflow_cli/api/transports/ui_automation_video.py, which no bot can
+      # src/gflow_cli/api/transports/_video_common.py, which no bot can
       # do -- so a bot-authored minor bump can never be mergeable here anyway.
       # The weekly `deps-watch` workflow reports how far behind the pin has
       # drifted so it does not freeze unnoticed.

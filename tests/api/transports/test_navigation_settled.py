@@ -28,7 +28,7 @@ _TRANSPORTS = Path(__file__).resolve().parents[3] / "src" / "gflow_cli" / "api"
 #: decision on the record rather than an oversight.
 #:
 #: #836 proposed removing both, reading them as contradicting the "do NOT use
-#: networkidle" comment further down `ui_automation.py`. They do not: that comment
+#: networkidle" comment further down `_ui_navigation.py`. They do not: that comment
 #: governs the GALLERY navigation, which is followed by `_settle_if_redirecting`.
 #: The bootstrap cannot use that settle — it is gated on `self._account_locale`, and
 #: the bootstrap navigation is the call that RESOLVES the locale, so it is None at
@@ -49,7 +49,7 @@ _ABSORBED_BY_EXISTING_WAIT = {
     # the full URL_SETTLE_TIMEOUT_MS (4 s) to return None, on every parked run of
     # a locale-resolved account. The only `wait_until="commit"` goto in this file
     # is that park (#792). On the record, per this module's own rule.
-    ("ui_automation.py", "commit"),
+    ("_ui_session.py", "commit"),
 }
 
 
@@ -92,10 +92,16 @@ def _settle_lines(path: Path) -> set[int]:
     }
 
 
+_UI_PARTS = sorted(
+    p.relative_to(_TRANSPORTS).as_posix() for p in (_TRANSPORTS / "transports").glob("_ui_*.py")
+)
+
+
 @pytest.mark.parametrize(
     "relpath",
     [
         "transports/ui_automation.py",
+        *_UI_PARTS,
         "transports/experimental/evaluate_fetch.py",
         "transports/experimental/sapisidhash.py",
         "transports/experimental/bearer.py",

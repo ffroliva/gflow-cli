@@ -19,7 +19,12 @@ from rich.table import Table
 from rich.text import Text
 
 from gflow_cli import json_output, profile_store
-from gflow_cli._cli_helpers import run_with_handlers, safe_path_text
+from gflow_cli._cli_helpers import (
+    out_file_option,
+    run_with_handlers,
+    safe_path_text,
+    spends_credits,
+)
 from gflow_cli.api import routes
 from gflow_cli.config import LogLevel, get_settings
 from gflow_cli.data.queries import (
@@ -284,6 +289,7 @@ def data() -> None:
     """Read and reconcile local gflow media history."""
 
 
+@spends_credits(False)
 @data.command("media")
 @click.argument("media_id")
 @click.option(
@@ -335,6 +341,7 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
     console.print(table)
 
 
+@spends_credits(False)
 @data.command("download")
 @click.argument("media_id")
 @click.option(
@@ -411,6 +418,7 @@ def list_group() -> None:
     """List entries from the catalog."""
 
 
+@spends_credits(False)
 @list_group.command(name="projects")
 @_PROFILE_OPT
 @_LIMIT_OPT
@@ -431,6 +439,7 @@ _ALL_COPIES_OPT = click.option(
 )
 
 
+@spends_credits(False)
 @list_group.command(name="images")
 @_PROFILE_OPT
 @_LIMIT_OPT
@@ -460,6 +469,7 @@ def list_images_cmd(
     _emit(rows, as_json, _emit_images_table, "No images recorded.")
 
 
+@spends_credits(False)
 @list_group.command(name="videos")
 @_PROFILE_OPT
 @_LIMIT_OPT
@@ -489,6 +499,7 @@ def list_videos_cmd(
     _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
 
 
+@spends_credits(False)
 @list_group.command(name="errors")
 @_PROFILE_OPT
 @_LIMIT_OPT
@@ -506,6 +517,7 @@ def list_errors_cmd(profile: str | None, limit: int, offset: int, as_json: bool)
     _emit(rows, as_json, _emit_errors_table, "No failed operations recorded.")
 
 
+@spends_credits(False)
 @list_group.command(name="profiles")
 @_LIMIT_OPT
 @_OFFSET_OPT
@@ -628,6 +640,7 @@ def _emit_stats(payload: dict[str, Any], as_json: bool) -> None:
         click.echo("Usage counters are on.")
 
 
+@spends_credits(False)
 @data.command("stats")
 @click.option(
     "--weeks",
@@ -654,6 +667,7 @@ def stats_cmd(weeks: int, as_json: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @data.command("prune")
 @click.option("--dry-run", is_flag=True, help="Report dead rows without deleting them.")
 @click.option("--profile", default=None, help="Limit scan to a specific profile.")
@@ -733,6 +747,7 @@ def errors_group() -> None:
     """Maintain the failed-operation history: export (archive) and prune (#345)."""
 
 
+@spends_credits(False)
 @errors_group.command(name="export")
 @_PROFILE_OPT
 @click.option(
@@ -742,14 +757,7 @@ def errors_group() -> None:
     metavar="AGE",
     help=f"Only export failures older than this. {_OLDER_THAN_HELP} Default: all.",
 )
-@click.option(
-    "-o",
-    "--output",
-    "output",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
-    help="Write JSONL to this file. Default: stdout.",
-)
+@out_file_option("output", help="Write JSONL to this file. Default: stdout.")
 @_guard
 def errors_export_cmd(profile: str | None, older_than: str | None, output: Path | None) -> None:
     """Export failed operations as JSONL — archive history before pruning (#345).
@@ -768,6 +776,7 @@ def errors_export_cmd(profile: str | None, older_than: str | None, output: Path 
     click.echo(f"Exported {len(rows)} failed operation(s) to {output}.")
 
 
+@spends_credits(False)
 @errors_group.command(name="prune")
 @_PROFILE_OPT
 @click.option(
@@ -968,6 +977,7 @@ async def _run_data_sync(
         _echo_sync_summary(summary, dry_run=dry_run)
 
 
+@spends_credits(False)
 @data.command("sync")
 @click.option(
     "--names",

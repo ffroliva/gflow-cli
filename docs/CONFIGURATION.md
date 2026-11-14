@@ -148,6 +148,13 @@ runs.
 Deep setup, verification, and security notes live in
 [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
+### `GFLOW_CLI_EXIT_CODES`
+
+Default: unset (the legacy exit codes). Set it to `2` to opt in to the stable exit-code core
+([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)): `4→40`, `5→41`, `6→42`, `7→43`,
+`8→3`, `9→44`. Any other value keeps the legacy codes. It works from the environment or from
+`.env`. The full table and the coming default switch are in [ERRORS.md](ERRORS.md).
+
 ### `GFLOW_CLI_PROVIDER`
 
 **What:** Backend to use for generations.
@@ -313,7 +320,7 @@ Until the #1041 fix this setting was ignored and every command logged at `INFO` 
 
 ### `GFLOW_CLI_UPDATE_CHECK`
 
-**What:** Once-a-day best-effort PyPI check that shows an update banner on stderr when a newer gflow-cli exists — a bordered panel with the new version, `gflow update`, and the release-notes link when stderr is a terminal; one plain yellow line when piped. The notice is always served from a local cache (`<GFLOW_CLI_HOME>/update_check.json`); a stale cache refreshes on a background daemon thread whose result feeds the *next* invocation — the check never blocks or fails a command, and a failed poll still counts toward the once-a-day cap. `gflow update` / `gflow update --check` refresh the same cache synchronously.
+**What:** Once-a-day best-effort PyPI check that shows an update banner on stderr when a newer gflow-cli exists — a bordered panel with the new version, `gflow update`, and the release-notes link when stderr is a terminal; one plain yellow line when piped. The notice is always served from a local cache (`<GFLOW_CLI_HOME>/update_check.json`); a stale cache refreshes on a background daemon thread whose result feeds the *next* invocation — the check never blocks or fails a command, and a failed poll still counts toward the once-a-day cap. `gflow update` / `gflow update --check` refresh the same cache synchronously, and suppress the banner so it never contradicts the live install result.
 **Values:** `1` (default) | `0` to disable
 **Skipped automatically:** in CI (`CI` set to anything but `0` / `false`) and for editable/local-source installs (PEP 610 `direct_url.json` detection) — "upgrade" advice is wrong there.
 **Upgrading:** [`gflow update`](USAGE.md#gflow-update) runs the installer that put gflow-cli here (`uv tool` / `pipx` / the venv's own `pip`).
@@ -509,7 +516,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 - `flow.google.com` — force the migrated composer for everything, including what it cannot serve yet (those requests then exit 36/11 instead of falling back).
 - `labs.google` — never use the migrated composer; where Flow serves `flow.google.com`, requests fail with exit 36 (kill switch).
 **Default:** `auto`
-**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). `video extend` is ported for a single segment from a clip (one PROMPT; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36, and `-o` saves the new extension clip only, #882). Frames given by UUID/`@Name`, media references by UUID/`@Name` (except an image `--ref <uuid>` the catalog records in the same `--project`, #995), character entities on text-to-video and image-to-video, Agent instructions, Imagen 4, scenes, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call. Local-file `video r2v` takes a character with `--reference-entity` paired with `--reference-entity-name` (#723); an id alone exits 36.
+**Scope today:** the migrated composer covers `gflow video t2v`, local-file `video i2v` / `r2v`, `gflow image t2i`, and local-file `gflow image i2i`. Images support Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspect ratios (16:9, 4:3, 1:1, 3:4, 9:16 — `3:4` was added to that host's radiogroup by 2026-09-17, #864) and count 1–4; the page owns the `ogiZ0b` reCAPTCHA + submit and the response already contains completed signed image URLs. Local-file start+end frames (`--initial-frame` + `--end-frame`) are ported (#639). Image prompts may tag a character with `@Name` (or `--reference-entity` paired with `--reference-entity-name`; an id alone exits 36), attached through the composer's `@` picker (#723). `video extend` is ported for a single segment from a clip (one PROMPT; `-n` > 1, `--scene`/`--resume-from`, `--seed` and an `--aspect` other than the source's exit 36, and `--out-file` saves the new extension clip only, #882). Frames given by UUID/`@Name`, media references by UUID/`@Name` (except an image `--ref <uuid>` the catalog records in the same `--project`, #995), character entities on text-to-video and image-to-video, Agent instructions, Imagen 4, scenes, instructions and tools are not ported yet and fail before submit where Flow serves flow.google.com. MCP uses the same image service and queue payload, and inherits this setting from the server/daemon environment rather than per call. Local-file `video r2v` takes a character with `--reference-entity` paired with `--reference-entity-name` (#723); an id alone exits 36.
 
 ### `GFLOW_CLI_WIRE_READS`
 

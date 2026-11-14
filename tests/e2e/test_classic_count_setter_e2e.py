@@ -24,6 +24,7 @@ import structlog
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from tests.e2e.conftest import skip_labs_composer_check
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_image]
 
@@ -77,6 +78,7 @@ async def test_classic_t2i_generates_exactly_the_requested_count(
         f"count setter failed to converge on the live composer (#404)"
     )
 
+    skip_labs_composer_check(install_log_capture.entries, "the classic count setter")
     completed = [
         e
         for e in install_log_capture.entries
