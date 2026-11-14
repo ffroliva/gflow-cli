@@ -1867,9 +1867,10 @@ and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
 its own file open, so it can be neither overwritten nor renamed while it runs.
 Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
 the launcher ("os error 32"). The upgrade *did* happen — the launcher only
-points at the venv's python — so `gflow update` reports it as upgraded with a
-note quoting the manager's exit code; the next update from another shell
-refreshes the launcher.
+points at the venv's python — so `gflow update` reports it as upgraded, prints
+the manager's captured output, and adds a note quoting its exit code. The old
+launcher keeps working. A later `gflow update` reports "up to date" and does not
+run the manager, so it does not replace the launcher either.
 
 **Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
 lock just above is the benign case: it is the `gflow.exe` *you* are running, and

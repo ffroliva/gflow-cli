@@ -437,9 +437,11 @@ def run_update(
         )
     notes: list[str] = []
     if returncode != 0:
+        _show_output(res.stdout, res.stderr)
         notes.append(
-            f"Note: `{shown}` exited {returncode} AFTER installing {after} "
-            "(the running launcher keeps working and will refresh on the next update)."
+            f"Note: `{shown}` exited {returncode} AFTER installing {after}. On Windows this is "
+            "usually the running `gflow.exe` launcher, which cannot be replaced while in use; "
+            "it keeps working."
         )
     playwright_after = _version_in_venv("playwright")
     if playwright_before != playwright_after:

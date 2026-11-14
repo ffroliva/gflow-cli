@@ -550,6 +550,25 @@ class TestRunUpdate:
         assert len(report.notes) == 1
         assert "exited 1 AFTER installing 999.0.0" in report.notes[0]
 
+    def test_failure_after_install_shows_output_and_an_honest_note(
+        self,
+        uv_install: list[tuple[str, ...]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The next `gflow update` reports up to date and never runs the manager,
+        so the note must not promise a refresh; and the launcher is a Windows cause."""
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(
+            uc, "_run_command", _exits(1, stderr="error: Failed to upgrade gflow-cli")
+        )
+        report = uc.run_update(check=False)
+        assert report.upgraded is True
+        assert "error: Failed to upgrade gflow-cli" in capsys.readouterr().err
+        (note,) = report.notes
+        assert "On Windows" in note, note
+        assert "next update" not in note, note
+
     def test_pypi_unreachable_and_manager_found_nothing(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
     ) -> None:
