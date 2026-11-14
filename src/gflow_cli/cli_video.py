@@ -54,12 +54,17 @@ from gflow_cli.errors import (
     SceneConcatError,
 )
 from gflow_cli.image_batch import resolve_jitter_range
-from gflow_cli.paths import extend_output_path
+from gflow_cli.paths import (
+    chain_clip_relocator,
+    extend_output_path,
+    relocate_video_output,
+)
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from gflow_cli.api.video import VideoResult
     from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.tools.invocation import AppliedTool
@@ -240,44 +245,6 @@ def _reject_duration_without_control(
         raise click.UsageError(f"{named}: {exc}") from exc
 
 
-def _relocate_single_video(item: Any, target: Path) -> Any:
-    from dataclasses import replace
-    from typing import cast
-
-    local_p = cast("Path | None", getattr(item, "local_path", None))
-    if local_p is None or not local_p.exists():
-        return item
-    if local_p != target:
-        import shutil
-
-        # shutil.move, not Path.replace: a rename across mounts raises EXDEV (#1114).
-        shutil.move(local_p, target)
-        return replace(item, local_path=target)
-    return item
-
-
-def _relocate_video_output(result: Any, output_file: Path | None) -> Any:
-    if output_file is None:
-        return result
-    from typing import cast
-
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(result, (list, tuple)):
-        items = cast("tuple[Any, ...] | list[Any]", result)
-        relocated: list[Any] = []
-        is_single = len(items) == 1
-        for i, item in enumerate(items, start=1):
-            target = (
-                output_file
-                if is_single
-                else output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
-            )
-            relocated.append(_relocate_single_video(item, target))
-        return relocated
-
-    return _relocate_single_video(result, output_file)
-
-
 async def _generate_and_report(
     request: Any,
     *,
@@ -367,7 +334,7 @@ async def _generate_and_report(
                 **resolver_kw,
             )
 
-        result = _relocate_video_output(result, output_file)
+        result = relocate_video_output(result, output_file)
 
         try:
             recorder.record_completed_video(
@@ -745,21 +712,23 @@ def _resolve_chain_resume(
     settings: Any,
     profile_name: str,
     profile_dir: Path,
-) -> tuple[str, int]:
-    """Resolve the chain_id and number of already-completed links.
+) -> tuple[str, int, Path | None]:
+    """Resolve the chain_id, the number of already-completed links and the last one's clip.
 
     For a fresh run mints a new UUID.  For a resume, opens the chain recorder
     to count completed links and returns early (raises SystemExit via
     console.print + return sentinel) when the chain is already done.
-    Returns ``(chain_id, skipped)`` — callers check ``skipped >= len(links)``
-    themselves via the returned value; this helper raises nothing.
+    Returns ``(chain_id, skipped, seed_clip)`` — callers check ``skipped >= len(links)``
+    themselves. ``seed_clip`` seeds the first remaining link (#1300); a resume whose clip
+    is gone is refused here, before the cost prompt, rather than sent as an unseeded t2v.
     """
     import uuid
 
     from gflow_cli.data.chain_repo import ChainLinkRecorder
+    from gflow_cli.errors import FrameExtractionError
 
     if resume_from is None:
-        return str(uuid.uuid4()), 0
+        return str(uuid.uuid4()), 0, None
 
     chain_id = resume_from
     probe = ChainLinkRecorder.open(
@@ -769,10 +738,18 @@ def _resolve_chain_resume(
         chain_id=chain_id,
     )
     try:
-        skipped = len(probe.completed_links())
+        completed = probe.completed_links()
     finally:
         probe.close()
-    return chain_id, skipped
+    seed_clip = Path(completed[-1].local_path) if completed else None
+    if seed_clip is not None and len(completed) < len(links) and not seed_clip.is_file():
+        raise FrameExtractionError(
+            detail=f"cannot resume chain {chain_id}: the clip of its last completed link, "
+            f"{seed_clip}, is missing, so the next link has nothing to continue from",
+            remediation_hint="Put the clip back at that path, or start a new chain.",
+            charged="no",
+        )
+    return chain_id, len(completed), seed_clip
 
 
 @dataclass(frozen=True)
@@ -790,6 +767,9 @@ class _ChainExecConfig:
     jitter: float
     chain_id: str
     as_json: bool
+    relocate: Callable[[int, VideoResult], VideoResult] | None = None
+    start_index: int = 0
+    seed_clip: Path | None = None
 
 
 async def _execute_chain_links(
@@ -817,7 +797,7 @@ async def _execute_chain_links(
     chain_id = cfg.chain_id
     as_json = cfg.as_json
 
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
     from gflow_cli.errors import ChainPartialError
 
     # (request, media_id) pairs — matched by object IDENTITY in _on_link_failed.
@@ -899,6 +879,9 @@ async def _execute_chain_links(
             aspect=aspect_enum,
             seed_offset_ms=seed_offset,
             jitter=jitter,
+            relocate=cfg.relocate,
+            start_index=cfg.start_index,
+            seed_clip=cfg.seed_clip,
         )
         return results, False, completed_paths
     except ChainPartialError as exc:
@@ -1024,7 +1007,7 @@ async def _run_chain(
 
     # Resume: bind the prior chain_id and skip completed links so they are not
     # regenerated. A fresh run mints a new id.
-    chain_id, skipped = _resolve_chain_resume(
+    chain_id, skipped, seed_clip = _resolve_chain_resume(
         resume_from,
         links,
         settings=settings,
@@ -1109,6 +1092,9 @@ async def _run_chain(
                     jitter=jitter,
                     chain_id=chain_id,
                     as_json=as_json,
+                    relocate=chain_clip_relocator(output_file),
+                    start_index=skipped,
+                    seed_clip=seed_clip,
                 ),
             )
     finally:
@@ -1788,13 +1774,15 @@ def r2v(
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @tool_option
-@out_file_option(help="Explicit output file path for the generated chain clips.")
+@out_file_option(
+    help="Write link i's clip to FILE's stem plus _i (clip.mp4 -> clip_1.mp4, clip_2.mp4)."
+)
 @click.option(
     "--out-dir",
     "out_dir",
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
-    help="Directory to save the link mp4s + seed frames. Defaults to the output dir.",
+    help="Directory for the seed frames, and the link mp4s unless --out-file is given.",
 )
 @click.option(
     "--json",
@@ -1819,11 +1807,11 @@ def chain(
     as_json: bool,
 ) -> None:
     """Render the chain MANIFEST (one continuous last-frame I2V sequence)."""
-    if output_file is not None:  # _run_chain has never written there; say so (#1293)
-        click.echo(
-            "video chain does not apply --out-file yet (#1293); clips are saved under --out-dir.",
-            err=True,
-        )
+    # Before the cost prompt and the browser: the clips' folder must be creatable.
+    blocker = next((p for p in output_file.parents if p.exists()), None) if output_file else None
+    if blocker is not None and not blocker.is_dir():
+        msg = f"{blocker} is a file, so {output_file} cannot be written under it."
+        raise click.BadParameter(msg, param_hint="'--out-file'")
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(

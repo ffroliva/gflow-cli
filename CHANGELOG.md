@@ -30,6 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
+  accepted and ignored. Link i's clip goes to `<stem>_<i><suffix>` next to PATH
+  (`out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`), numbered over the whole manifest so
+  `--resume-from` keeps each link's name; `--json`, the chain table and the videos catalog report
+  those paths, and seed frames stay under `--out-dir`. An existing file or folder at a numbered
+  path is never replaced, and a clip whose move fails is never lost: either way it stays where it
+  downloaded, is recorded there, and a warning names the link, its media id and the path. A
+  FILE under an existing file is a usage error before the cost prompt. The stderr notice is gone
+  ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+- **`video chain --resume-from` continues the chain instead of restarting it.** The first resumed
+  link was numbered 0: it overwrote link 0's chain row, went out as an unseeded text-to-video,
+  and left the chain one row short, so a later resume billed a finished link again. Resumed links
+  now keep their manifest index (chain table, `--json` `links[].index`, `--out-file` number), the
+  first one is an image-to-video seeded from the last completed clip, and a resume whose clip is
+  gone is refused with exit 20 naming the file, before anything is billed
+  ([#1300](https://github.com/ffroliva/gflow-cli/issues/1300)).
+
 - **`gflow update` says one thing about the result
   ([#1163](https://github.com/ffroliva/gflow-cli/issues/1163)).** It no longer shows the
   cached "update available" banner, which could name an older release than the one it then

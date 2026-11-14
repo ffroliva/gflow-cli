@@ -639,11 +639,12 @@ waits for each link in turn, so total wallclock is the sum of all link waits.
 | `--max-links N` | unset | Cap link count; exit 11 (`ConfigurationError`) if the manifest has more. A spend guardrail. |
 | `-y` / `--yes` | off | Skip the pending video operation confirmation prompt. |
 | `--dry-run` | off | Print the pending video operation plan and submit nothing. |
-| `--resume-from CHAIN_ID` | unset | Resume a prior chain by its id; already-completed links are skipped (not regenerated). |
+| `--resume-from CHAIN_ID` | unset | Resume a prior chain by its id; already-completed links are skipped (not regenerated), and the next link is an i2v seeded from the last completed clip, which must still be at its recorded path (exit 20 otherwise, before anything is billed; [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)). |
 | `--jitter F` | `0.0` | Random `0..F` second pause **between** links (anti-bot cadence; never before link 0). |
 | `--seed-offset MS` | `0` | Extract the seed frame this many ms before EOF (fade-to-black guard). |
 | `--aspect` | `9:16` | `9:16` / `16:9`. Applied uniformly to every link (continuity requirement). |
-| `--out-dir DIR` | output root | Directory for the link mp4s + `linkN_lastframe.jpg` seed frames. |
+| `--out-file FILE` | unset | Link i's clip goes to `<stem>_<i><suffix>` next to FILE (`clip.mp4` gives `clip_1.mp4`, `clip_2.mp4`), numbered over the whole manifest so `--resume-from` keeps each name; seed frames stay under `--out-dir`. An existing file or folder there is never replaced: that clip, like one whose move fails, stays where it downloaded, recorded there, with a warning. A FILE under an existing file is a usage error (exit 2) before anything runs. Deprecated spelling: `-o/--output` ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)). |
+| `--out-dir DIR` | output root | Directory for the `linkN_lastframe.jpg` seed frames, and for the link mp4s unless `--out-file` is given. |
 | `--profile NAME` | default profile | Per-subcommand profile override. |
 | `--json` | off | Emit a machine-readable JSON result. |
 
