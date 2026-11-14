@@ -98,16 +98,22 @@ def catalog_ids(text: str) -> tuple[str, ...]:
     Raises CatalogError rather than return a short list: an id dropped silently is an id
     never checked.
     """
-    status_col = None
+    status_col: int | None = None
+    catalogued = True  # until a header says otherwise, an id row counts (and fails if unparsed)
     rows: list[tuple[str, str]] = []
+    expected = 0
     for line in text.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if status_col is None and "Status" in cells:
-            status_col = cells.index("Status")
+        if cells[0] == "RPC id":  # each table's header: only one with a Status column catalogues
+            status_col = cells.index("Status") if "Status" in cells else None
+            catalogued = status_col is not None
+            continue
         m = _ROW_RE.match(line)
-        if m and status_col is not None and len(cells) > status_col:
+        if not (m and catalogued):
+            continue
+        expected += 1
+        if status_col is not None and len(cells) > status_col:
             rows.append((m.group(1), cells[status_col].lower()))
-    expected = len(_ROW_RE.findall(text))
     if len(rows) != expected:
         raise CatalogError(f"catalog parsed {len(rows)} of {expected} rows")
     live = tuple(rpc for rpc, status in rows if status == "live")
