@@ -16,7 +16,7 @@ def test_selector_key_must_be_dotted_lower_snake() -> None:
 
 
 def test_surface_pins_a_viewport_at_or_above_the_breakpoint() -> None:
-    """ui_automation.py:117-124 — below 1920x1080 crosses Flow's responsive
+    """_ui_common.py:113-114 — below 1920x1080 crosses Flow's responsive
     breakpoint and drifts the selectors. A probe that forgets this reports
     false drift, so the model refuses to let it be forgotten."""
     with pytest.raises(ValueError, match="breakpoint"):
