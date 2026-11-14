@@ -29,7 +29,7 @@ from structlog.testing import capture_logs
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.image import Model as ImageModel
-from gflow_cli.api.transports import migrated_composer
+from gflow_cli.api.transports import _mc_upload_frame, migrated_composer
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
@@ -2326,10 +2326,9 @@ async def test_attach_refuses_a_non_image_before_any_click(tmp_path: Path) -> No
 async def test_attach_refuses_when_the_add_menu_has_no_upload_entry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_PICKER_OPEN_S", 0.05)
     page = FakePage()
     page.dom.upload_item_present = False
     with pytest.raises(UiSelectorDriftError, match="upload"):
@@ -2350,10 +2349,9 @@ async def test_attach_refuses_when_no_file_chooser_opens(tmp_path: Path) -> None
 async def test_attach_is_upload_rejected_when_maseq_does_not_answer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_UPLOAD_S", 0.2)
     page = FakePage()
     page.dom.maseq_reply = "none"
     with pytest.raises(MediaUploadRejectedError) as ei:
@@ -2375,10 +2373,9 @@ async def test_attach_names_the_one_time_terms_dialog_when_one_opens(
     full budget for a request the page had already declined to make. The old message
     said the upload "never reached Flow" and told the user to re-encode their image;
     it is neither the file nor the network."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_UPLOAD_S", 0.2)
     page = FakePage()
     page.dom.consent_dialog_on_upload = True
     with pytest.raises(MediaUploadRejectedError) as ei:
@@ -2400,10 +2397,9 @@ async def test_attach_does_not_blame_a_dialog_that_was_already_open(
     never on one that was already on screen — otherwise a lingering changelog modal
     (#26) would rewrite every unrelated upload timeout into a terms message and send
     the user to accept something that was never asked of them."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_UPLOAD_S", 0.2)
     page = FakePage()
     page.dom.dialog_present = True  # already there before the file is chosen
     page.dom.maseq_reply = "none"
@@ -2421,10 +2417,9 @@ async def test_attach_says_the_request_left_the_page_when_flow_just_never_answer
     different bugs with opposite fixes: one argues for a retry, the other against.
     `FRAME_UPLOAD_S` itself concedes a large file on a slow link can exceed the budget,
     so claiming nothing was sent would have been false on a perfectly healthy upload."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_UPLOAD_S", 0.2)
     page = FakePage()
     page.dom.maseq_reply = "sent_no_reply"
     with pytest.raises(MediaUploadRejectedError) as ei:
@@ -2445,10 +2440,9 @@ async def test_attach_keeps_exit_27_when_the_dialog_probe_itself_dies(
     reason no reply arrived is that the page died or navigated — in which case the dialog
     count raises too, and letting that escape would swap a mapped exit 27 and its
     remediation for an unmapped traceback. Same lesson as #752, one surface over."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_UPLOAD_S", 0.2)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_UPLOAD_S", 0.2)
     page = FakePage()
     page.dom.page_dies_on_upload = True
     with pytest.raises(MediaUploadRejectedError) as ei:
@@ -2511,10 +2505,9 @@ async def test_attach_refuses_when_the_first_id_in_the_reply_is_the_project(
 async def test_attach_is_reference_not_found_when_the_picker_lists_no_such_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.1)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_PICKER_OPEN_S", 0.1)
     page = FakePage()
     page.dom.picker_options = ["Blue sphere on table"]
     page.dom.picker_lists_upload = False  # Flow took the upload and never listed it
@@ -2528,10 +2521,9 @@ async def test_attach_is_reference_not_found_when_the_picker_lists_no_such_name(
 async def test_attach_is_selector_drift_when_the_chip_stays_empty_after_the_pick(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_THUMB_VISIBLE_S", 0.1)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_THUMB_VISIBLE_S", 0.1)
     page = FakePage()
     page.dom.chip_binds = False
     with pytest.raises(UiSelectorDriftError, match="chip"):
@@ -2546,11 +2538,10 @@ async def test_attach_searches_again_when_the_upload_is_not_indexed_yet(
     """denon82, 2026-09-05: two runs missed the fresh upload within 8 s on a project
     with 30+ assets and a third listed it — the picker search is server-side. A
     miss is re-searched from a fresh popover before it is a refusal."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.05)
-    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_PICKER_OPEN_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
     page = FakePage()
     page.dom.picker_lists_after_searches = 1  # listed on the second search only
     media_id = await MigratedComposer().attach_start_frame(page, PROJ, _png(tmp_path))
@@ -2563,8 +2554,8 @@ async def test_attach_gives_up_after_the_search_attempts(
     from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_PICKER_OPEN_S", 0.05)
-    monkeypatch.setattr(migrated_composer, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_PICKER_OPEN_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_SEARCH_RETRY_PAUSE_S", 0.01)
     page = FakePage()
     page.dom.picker_lists_after_searches = 99
     with pytest.raises(ReferenceNotFoundError, match="nothing"):
@@ -2652,11 +2643,10 @@ async def test_attach_says_so_when_the_confirm_was_clicked_and_the_picker_stayed
     confirm existed, took the click, and the picker still would not commit. Nothing had
     ever produced that string before this test — the fake closed the picker
     unconditionally on a confirm click, which is the same shortcut, one button over."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_GRACE_S", 0.05)
-    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_HIDDEN_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_COMMIT_GRACE_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_COMMIT_HIDDEN_S", 0.05)
     page = FakePage()
     page.dom.picker_needs_confirm = True
     page.dom.picker_confirm_commits = False
@@ -2671,11 +2661,10 @@ async def test_attach_says_so_when_the_picker_neither_commits_nor_offers_a_confi
     """The confirm is a cohort observation, not a contract. When it is absent AND the
     pick does not commit, the error must say which of the two it was — otherwise the
     next cohort drift reads as the one we already fixed."""
-    from gflow_cli.api.transports import migrated_composer
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_GRACE_S", 0.05)
-    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_HIDDEN_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_COMMIT_GRACE_S", 0.05)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_COMMIT_HIDDEN_S", 0.05)
     page = FakePage()
     page.dom.picker_needs_confirm = True
     page.dom.picker_has_confirm = False
@@ -3867,9 +3856,9 @@ async def test_upload_recovers_only_one_exact_unique_name(
         response.text = AsyncMock(side_effect=RuntimeError("response body unavailable"))
         page._fire_response(response)
 
-    monkeypatch.setattr(migrated_composer, "_unique_display_name", lambda p: "unique.png")
+    monkeypatch.setattr(_mc_upload_frame, "_unique_display_name", lambda p: "unique.png")
     readback = AsyncMock(return_value=("title", [{"name": "unique.png", "id": MEDIA_UP}] * count))
-    monkeypatch.setattr(migrated_composer, "_project_snapshot", readback, raising=False)
+    monkeypatch.setattr(_mc_upload_frame, "_project_snapshot", readback, raising=False)
     with patch.object(FakeFileChooser, "set_files", fail_upload):
         if count == 1:
             assert await migrated_composer.MigratedComposer().upload(
@@ -3903,8 +3892,8 @@ async def test_upload_readback_that_proves_nothing_keeps_the_unknown_outcome(
         response.text = AsyncMock(side_effect=RuntimeError("response body unavailable"))
         page._fire_response(response)
 
-    monkeypatch.setattr(migrated_composer, "_unique_display_name", lambda p: "unique.png")
-    monkeypatch.setattr(migrated_composer, "_project_snapshot", readback)
+    monkeypatch.setattr(_mc_upload_frame, "_unique_display_name", lambda p: "unique.png")
+    monkeypatch.setattr(_mc_upload_frame, "_project_snapshot", readback)
     with patch.object(FakeFileChooser, "set_files", fail_upload):
         with pytest.raises(RpcResponseUnavailableError, match="body was unavailable"):
             await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
