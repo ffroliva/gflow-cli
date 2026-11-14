@@ -25,6 +25,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.config import get_settings
 
 console = Console()
@@ -183,6 +184,7 @@ def current_capabilities(*, no_spend: bool = False) -> dict[str, Any]:
     return build_capabilities(get_settings().flow_host, no_spend=no_spend)
 
 
+@spends_credits(False)
 @click.command("capabilities")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON document.")
 def capabilities(as_json: bool) -> None:

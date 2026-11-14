@@ -312,6 +312,15 @@ def test_main_publishes_the_section_on_an_auth_expired_night(
     assert f"#### RPC-DRIFT {ID_GONE}" in out
 
 
+def test_a_second_table_without_a_status_column_is_not_catalogued() -> None:
+    # The request-fingerprint table (#1228) also keys its rows by RPC id but has no Status.
+    doc = (
+        "| RPC id | Action | Status |\n|---|---|---|\n| `aaaaaa` | x | live |\n\nProse.\n\n"
+        "| RPC id | Hash |\n|---|---|\n| `bbbbbb` | `d54b` |\n"
+    )
+    assert catalog_ids(doc) == ("aaaaaa",)
+
+
 def test_live_status_matches_case_insensitively() -> None:
     table = "| RPC id | Status |\n|---|---|\n| `aaaaaa` | Live |\n| `bbbbbb` | LIVE |\n"
     assert catalog_ids(table) == ("aaaaaa", "bbbbbb")

@@ -25,6 +25,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
+    spends_credits,
     tool_option,
     upscale_out_dir_option,
 )
@@ -1181,6 +1182,7 @@ def video() -> None:
     """Generate and manage videos via Google Flow Veo."""
 
 
+@spends_credits(True)
 @video.command(
     "t2v",
     short_help="Generate a video from a text prompt.",
@@ -1348,6 +1350,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     return str(resolved), None
 
 
+@spends_credits(True)
 @video.command(
     "i2v",
     short_help="Generate a video from an initial image + motion prompt.",
@@ -1532,6 +1535,7 @@ def i2v(  # NOSONAR
     )
 
 
+@spends_credits(True)
 @video.command(
     "r2v",
     short_help="Generate a video from reference images + prompt (ingredients).",
@@ -1693,6 +1697,7 @@ def r2v(
     )
 
 
+@spends_credits(True)
 @video.command(
     "chain",
     short_help="Render a manifest of links into one continuous I2V chain.",
@@ -2389,6 +2394,7 @@ async def _extend_session(  # noqa: PLR0913
             raise result.error
 
 
+@spends_credits(True)
 @video.command(
     "extend",
     short_help="Continue an existing clip by another 8 seconds (costs credits).",
@@ -2557,6 +2563,7 @@ def extend(  # noqa: PLR0913
     )
 
 
+@spends_credits(False)
 @video.command(
     "upscale",
     short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",

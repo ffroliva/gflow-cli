@@ -9,7 +9,12 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import _make_provider_dir, _resolve_profile, run_with_handlers
+from gflow_cli._cli_helpers import (
+    _make_provider_dir,
+    _resolve_profile,
+    run_with_handlers,
+    spends_credits,
+)
 from gflow_cli.services.credits import inspect_all_profiles, inspect_profile
 
 console = Console()
@@ -77,6 +82,7 @@ def credits() -> None:
     """
 
 
+@spends_credits(False)
 @credits.command("user")
 @click.option("--profile", default=None, help="Profile name.")
 @click.option("--refresh", is_flag=True, help=_REFRESH_HELP)
@@ -91,6 +97,7 @@ def user(profile: str | None, refresh: bool, as_json: bool) -> None:
     )
 
 
+@spends_credits(False)
 @credits.command("list")
 @click.option("--refresh", is_flag=True, help=_REFRESH_HELP)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
