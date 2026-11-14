@@ -1799,7 +1799,7 @@ def r2v(
     "out_dir",
     default=None,
     type=click.Path(file_okay=False, path_type=Path),
-    help="Directory to save the link mp4s + seed frames. Defaults to the output dir.",
+    help="Directory for the seed frames, and the link mp4s unless --out-file is given.",
 )
 @click.option(
     "--json",

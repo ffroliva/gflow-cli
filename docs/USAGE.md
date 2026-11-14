@@ -699,8 +699,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > instead of proceeding on Flow's sticky default (typically x2) and silently
 > changing what the run bills.
 > `t2v`, `i2v`, `r2v`, `video chain`, and `video extend` additionally take `--out-file PATH` (explicit file destination).
-> `video chain` writes link i's clip to `<stem>_<i><suffix>` next to PATH (`--out-file out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`, …), numbered over the whole manifest even for one link, so `--resume-from` writes the remaining links under the names a full run would; seed frames stay under `--out-dir`, and `--json` and the catalog report the numbered paths ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
-> The mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
+> `video chain` writes link i's clip to `<stem>_<i><suffix>` next to PATH (`--out-file out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`, …), numbered over the whole manifest even for one link, so `--resume-from` writes the remaining links under the names a full run would; seed frames stay under `--out-dir`, and `--json` and the catalog report the numbered paths. An existing file or folder at a numbered path is never replaced: that clip, like one whose move fails, stays at its `--out-dir` path, is recorded there, and a warning names it ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+> For `t2v`, `i2v` and `r2v` the mp4 lands at `<output_file>` or `<out-dir>/<media_id>.mp4`.
 >
 > **`i2v` model rules (issues #125 / #626):** every model — `omni-flash`
 > included — supports i2v with a **start frame** and with an **end frame**
@@ -1148,7 +1148,8 @@ Options:
   --profile NAME            Profile name (overrides default).
   --out-file FILE           Write link i's clip to FILE's stem plus _i
                             (clip.mp4 -> clip_1.mp4, clip_2.mp4).
-  --out-dir DIR             Directory for the link mp4s + seed frames.
+  --out-dir DIR             Directory for the seed frames, and for the link
+                            mp4s unless --out-file is given.
   --json                    Emit a machine-readable JSON result.
 ```
 
