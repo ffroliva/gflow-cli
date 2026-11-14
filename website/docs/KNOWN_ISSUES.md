@@ -249,10 +249,10 @@ that a page-free reader would change.
 
 ### A Veo extend segment is 7 seconds, not the 8 Flow advertises — so concat pads a frozen second
 
-- **Status:** Open · **Severity:** Medium (audible/visible on every internal seam of a chained extend) · **Affected:** `gflow video extend -n >1` with `-o`, and any scene mixing extend segments
+- **Status:** Open · **Severity:** Medium (audible/visible on every internal seam of a chained extend) · **Affected:** `gflow video extend -n >1` with `--out-file` (or legacy `-o`), and any scene mixing extend segments
 - **Discovered:** 2026-09-01, by live verification of the extend feature. Offline tests could not have found it.
 
-**What happens.** `gflow video extend ... -n 2 -o out.mp4` produces a file whose
+**What happens.** `gflow video extend ... -n 2 --out-file out.mp4` produces a file whose
 audio drops to digital silence (−91 dB) for exactly one second before each
 internal seam, over a **frozen video frame**. The seam itself is clean; the dead
 second sits immediately before it.
@@ -295,7 +295,7 @@ An N-segment chain has N−1 of these.
   fix needs — clamping `ConcatInput.end` to a hardcoded 7.0 would be a guess
   dressed as a fix.
 
-**Workaround today.** Render without `-o` and trim in post, or accept the
+**Workaround today.** Render without `--out-file` and trim in post, or accept the
 freeze-hold. Single-segment extends are unaffected.
 
 
@@ -817,7 +817,7 @@ disproven the "bearer header" hypothesis for `create_project`.
   host.
 - Files: `src/gflow_cli/api/transports/experimental/evaluate_fetch.py`
   (`generate_images`, `_generate_images_inner`, `_handle_response`,
-  `refresh_auth`) and `src/gflow_cli/api/client.py` (`_drive_image_generation`).
+  `refresh_auth`) and `src/gflow_cli/api/_flow_generation.py` (`_drive_image_generation`, split out of `client.py` in #1249).
 
 **Workaround:** none known. Image generation against the live API does not
 currently succeed via the e2e transport path.

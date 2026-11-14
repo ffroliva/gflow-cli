@@ -499,25 +499,25 @@ A `--dry-run` flag that validates prompts + estimates cost without making any pa
 
 You want to feed `gflow-cli`'s output into `ffmpeg`, a CMS, or another automation step.
 
-### 11.1 Explicit output path with `-o` / `--output`
+### 11.1 Explicit output path with `--out-file`
 
-Pass `-o` / `--output` to land the generated file directly at a custom destination:
+Pass `--out-file` to land the generated file directly at a custom destination (legacy `-o` / `--output` also supported):
 
 ```bash
 # Save directly to a specific file (auto-creates parent directories)
-gflow image t2i "cinematic hero scene" -o ./assets/hero.png
-gflow video t2v "sunset over ocean" -o ./render/clip.mp4
+gflow image t2i "cinematic hero scene" --out-file ./assets/hero.png
+gflow video t2v "sunset over ocean" --out-file ./render/clip.mp4
 
 # Multi-count generations automatically receive _1, _2 stem suffixes
-gflow image t2i "concept art" -n 2 -o ./concepts/art.png
+gflow image t2i "concept art" -n 2 --out-file ./concepts/art.png
 # → ./concepts/art_1.png and ./concepts/art_2.png
 ```
 
-Silent overwrite semantics: `-o` overwrites any existing file at the target path. Extension correction: if `-o asset.jpg` receives a PNG payload, `gflow` corrects the output key extension appropriately.
+Silent overwrite semantics: `--out-file` overwrites any existing file at the target path. Extension correction: if `--out-file asset.jpg` receives a PNG payload, `gflow` corrects the output key extension appropriately.
 
 ### 11.2 The deterministic default layout
 
-When `-o` is omitted, default outputs and `--out-dir` flags produce **predictable paths**:
+When `--out-file` is omitted, default outputs and `--out-dir` flags produce **predictable paths**:
 
 If `GFLOW_CLI_STORAGE_URI` is set, generated asset bytes go to the configured
 bucket prefix instead of local disk. Use [Journey 15](#journey-15-sending-generated-assets-to-s3-minio-or-gcs)
@@ -611,14 +611,14 @@ Flow's safety classifier blocked the prompt or generated output. Common triggers
 Re-run the single failing row in isolation while iterating:
 
 ```bash
-gflow video t2v "your rewritten prompt" -o ./debug/test.mp4
+gflow video t2v "your rewritten prompt" --out-file ./debug/test.mp4
 ```
 
 Once it passes, fix the prompt in `prompts.txt` and rerun the loop.
 
 ### 12.2 Exit 4 — `RateLimitError`
 
-Flow returned `429 Too Many Requests`. The `tenacity` retry layer already retried up to 3× with exponential jittered backoff (1 s → 2 s → 4 s, ±25% jitter, capped at 60 s when `Retry-After` is set). If it still failed, you're hitting either:
+Flow returned `429 Too Many Requests`. For reads and polls, the `tenacity` retry layer already retried up to 3× with exponential jittered backoff (1 s → 2 s → 4 s, ±25% jitter, capped at 60 s when `Retry-After` is set). An image submit and a billed extend or upscale are sent once and never retried, because their reCAPTCHA token is single-use (#1260, #1274, #1275). If it still failed, you're hitting either:
 
 - **Sustained rate limit** — the API thinks you're spamming. Wait and resume.
 - **Daily quota** — your plan's allowance for the day is exhausted. Check the credit balance UI.

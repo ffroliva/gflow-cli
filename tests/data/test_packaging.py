@@ -29,3 +29,8 @@ def test_built_distributions_contain_sql_migrations(tmp_path: Path) -> None:
             name.endswith("src/gflow_cli/data/migrations/0001_initial.sql")
             for name in archive.getnames()
         )
+        # A checkout under .worktrees/ is matched by our own .gitignore, and hatchling then
+        # drops every .gitignore pattern, so the sdist swept up tmp/ -- including files that
+        # parallel tests delete mid-build (FileNotFoundError). Scratch dirs never ship.
+        scratch = [n for n in archive.getnames() if n.split("/")[1:2] in (["tmp"], ["out"])]
+        assert scratch == [], f"scratch files in the sdist: {scratch[:5]}"

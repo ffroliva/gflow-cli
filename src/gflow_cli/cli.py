@@ -19,6 +19,7 @@ from rich.table import Table
 
 from gflow_cli import __version__, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
+from gflow_cli.cli_capabilities import capabilities as _capabilities_command
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
@@ -279,7 +280,7 @@ def _maybe_rename_first_profile(
 def auth_login(profile: str | None, browser: str | None, account: str | None = None) -> None:
     """One-time interactive sign-in. Opens a browser window."""
     from gflow_cli.browser_manager import is_chrome_available
-    from gflow_cli.errors import EXIT_CODE_MAP, GFlowError
+    from gflow_cli.errors import GFlowError, exit_code_for
 
     name = profile or _resolve_or_prompt(default_for_first_run="default")
     # Resolve browser strategy: CLI > Env > auto
@@ -327,11 +328,7 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
         console.print(f"[red]{escape(str(e))}[/red]")
         if e.remediation_hint:
             console.print(f"[dim]{escape(e.remediation_hint)}[/dim]")
-        exit_code = next(
-            (code for cls, code in EXIT_CODE_MAP.items() if isinstance(e, cls)),
-            1,
-        )
-        sys.exit(exit_code)
+        sys.exit(exit_code_for(e))
     except Exception as e:
         console.print(f"[red]Unexpected error during login: {escape(str(e))}[/red]")
         sys.exit(1)
@@ -630,6 +627,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
         )
 
 
+main.add_command(_capabilities_command)
 main.add_command(_character_group)
 main.add_command(_credits_group)
 main.add_command(_data_group)

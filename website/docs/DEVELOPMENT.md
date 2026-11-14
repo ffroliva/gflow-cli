@@ -63,6 +63,7 @@ Types mirror Conventional Commits: `feature`, `fix`, `docs`, `chore`, `refactor`
 
 ```bash
 uv run python scripts/ci/check_repo_hygiene.py
+uv run python scripts/ci/check_size.py
 uv run python scripts/ci/check_doc_links.py
 uv run python scripts/ci/check_website_docs_pii.py
 uv run python scripts/ci/generate_website_docs.py --check
@@ -74,7 +75,7 @@ uv run pyright src
 uv run python -m pytest -q --cov=gflow_cli
 ```
 
-CI runs the same ten on every push (this list is kept identical to AGENTS.md's —
+CI runs the same eleven on every push (this list is kept identical to AGENTS.md's —
 `/gflow:check` runs it plus the CLI↔MCP mirror sweep). Do not bypass with `--no-verify`.
 Project pytest defaults exclude `e2e` and `live`; run those credit-spending
 tests only with an explicit marker expression and profile/env setup.

@@ -14,12 +14,12 @@ has no instructions support — agentic-video is a deliberate typed divergence
 (``drivers/agentic.py`` raises ``FlowAgentUiError``). An ``instructions`` param
 on the video tool would be silently dropped, so it is intentionally absent.
 
-Note on ``--output``/``-o`` (#411): mirrored since the wiring landed — both
-generate tools accept ``output`` (``tools.py``) and put ``output_file`` in the
-task payload, which the daemon decodes and relocates the artifact to
-(``worker/daemon.py``). A v0.48.0 pre-release audit removed an earlier dead
-param that the queue never read; the docstring here claimed that state long
-after the real wiring shipped (#495).
+Note on ``--output``/``-o`` (#411): ``out_file`` is the name and ``output`` is
+deprecated (removed in a future release). Both generate tools accept either
+parameter (``tools.py``) and put ``output_file`` in the task payload, which the
+daemon decodes and relocates the artifact to (``worker/daemon.py``). A v0.48.0
+pre-release audit removed an earlier dead param that the queue never read; the
+docstring here claimed that state long after the real wiring shipped (#495).
 
 Note on ``image t2i --jitter`` (#241): intentionally NOT mirrored on
 ``gflow_generate_image``. The jitter paces submissions *between prompts* in a
@@ -34,10 +34,9 @@ import inspect
 import re
 from typing import Any
 
-import click
-
 from gflow_cli.cli import main
 from gflow_cli.mcp import tools as mcp_tools
+from tests.mcp._cli_tree import cli_leaves
 
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
@@ -52,7 +51,9 @@ CLI_TO_MCP: dict[str, str] = {
     "video t2v": "gflow_generate_video",  # mode="t2v"
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
-    "models": "gflow_list_models",
+    "models": "gflow_list_models",  # bare `gflow models` is `models list` (#1196)
+    "models list": "gflow_list_models",
+    "models show": "gflow_list_models",  # the catalog carries every model's show detail
     "tools list": "gflow_list_tools",
     "tools show": "gflow_list_tools",  # list output carries the show detail
     "auth status": "gflow_auth_status",
@@ -94,6 +95,10 @@ _MCP_EXEMPT: dict[str, str] = {
         "long-running billed chain; not worker-enqueued, and its cost "
         "confirmation has no MCP equivalent (#481)"
     ),
+    # Not a gap: the twin is a resource, not a tool (a document an agent reads before
+    # planning, like gflow://docs/*). tests/mcp/test_capabilities.py holds the two
+    # surfaces to the same JSON document (#1197).
+    "capabilities": "twin is the MCP resource capabilities://self (same document, #1197)",
     "auth": "interactive session management — needs a human browser login flow",
     "auth list": "interactive session management",
     "auth login": "interactive session management",
@@ -169,20 +174,7 @@ _MCP_EXEMPT: dict[str, str] = {
 
 def _cli_leaves() -> set[str]:
     """Every invokable CLI path: plain commands + invoke_without_command groups."""
-    leaves: set[str] = set()
-
-    def _walk(group: click.Group, prefix: str) -> None:
-        for name, cmd in group.commands.items():
-            path = f"{prefix}{name}"
-            if isinstance(cmd, click.Group):
-                if cmd.invoke_without_command:
-                    leaves.add(path)
-                _walk(cmd, f"{path} ")
-            else:
-                leaves.add(path)
-
-    _walk(main, "")
-    return leaves
+    return cli_leaves(main)
 
 
 def test_every_cli_leaf_has_an_mcp_decision() -> None:
@@ -227,7 +219,6 @@ _CLI_ONLY_PARAMS: frozenset[str] = frozenset(
         "as_json",  # MCP always returns structured data
         "out",
         "out_dir",
-        "output_file",  # the tool reports paths, it does not choose them
         "read_stdin",
         "prompts_file",  # shell-input plumbing
         "transport",  # operator concern
@@ -246,6 +237,9 @@ _PARAM_ALIASES: dict[str, str] = {
     "image": "initial_frame",
     "enable_mode": "enabled",  # CLI --enable-mode / tool `enabled`: same switch
     "disabled": "enabled",
+    "output_file": "out_file",  # --out-file PATH (#1158)
+    "output_file_deprecated": "output",  # deprecated -o/--output PATH, removed in N+1
+    "out_dir_deprecated": "out_dir",  # video upscale: deprecated -o DIR for --out DIR
 }
 
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked
@@ -255,6 +249,9 @@ _OPTION_EXEMPT: dict[str, str] = {
     "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
     "instructions apply:file": "reads a local file; the tool takes the text directly",
     "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
+    "models show:model_id": (
+        "coarse mapping — gflow_list_models returns every model; the id is its filter (#1196)"
+    ),
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
 }
 

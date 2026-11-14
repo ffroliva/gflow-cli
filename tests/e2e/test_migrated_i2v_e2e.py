@@ -221,12 +221,13 @@ async def test_e2e_the_pickers_confirm_is_clickable_on_the_real_frames_picker(
     would ship having never executed against the live DOM at all, which is the difference
     between a named blocker and an unrun claim.
     """
-    from gflow_cli.api.transports import migrated_composer
 
     project = _project_id()
     _set_flow_host(monkeypatch, None)
+    from gflow_cli.api.transports import _mc_upload_frame
+
     # Expire the grace before Flow can possibly auto-close: forces the confirm branch.
-    monkeypatch.setattr(migrated_composer, "FRAME_COMMIT_GRACE_S", 0.001)
+    monkeypatch.setattr(_mc_upload_frame, "FRAME_COMMIT_GRACE_S", 0.001)
     frame = _probe_png(tmp_path, f"gflow-e2e-confirm-{os.getpid()}.png")
     transport = UiAutomationTransport()
     try:

@@ -65,6 +65,10 @@ FILE_OVERRIDES: dict[str, tuple[tuple[str, str], ...]] = {
             "](FLOW_WIRE_RPCS.md)",
             "](https://github.com/ffroliva/gflow-cli/blob/main/docs/FLOW_WIRE_RPCS.md)",
         ),
+        (
+            "](superpowers/spikes/",
+            "](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/",
+        ),
     ),
     # The privacy notice must name its controller; the site names the public handle, not
     # the private name the token pass would otherwise mangle into "your.name Oliva".

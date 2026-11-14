@@ -129,3 +129,7 @@ scripts/dev/har-spike/.npm-cache/
 # MCPJam bridge spike (scripts/dev/mcpjam): local npm install, never committed
 scripts/dev/mcpjam/node_modules/
 .junit/
+
+# sharpit reports (local `pytest --sharpit` and CI write them at the repo root)
+sharpit-report.json
+sharpit-junit.xml

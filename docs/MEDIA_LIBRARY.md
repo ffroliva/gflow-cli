@@ -97,6 +97,16 @@ Freshness is layered, cheapest-first:
    disk). A user rename then costs one extra request, once. Applies to i2i
    UUID refs and i2v frame refs; a resolver failure is swallowed with a
    warning and the pre-#546 fallback chain proceeds unchanged.
+
+   Where Flow serves **flow.google.com**, `projectInitialData` answered "Flow RPCs
+   have been deprecated and disabled" (observed on one profile, 2026-11-12), so gflow
+   reads the page instead: on the first miss with a grid tile it opens the `@` picker
+   with nothing typed, matches the image by its thumbnail token, takes the option's
+   title as the current caption, and retries after a reload within the usual reload
+   budget. This heals the run on every surface (CLI, MCP, `gflow run`); the catalog
+   write still needs the CLI's resolver (`store` mode only). Reach is what the empty
+   picker lists: 15 of 21 assets in the measured project
+   ([spike](superpowers/spikes/2026-11-12-migrated-listing-captions.md)).
 3. **Bulk reconciliation** — `gflow data sync --names`
    ([#543](https://github.com/ffroliva/gflow-cli/issues/543), shipped) for
    cold catalogs and ghost detection; `gflow doctor`

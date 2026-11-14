@@ -172,3 +172,37 @@ async def test_resume_continues_at_the_given_position() -> None:
     )
     assert [s["position"] for s in c.submits] == [3, 4]
     assert c.submits[0]["media_id"] == "tail-media"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_poll_names_the_billed_segment() -> None:
+    """#1201: the segment is submitted and billed; its id must survive a poll failure."""
+    from gflow_cli.errors import FlowApiError
+
+    class _PollFails(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            raise FlowApiError("Flow failed the generation")
+
+    result = await run_extend_chain(
+        _PollFails(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
+    )
+    assert result.credits_spent == 10
+    assert getattr(result.error, "operation_id", "") == "media-1"
+
+
+@pytest.mark.asyncio
+async def test_a_retryable_poll_failure_after_submit_says_reconcile() -> None:
+    """#1201: a 429 that outlasts the poll's retries must not advise re-running a billed segment."""
+    from gflow_cli.errors import RateLimitError
+
+    class _PollRateLimited(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            raise RateLimitError("too many requests")
+
+    result = await run_extend_chain(
+        _PollRateLimited(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
+    )
+    err = result.error
+    assert isinstance(err, RateLimitError)
+    assert (err.charged, err.resolved_next_action(), err.retryable) == ("maybe", "reconcile", False)
+    assert "retry" not in (err.remediation_hint or "").lower()
