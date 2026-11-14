@@ -94,3 +94,57 @@ def test_nine_commands_have_out_file_option(cmd_path: tuple[str, ...]) -> None:
     assert "--out-file" in opt_names, f"{' '.join(cmd_path)} missing --out-file"
     assert "-o" in opt_names, f"{' '.join(cmd_path)} missing -o"
     assert "--output" in opt_names, f"{' '.join(cmd_path)} missing --output"
+
+
+_EXPECTED_UPSCALE_DEPRECATION_WARNING = (
+    "-o is deprecated as the short form of --out and will select the output format in a future "
+    "release (-o json|table|id). Use --out DIR."
+)
+_MEDIA_ID = "3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14"
+
+
+def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    runner = CliRunner()
+    dir1 = tmp_path / "d1"
+    dir2 = tmp_path / "d2"
+    dir1.mkdir()
+    dir2.mkdir()
+
+    # Both flags -> exit 2 before any work
+    res_both = runner.invoke(
+        main, ["video", "upscale", _MEDIA_ID, "--out", str(dir1), "-o", str(dir2)]
+    )
+    assert res_both.exit_code == 2
+    assert "--out" in res_both.stderr
+
+    res_both_rev = runner.invoke(
+        main, ["video", "upscale", _MEDIA_ID, "-o", str(dir2), "--out", str(dir1)]
+    )
+    assert res_both_rev.exit_code == 2
+    assert "--out" in res_both_rev.stderr
+
+    # New flag alone -> no deprecation warning
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.upsample_video = AsyncMock(return_value=dir1 / "upscaled.mp4")
+
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video.FlowApiClient", return_value=mock_client),
+    ):
+        res_new = runner.invoke(
+            main, ["video", "upscale", _MEDIA_ID, "--out", str(dir1), "--project", "PROJ1"]
+        )
+        assert res_new.exit_code == 0, res_new.output
+        assert _EXPECTED_UPSCALE_DEPRECATION_WARNING not in res_new.stderr
+
+        res_old = runner.invoke(
+            main, ["video", "upscale", _MEDIA_ID, "-o", str(dir2), "--project", "PROJ1"]
+        )
+        assert res_old.exit_code == 0, res_old.output
+        assert res_old.stderr.strip() == _EXPECTED_UPSCALE_DEPRECATION_WARNING

@@ -79,6 +79,7 @@ __all__ = [
     "DeprecatedAliasOption",
     "PrimaryOption",
     "_FLOW_ID_RE",
+    "_OUT_DIR_SHORT_DEPRECATION_WARNING",
     "_OUT_FILE_DEPRECATION_WARNING",
     "_handle_gflow_error",
     "_handle_unhandled_error",
@@ -93,6 +94,7 @@ __all__ = [
     "safe_path_text",
     "slugify_project_name",
     "tool_option",
+    "upscale_out_dir_option",
 ]
 
 # Flow project ids are interpolated into navigation URLs and CSS selectors
@@ -106,6 +108,11 @@ _FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
 _OUT_FILE_DEPRECATION_WARNING = (
     "-o/--output PATH is deprecated and will select the output format in a future release "
     "(-o json|table|id). Use --out-file PATH."
+)
+
+_OUT_DIR_SHORT_DEPRECATION_WARNING = (
+    "-o is deprecated as the short form of --out and will select the output format in a future "
+    "release (-o json|table|id). Use --out DIR."
 )
 
 
@@ -244,6 +251,28 @@ def out_file_option(
         deprecated_help=f"Deprecated: use --out-file. {help}",
         warning_line=_OUT_FILE_DEPRECATION_WARNING,
         conflict_message="Cannot specify both --out-file and -o/--output. Use --out-file.",
+    )
+
+
+def upscale_out_dir_option(
+    dest: str = "out_dir",
+    *,
+    help: str = "Output directory (defaults to the configured gflow output dir).",
+) -> Callable[[Any], Any]:
+    """Decorator adding ``--out DIR`` and keeping deprecated short form ``-o DIR`` (#1158).
+
+    Reuses ``deprecated_alias_option``. Warns on stderr when ``-o`` is used,
+    and raises ``click.UsageError`` (exit 2) naming ``--out`` if both are provided.
+    """
+    return deprecated_alias_option(
+        primary_opts=("--out",),
+        deprecated_opts=("-o",),
+        dest=dest,
+        type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+        help=help,
+        deprecated_help=f"Deprecated: use --out. {help}",
+        warning_line=_OUT_DIR_SHORT_DEPRECATION_WARNING,
+        conflict_message="Cannot specify both --out and -o. Use --out.",
     )
 
 

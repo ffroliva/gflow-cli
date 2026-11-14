@@ -26,6 +26,7 @@ from gflow_cli._cli_helpers import (
     set_interrupt_context,
     slugify_project_name,
     tool_option,
+    upscale_out_dir_option,
 )
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
@@ -2577,12 +2578,7 @@ def extend(  # noqa: PLR0913
         "or 270p (animated GIF export)."
     ),
 )
-@click.option(
-    "-o",
-    "--out",
-    "out_dir",
-    type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-    default=None,
+@upscale_out_dir_option(
     help="Output directory (defaults to the configured gflow output dir).",
 )
 @click.option(
