@@ -40,11 +40,6 @@ from gflow_cli.api.image import (
 )
 from gflow_cli.api.transports import (
     _ui_capture,
-    _ui_character,
-    _ui_image,
-    _ui_navigation,
-    _ui_prompt,
-    _ui_session,
     _ui_settings,
 )
 from gflow_cli.api.transports._common import (
@@ -500,10 +495,5 @@ class UiAutomationTransport(VideoGenerationMixin, ImageGenerationMixin):
 
 
 # Bind class into mixin modules for tests that patch UiAutomationTransport._x
-_ui_session.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
-_ui_navigation.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
-_ui_prompt.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
 _ui_settings.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
 _ui_capture.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
-_ui_character.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
-_ui_image.UiAutomationTransport = UiAutomationTransport  # type: ignore[attr-defined]
