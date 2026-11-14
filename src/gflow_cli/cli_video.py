@@ -1866,7 +1866,7 @@ def _migrated_extend_seconds(model_key: str | None) -> tuple[int, int]:
     billed seconds are read from that token, not measured (12 credits is the only billing
     fact). Any other key keeps the measured Veo 7 s added / 8 s billed.
     """
-    if model_key and (m := re.search(r"_extend_(\d+)s\b", model_key)):
+    if model_key and (m := re.search(r"_extend_(\d+)s(?:_|$)", model_key)):
         return int(m.group(1)), int(m.group(1))
     return _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
 

@@ -748,6 +748,23 @@ def test_the_migrated_payload_reports_the_key_length(key: str, added: int, bille
     assert payload["request"]["duration"] == added
 
 
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        ("macaron_cookie_extend_4s", (4, 4)),
+        ("macaron_cookie_extend_4s_low_priority", (4, 4)),  # `s_` is no word boundary
+        ("macaron_cookie_extend_12s", (12, 12)),
+        ("macaron_cookie_extend_4sx", (7, 8)),  # not a length token
+    ],
+)
+def test_the_extend_seconds_token_is_read_from_any_omni_key(
+    key: str, expected: tuple[int, int]
+) -> None:
+    from gflow_cli.cli_video import _migrated_extend_seconds
+
+    assert _migrated_extend_seconds(key) == expected
+
+
 def test_json_mode_prints_no_human_plan(runner: CliRunner) -> None:
     """The plan preamble on stdout corrupted the JSON document (#882, @stgmt)."""
     result = runner.invoke(
