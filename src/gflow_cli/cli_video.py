@@ -782,6 +782,8 @@ def _chain_clip_relocator(
     def relocate(index: int, result: VideoResult) -> VideoResult:
         target = numbered_path(output_file, index + 1)
         try:
+            if target.exists():  # an earlier run's clip, or a folder: never replace it
+                raise FileExistsError(f"{target} already exists")
             return relocate_video(result, target)
         except OSError as exc:  # billed already: keep and record the clip where it is
             logger.warning("chain_out_file_move_failed", target=str(target), error=str(exc))

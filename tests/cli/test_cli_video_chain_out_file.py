@@ -190,3 +190,23 @@ def test_a_resume_whose_seed_clip_is_gone_is_refused_before_submit(tmp_path: Pat
     assert str(missing) in json.loads(result.stdout)["error"]["detail"]
     assert flow.calls == []
     catalog.flow_client_cls.assert_not_called()
+
+
+def test_an_existing_target_is_never_overwritten(tmp_path: Path) -> None:
+    """A second run with the same --out-file keeps the old files and its own clips."""
+    flow = _Flow(tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "clip_1.mp4").write_bytes(b"earlier run")
+    (out / "clip_2.mp4").mkdir()
+
+    result, catalog = _invoke(tmp_path, flow, links=2, args=["--out-file", str(out / "clip.mp4")])
+
+    assert result.exit_code == 0, result.output
+    assert (out / "clip_1.mp4").read_bytes() == b"earlier run"
+    kept = [flow.download_dir / "m0.mp4", flow.download_dir / "m1.mp4"]
+    assert all(p.is_file() for p in kept)
+    payload = json.loads(result.stdout)
+    assert [Path(link["local_path"]) for link in payload["links"]] == kept
+    assert _rows(tmp_path, payload["chain_id"]) == list(enumerate(kept))
+    assert _catalog_paths(catalog) == kept
