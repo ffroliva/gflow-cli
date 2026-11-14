@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Opt-in stable exit-code core (`GFLOW_CLI_EXIT_CODES=2`).** Opt in to a standardized core
+  (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted; 4 is reserved for "accepted, still running") with specific causes moved to
+  the 40–63 range. In `--json` envelopes, `exit_code` reflects the active mode and `exit_code_legacy`
+  preserves the legacy code ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)).
 - **`--out-file PATH` on generation/export commands and `out_file` on MCP tools ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
   The explicit file destination is `--out-file PATH` on `data errors export`, `image t2i`,
   `image i2i`, `scene create`, `video t2v`, `video i2v`, `video r2v`, `video chain`, and
@@ -28,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - In a future release `-o/--output` selects the output format (`-o json|table|id`).
   Replace -o/--output PATH with --out-file PATH (and video upscale -o DIR with --out DIR).
+- **Exit-code core will become the default in a later release ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)):**
+  - `4` (`RateLimitError`) moves to `40`.
+  - `5` (`ContentPolicyError`) moves to `41`.
+  - `6` (`NetworkError`) moves to `42`.
+  - `7` (`WireFormatError`) moves to `43`.
+  - `8` (`AuthMissingError`) moves to `3` (unified auth exit code with `AuthExpiredError`).
+  - `9` (`TransportTimeoutError`) moves to `44`.
+  - `4` is reserved for "accepted, still running" (resumable jobs).
+  - `5–9` are reserved.
+  - `0`, `1`, `2`, `3`, `130`, and `10–39` are unchanged.
+  Set GFLOW_CLI_EXIT_CODES=2 now to test your scripts against the new codes.
 
 ## [0.98.0] — 2026-11-12
 

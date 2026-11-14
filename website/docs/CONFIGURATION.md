@@ -148,6 +148,13 @@ runs.
 Deep setup, verification, and security notes live in
 [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md).
 
+### `GFLOW_CLI_EXIT_CODES`
+
+Default: unset (the legacy exit codes). Set it to `2` to opt in to the stable exit-code core
+([#1202](https://github.com/ffroliva/gflow-cli/issues/1202)): `4→40`, `5→41`, `6→42`, `7→43`,
+`8→3`, `9→44`. Any other value keeps the legacy codes. It works from the environment or from
+`.env`. The full table and the coming default switch are in [ERRORS.md](ERRORS.md).
+
 ### `GFLOW_CLI_PROVIDER`
 
 **What:** Backend to use for generations.

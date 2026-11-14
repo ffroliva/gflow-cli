@@ -36,7 +36,7 @@ from pydantic import Field
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
-from gflow_cli._cli_helpers import _FLOW_ID_RE, _exit_code_for, default_project  # pyright: ignore[reportPrivateUsage]
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -51,7 +51,7 @@ from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import GFlowError, is_retryable, outcome_members
+from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.out_file import DeprecatedOutputParam, OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -246,7 +246,7 @@ def _guarded(
             try:
                 result = await fn(*args, **kwargs)
             except GFlowError as exc:
-                outcome = str(_exit_code_for(exc))
+                outcome = str(exit_code_for(exc))
                 log.error("mcp.tool.gflow_error", tool=fn.__name__, error=str(exc))
                 result = _error_payload(_gflow_error_dict(exc))
             except Exception as exc:  # noqa: BLE001 — the funnel IS the handler

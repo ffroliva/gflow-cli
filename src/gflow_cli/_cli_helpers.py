@@ -53,8 +53,8 @@ from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
 from gflow_cli.config import get_settings
 from gflow_cli.errors import (
-    EXIT_CODE_MAP,
     GFlowError,
+    exit_code_for,
 )
 from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
@@ -434,19 +434,6 @@ def safe_path_text(path: Path) -> str:
         return str(path)
 
 
-def _exit_code_for(exc: GFlowError) -> int:
-    """Return the exit code for *exc* via isinstance-walk on ``EXIT_CODE_MAP``.
-
-    Iteration order matters: subclasses inherit the parent class's code only
-    if they don't have their own entry, and the dict is ordered
-    most-specific-first (see ``errors.py``).
-    """
-    for cls, code in EXIT_CODE_MAP.items():
-        if isinstance(exc, cls):
-            return code
-    return 1
-
-
 def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     """Print user-facing message + remediation, emit ``error_raised`` event,
     return exit code.
@@ -461,7 +448,7 @@ def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
     if exc.remediation_hint:
         _console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
     _print_incident_ref(exc.incident_ref)
-    return _exit_code_for(exc)
+    return exit_code_for(exc)
 
 
 def _print_incident_ref(ref: Any) -> None:
@@ -548,7 +535,7 @@ def run_with_handlers(
         if as_json:
             emit_error_event(_logger, e, cli_command=cli_command)
             json_output.emit(json_output.error_payload(e))
-            sys.exit(_exit_code_for(e))
+            sys.exit(exit_code_for(e))
         sys.exit(_handle_gflow_error(e, cli_command=cli_command))
     except (KeyboardInterrupt, click.Abort):
         _report_interrupt()

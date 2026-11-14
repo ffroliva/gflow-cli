@@ -212,3 +212,48 @@ HTTP `status`: no HTTP call failed.
 
 `tests/test_problem_details_extensions.py` fails when a `type` is missing here or a row
 disagrees with what the code emits.
+
+## Exit codes: the stable core (opt-in in this release)
+
+In this release, gflow introduces a stable exit-code core. The default remains today's
+legacy codes. Scripts opt in to the new codes by setting `GFLOW_CLI_EXIT_CODES=2`.
+
+The core reserves low codes for broad outcomes:
+- `0`: success.
+- `1`: general error.
+- `2`: command-line usage or invalid input.
+- `3`: authentication failure (expired session or missing profile).
+- `4`: accepted and still running (reserved for asynchronous execution; emitted by nothing in this release).
+- `5–9`: reserved.
+- `130`: interrupted by signal (SIGINT).
+
+Specific error causes move into the 40–63 range. Codes 10–39 remain unchanged.
+
+### Legacy to stable core mapping
+
+| Legacy code | Core code (mode 2) | Error class / Meaning |
+|---|---|---|
+| `0` | `0` | Success (unchanged) |
+| `1` | `1` | General or unclassified error (unchanged) |
+| `2` | `2` | CLI usage or input error (unchanged) |
+| `3` | `3` | `AuthExpiredError` (unchanged) |
+| `4` | `40` | `RateLimitError` (rate limit or quota hit) |
+| `5` | `41` | `ContentPolicyError` (content safety refusal) |
+| `6` | `42` | `NetworkError` (transient connection or HTTP failure) |
+| `7` | `43` | `WireFormatError` (unexpected response shape) |
+| `8` | `3` | `AuthMissingError` (missing credentials; merged with auth code 3) |
+| `9` | `44` | `TransportTimeoutError` (browser or network timeout) |
+| `10–39` | `10–39` | Specific causes (WAF, config, data store, credits, etc.; unchanged) |
+| `130` | `130` | Interrupted by user (unchanged) |
+
+In the shared `--json` error envelope (and MCP queued failures), `exit_code` reports the
+active process exit code (40 under mode 2, or 4 by default), and `exit_code_legacy` always
+reports the legacy code. The process exit status follows the active mode on every command.
+
+### Deprecation cycle
+
+The change ships over three releases:
+1. **This release:** the legacy codes stay the default. Opt in with `GFLOW_CLI_EXIT_CODES=2`, in the environment or in `.env`.
+2. **A later release:** the stable core becomes the default. `GFLOW_CLI_EXIT_CODES=1` restores the legacy codes and prints a one-line deprecation notice on stderr.
+3. **The release after that:** the legacy codes are removed.
+
