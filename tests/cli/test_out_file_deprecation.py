@@ -110,7 +110,7 @@ def test_click_tree_guard() -> None:
 
     Exactly the nine commands have --out-file.
     Any option anywhere spelled -o or --output that takes a path must be the
-    deprecated one from task 1/2 (identifiable via is_deprecated_alias attribute).
+    deprecated one from task 1/2 (a DeprecatedAliasOption).
     """
     commands: dict[str, click.Command] = {}
 
@@ -151,11 +151,10 @@ def test_click_tree_guard() -> None:
             if isinstance(param, click.Option):
                 if any(opt in ("-o", "--output") for opt in param.opts):
                     if isinstance(param.type, click.Path):
-                        assert getattr(param, "is_deprecated_alias", False) is True, (
-                            f"{path} option {param.opts} is a path-typed -o/--output but missing "
-                            "the deprecated alias marker"
+                        assert isinstance(param, DeprecatedAliasOption), (
+                            f"{path} option {param.opts} is a path-typed -o/--output but not "
+                            "a deprecated alias (use out_file_option)"
                         )
-                        assert isinstance(param, DeprecatedAliasOption)
 
 
 def test_cli_runner_image_t2i(tmp_path: Path) -> None:

@@ -35,12 +35,13 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import functools
 import re
 import sys
 import traceback
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import click
 import structlog
@@ -77,7 +78,6 @@ _console = Console()
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
     "DeprecatedAliasOption",
-    "PrimaryOption",
     "_FLOW_ID_RE",
     "_OUT_DIR_SHORT_DEPRECATION_WARNING",
     "_OUT_FILE_DEPRECATION_WARNING",
@@ -117,75 +117,10 @@ _OUT_DIR_SHORT_DEPRECATION_WARNING = (
 
 
 class DeprecatedAliasOption(click.Option):
-    """An option that is a deprecated alias for another option (#1158).
+    """Marks an option as the deprecated spelling of another (#1158); no behaviour of its own.
 
-    Emits a deprecation warning to stderr once per invocation when used,
-    arbitrates mutual exclusion with the primary option (raising click.UsageError),
-    and sets the primary option's parameter slot in ``ctx.params``.
+    The Click-tree guard test finds deprecated spellings by this class.
     """
-
-    def __init__(
-        self,
-        *args: Any,
-        primary_name: str,
-        warning_line: str,
-        conflict_message: str,
-        deprecated_for: str,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.primary_name = primary_name
-        self.warning_line = warning_line
-        self.conflict_message = conflict_message
-        self.deprecated_for = deprecated_for
-        self.is_deprecated_alias = True
-        self.is_deprecated_output = True
-
-    def handle_parse_result(
-        self, ctx: click.Context, opts: Mapping[str, Any], args: list[str]
-    ) -> tuple[Any, list[str]]:
-        if self.name and self.name in opts and self.primary_name in opts:
-            raise click.UsageError(self.conflict_message)
-        if self.name and self.name in opts:
-            warned_raw: object = getattr(ctx, "_deprecated_warned", None)
-            if not isinstance(warned_raw, set):
-                warned_raw = set[str]()
-                ctx._deprecated_warned = warned_raw  # type: ignore[attr-defined]
-            warned: set[str] = cast("set[str]", warned_raw)
-            if self.warning_line not in warned:
-                warned.add(self.warning_line)
-                click.echo(self.warning_line, err=True)
-            val, remaining_args = super().handle_parse_result(ctx, opts, args)
-            ctx.params[self.primary_name] = val
-            ctx.set_parameter_source(self.primary_name, ParameterSource.COMMANDLINE)
-            return val, remaining_args
-        return super().handle_parse_result(ctx, opts, args)
-
-
-class PrimaryOption(click.Option):
-    """The primary option that pairs with a DeprecatedAliasOption (#1158).
-
-    Arbitrates mutual exclusion with the deprecated option (raising click.UsageError).
-    """
-
-    def __init__(
-        self,
-        *args: Any,
-        dep_name: str,
-        conflict_message: str,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self.dep_name = dep_name
-        self.conflict_message = conflict_message
-        self.is_primary_alias = True
-
-    def handle_parse_result(
-        self, ctx: click.Context, opts: Mapping[str, Any], args: list[str]
-    ) -> tuple[Any, list[str]]:
-        if self.name and self.name in opts and self.dep_name in opts:
-            raise click.UsageError(self.conflict_message)
-        return super().handle_parse_result(ctx, opts, args)
 
 
 def deprecated_alias_option(
@@ -195,38 +130,39 @@ def deprecated_alias_option(
     *,
     type: click.ParamType[Any] | type[object],
     help: str,
-    deprecated_help: str,
     warning_line: str,
-    conflict_message: str,
 ) -> Callable[[Any], Any]:
-    """Create a pair of primary and deprecated options writing to the same dest."""
-    dep_name = f"_{dest}_deprecated"
+    """Add ``primary_opts`` and its deprecated spelling ``deprecated_opts``, both feeding ``dest``.
 
-    def decorator(f: Any) -> Any:
-        f = click.option(
+    The two options get separate slots and the callback wrapper merges them, so the
+    result does not depend on Click's parameter-processing order (Click < 8.5 let the
+    unused option overwrite the used one with None). The wrapper must sit outside any
+    error guard so the conflict reaches Click as a usage error (exit 2).
+    """
+    alias = f"{dest}_deprecated"
+    old_spelling = "/".join(deprecated_opts)
+    conflict = f"Use {primary_opts[0]} only; {old_spelling} is its deprecated spelling."
+
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            old = kwargs.pop(alias)
+            if old is not None:
+                if kwargs.get(dest) is not None:
+                    raise click.UsageError(conflict)
+                click.echo(warning_line, err=True)
+                kwargs[dest] = old
+            return f(*args, **kwargs)
+
+        with_alias = click.option(
             *deprecated_opts,
-            dep_name,
+            alias,
             type=type,
             default=None,
-            expose_value=False,
-            help=deprecated_help,
+            help=f"Deprecated: use {primary_opts[0]}.",
             cls=DeprecatedAliasOption,
-            primary_name=dest,
-            warning_line=warning_line,
-            conflict_message=conflict_message,
-            deprecated_for=primary_opts[0],
-        )(f)
-        f = click.option(
-            *primary_opts,
-            dest,
-            type=type,
-            default=None,
-            help=help,
-            cls=PrimaryOption,
-            dep_name=dep_name,
-            conflict_message=conflict_message,
-        )(f)
-        return f
+        )(wrapper)
+        return click.option(*primary_opts, dest, type=type, default=None, help=help)(with_alias)
 
     return decorator
 
@@ -248,9 +184,7 @@ def out_file_option(
         dest=dest,
         type=click.Path(dir_okay=False, path_type=Path),
         help=help,
-        deprecated_help=f"Deprecated: use --out-file. {help}",
         warning_line=_OUT_FILE_DEPRECATION_WARNING,
-        conflict_message="Cannot specify both --out-file and -o/--output. Use --out-file.",
     )
 
 
@@ -270,9 +204,7 @@ def upscale_out_dir_option(
         dest=dest,
         type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
         help=help,
-        deprecated_help=f"Deprecated: use --out. {help}",
         warning_line=_OUT_DIR_SHORT_DEPRECATION_WARNING,
-        conflict_message="Cannot specify both --out and -o. Use --out.",
     )
 
 
