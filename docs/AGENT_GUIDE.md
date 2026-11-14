@@ -31,7 +31,7 @@ The `gflow` CLI exposes these command groups (full reference in [docs/USAGE.md](
 - `gflow image` — `t2i` / `i2i` / `upload` (Imagen / Nano Banana).
 - `gflow video` — `t2v` / `i2v` / `r2v` / `batch`, plus `chain` (last-frame I2V chaining from a JSONL manifest; link 0 is t2v, later links are i2v seeded by the previous clip's last frame; veo models only).
 - `gflow character` — `create` / `list` / `show` / `voices`: reusable, project-scoped Flow Character entities (a named subject with reference images, optional voice and personality) for consistent subjects across generations. See [docs/CHARACTER.md](CHARACTER.md).
-- `gflow scene` — `create` / `show`: compose ordered clips into a scene; `create --output` renders a credit-free server-side extended video via `runVideoFxConcatenation` (no local ffmpeg).
+- `gflow scene` — `create` / `show`: compose ordered clips into a scene; `create --out-file` renders a credit-free server-side extended video via `runVideoFxConcatenation` (no local ffmpeg).
 - `gflow data` — query the local SQLite catalog.
 
 ## Routing rules
