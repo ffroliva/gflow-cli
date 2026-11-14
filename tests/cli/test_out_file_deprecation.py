@@ -121,7 +121,7 @@ def test_nine_commands_have_out_file_option(cmd_path: tuple[str, ...]) -> None:
 def test_click_tree_guard() -> None:
     """Click-tree guard: walk every leaf of gflow_cli.cli.main.
 
-    Exactly the nine commands have --out-file.
+    Exactly the nine commands, plus the --out-file-only bridge verbs, have --out-file.
     Any option anywhere spelled -o or --output that takes a path must be the
     deprecated one from task 1/2 (a DeprecatedAliasOption).
     """

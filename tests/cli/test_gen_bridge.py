@@ -396,6 +396,39 @@ def test_gen_json_error_payload_carries_the_mode(tmp_path: Path) -> None:
     assert data["mode"] == "t2v"
 
 
+@pytest.mark.parametrize(("codes", "exit_code"), [(None, 6), ("2", 42)])
+def test_gen_json_error_keeps_the_exit_code_fields(
+    codes: str | None, exit_code: int, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "mode" is added on top of the #1202 envelope; it must not displace exit_code(_legacy).
+    from gflow_cli.config import get_settings
+    from gflow_cli.errors import NetworkError
+
+    if codes is None:
+        monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
+    else:
+        monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", codes)
+    get_settings.cache_clear()
+    try:
+        with (
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path),
+            patch(
+                "gflow_cli.cli_image._run_t2i",
+                new_callable=AsyncMock,
+                side_effect=NetworkError("down"),
+            ),
+        ):
+            result = CliRunner().invoke(main, ["image", "gen", "a cat", "--json"])
+    finally:
+        get_settings.cache_clear()
+    assert result.exit_code == exit_code, result.output
+    data = json.loads(result.stdout)
+    assert data["mode"] == "t2i"
+    assert data["error"]["exit_code"] == exit_code
+    assert data["error"]["exit_code_legacy"] == 6
+
+
 def test_video_gen_keeps_where_project_name_came_from(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
