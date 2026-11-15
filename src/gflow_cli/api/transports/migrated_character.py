@@ -82,9 +82,19 @@ def _character_row_header(cells: list[Any], payload: object) -> tuple[str, str, 
     return project, entity, info
 
 
-def _workflow_ids(parts: list[Any]) -> tuple[str, ...]:
-    images = _list(parts[0]) if parts else None
-    return tuple(wf for ref in images or [] if (wf := _str((_list(ref) or [None])[0])) is not None)
+def _workflow_ids(parts: list[Any], payload: object) -> tuple[str, ...]:
+    images_cell = parts[0] if parts else None
+    images = _list(images_cell)
+    if images_cell is not None and images is None:
+        raise _drift(payload, "character images are not [[workflow_id, …], …]")
+    ids: list[str] = []
+    for ref in images or []:
+        cells = _list(ref)
+        if cells is None:
+            raise _drift(payload, "a character image ref is not [workflow_id, …]")
+        if cells and (wf := _str(cells[0])) is not None:
+            ids.append(wf)
+    return tuple(ids)
 
 
 def _character_voice(parts: list[Any], payload: object) -> str | None:
@@ -117,7 +127,7 @@ def _character(row: object, payload: object) -> Character | None:
     if info[0] != 1:
         return None
     parts = _character_parts(info, payload)
-    workflow_ids = _workflow_ids(parts)
+    workflow_ids = _workflow_ids(parts, payload)
     voice = _character_voice(parts, payload)
     personality = _str(parts[2]) if len(parts) > 2 else None
     return Character(

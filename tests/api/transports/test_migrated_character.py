@@ -161,6 +161,23 @@ class TestDrift:
         assert char.voice is None
         assert char.personality is None
 
+    def test_malformed_image_refs_are_wire_drift(self) -> None:
+        """CodeRabbit on #1306: a bad images container or ref read as "no workflows"."""
+        bad_container = _payload()
+        bad_container[5][0][3][2][0] = "oops"
+        with pytest.raises(WireFormatError, match="character images are not"):
+            parse_project_read(bad_container)
+
+        bad_ref = _payload()
+        bad_ref[5][0][3][2][0] = ["not-a-ref"]
+        with pytest.raises(WireFormatError, match="character image ref is not"):
+            parse_project_read(bad_ref)
+
+        no_images = _payload()
+        no_images[5][0][3][2][0] = None
+        (char,) = parse_project_read(no_images).characters
+        assert char.workflow_ids == ()
+
     def test_non_list_voice_refs_cell_is_wire_drift(self) -> None:
         payload = _payload()
         payload[5][0][3][2][1] = "aoede"
