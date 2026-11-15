@@ -1457,6 +1457,7 @@ async def rpc_reply(
     *,
     timeout_s: float,
     write: bool = False,
+    accept: Callable[[Any], bool] | None = None,
 ) -> Any:
     """Run ``action`` and return the payload of the first ``rpcid`` frame the page gets.
 
@@ -1502,7 +1503,7 @@ async def rpc_reply(
                     )
                 )
         for rid, payload in parse_frames(text):
-            if rid == rpcid and not reply.done():
+            if rid == rpcid and not reply.done() and (accept is None or accept(payload)):
                 reply.set_result(payload)
 
     page.on("response", on_response)
@@ -1520,6 +1521,3 @@ async def rpc_reply(
             ) from e
     finally:
         page.remove_listener("response", on_response)
-
-
-_rpc_reply = rpc_reply

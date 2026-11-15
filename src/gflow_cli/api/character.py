@@ -25,6 +25,7 @@ __all__ = [
     "VOICE_NAMES",
     "Voice",
     "parse_characters",
+    "voice_from_wire",
 ]
 
 log = structlog.get_logger(__name__)
@@ -113,15 +114,10 @@ VOICE_NAMES: tuple[str, ...] = tuple(v.name for v in VOICES)
 _VOICE_BY_WIRE: dict[str, str] = {v.name.lower(): v.name for v in VOICES}
 
 
-def voice_to_wire(name: str) -> str:
-    """Canonical ``Aoede`` (or any case) -> ``aoede`` for ``flow.google.com``'s wire."""
-    return name.strip().lower()
-
-
 def voice_from_wire(wire_id: str) -> str:
-    """Wire ``aoede`` -> canonical ``Aoede``; an unknown id is capitalized, never dropped."""
+    """Wire ``aoede`` -> canonical ``Aoede``; an unknown id is kept verbatim, never renamed."""
     cleaned = wire_id.strip()
-    return _VOICE_BY_WIRE.get(cleaned.lower(), cleaned.capitalize())
+    return _VOICE_BY_WIRE.get(cleaned.lower(), cleaned)
 
 
 # ---------------------------------------------------------------------------

@@ -23,12 +23,14 @@ Parsing is pure. Signed/capability download links are kept apart from
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api.character import Character, Voice, voice_from_wire
+from gflow_cli.api.transports._common import raise_if_known_landing, safe_page_url
 from gflow_cli.api.transports.batchexecute import discovery_head
 from gflow_cli.errors import TransportTimeoutError, WireFormatError
 
@@ -39,27 +41,13 @@ log = structlog.get_logger(__name__)
 
 PROJECT_READ_RPC = "Zzl0ze"
 
-_CHARACTERS, _WORKFLOWS, _MEDIA, _VOICES = 5, 1, 2, 3
-
-
-@dataclass(frozen=True)
-class CharacterImage:
-    """One character image as the project read lists it.
-
-    ``download_url`` is a capability link (``lh3.googleusercontent.com/asb/…``): it
-    grants access by its path alone and expires. Use it at once, never persist or log
-    it. Append ``=s0`` for the original — bare, it serves a 288x512 preview."""
-
-    workflow_id: str
-    media_id: str | None
-    download_url: str | None = field(repr=False)
+_CHARACTERS, _VOICES = 5, 3
 
 
 @dataclass(frozen=True)
 class ProjectRead:
     characters: tuple[Character, ...]
     voices: tuple[Voice, ...]
-    images: dict[str, CharacterImage]
 
 
 def _drift(payload: object, what: str) -> WireFormatError:
@@ -78,33 +66,37 @@ def _str(node: object) -> str | None:
     return node if isinstance(node, str) and node else None
 
 
-def _first_url(node: object) -> str | None:
-    """The first ``https://`` string anywhere in ``node`` — every link a media row
-    carries was measured to be the same one, at four different positions."""
-    if isinstance(node, str):
-        return node if node.startswith("https://") else None
-    for item in _list(node) or []:
-        found = _first_url(item)
-        if found:
-            return found
-    return None
-
-
-def _character(row: object, payload: object) -> Character:
+def _character(row: object, payload: object) -> Character | None:
     cells = _list(row) or []
     info = _list(cells[3]) if len(cells) > 3 else None
     project = _str(cells[0]) if cells else None
     entity = _str(cells[1]) if len(cells) > 1 else None
-    if info is None or project is None or entity is None or len(info) < 2:
+    if (
+        info is None
+        or project is None
+        or entity is None
+        or len(info) < 2
+        or type(info[0]) is not int
+    ):
         raise _drift(payload, "a character row has no [project, entity, _, [kind, name, …]]")
+    if info[0] != 1:
+        return None
     parts = _list(info[2]) if len(info) > 2 else None
     parts = parts or []
     images = _list(parts[0]) if parts else None
     workflow_ids = tuple(
         wf for ref in images or [] if (wf := _str((_list(ref) or [None])[0])) is not None
     )
-    voice_refs = _list(parts[1]) if len(parts) > 1 else None
-    voice_id = _str((_list(voice_refs[0]) or [None, None])[1]) if voice_refs else None
+    voice_cell = parts[1] if len(parts) > 1 else None
+    voice_refs = _list(voice_cell)
+    if voice_cell is not None and voice_refs is None:
+        raise _drift(payload, "character voice refs are not [[_, wire_id], …]")
+    voice_id: str | None = None
+    if voice_refs:
+        first_ref = _list(voice_refs[0])
+        if first_ref is None or len(first_ref) < 2:
+            raise _drift(payload, "character voice ref has no [_, wire_id]")
+        voice_id = _str(first_ref[1])
     personality = _str(parts[2]) if len(parts) > 2 else None
     return Character(
         entity_id=entity,
@@ -128,8 +120,20 @@ def _voice(entry: object) -> Voice | None:
     return Voice(name, _str(first[1]) if first and len(first) > 1 else None)
 
 
-def parse_project_read(payload: object) -> ProjectRead:
-    """Parse a decoded ``Zzl0ze`` reply into characters, live voices and image media.
+def _matches_project(payload: object, project_id: str) -> bool:
+    top = _list(payload)
+    if top is None or len(top) <= _CHARACTERS:
+        return True
+    rows = _list(top[_CHARACTERS])
+    if not rows:
+        return True
+    projects = {_str(cells[0]) for r in rows if (cells := _list(r))}
+    projects.discard(None)
+    return not projects or project_id in projects
+
+
+def parse_project_read(payload: object, *, project_id: str | None = None) -> ProjectRead:
+    """Parse a decoded ``Zzl0ze`` reply into characters and live voices.
 
     A slot that is null is an empty project (no characters yet), not drift; a slot
     whose rows do not have the measured shape raises :class:`WireFormatError` rather
@@ -140,24 +144,14 @@ def parse_project_read(payload: object) -> ProjectRead:
     rows = top[_CHARACTERS]
     if rows is not None and _list(rows) is None:
         raise _drift(payload, "slot 5 (characters) is not a list")
-    characters = tuple(_character(row, payload) for row in _list(rows) or [])
+    characters = tuple(
+        char
+        for row in _list(rows) or []
+        if (char := _character(row, payload)) is not None
+        and (project_id is None or char.project_id == project_id)
+    )
     voices = tuple(v for e in _list(top[_VOICES]) or [] if (v := _voice(e)) is not None)
-    media_by_workflow: dict[str, list[Any]] = {}
-    for m in _list(top[_MEDIA]) or []:
-        cells = _list(m)
-        wf = _str(cells[2]) if cells and len(cells) > 2 else None
-        if cells and wf:
-            media_by_workflow[wf] = cells
-    images: dict[str, CharacterImage] = {}
-    for char in characters:
-        for wf in char.workflow_ids:
-            media = media_by_workflow.get(wf)
-            images[wf] = CharacterImage(
-                workflow_id=wf,
-                media_id=_str(media[0]) if media else None,
-                download_url=_first_url(media) if media else None,
-            )
-    return ProjectRead(characters=characters, voices=voices, images=images)
+    return ProjectRead(characters=characters, voices=voices)
 
 
 async def read_project(
@@ -177,24 +171,43 @@ async def read_project(
 
     async def trigger() -> None:
         if is_at(getattr(page, "url", ""), target):
-            await page.reload(wait_until="domcontentloaded")
+            await page.reload(wait_until="domcontentloaded", timeout=45_000)
         else:
-            await page.goto(target, wait_until="domcontentloaded")
+            await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+        await raise_if_known_landing(page, requested=target, at="migrated.character")
 
-    async def reload() -> None:
-        await page.reload(wait_until="domcontentloaded")
+    async def retry() -> None:
+        await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+        await raise_if_known_landing(page, requested=target, at="migrated.character")
+
+    def accept(payload: object) -> bool:
+        return _matches_project(payload, project_id)
 
     try:
-        raw = await rpc_reply(page, PROJECT_READ_RPC, trigger, timeout_s=timeout_s)
+        try:
+            raw = await rpc_reply(
+                page, PROJECT_READ_RPC, trigger, timeout_s=timeout_s, accept=accept
+            )
+        except (TransportTimeoutError, PlaywrightTimeoutError):
+            await raise_if_known_landing(page, requested=target, at="migrated.character")
+            log.warning("character.project_read_retry", project_id=project_id, timeout_s=timeout_s)
+            raw = await rpc_reply(page, PROJECT_READ_RPC, retry, timeout_s=timeout_s, accept=accept)
+    except PlaywrightTimeoutError as e:
+        await raise_if_known_landing(page, requested=target, at="migrated.character")
+        raise TransportTimeoutError(
+            detail=(
+                f"flow.google.com navigation to {safe_page_url(target)} timed out "
+                f"before {PROJECT_READ_RPC} replied (host=migrated)"
+            ),
+        ) from e
     except TransportTimeoutError:
-        log.warning("character.project_read_retry", project_id=project_id, timeout_s=timeout_s)
-        raw = await rpc_reply(page, PROJECT_READ_RPC, reload, timeout_s=timeout_s)
-    return parse_project_read(raw)
+        await raise_if_known_landing(page, requested=target, at="migrated.character")
+        raise
+    return parse_project_read(raw, project_id=project_id)
 
 
 __all__ = [
     "PROJECT_READ_RPC",
-    "CharacterImage",
     "ProjectRead",
     "parse_project_read",
     "read_project",

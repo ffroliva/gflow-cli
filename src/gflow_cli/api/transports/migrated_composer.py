@@ -271,9 +271,6 @@ from gflow_cli.api.transports._mc_common import (
     _recovery_detail as _recovery_detail,
 )
 from gflow_cli.api.transports._mc_common import (
-    _rpc_reply as _rpc_reply,
-)
-from gflow_cli.api.transports._mc_common import (
     _unique_display_name as _unique_display_name,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -590,7 +587,7 @@ async def create_project(
     before = str(page.url)
     deadline = time.monotonic() + timeout_s
     try:
-        payload = await _rpc_reply(
+        payload = await rpc_reply(
             page,
             CREATE_PROJECT_RPC,
             lambda: button.click(timeout=15_000),
@@ -685,9 +682,7 @@ async def rename_project(
             ) from e
 
     try:
-        payload = await _rpc_reply(
-            page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
-        )
+        payload = await rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True)
     except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
         unknown = _write_outcome_unknown(
             original_error,
@@ -735,7 +730,7 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
         await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
 
     try:
-        payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
+        payload = await rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
     except TransportTimeoutError as e:
         if flow_landing_kind(page.url) == "public":
             # The generic /about hint says "open the project"; credits has no project.

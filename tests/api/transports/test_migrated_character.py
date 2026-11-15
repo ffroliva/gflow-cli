@@ -15,7 +15,11 @@ from typing import Any
 
 import pytest
 
-from gflow_cli.api.character import VOICE_NAMES, voice_from_wire, voice_to_wire
+from gflow_cli.api import character as character_mod
+from gflow_cli.api.character import VOICE_NAMES, voice_from_wire
+from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.transports import _mc_common as mc_common
+from gflow_cli.api.transports import migrated_character
 from gflow_cli.api.transports.migrated_character import ProjectRead, parse_project_read
 from gflow_cli.errors import WireFormatError
 
@@ -73,6 +77,31 @@ class TestCharacters:
         payload[5] = None
         assert parse_project_read(payload).characters == ()
 
+    def test_parse_project_read_keeps_only_requested_projects_rows(self) -> None:
+        payload = _payload()
+        other_row = copy.deepcopy(payload[5][0])
+        other_row[0] = "00000000-0000-4000-8000-000000000099"
+        other_row[1] = "00000000-0000-4000-8000-0000000000aa"
+        other_row[3][1] = "Wrong Project Character"
+        payload[5].insert(0, other_row)
+
+        chars = parse_project_read(payload, project_id=_PROJECT).characters
+        assert [c.entity_id for c in chars] == [_ENTITY]
+
+    def test_non_character_entity_kind_is_skipped(self) -> None:
+        payload = _payload()
+        scene_row = copy.deepcopy(payload[5][0])
+        scene_row[1] = "00000000-0000-4000-8000-0000000000bb"
+        scene_row[3] = [2, "A Scene", []]
+        payload[5].append(scene_row)
+
+        chars = parse_project_read(payload).characters
+        assert [c.display_name for c in chars] == ["Personnage sans titre"]
+
+    def test_the_character_dto_still_carries_no_url(self) -> None:
+        (char,) = _read().characters
+        assert "https://" not in repr(char)
+
 
 class TestVoices:
     def test_the_live_catalog_is_read(self) -> None:
@@ -89,25 +118,11 @@ class TestVoices:
 
     @pytest.mark.parametrize("given", ["Aoede", "aoede", "AOEDE"])
     def test_voice_case_round_trips(self, given: str) -> None:
-        assert voice_to_wire(given) == "aoede"
-        assert voice_from_wire(voice_to_wire(given)) == "Aoede"
+        assert voice_from_wire(given) == "Aoede"
 
     def test_an_unknown_wire_voice_keeps_its_identity(self) -> None:
-        # A voice Flow adds before gflow knows it must not be dropped or renamed.
-        assert voice_from_wire("newvoice") == "Newvoice"
-
-
-class TestImages:
-    def test_each_character_image_maps_to_its_media_and_download_link(self) -> None:
-        images = _read().images
-        for wf in (_PORTRAIT_WF, _BODY_WF):
-            assert wf in images
-            assert images[wf].media_id
-            assert images[wf].download_url.startswith("https://lh3.googleusercontent.com/asb/")
-
-    def test_the_character_dto_still_carries_no_url(self) -> None:
-        (char,) = _read().characters
-        assert "https://" not in repr(char)
+        # A voice Flow adds before gflow knows it must be kept verbatim, never renamed.
+        assert voice_from_wire("myCustomVoice") == "myCustomVoice"
 
 
 class TestDrift:
@@ -123,10 +138,42 @@ class TestDrift:
             parse_project_read(payload)
         assert "Zzl0ze" in str(exc.value)
 
-    def test_drift_detail_carries_no_capability_link(self) -> None:
+    def test_drifted_single_element_voice_ref_raises_wire_format_error(self) -> None:
         payload = _payload()
-        payload[5] = "https://lh3.googleusercontent.com/asb/SECRET-PATH-xyz"
+        payload[0] = "https://lh3.googleusercontent.com/asb/SECRET-VOICE-CAPABILITY"
+        payload[5][0][3][2][1] = [["aoede"]]
         with pytest.raises(WireFormatError) as exc:
             parse_project_read(payload)
+        assert exc.value.route == "batchexecute:Zzl0ze"
+        assert "SECRET-VOICE-CAPABILITY" not in str(exc.value)
+        assert "SECRET-VOICE-CAPABILITY" not in json.dumps(exc.value.discovery)
+
+    def test_drift_detail_carries_no_capability_link(self) -> None:
+        # Planted at index 0 so it sits inside the first 200 chars of discovery_head.
+        payload = ["https://lh3.googleusercontent.com/asb/SECRET-PATH-xyz"]
+        with pytest.raises(WireFormatError) as exc:
+            parse_project_read(payload)
+        head = (exc.value.discovery or {}).get("payload_head", "")
+        assert "<redacted:url>" in head
         assert "SECRET-PATH" not in str(exc.value)
         assert "SECRET-PATH" not in json.dumps(exc.value.discovery)
+
+
+def test_character_doc_matches_zzl0ze_row_and_voice_layout() -> None:
+    doc = (Path(__file__).resolve().parents[3] / "docs" / "CHARACTER.md").read_text(
+        encoding="utf-8"
+    )
+    assert "[project, entity_id, _, [1, name, [images, voices, personality]]" in doc
+    assert '[[null, "<wire id>"]]' in doc
+    assert "voiceRefs[0][0]" not in doc
+    assert "[entityId, projectId," not in doc
+
+
+def test_slice_2_exports_no_unused_voice_or_image_helpers() -> None:
+    assert not hasattr(character_mod, "voice_to_wire")
+    assert not hasattr(migrated_character, "CharacterImage")
+    assert not hasattr(migrated_character, "_first_url")
+    assert not hasattr(migrated_character, "_WORKFLOWS")
+    assert "images" not in ProjectRead.__dataclass_fields__
+    assert not hasattr(FlowApiClient, "list_voices")
+    assert not hasattr(mc_common, "_rpc_reply")
