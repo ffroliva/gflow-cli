@@ -461,6 +461,9 @@ def test_pipx_update_still_works(tmp_path: Path, update_wheels: tuple[Path, Path
         "PYTHONUTF8": "1",
     }
 
+    # The install needs the index (gflow's dependencies, and pipx's own shared pip);
+    # only the update must resolve gflow-cli from the local wheels.
+    install_env = {k: v for k, v in env.items() if k != "PIP_NO_INDEX"}
     install_res = subprocess.run(
         [
             "pipx",
@@ -471,7 +474,7 @@ def test_pipx_update_still_works(tmp_path: Path, update_wheels: tuple[Path, Path
         ],
         capture_output=True,
         text=True,
-        env=env,
+        env=install_env,
         check=False,
     )
     assert install_res.returncode == 0, f"pipx install failed:\n{install_res.stderr}"
