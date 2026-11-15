@@ -26,10 +26,10 @@ machine exited 0 and refreshed its launcher.
    reports *that*: non-zero exit with a moved version is an upgrade with a note; zero exit
    with an unmoved version is exit 11. A review that asks "why not just check the return
    code?" has the answer here.
-2. **The launcher cannot be renamed aside either.** The trampoline holds its own file open:
-   `os.replace` and `mv` on a running `gflow.exe` both fail (error 32 / "Device or resource
-   busy", measured against `gflow serve`). A rename-then-restore design was built, measured,
-   and deleted — do not propose it again.
+2. **uv tool launcher copy:** `uv tool upgrade` attempts to overwrite the running
+   trampoline launcher at `bin/gflow.exe`, which fails with `os error 32`. Note that for **pip**
+   installs (#1298), clearing `importlib.metadata` caches and `gc.collect()` allows the process to
+   rename its own launcher aside before pip runs.
 3. **`uv tool upgrade` honours an install-time pin silently.** A receipt with
    `specifier = "==x.y.z"` makes the upgrade a no-op with exit 0. Real
    `uv tool install gflow-cli` writes no specifier, so users are unaffected, but tests that
