@@ -4,7 +4,7 @@ put it here (``uv tool`` / ``pipx`` / the venv's own ``pip``).
 Rendering only: the decisions live in :func:`gflow_cli.update_check.run_update`.
 Exit contract: 0 (upgraded, already current, or ``--check``), 11
 (:class:`~gflow_cli.errors.ConfigurationError`: not an index install, manager
-missing from PATH, or the manager failed).
+missing from PATH, launcher in use, missing launcher, or the manager failed).
 """
 
 from __future__ import annotations

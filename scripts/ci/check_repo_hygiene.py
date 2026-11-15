@@ -171,8 +171,8 @@ def _check_sources() -> list[str]:
     violations: list[str] = []
     for scan_dir in SCAN_DIRS:
         for path in (ROOT / scan_dir).rglob("*.py"):
-            # Skip this file itself.
-            if path == Path(__file__).resolve():
+            # Skip this file itself and scratch spike venvs.
+            if path == Path(__file__).resolve() or "_spike_out" in path.parts:
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
