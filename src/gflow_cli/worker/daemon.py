@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -28,10 +29,11 @@ from gflow_cli.errors import (
     DataStoreError,
     FlowApiError,
     GFlowError,
+    TaskCancelledError,
     outcome_members,
 )
 from gflow_cli.observability import exception_message_hash
-from gflow_cli.paths import image_output_path
+from gflow_cli.paths import image_output_path, numbered_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
@@ -145,16 +147,9 @@ class FlowWorker:
                     exc_info=exc,
                 )
 
-        def observe_checkpoint(cp: GenerationCheckpoint) -> None:
-            # Any emitted phase is at/after submit_attempted (C1 emits it right
-            # before the credit gesture), so may_have_spent is always True here.
-            save_checkpoint(
-                cp.phase,
-                may_have_spent=True,
-                operation_id=cp.operation_id,
-                media_ids=cp.media_ids,
-                workflow_ids=cp.workflow_ids,
-            )
+        observe_checkpoint = self._checkpoint_observer(
+            task.task_id, claimant, checkpoint_project_id, save_checkpoint
+        )
 
         # Pre-submit checkpoint: nothing spent yet. A crash/cancel before the
         # observer fires classifies as a safe failure (queue.classify_interrupted).
@@ -269,10 +264,7 @@ class FlowWorker:
                                     if len(images) == 1:
                                         target = output_file
                                     else:
-                                        target = (
-                                            output_file.parent
-                                            / f"{output_file.stem}_{i}{output_file.suffix}"
-                                        )
+                                        target = numbered_path(output_file, i)
                                     target.parent.mkdir(parents=True, exist_ok=True)
                                 else:
                                     target = image_output_path(
@@ -575,6 +567,54 @@ class FlowWorker:
                 # failed before any media id existed still writes NULL, as before.
                 flow_media_id=started_media_ids[0] if started_media_ids else None,
             )
+
+    def _checkpoint_observer(
+        self,
+        task_id: str,
+        claimant: str,
+        project_id: list[str | None],
+        save_checkpoint: Callable[..., None],
+    ) -> Callable[[GenerationCheckpoint], None]:
+        """The generation observer: the #1198 submit gate, then the checkpoint write."""
+
+        def observe_checkpoint(cp: GenerationCheckpoint) -> None:
+            # Any emitted phase is at/after submit_attempted (C1 emits it right
+            # before the credit gesture), so may_have_spent is always True here.
+            if cp.phase == "submit_attempted":
+                # #1198 submit gate: a `gflow cancel` / `tasks/cancel` that landed while
+                # this job was claimed stops it here, before anything is sent to Flow.
+                # Unlike save_checkpoint, a DB fault here stops the job: nothing is sent yet,
+                # and going on could bill a job `gflow cancel` already reported `charged: no`.
+                try:
+                    go = self.repo.checkpoint_before_submit(
+                        task_id,
+                        claimant=claimant,
+                        phase=cp.phase,
+                        may_have_spent=True,
+                        project_id=project_id[0],
+                    )
+                except Exception as exc:
+                    logger.warning("submit_gate_failed", task_id=task_id, exc_info=exc)
+                    raise DataStoreError(
+                        detail="Could not check the job before submitting it; nothing was sent.",
+                        route="worker.submit_gate",
+                        charged="no",
+                        next_action="retry",
+                        remediation_hint="Nothing was sent to Flow. Run the job again.",
+                    ) from exc
+                else:
+                    if not go:
+                        raise TaskCancelledError(detail="Aborted by gflow before it was submitted.")
+                    return  # the gate wrote the checkpoint
+            save_checkpoint(
+                cp.phase,
+                may_have_spent=True,
+                operation_id=cp.operation_id,
+                media_ids=cp.media_ids,
+                workflow_ids=cp.workflow_ids,
+            )
+
+        return observe_checkpoint
 
     def _build_image_request(self, payload: dict[str, Any]) -> GenerateImageRequest:
         # Delegates to the codec (Task C2) — the single mapping from a queue

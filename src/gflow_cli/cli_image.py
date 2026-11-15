@@ -39,6 +39,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
+    spends_credits,
     tool_option,
 )
 from gflow_cli.api import routes
@@ -109,7 +110,7 @@ from gflow_cli.image_batch import (
 from gflow_cli.image_batch import (
     MIN_COUNT as _MIN_COUNT,
 )
-from gflow_cli.paths import image_output_path, resolve_batch_output_dir
+from gflow_cli.paths import image_output_path, numbered_path, resolve_batch_output_dir
 from gflow_cli.profile_store import account_locale_for
 from gflow_cli.refresh_resolver import (
     _build_name_resolver as _build_name_resolver,  # pyright: ignore[reportPrivateUsage]
@@ -379,6 +380,7 @@ def image() -> None:
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @image.command(
     "upload",
     short_help="Upload a local image into an ephemeral Flow project.",
@@ -486,6 +488,7 @@ async def _run_upload(
 # ---------------------------------------------------------------------------
 
 
+@spends_credits(False)
 @image.command(
     "upscale",
     short_help="Upscale a platform-generated image to 2K or 4K.",
@@ -711,6 +714,7 @@ _ui_mode_option = click.option(
 )
 
 
+@spends_credits(True)
 @image.command(
     "t2i",
     short_help="Generate image(s) from a text prompt.",
@@ -1123,7 +1127,7 @@ async def _download_images(
             if len(images) == 1:
                 target = output_file
             else:
-                target = output_file.parent / f"{output_file.stem}_{i}{output_file.suffix}"
+                target = numbered_path(output_file, i)
         elif out is not None:
             target = out / f"{img.media_name}_{i}.png"
         else:
@@ -1407,6 +1411,7 @@ def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) ->
 _BATCH_TITLE = "gflow-cli image batch"
 
 
+@spends_credits(True)
 @image.command(
     "batch",
     short_help=f"Batch-generate images from a manifest (max {_MAX_BATCH_PROMPTS}, shared project).",
@@ -1589,6 +1594,7 @@ class _I2IParams:
     ui_mode: UiMode | None = None
 
 
+@spends_credits(True)
 @image.command(
     "i2i",
     short_help="Generate image(s) from a prompt + one or more reference images.",

@@ -5,7 +5,7 @@ skillopt_epoch: 0
 description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch image pipelines, or spending Flow credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Drives the real Flow web UI through a headed Chrome session (Playwright) after a one-time browser sign-in — it does not bypass the UI, it automates it.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
-  - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
+  - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'
   - Output flag confusion: '--out-file' takes a FILE path (single asset, legacy '-o/--output'); '--out' (image) / '--out-dir' (video) take a DIRECTORY
   - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
   - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
@@ -82,6 +82,7 @@ gflow image t2i "<prompt>" [--model {nano2|nano2-lite|nano-pro|image4}] \
                             [--aspect {9:16|16:9|1:1|4:3|3:4}] \
                             [-n 1..4] [--out DIR]
 gflow image i2i "<prompt>" --ref PATH_OR_UUID [--ref ...] [...same as t2i]
+gflow image generate "<prompt>" [--ref ...] [...]               # bridge: no --ref -> t2i, --ref -> i2i (#1193); --json adds "mode"
 gflow image upscale <mediaId> --scale {2k|4k} [--project ID] [--out DIR]  # 4K is Ultra-only
 gflow image batch <manifest.tsv|manifest.json> [-n 1..4] [--aspect ...] [--out DIR]  # shared project, up to 5 prompts; refuses any row ref (exit 11, like any manifest error)
 gflow run --config <batch.json> [--project ID]            # JSON image batch; a row's "ref" may be "batch:N" (an earlier
@@ -107,12 +108,13 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # Video generation (Veo 3.1)
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: Omni models only; without --project a project is created first, on either host (#864); durations: 4/6/8 Veo, 4/6/8/10 omni-flash, 3-15 omni-1.2-flash
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
+gflow video generate "<prompt>" [--initial-frame F | --ref IMG] [...]  # bridge: none -> t2v, frame -> i2v, --ref -> r2v; frame AND --ref = exit 2 (#1193)
 gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF
 # `gflow video` has no `batch` subcommand — that stub never worked and was
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
-                  # --out-file is not applied by chain yet (stderr notice, #1293): clips go to --out-dir
+                  # --out-file out/clip.mp4 writes link i to out/clip_<i>.mp4 (#1293)
 
 # Characters (reusable, project-scoped subjects)
 gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
@@ -137,9 +139,12 @@ gflow instructions rm (TITLE | --id ID) --project ID
 gflow instructions apply FILE --project ID                # declarative full-sync (TOML/JSON)
 gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent switch
 
-# Keeping gflow-cli current (every command shows a banner when a newer release exists)
-gflow update [--check] [--json]
-gflow docs [TOPIC] [--search TERM] [--json]                            # upgrades via uv tool / pipx / pip; source installs refused (exit 11)
+# Discover every command, its params and whether it spends credits (stable JSON, #1203)
+gflow --help --json                                       # also: gflow <group> [<cmd>] --help --json
+
+# Keeping gflow-cli current (other commands show a banner when a newer release exists)
+gflow update [--check] [-v|--verbose] [--json]                         # upgrades via uv tool / pipx / pip; source installs refused (exit 11); on Windows pip, exit 11 also when another gflow process holds a launcher (nothing changed: close it, retry); a Windows pip install at <=0.99.0 upgrades once by hand: close every gflow process, then `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (docs/USAGE.md#gflow-update); -v streams the installer output
+gflow docs [TOPIC] [--search TERM] [--json]
 
 # Usage statistics and weekly telemetry (local counters; upload after interactive notice)
 gflow data stats [--weeks N] [--json]
@@ -147,6 +152,11 @@ gflow telemetry on
 gflow telemetry off [--delete]
 gflow telemetry status [--json]
 gflow telemetry show
+
+# Abort a queued job (local only; MCP twin: tasks/cancel). No --profile: task ids are global
+gflow cancel TASK_ID [--json]   # not yet submitted -> cancelled, exit 0, nothing charged;
+                                # already submitted -> abandoned, exit 22: Flow cannot cancel it,
+                                # it may still be charged (cancel.server: no)
 ```
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
@@ -311,7 +321,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 
 | Mistake | Correct behaviour |
 |---|---|
-| `gflow video generate` or `gflow video create` | `gflow video t2v` (text→video) or `gflow video i2v` (image→video) |
+| `gflow video create` | `gflow video generate` (alias `gen`; mode read from the inputs), or the mode verb itself: `gflow video t2v` (text→video) / `gflow video i2v` (image→video) |
 | `--output DIR` (a directory) as the output location | `--out-file PATH` is an explicit FILE path (legacy `-o/--output`, single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. |
 | An absolute MCP `out_file` / `output` / `out_dir` outside the output dir, or a path as MCP `profile` | MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` (v0.92.0+): pass `out_file` (or legacy `output`) relative to it; anything else returns 400 `Invalid Output` / `Invalid out_dir`. `profile` is a plain name (400 `Invalid Profile`). The CLI `--out-file` is unchanged |
 | `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |

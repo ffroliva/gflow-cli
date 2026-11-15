@@ -271,9 +271,6 @@ from gflow_cli.api.transports._mc_common import (
     _recovery_detail as _recovery_detail,
 )
 from gflow_cli.api.transports._mc_common import (
-    _rpc_reply as _rpc_reply,
-)
-from gflow_cli.api.transports._mc_common import (
     _unique_display_name as _unique_display_name,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -289,6 +286,9 @@ from gflow_cli.api.transports._mc_common import (
     body_rpcid as body_rpcid,
 )
 from gflow_cli.api.transports._mc_common import (
+    is_at as is_at,
+)
+from gflow_cli.api.transports._mc_common import (
     migrated_can_serve as migrated_can_serve,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -296,6 +296,9 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     request_body as request_body,
+)
+from gflow_cli.api.transports._mc_common import (
+    rpc_reply as rpc_reply,
 )
 from gflow_cli.api.transports._mc_common import (
     url_rpcid as url_rpcid,
@@ -584,7 +587,7 @@ async def create_project(
     before = str(page.url)
     deadline = time.monotonic() + timeout_s
     try:
-        payload = await _rpc_reply(
+        payload = await rpc_reply(
             page,
             CREATE_PROJECT_RPC,
             lambda: button.click(timeout=15_000),
@@ -647,7 +650,7 @@ async def rename_project(
     ``timeout_s`` bounds the rename reply; the selector wait stays at ``ANCHOR_TIMEOUT_S``.
     A lost or late reply is settled by reading the saved title back (#992, #1037)."""
     target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-    if not str(getattr(page, "url", "") or "").startswith(target):
+    if not is_at(getattr(page, "url", ""), target):
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
     await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     field = await _wait_anchor(
@@ -679,9 +682,7 @@ async def rename_project(
             ) from e
 
     try:
-        payload = await _rpc_reply(
-            page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True
-        )
+        payload = await rpc_reply(page, RENAME_PROJECT_RPC, submit, timeout_s=timeout_s, write=True)
     except (RpcResponseUnavailableError, TransportTimeoutError) as original_error:
         unknown = _write_outcome_unknown(
             original_error,
@@ -729,7 +730,7 @@ async def read_credits(page: Page, *, timeout_s: float = 30.0) -> CreditsInfo:
         await page.goto(MIGRATED_ROOT_URL, wait_until="domcontentloaded", timeout=45_000)
 
     try:
-        payload = await _rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
+        payload = await rpc_reply(page, CREDITS_RPC, load, timeout_s=timeout_s)
     except TransportTimeoutError as e:
         if flow_landing_kind(page.url) == "public":
             # The generic /about hint says "open the project"; credits has no project.

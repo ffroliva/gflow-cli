@@ -56,7 +56,10 @@ async def test_a_retired_labs_route_does_not_blame_the_payload_or_a_prompt(
     """
     async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
         try:
-            characters = await client.list_characters(_ANY_PROJECT)
+            # Pass migrated_read=False so this canary keeps probing the retired
+            # labs projectInitialData diagnosis directly rather than falling back
+            # to flow.google.com's Zzl0ze read on _ANY_PROJECT (#875, #987).
+            characters = await client.list_characters(_ANY_PROJECT, migrated_read=False)
         except WireFormatError as exc:
             if "deprecated" not in (exc.detail or "").lower():
                 # A different wire failure. Not this test's subject, and asserting
@@ -74,10 +77,8 @@ async def test_a_retired_labs_route_does_not_blame_the_payload_or_a_prompt(
             assert "projectInitialData" in hint, f"does not name the retired route: {hint}"
             assert "639" in hint, f"does not point at the port that would fix it: {hint}"
 
-            # MEASURED 2026-09-20 on denon82, both on `auto` and with the host pinned:
-            # GFLOW_CLI_FLOW_HOST=flow.google.com returns the SAME 404, because this
-            # read has no migrated arm. Suggesting it would repeat the exact failure
-            # #875 fixed, one field over.
+            # For a caller that reaches this retired labs route directly,
+            # suggesting GFLOW_CLI_FLOW_HOST would not help that route succeed.
             assert "GFLOW_CLI_FLOW_HOST" not in hint, (
                 f"suggests a setting measured not to help: {hint}"
             )

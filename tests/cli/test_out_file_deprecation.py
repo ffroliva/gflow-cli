@@ -47,6 +47,10 @@ _NINE_COMMANDS = (
     ("video", "extend"),
 )
 
+# New verbs (the #1193 bridges): --out-file and no -o/--output PATH spelling at all.
+# The walk sees every registered name, so the `gen` alias is listed too.
+_OUT_FILE_ONLY = {"image generate", "video generate", "image gen", "video gen"}
+
 
 def _get_command(path: tuple[str, ...]) -> click.Command:
     current: click.BaseCommand = main
@@ -118,7 +122,7 @@ def test_nine_commands_have_out_file_option(cmd_path: tuple[str, ...]) -> None:
 def test_click_tree_guard() -> None:
     """Click-tree guard: walk every leaf of gflow_cli.cli.main.
 
-    Exactly the nine commands have --out-file.
+    Exactly the nine commands, plus the --out-file-only bridge verbs, have --out-file.
     Any option anywhere spelled -o or --output that takes a path must be the
     deprecated one from task 1/2 (a DeprecatedAliasOption).
     """
@@ -143,7 +147,12 @@ def test_click_tree_guard() -> None:
         for path, cmd in commands.items()
         if any(isinstance(p, click.Option) and "--out-file" in p.opts for p in cmd.params)
     }
-    assert commands_with_out_file == expected_nine
+    assert commands_with_out_file == expected_nine | _OUT_FILE_ONLY
+
+    # A verb added after #1158 never had -o PATH, so it gets no deprecated spelling either.
+    for path in _OUT_FILE_ONLY:
+        opts = {o for p in commands[path].params if isinstance(p, click.Option) for o in p.opts}
+        assert not opts & {"-o", "--output"}, f"{path} must take --out-file only"
 
     # Check that any -o or --output option taking a Path is marked as deprecated alias
     for path, cmd in commands.items():
@@ -355,24 +364,5 @@ def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
         assert out_path.is_relative_to(dir2), out_path  # -o DIR reached out_dir
 
 
-@pytest.mark.parametrize("flag", ["--out-file", "-o"])
-def test_video_chain_says_the_file_path_is_not_applied(tmp_path: Path, flag: str) -> None:
-    """#1293: chain never wrote to the given path; it must say so instead of staying silent."""
-    manifest = tmp_path / "chain.jsonl"
-    manifest.write_text('{"prompt": "a"}\n{"prompt": "b"}\n', encoding="utf-8")
-
-    async def _ran(**_kwargs: object) -> None:
-        return None
-
-    with (
-        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
-        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
-        patch("gflow_cli.cli_video._run_chain", _ran),
-    ):
-        result = CliRunner().invoke(
-            main, ["video", "chain", str(manifest), "--yes", flag, str(tmp_path / "c.mp4")]
-        )
-
-    assert result.exit_code == 0, result.output
-    assert "video chain does not apply --out-file yet" in result.stderr
-    assert "#1293" in result.stderr
+# `video chain --out-file` / `-o` (#1293) is pinned by tests/cli/test_cli_video_chain_out_file.py,
+# which runs the real run_chain so the written files can be checked.

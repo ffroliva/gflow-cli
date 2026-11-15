@@ -15,6 +15,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     run_with_handlers,
+    spends_credits,
 )
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
@@ -37,6 +38,7 @@ def project() -> None:
     """Manage Google Flow projects."""
 
 
+@spends_credits(False)
 @project.command("list")
 @click.option("--profile", default=None, help="Profile name to filter projects by.")
 @click.option(
@@ -81,6 +83,7 @@ def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
         _emit_projects_table(rows)
 
 
+@spends_credits(False)
 @project.command("show")
 @click.argument("project_id", callback=_validate_project_id)
 @click.option("--profile", default=None, help="Profile name.")
@@ -159,6 +162,7 @@ async def _run_create_project(
         return info.project_id, info.title
 
 
+@spends_credits(False)
 @project.command("create")
 @click.option("--name", "--title", "--project-name", "title", default=None, help="Project title.")
 @click.option("--profile", default=None, help="Profile name.")
@@ -201,6 +205,7 @@ async def _run_rename_project(
         repo.update_project_title(profile_name, project_id, new_title)
 
 
+@spends_credits(False)
 @project.command("rename")
 @click.argument("project_id", callback=_validate_project_id)
 @click.argument("new_title")

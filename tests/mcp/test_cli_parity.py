@@ -26,6 +26,13 @@ Note on ``image t2i --jitter`` (#241): intentionally NOT mirrored on
 multi-prompt run; the MCP tool is single-prompt, so the parameter would be a
 silent no-op there. An MCP agent composing several calls owns its own cadence
 (or sets ``GFLOW_CLI_JITTER_RANGE`` server-side, which the batch paths honour).
+
+Note on ``--help --json`` (#1203): deliberately no MCP twin. It is a discovery
+surface for the CLI itself (the Click command tree); an MCP client discovers the
+server's tools and their schemas through the protocol's own ``tools/list``. It adds
+no Click option or leaf (the root group intercepts it before parsing), so it needs
+no entry in the tables below. Its ``spends_credits`` decisions must agree with the
+MCP spend gate: see ``test_paid_commands_agree_between_cli_and_mcp``.
 """
 
 from __future__ import annotations
@@ -34,7 +41,11 @@ import inspect
 import re
 from typing import Any
 
+import click
+
+from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
+from gflow_cli.mcp import server as mcp_server
 from gflow_cli.mcp import tools as mcp_tools
 from tests.mcp._cli_tree import cli_leaves
 
@@ -48,9 +59,11 @@ CLI_TO_MCP: dict[str, str] = {
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
     "image i2i": "gflow_generate_image",  # reference_images param
+    "image generate": "gflow_generate_image",  # bridge verb (#1193): t2i/i2i by inputs
     "video t2v": "gflow_generate_video",  # mode="t2v"
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
+    "video generate": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
     "models": "gflow_list_models",  # bare `gflow models` is `models list` (#1196)
     "models list": "gflow_list_models",
     "models show": "gflow_list_models",  # the catalog carries every model's show detail
@@ -95,6 +108,13 @@ _MCP_EXEMPT: dict[str, str] = {
         "long-running billed chain; not worker-enqueued, and its cost "
         "confirmation has no MCP equivalent (#481)"
     ),
+    # Not a gap: the twin is a protocol method, not a tool. SEP-2663 `tasks/cancel` and
+    # `gflow cancel` store the same row state through worker.queue.abort_task, and the
+    # MCP side also stops a job running in its own server. What differs is the report:
+    # tasks/get says cancelled plus a statusMessage, while the CLI's --json carries the
+    # charged/next_action members. Both runs are tested: tests/test_cli_cancel_subprocess.py
+    # and tests/mcp/test_tasks_extension.py::test_tasks_cancel_then_get_on_the_wire_per_state.
+    "cancel": "twin is the MCP protocol method tasks/cancel (same abort_task, #1198)",
     # Not a gap: the twin is a resource, not a tool (a document an agent reads before
     # planning, like gflow://docs/*). tests/mcp/test_capabilities.py holds the two
     # surfaces to the same JSON document (#1197).
@@ -173,8 +193,25 @@ _MCP_EXEMPT: dict[str, str] = {
 
 
 def _cli_leaves() -> set[str]:
-    """Every invokable CLI path: plain commands + invoke_without_command groups."""
+    """Every invokable CLI path, from the walker `--help --json` uses (one surface)."""
     return cli_leaves(main)
+
+
+def _command(path: str) -> click.Command:
+    cmd: Any = main
+    for part in path.split():
+        cmd = cmd.commands[part]
+    return cmd
+
+
+def test_paid_commands_agree_between_cli_and_mcp() -> None:
+    # A CLI command marked as spending must map to a tool the MCP --no-spend gate removes.
+    disagree = {
+        leaf: (spends_credits_decision(_command(leaf)), tool)
+        for leaf, tool in CLI_TO_MCP.items()
+        if spends_credits_decision(_command(leaf)) != (tool in mcp_server._SPEND_TOOLS)
+    }
+    assert not disagree, f"spends_credits disagrees with mcp.server._SPEND_TOOLS: {disagree}"
 
 
 def test_every_cli_leaf_has_an_mcp_decision() -> None:
@@ -247,6 +284,8 @@ _PARAM_ALIASES: dict[str, str] = {
 _OPTION_EXEMPT: dict[str, str] = {
     "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
     "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
+    "image generate:prompts": "resolves to `image t2i`; same reason as `image t2i:prompts`",
+    "image generate:continue_on_error": "resolves to `image t2i`; batch-only semantics",
     "instructions apply:file": "reads a local file; the tool takes the text directly",
     "tools show:name": "coarse mapping — one MCP tool lists and shows; the name is its filter",
     "models show:model_id": (

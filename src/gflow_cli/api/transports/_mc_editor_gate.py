@@ -40,6 +40,7 @@ from gflow_cli.api.transports._mc_common import (
     ComposerKind,
     _ligature,
     _recovery_detail,
+    is_at,
 )
 from gflow_cli.api.transports._mc_media import MediaMixin
 from gflow_cli.errors import UiSelectorDriftError
@@ -110,8 +111,7 @@ class EditorGateMixin(MediaMixin):
         needed on either kind of account), wait for the settings trigger, and report
         which composer is there: ``"classic"``, or #799's ``"agent_only"``."""
         target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-        current = str(getattr(page, "url", "") or "")
-        if not current.startswith(target):
+        if not is_at(getattr(page, "url", ""), target):
             log.info("migrated.navigate", url=target)
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
         await self._dismiss_dialog(page)

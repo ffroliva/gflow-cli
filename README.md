@@ -52,7 +52,10 @@ Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x
 # 1 · Install (uv recommended; also: pip install gflow-cli)
 uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
-# later: `gflow update` upgrades in place (every command shows a banner when a newer release is out)
+# later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
+# Windows pip install at 0.99.0 or older? Upgrade once by hand first (#1298):
+#   close every gflow process, then <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
+#   (a --user install: py -3.X -m pip install --user --upgrade gflow-cli; see https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md#gflow-update)
 
 # 2 · Authenticate (one-time, opens a real Chrome window)
 # Behind a proxy (e.g. Clash)? Set GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897 first (docs/CONFIGURATION.md)
@@ -74,6 +77,10 @@ gflow character create --project <id> --name "Aria" --face-prompt "..." --body-p
 ```
 
 Outputs land under `$GFLOW_CLI_OUTPUT_DIR`, or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
+
+To save one result at an exact path, pass `--out-file PATH` (for example `gflow image t2i "..." --out-file hero.png`). The old path form, `-o/--output PATH`, still works but prints a deprecation warning: in a later release `-o/--output` selects the output format (`json|table|id`). See [USAGE](docs/USAGE.md#gflow-image-t2i).
+
+Scripts that branch on exit codes can opt in to the stable core now (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted) by setting `GFLOW_CLI_EXIT_CODES=2`. It becomes the default in a later release. See [ERRORS: the stable core](docs/ERRORS.md#exit-codes-the-stable-core-opt-in-in-this-release).
 
 > **Why `--browser chrome`?** It is the only strategy that marks the profile as a real-Chrome profile, which is what later generation runs open it with. The default `auto` picks it whenever Chrome is installed — see [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md).
 
@@ -130,6 +137,8 @@ gflow-cli ships four agent entry points. Pick the one your tool reads first.
 | [**llms.txt**](llms.txt) | LLM-readable summary (llmstxt.org format) | Paste into ChatGPT, Claude, or Gemini to onboard the model |
 | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | Claude Code Skill | Symlink into `~/.claude/skills/` |
 
+An agent can also read the whole command tree from the CLI itself: `gflow --help --json`.
+
 ### Install the plugin (Claude Code)
 
 One step, and you get the `gflow-cli` and `video-production` skills plus the MCP server:
@@ -173,7 +182,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 ## Project status
 
-**Alpha.** Image (t2i, i2i, upload, upscale, batch) and video (t2v, i2v, r2v, chain, extend, upscale) run end-to-end on `ui_automation`, with a 5-model Veo picker plus `--duration` and `--count`. Beyond single generations: `gflow movie` renders multi-scene manifests, `gflow instructions` manages persistent Agent-Mode brief cards (credits-free), `gflow character` handles reusable subjects, `gflow scene` does credit-free server-side stitching, `--tool` applies prompt-rewriting tools, and an MCP server (`gflow mcp run` stdio / `gflow serve` Streamable HTTP) exposes the core surface to AI agents with a CI-enforced CLI↔MCP parity contract.
+**Alpha.** Image (t2i, i2i, upload, upscale, batch) and video (t2v, i2v, r2v, chain, extend, upscale), plus `image generate` / `video generate`, which pick the mode from the inputs, run end-to-end on `ui_automation`, with a 5-model Veo picker plus `--duration` and `--count`. Beyond single generations: `gflow movie` renders multi-scene manifests, `gflow instructions` manages persistent Agent-Mode brief cards (credits-free), `gflow character` handles reusable subjects, `gflow scene` does credit-free server-side stitching, `--tool` applies prompt-rewriting tools, and an MCP server (`gflow mcp run` stdio / `gflow serve` Streamable HTTP) exposes the core surface to AI agents with a CI-enforced CLI↔MCP parity contract.
 
 Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project is heading: [ROADMAP.md](ROADMAP.md).
 

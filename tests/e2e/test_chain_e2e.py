@@ -195,3 +195,151 @@ async def test_chain_two_link_seeds_i2v_from_last_frame(
         f"its start frame through the media dialog (i2v routed to ...StartImage, "
         f"not ...Text — issue #125); captured events: {events}"
     )
+
+
+def test_chain_cli_out_file_writes_numbered_mp4s_and_seeds_link_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CHAIN-E2E-2 (#1293, #1300): the CLI, not ``run_chain``, honours ``--out-file``.
+
+    ``gflow video chain <2-link manifest> --out-file <tmp>/out/clip.mp4 --yes --json``
+    writes ``clip_1.mp4`` and ``clip_2.mp4`` as mp4 files, ``--json`` reports exactly
+    those paths, and the catalog recorded link 2 as an i2v (a misrouted seeded link
+    aborts the chain with ``WireFormatError``, so exit 0 is itself route evidence).
+
+    Spends ~2 Veo credits per run.
+    """
+    import json
+    import sqlite3
+
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+    from gflow_cli.config import reset_settings
+    from gflow_cli.paths import looks_like_video
+
+    db = tmp_path / "e2e_chain_cli.db"
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    reset_settings()
+
+    name = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not name:
+        pytest.skip("set GFLOW_CLI_E2E_PROFILE to a logged-in profile, then run with -m e2e_video")
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+
+    if not _resolve_profile_dir(name).exists():
+        pytest.skip(f"profile not found for {name!r} — run `gflow auth login --profile {name}`")
+
+    _model()  # skips on an alias chains refuse
+    model_alias = os.environ.get(_E2E_MODEL_ENV, "veo-lite").strip().lower()
+    ratio = "9:16" if _aspect() is Aspect.PORTRAIT else "16:9"
+    manifest = tmp_path / "chain.jsonl"
+    manifest.write_text(
+        "\n".join(json.dumps({"prompt": p}) for p in (_LINK0_PROMPT, _LINK1_PROMPT)),
+        encoding="utf-8",
+    )
+    out = tmp_path / "out" / "clip.mp4"
+
+    result = CliRunner().invoke(
+        main,
+        [
+            "video", "chain", str(manifest),
+            "--profile", name, "--model", model_alias, "--aspect", ratio,
+            "--out-dir", str(tmp_path / "dl"), "--out-file", str(out),
+            "--yes", "--json",
+        ],
+    )  # fmt: skip
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout[result.stdout.index("{\n") :])
+    expected = [out.parent / "clip_1.mp4", out.parent / "clip_2.mp4"]
+    assert [Path(link["local_path"]) for link in payload["links"]] == expected
+    assert [Path(p) for p in payload["completed_paths"]] == expected
+    for clip in expected:
+        assert clip.is_file(), f"--out-file clip missing: {clip}"
+        assert looks_like_video(clip.read_bytes()[:16]), f"not an mp4: {clip}"
+
+    # The database holds this run only; chain links record command "video t2v"/"video i2v".
+    with sqlite3.connect(db) as conn:
+        modes = [
+            row[0] for row in conn.execute("SELECT mode FROM operations ORDER BY started_at, rowid")
+        ]
+    assert modes == ["t2v", "i2v"], f"link 2 must go out as i2v; catalog modes: {modes}"
+
+
+def test_chain_cli_resume_keeps_the_manifest_index_and_seeds_from_the_last_clip(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CHAIN-E2E-3 (#1300): ``--resume-from`` continues the chain instead of restarting it.
+
+    Link 0 runs alone (a one-link manifest); then the two-link manifest resumes that
+    chain id. The resumed link must keep its manifest index (``links[].index == 1``),
+    land on that number under ``--out-file`` (``clip_2.mp4``), and go out as an i2v
+    seeded from link 0's clip: before #1300 it was numbered 0, overwrote link 0's
+    row, and went out unseeded as a t2v.
+
+    Spends 2 Veo clips per run (veo-lite by default).
+    """
+    import json
+    import sqlite3
+
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+    from gflow_cli.config import reset_settings
+    from gflow_cli.paths import looks_like_video
+
+    db = tmp_path / "e2e_chain_resume.db"
+    monkeypatch.delenv("GFLOW_CLI_HOME", raising=False)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
+    reset_settings()
+
+    name = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not name:
+        pytest.skip("set GFLOW_CLI_E2E_PROFILE to a logged-in profile, then run with -m e2e_video")
+    from gflow_cli.auth import profile_dir as _resolve_profile_dir
+
+    if not _resolve_profile_dir(name).exists():
+        pytest.skip(f"profile not found for {name!r} — run `gflow auth login --profile {name}`")
+
+    _model()  # skips on an alias chains refuse
+    model_alias = os.environ.get(_E2E_MODEL_ENV, "veo-lite").strip().lower()
+    ratio = "9:16" if _aspect() is Aspect.PORTRAIT else "16:9"
+    first = tmp_path / "first.jsonl"
+    first.write_text(json.dumps({"prompt": _LINK0_PROMPT}), encoding="utf-8")
+    both = tmp_path / "both.jsonl"
+    both.write_text(
+        "\n".join(json.dumps({"prompt": p}) for p in (_LINK0_PROMPT, _LINK1_PROMPT)),
+        encoding="utf-8",
+    )
+    common = ["--profile", name, "--model", model_alias, "--aspect", ratio, "--yes", "--json"]
+
+    run1 = CliRunner().invoke(
+        main,
+        ["video", "chain", str(first), "--out-dir", str(tmp_path / "dl1"), *common],
+    )
+    assert run1.exit_code == 0, run1.output
+    chain_id = json.loads(run1.stdout[run1.stdout.index("{\n") :])["chain_id"]
+
+    out = tmp_path / "out" / "clip.mp4"
+    run2 = CliRunner().invoke(
+        main,
+        [
+            "video", "chain", str(both), "--resume-from", chain_id,
+            "--out-dir", str(tmp_path / "dl2"), "--out-file", str(out), *common,
+        ],
+    )  # fmt: skip
+    assert run2.exit_code == 0, run2.output
+    payload = json.loads(run2.stdout[run2.stdout.index("{\n") :])
+    assert payload["chain_id"] == chain_id
+    assert [link["index"] for link in payload["links"]] == [1], payload["links"]
+    resumed = Path(payload["links"][0]["local_path"])
+    assert resumed == out.parent / "clip_2.mp4", resumed
+    assert resumed.is_file() and looks_like_video(resumed.read_bytes()[:16])
+
+    with sqlite3.connect(db) as conn:
+        modes = [
+            row[0] for row in conn.execute("SELECT mode FROM operations ORDER BY started_at, rowid")
+        ]
+    assert modes == ["t2v", "i2v"], f"the resumed link must go out as an i2v; modes: {modes}"

@@ -12,6 +12,7 @@ from typing import NoReturn
 import click
 
 from gflow_cli import telemetry as telemetry_mod
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage]
 
 
@@ -20,6 +21,7 @@ def telemetry() -> None:
     """Inspect and control usage counters and weekly uploads."""
 
 
+@spends_credits(False)
 @telemetry.command("status")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON status.")
 def status_cmd(as_json: bool) -> None:
@@ -57,6 +59,7 @@ def _fail(detail: str) -> NoReturn:
     sys.exit(11)
 
 
+@spends_credits(False)
 @telemetry.command("on")
 def on_cmd() -> None:
     """Allow weekly usage uploads after the interactive usage notice."""
@@ -78,6 +81,7 @@ def on_cmd() -> None:
         )
 
 
+@spends_credits(False)
 @telemetry.command("off")
 @click.option("--delete", is_flag=True, help="Also delete local usage data.")
 def off_cmd(delete: bool) -> None:
@@ -119,6 +123,7 @@ def off_cmd(delete: bool) -> None:
         )
 
 
+@spends_credits(False)
 @telemetry.command("show")
 def show_cmd() -> None:
     """Print the weekly usage report for the current ISO week as JSON."""

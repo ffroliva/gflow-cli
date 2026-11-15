@@ -961,6 +961,135 @@ def test_record_started_extend_persists_a_pending_video(tmp_path: Path) -> None:
     assert row[2] == "veo_3_1_extension_lite"
 
 
+_EXT_MEDIA = "a69e0c3b-47a2-4751-81e9-c8d923832aa0"
+_EXT_PROJECT = "5dffb6db-83dc-43a2-bed9-613b0661a35b"
+
+
+def _catalog_with_source(store: DataStore, tmp_path: Path) -> DataRepository:
+    """A catalog holding one finished source clip (workflow ``src-wf``)."""
+    from gflow_cli.data.models import AssetKind, AssetRecord, ProjectRecord
+
+    repo = DataRepository(store)
+    repo.upsert_profile("p", tmp_path)
+    repo.upsert_project(
+        ProjectRecord(
+            id="pr", profile_name="p", flow_project_id=_EXT_PROJECT, title="t", source="generated"
+        )
+    )
+    repo.upsert_asset(
+        AssetRecord(
+            id="src",
+            profile_name="p",
+            flow_project_id=_EXT_PROJECT,
+            flow_media_id=_EXT_MEDIA,
+            flow_workflow_id="src-wf",
+            flow_media_generation_id=None,
+            kind=AssetKind.VIDEO,
+            status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            model="veo_3_1_lite",
+            aspect_ratio="portrait",
+            width=None,
+            height=None,
+            duration_seconds=8.0,
+            seed=None,
+            metadata_json={"display_name": "cup"},
+        )
+    )
+    return repo
+
+
+def _start_extend(repo: DataRepository, tmp_path: Path, *, media: str, source: str) -> None:
+    from gflow_cli.api.video_extend import ExtendStarted
+
+    OperationRecorder(repo, prompt_mode="store").record_started_extend(
+        profile_name="p",
+        profile_dir=tmp_path,
+        project_id=_EXT_PROJECT,
+        aspect="9:16",
+        source_media_id=source,
+        # A workflow id other than the source's: _started_handler refuses an equal one.
+        started=ExtendStarted(media_id=media, workflow_id="new-wf", model_key="omni_extend_4s"),
+    )
+
+
+def _asset_rows(store: DataStore) -> list[tuple[object, ...]]:
+    return store.conn.execute(
+        "SELECT id, status, model, metadata_json, duration_seconds, flow_workflow_id FROM assets"
+    ).fetchall()
+
+
+def test_an_in_place_extend_writes_nothing_at_submit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1184: an extend that grows the SOURCE id in place may still fail or time out, so
+    the submit-time hook must leave the clip's row as it was. It needs no catalog read to
+    decide that, so a broken catalog cannot abort a run Flow already billed."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        before = _asset_rows(store)
+
+        def _broken(*_a: object, **_k: object) -> None:
+            raise sqlite3.OperationalError("database is locked")
+
+        monkeypatch.setattr(repo, "get_asset_by_flow_media_id", _broken)
+        _start_extend(repo, tmp_path, media=_EXT_MEDIA, source=_EXT_MEDIA)
+        assert _asset_rows(store) == before
+
+
+def test_an_in_place_extend_of_an_uncatalogued_clip_leaves_no_row(tmp_path: Path) -> None:
+    """A source made in Flow's UI or on another machine is not in the catalog. Its in-place
+    extend must not leave a ``pending`` row for the source id that nothing ever settles."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        _start_extend(repo, tmp_path, media=_EXT_MEDIA, source=_EXT_MEDIA)
+        OperationRecorder(repo, prompt_mode="store").record_extended_in_place(
+            profile_name="p", media_id=_EXT_MEDIA, workflow_id="new-wf", model_key="k"
+        )
+        assert _asset_rows(store) == []
+
+
+def test_a_recorded_id_that_is_not_the_source_still_fails_loudly(tmp_path: Path) -> None:
+    """Only the SOURCE id grows in place. Any other already-recorded id is a collision the
+    caller surfaces as ``extend_record_failed``; it must never rewrite that other row."""
+    from gflow_cli.errors import DataIntegrityError
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        before = _asset_rows(store)
+        with pytest.raises(DataIntegrityError):
+            _start_extend(repo, tmp_path, media=_EXT_MEDIA, source="some-other-source")
+        assert _asset_rows(store) == before
+
+
+def test_an_in_place_extend_notes_the_source_row_after_success(tmp_path: Path) -> None:
+    """After Flow reports success the row carries the billed generation's workflow id and
+    when it grew; its id, status, model and source workflow stay the clip's own."""
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        OperationRecorder(repo, prompt_mode="store").record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+        )
+        rows = _asset_rows(store)
+    assert len(rows) == 1
+    row_id, status, model, meta_text, duration, workflow = rows[0]
+    assert (row_id, status, model, workflow) == (
+        "src",
+        "MEDIA_GENERATION_STATUS_SUCCESSFUL",
+        "veo_3_1_lite",
+        "src-wf",
+    )
+    assert duration is None  # the clip grew, so the stored 8 s is no longer true
+    meta = json.loads(str(meta_text))
+    assert meta["display_name"] == "cup"
+    assert meta["extended_by"] == "macaron_cookie_extend_4s"
+    assert meta["extend_workflow_id"] == "new-wf"
+    assert meta["extended_at"]
+    assert "extend_unit_cost" not in meta  # flow.google.com reports no price
+
+
 def test_record_started_extend_does_not_persist_the_prompt(tmp_path: Path) -> None:
     """A user who set history_prompts=redacted asked for prompts NOT to be
     stored. Asset metadata is not where prompts live on any other path either —

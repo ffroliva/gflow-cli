@@ -25,6 +25,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli import json_output
+from gflow_cli._cli_helpers import spends_credits
 from gflow_cli.config import get_settings
 
 console = Console()
@@ -109,9 +110,9 @@ _FIXED: dict[str, Entry] = {
     ),
     "abort.local": (
         "partial",
-        "Ctrl-C stops a CLI run; MCP tasks/cancel (a client with the SEP-2663 Tasks "
-        "extension) stops a wait=false task. Neither stops a generation Flow already "
-        "accepted, which may still be charged. No `cancel <id>` yet (#1198).",
+        "Ctrl-C stops a CLI run; `gflow cancel <id>` and MCP tasks/cancel (a client with "
+        "the SEP-2663 Tasks extension) abort a queued wait=false job (#1198). None of "
+        "them stops a generation Flow already accepted, which may still be charged.",
     ),
     "cancel.server": (
         "no",
@@ -183,6 +184,7 @@ def current_capabilities(*, no_spend: bool = False) -> dict[str, Any]:
     return build_capabilities(get_settings().flow_host, no_spend=no_spend)
 
 
+@spends_credits(False)
 @click.command("capabilities")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON document.")
 def capabilities(as_json: bool) -> None:

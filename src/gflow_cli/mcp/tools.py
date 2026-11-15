@@ -83,8 +83,10 @@ _WAIT_DESCRIPTION = (
     "by task_id: while it runs the status is working; once done it is completed and its "
     "result field holds the same reply wait=true would (files, project id, seed). A failed "
     "generation is also completed, with result.isError true, so check isError. "
-    "tasks/cancel stops the job; tasks/get then reads cancelled (a job cancelled after "
-    "submit is recorded as indeterminate: a credit may be spent). The job runs only while "
+    "tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet "
+    "submitted to Flow stops before submitting and nothing is charged; once a gflow worker "
+    "has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage "
+    "says which). gflow cancel <id> is the CLI twin. The job runs only while "
     "this server runs: if the client closes the server, it is cancelled."
 )
 _WaitParam = Annotated[bool, Field(description=_WAIT_DESCRIPTION)]
@@ -104,8 +106,7 @@ _ToolsParam = Annotated[
 _ENTITIES_DESCRIPTION = (
     "Saved character entity ids to attach. On flow.google.com each id needs its display "
     "name at the same position in reference_entity_names, or the call fails before "
-    "submit; gflow_character_list returns both (if it fails with a wire-format error, "
-    "#875, ask the user or read the name in Flow's UI)."
+    "submit; gflow_character_list returns both."
 )
 _ImageEntitiesParam = Annotated[list[str] | None, Field(description=_ENTITIES_DESCRIPTION)]
 _VideoEntitiesParam = Annotated[
@@ -1271,7 +1272,10 @@ def _build_video_payload(
         "duration (seconds; omni_1_2_flash takes 3-15, at most 10 with an end_frame), "
         "and count select the Veo model, clip length, and batch size (CLI parity). "
         "The prompt supports @CharacterName mentions to tag saved project characters by name "
-        "(resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off "
+        "(resolves to referenceEntities; on flow.google.com a video @Name is not supported "
+        "yet, exit 29 before submit, so pass reference_entities plus reference_entity_names "
+        "to r2v). "
+        "Reference a SAVED character via @Name; pass one-off "
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
@@ -1650,11 +1654,14 @@ def _character_to_dict(char: Any) -> dict[str, Any]:
 @server.tool(
     name="gflow_character_list",
     description=(
-        "List the saved Flow CHARACTER entities in a project, with their entity ids. "
-        "Read-only and spends no credits. Call this to discover what you can attach: "
-        "an id goes to reference_entities on the generate tools, and a display_name can "
-        "be used as an @Name mention in a prompt (same wire, they dedupe). "
-        "Drives a browser session, so it is slower than the catalog tools."
+        "List the saved Flow CHARACTER entities in a project. Read-only, spends no credits. "
+        "On flow.google.com, returns each character's entity_id, display_name, voice, "
+        "personality, workflow_ids and thumbnail_media_id. Pass entity_id in "
+        "reference_entities paired with display_name in reference_entity_names (image and "
+        "video r2v). On flow.google.com, an image @Name still attaches the first word "
+        "after @ by name via the @ picker without reading the character catalog, while "
+        "video @Name is not supported yet (exit 29, mention index unavailable); video r2v "
+        "takes reference_entities plus reference_entity_names. Drives a browser."
     ),
 )
 @_guarded
@@ -1662,17 +1669,7 @@ async def gflow_character_list(
     project: str,
     profile: str = _DEFAULT_PROFILE,
 ) -> dict[str, Any]:
-    """List a project's Flow Character entities.
-
-    Args:
-        project: Flow project id to enumerate (mirrors the CLI ``--project``).
-        profile: gflow-cli profile name; resolves like the CLI when left as "default".
-
-    Returns:
-        ``{"status": "ok", "characters": [...], "count": N}``. The list is exactly what
-        Flow returned -- an empty list means the project has none, never that the lookup
-        was skipped (#499).
-    """
+    """List a project's Flow Character entities (#499)."""
     log.info("mcp.tool.character_list", project=project, profile=profile)
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):
@@ -1730,9 +1727,9 @@ async def gflow_character_voices() -> dict[str, Any]:
     name="gflow_character_show",
     description=(
         "Show one saved Flow CHARACTER entity by id or by exact display name. "
-        "Read-only and spends no credits. Exactly one of entity_id or name is required; "
-        "an ambiguous name is an error rather than a guess, which is the reason to prefer "
-        "the id. Drives a browser session."
+        "Read-only, spends no credits. On flow.google.com, returns the character's "
+        "entity_id, display_name, voice, personality, workflow_ids and thumbnail_media_id. "
+        "Exactly one of entity_id or name is required; ambiguous names fail. Drives a browser."
     ),
 )
 @_guarded

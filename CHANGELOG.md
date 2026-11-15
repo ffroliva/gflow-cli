@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.0] — 2026-11-15
+
+### Added
+
+- **`gflow image generate` and `gflow video generate`: one generate verb per media type, the mode
+  read from the inputs.** `image generate` runs `image t2i`, or `image i2i` when a `--ref` is
+  given; `video generate` runs `video t2v`, `video i2v` with `--initial-frame`/`--end-frame`, or
+  `video r2v` with `--ref`. Each then is that verb: the same options, output and exit codes,
+  and `--json` adds `"mode": "<resolved>"`. A frame and a `--ref` together, or an option
+  the resolved verb does not take, is a usage error (exit 2) naming the mode verb, never a
+  guess, and so is `--end-frame` without `--initial-frame`. The file flag is `--out-file
+  PATH` only: the bridges take no `-o/--output PATH`. `video generate hero.png` (an image file
+  as the prompt) is refused with the `--initial-frame` form instead of billing a t2v clip.
+  The mode verbs stay and nothing is deprecated. The MCP tools are unchanged:
+  `gflow_generate_image` runs i2i when `reference_images` is given, and
+  `gflow_generate_video` takes `mode`. `generate` is the spelling the OpenAI and Google Gen
+  AI SDKs use, and `gen` is kept as its alias (#1193).
+- **`gflow --help --json` prints the command tree as JSON ([#1203](https://github.com/ffroliva/gflow-cli/issues/1203)).**
+  `gflow <group> [<cmd>] --help --json` narrows it. Each command lists its path, summary,
+  params and `spends_credits`, which is true for a command that submits a new Flow
+  generation (video spends Veo credits, image the daily image quota). Paths and params are
+  read from Click; `spends_credits` is set per command, and tests fail when a command has no
+  decision, when the path-to-`spends_credits` snapshot changes, when a decision disagrees
+  with the MCP spend gate, or when a command is missing from `docs/USAGE.md`. `gflow auth`,
+  `auth use`/`logout`, `data errors export`/`prune`, `project show` and `project rename` are
+  now documented there.
+
+- **`gflow cancel <id>`: local abort, honest about server-side cancel.** A queued job, or
+  one a worker claimed but has not submitted yet, is cancelled (state `cancelled`, exit 0,
+  nothing charged): the worker re-reads its row just before submitting and stops. A job a
+  gflow worker already submitted is marked `abandoned` (exit 22): Flow cannot be told to
+  cancel it, so it may still run and be charged (a worker still running it keeps polling,
+  so the result is recorded), and `--json` says
+  `cancel.server: no`, `charged: maybe`, `next_action: reconcile`. A finished job is left
+  as it is (exit 0); an unknown id is a `TaskNotFoundError` (exit 1). MCP `tasks/cancel`
+  calls the same function. Migration `0010` adds the two queue states; error type
+  `server-cancel-unavailable` shares exit 22 (#1198).
+
+### Changed
+
+- **MCP `tasks/cancel` stores what happened, not `failed`/`indeterminate`.** A task not
+  yet submitted is now stored `cancelled` (it used to be `failed` with `reason: cancelled`);
+  one already submitted is stored `abandoned`, whether this server or another process runs
+  it (it used to be `indeterminate`, or left as it was). Both states are sticky: a worker
+  that finishes later records its media id and catalog entry but does not flip the row, so
+  `tasks/get` keeps answering `cancelled`, as SEP-2663 requires. A script that reads the
+  queue table and matched `failed`/`indeterminate` for a cancel must also match these two
+  (#1198).
+
+### Fixed
+
+- **`gflow update` in a Windows pip install no longer leaves gflow unusable ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)).**
+  On Windows, `gflow update` in a pip install could leave gflow unusable when pip attempted
+  to replace the running executable. `gflow update` now moves its launchers aside so the
+  upgrade can complete; or, while another gflow process (an MCP server, `gflow serve`) holds
+  a launcher, it stops before changing anything (exit 11). Installs in the user site
+  (`pip install --user`) now upgrade with `--user`.
+  *One-time manual upgrade for existing installs at 0.99.0 and below:* because their own updater
+  still has the bug, close every gflow process, then run
+  `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (venv) or
+  `py -3.X -m pip install --user --upgrade gflow-cli` (`--user`; `3.X` is the Python gflow was
+  installed under, and `py -0p` lists them).
+- **`gflow character list` and `show` now work on accounts Flow serves from `flow.google.com`; the voice list has 30 voices (`Enceladus` added).**
+  The MCP twins `gflow_character_list` and `gflow_character_show` return the same character
+  details on `flow.google.com` ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+  Thanks to @ziyedbe ([#987](https://github.com/ffroliva/gflow-cli/pull/987)).
+- **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
+  accepted and ignored. Link i's clip goes to `<stem>_<i><suffix>` next to PATH
+  (`out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`), numbered over the whole manifest so
+  `--resume-from` keeps each link's name; `--json`, the chain table and the videos catalog report
+  those paths, and seed frames stay under `--out-dir`. An existing file or folder at a numbered
+  path is never replaced, and a clip whose move fails is never lost: either way it stays where it
+  downloaded, is recorded there, and a warning names the link, its media id and the path. A
+  FILE under an existing file is a usage error before the cost prompt. The stderr notice is gone
+  ([#1293](https://github.com/ffroliva/gflow-cli/issues/1293)).
+- **`video chain --resume-from` continues the chain instead of restarting it.** The first resumed
+  link was numbered 0: it overwrote link 0's chain row, went out as an unseeded text-to-video,
+  and left the chain one row short, so a later resume billed a finished link again. Resumed links
+  now keep their manifest index (chain table, `--json` `links[].index`, `--out-file` number), the
+  first one is an image-to-video seeded from the last completed clip, and a resume whose clip is
+  gone is refused with exit 20 naming the file, before anything is billed
+  ([#1300](https://github.com/ffroliva/gflow-cli/issues/1300)).
+
+- **`gflow update` says one thing about the result
+  ([#1163](https://github.com/ffroliva/gflow-cli/issues/1163)).** It no longer shows the
+  cached "update available" banner, which could name an older release than the one it then
+  installed. The package manager's output is captured: a successful run prints two short
+  lines, and the output is shown only when the update fails. `gflow update -v` streams it
+  live, and `--json` stdout stays a single JSON document. When the manager exits non-zero
+  after the new version is installed (on Windows, usually the running `gflow.exe`
+  launcher), you get its output and a one-line note instead of an error followed by a
+  success. Thanks to @nitishkp001.
+
+- **`video extend` on flow.google.com no longer fails its catalog write, and reports the
+  length it added.** Measured 2026-11-08 with the Omni extend key, Flow grows the source clip
+  in place, under the source's media id. An extend is in place when Flow returns the
+  source's own id. Nothing is written for it at submit, so a failed or timed-out run leaves
+  the source row as it was; once Flow reports it done, the existing row gets `extended_by`,
+  `extend_workflow_id` and `extended_at` instead of a failing duplicate insert (a source the
+  catalog does not hold stays unrecorded). In that case `--json` reads
+  `seconds_added`/`seconds_billed` from the key's `_<n>s` token (4/4 for
+  `macaron_cookie_extend_4s`), or reports `null` when the key names no length; a separate
+  segment keeps 7/8. The default output file gets a random tag when
+  `<date>/<media-id>_extend.mp4` already exists, so a same-day re-run keeps the earlier
+  file. The help no longer says the extension alone is downloaded or that each run leaves a
+  new scene (#1184).
+- **Usage telemetry recorded the wrong command after a root flag ([#1209](https://github.com/ffroliva/gflow-cli/issues/1209)).**
+  `gflow -v auth list` counted as `gflow`, because a flag was treated as taking a value.
+
+### Security
+
+- **Error messages and saved failure records no longer leak flow.google.com secrets.** reCAPTCHA
+  tokens, the page's XSRF value and private image links are now replaced with a placeholder,
+  including when a long reply is cut short for the message. Media ids stay readable, so a
+  recovery message can still name the clip. Very long replies no longer stall error reporting.
+  Thanks to @ziyedbe (#987).
+
 ## [0.99.0] — 2026-11-14
 
 ### Added
@@ -7088,7 +7205,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...HEAD
+[0.100.0]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
 [0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0

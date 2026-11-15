@@ -195,7 +195,12 @@ class WorkspaceSurface(FlowSession):
         finally:
             self._checkin_page(page)
 
-    def _labs_project_route_refused(self, exc: AuthExpiredError | WireFormatError) -> bool:
+    def _labs_project_route_refused(
+        self,
+        exc: AuthExpiredError | WireFormatError,
+        *,
+        event: str = "project.labs_route_refused",
+    ) -> bool:
         """Is this the labs project route's measured refusal, worth trying flow.google.com?
 
         Measured 2026-09-17 on four profiles, 12/12: 404 "Flow RPCs have been deprecated
@@ -207,7 +212,7 @@ class WorkspaceSurface(FlowSession):
         """
         refused = self.settings.flow_host == "auto" and exc.status in (401, 404)
         if refused:
-            logger.info("project.labs_route_refused", status=exc.status, issue_ref="#864")
+            logger.info(event, status=exc.status, issue_ref="#864")
         return refused
 
     async def rename_project(self, project_id: str, new_title: str) -> JsonObject:

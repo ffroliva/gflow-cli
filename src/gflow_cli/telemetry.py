@@ -557,7 +557,8 @@ def _option_for_arg(group: click.Group, arg: str) -> click.Option | None:
 
 def _option_argv_width(group: click.Group, arg: str) -> int:
     option = _option_for_arg(group, arg)
-    if option and option.nargs and "=" not in arg:
+    # A flag takes no value, though Click reports nargs=1 for it (#1209).
+    if option and not option.is_flag and not option.count and option.nargs and "=" not in arg:
         return option.nargs + 1
     return 1
 
@@ -577,7 +578,7 @@ def _command_path(root: click.Group, argv: Sequence[str]) -> tuple[str, click.Co
         command = group.commands.get(arg)
         if command is None:
             break
-        path.append(arg)
+        path.append(command.name or arg)  # an alias (`video gen`) counts as its command
         index += 1
         if not isinstance(command, click.Group):
             leaf = command

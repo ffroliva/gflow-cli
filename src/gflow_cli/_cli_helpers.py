@@ -35,13 +35,15 @@ been removed. Both error handlers now import
 
 from __future__ import annotations
 
+import copy
 import functools
+import json
 import re
 import sys
 import traceback
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import click
 import structlog
@@ -60,11 +62,12 @@ from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Callable, Coroutine, Iterator
 
     from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
+_CommandT = TypeVar("_CommandT", bound=click.Command)
 _console = Console()
 
 # Explicit re-export list. The underscore prefix on ``_resolve_profile`` and
@@ -87,12 +90,20 @@ __all__ = [
     "_resolve_profile",
     "_validate_project_id",
     "apply_tool_option",
+    "BridgeCommand",
+    "bridge_params",
+    "cli_leaves",
+    "command_tree",
+    "help_json_path",
     "default_project",
     "deprecated_alias_option",
     "out_file_option",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
+    "run_bridged",
+    "spends_credits",
+    "spends_credits_decision",
     "tool_option",
     "upscale_out_dir_option",
 ]
@@ -302,6 +313,130 @@ def tool_option(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
+_SPENDS_CREDITS_ATTR = "gflow_spends_credits"
+
+
+def spends_credits(value: bool) -> Callable[[_CommandT], _CommandT]:
+    """Record whether a leaf command submits a Flow generation (#1203).
+
+    Goes OUTERMOST, above ``@<group>.command(...)``, so it marks the Command object.
+    True means a new generation is submitted: a video spends Veo credits, an image spends
+    the daily image quota. Every leaf needs a decision; ``tests/cli/test_help_json.py``
+    fails on an undecorated one.
+    """
+
+    def mark(cmd: _CommandT) -> _CommandT:
+        setattr(cmd, _SPENDS_CREDITS_ATTR, value)
+        return cmd
+
+    return mark
+
+
+def spends_credits_decision(cmd: click.Command) -> bool | None:
+    """The ``@spends_credits`` value of *cmd*, or None when it was never decided."""
+    return getattr(cmd, _SPENDS_CREDITS_ATTR, None)
+
+
+def cli_leaves(
+    group: click.Group, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], click.Command, list[str]]]:
+    """Yield ``(path, command, aliases)`` for every runnable command under *group*.
+
+    That is every plain command plus every ``invoke_without_command`` group (bare
+    ``gflow auth`` runs). Hidden commands and groups are skipped. A command registered
+    under several names in one group yields once, under its first name; the other names
+    are its aliases.
+    """
+    names: dict[int, list[str]] = {}
+    for name, cmd in group.commands.items():
+        names.setdefault(id(cmd), []).append(name)
+    for first, *aliases in names.values():
+        cmd = group.commands[first]
+        if cmd.hidden:
+            continue
+        if not isinstance(cmd, click.Group) or cmd.invoke_without_command:
+            yield (*path, first), cmd, aliases
+        if isinstance(cmd, click.Group):
+            yield from cli_leaves(cmd, (*path, first))
+
+
+def _jsonable(value: Any) -> Any:
+    if callable(value):
+        return None
+    return json.loads(json.dumps(value, default=str))  # Path, tuple -> JSON-native
+
+
+def _param_json(param: click.Parameter) -> dict[str, Any]:
+    info = param.to_info_dict()
+    is_option = isinstance(param, click.Option)
+    long = [o for o in param.opts if o.startswith("--")]
+    return {
+        "name": (long or param.opts)[0] if is_option else param.human_readable_name,
+        "opts": [*param.opts, *param.secondary_opts] if is_option else [],
+        "type": "flag" if is_option and info["is_flag"] else param.type.name,
+        "choices": _jsonable(info["type"].get("choices")),
+        "multiple": param.multiple,
+        "nargs": param.nargs,
+        "default": _jsonable(info["default"]),
+        "required": param.required,
+        "help": getattr(param, "help", None),
+    }
+
+
+def command_tree(root: click.Group, prefix: tuple[str, ...] = ()) -> dict[str, Any]:
+    """The ``--help --json`` payload: every runnable command at or under *prefix* (#1203)."""
+    from gflow_cli import __version__
+
+    return {
+        "schema": 1,
+        "name": "gflow",
+        "version": __version__,
+        "commands": [
+            {
+                "path": list(path),
+                "summary": cmd.get_short_help_str(limit=300),
+                "aliases": aliases,
+                "params": [_param_json(p) for p in cmd.params if not getattr(p, "hidden", False)],
+                "spends_credits": spends_credits_decision(cmd),
+            }
+            for path, cmd, aliases in cli_leaves(root)
+            if path[: len(prefix)] == prefix
+        ],
+    }
+
+
+# Parsed alongside each command's own options so a `--json` token is recognised where
+# it is an option and not where another option consumes it as a value.
+_HELP_JSON_FLAG = click.Option(["--json", "help_json"], is_flag=True, expose_value=False)
+
+
+def help_json_path(root: click.Group, args: list[str]) -> tuple[str, ...] | None:
+    """The command path a ``--help --json`` request names, or None when there is none.
+
+    Resolution goes through Click's own parser and ``resolve_command``, level by level as
+    ``click.shell_completion`` does, so option widths, option values and unknown commands
+    are Click's, not a guess from the raw tokens.
+    """
+    cmd: click.Command = root
+    ctx = click.Context(root, info_name="gflow", resilient_parsing=True)
+    path: list[str] = []
+    while True:
+        parser = cmd.make_parser(ctx)
+        _HELP_JSON_FLAG.add_to_parser(parser, ctx)
+        opts, rest, _ = parser.parse_args(args=list(args))
+        help_option = cmd.get_help_option(ctx)
+        if help_option and help_option.name in opts and "help_json" in opts:
+            return tuple(path)
+        if not isinstance(cmd, click.Group) or not rest:
+            return None
+        name, sub, args = cmd.resolve_command(ctx, rest)
+        if sub is None or name is None:
+            return None
+        cmd = sub
+        path.append(sub.name or name)  # an alias resolves to the leaf's own name
+        ctx = click.Context(sub, parent=ctx, info_name=name, resilient_parsing=True)
+
+
 def _parse_tool_spec(spec: str) -> tuple[str, dict[str, str]]:
     name, _, raw_opts = spec.partition(":")
     options: dict[str, str] = {}
@@ -491,6 +626,131 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     # found before retention ages it out.
     _print_incident_ref(getattr(exc, "incident_ref", None))
     return 1
+
+
+# ------------------------------------------------------------ bridge verbs (#1193)
+# `image generate` / `video generate` pick the mode verb from the inputs and then ARE that verb:
+# the raw arguments are parsed again by the mode verb itself, so its envvars, callbacks,
+# required checks, parameter sources and "No such option" errors are a direct call's.
+
+_BRIDGE_ARGS_META = "gflow.bridge_args"
+
+
+class BridgeCommand(click.Command):
+    """A bridge verb: routes on its raw arguments, then hands them to the resolved verb.
+
+    Only ``--help`` and shell completion parse against the union of the mode verbs'
+    options. A run parses loosely (no types, callbacks, envvars or required checks) just
+    to read the routing inputs, so every other option is judged by the resolved verb.
+    """
+
+    #: Deprecated spellings the mode verbs accept and a bridge refuses (set by bridge_params).
+    refused: tuple[click.Option, ...] = ()
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        ahead = args[: args.index("--")] if "--" in args else args
+        if ctx.resilient_parsing or any(a in ctx.help_option_names for a in ahead):
+            return super().parse_args(ctx, args)
+        ctx.meta[_BRIDGE_ARGS_META] = list(args)
+        ctx.params = _routing_values(ctx, self, args)
+        return []
+
+
+def _routing_values(ctx: click.Context, cmd: BridgeCommand, args: list[str]) -> dict[str, Any]:
+    """The bridge's arguments read loosely: ``positionals`` plus each option's raw value."""
+    options = (p for p in (*cmd.params, *cmd.refused) if isinstance(p, click.Option))
+    router = click.Command(
+        cmd.name,
+        params=[click.Argument(["positionals"], nargs=-1), *map(_loose_copy, options)],
+        context_settings={"ignore_unknown_options": True, "help_option_names": []},
+    )
+    values = router.make_context(ctx.info_name, list(args), parent=ctx.parent).params
+    for param in cmd.refused:
+        if values.pop(param.name or "", None):
+            typed = next((a for a in args if a.split("=", 1)[0] in param.opts), param.opts[0])
+            raise click.NoSuchOption(typed, ctx=ctx)
+    return values
+
+
+def _loose_copy(param: click.Option) -> click.Option:
+    """*param* reduced to its spelling and arity, so reading it can never fail or prompt."""
+    loose = copy.copy(param)
+    loose.required = False
+    loose.callback = None
+    loose.envvar = None
+    loose.allow_from_autoenv = False
+    loose.prompt = None
+    loose.is_eager = False
+    if not (param.is_flag or param.count):
+        loose.type = click.STRING
+        loose.default = None
+    return loose
+
+
+def bridge_params(
+    cmd: BridgeCommand,
+    *modes: click.Command,
+    exclude: tuple[str, ...] = (),
+    help_for: dict[str, str] | None = None,
+) -> None:
+    """Give *cmd* its own arguments plus every mode verb's options, for ``--help``.
+
+    An option a mode requires (``--ref``) is relaxed, and ``help_for`` rewrites help that
+    only reads right on one mode verb, each on a copy so the mode verb is untouched. A
+    deprecated spelling (``-o/--output PATH``, #1158, and *exclude*) is refused instead: a
+    new verb starts on the current flags.
+    """
+    overrides = help_for or {}
+    params = list(cmd.params)
+    refused: dict[str, click.Option] = {}
+    seen = {p.name for p in params}
+    for param in (p for mode in modes for p in mode.params):
+        if isinstance(param, click.Option) and (
+            isinstance(param, DeprecatedAliasOption) or param.name in exclude
+        ):
+            refused.setdefault(param.name or "", param)
+        elif not isinstance(param, click.Argument) and param.name not in seen:
+            seen.add(param.name)
+            params.append(_bridge_copy(param, overrides))
+    cmd.params = params
+    cmd.refused = tuple(refused.values())
+
+
+def _bridge_copy(param: click.Parameter, overrides: dict[str, str]) -> click.Parameter:
+    """*param* as the bridge shows it: optional, and with its help rewritten if asked."""
+    if not param.required and param.name not in overrides:
+        return param
+    param = copy.copy(param)
+    param.required = False
+    if isinstance(param, click.Option) and param.name in overrides:
+        param.help = overrides[param.name]
+    return param
+
+
+def run_bridged(ctx: click.Context, mode: click.Command, why: str) -> None:
+    """Run *mode* on the bridge's raw arguments, exactly as if it had been called.
+
+    A usage error the mode raises names the verb the bridge resolved to and why.
+    """
+    group = ctx.parent.info_name if ctx.parent is not None else ""
+    raw: list[str] | None = ctx.meta.get(_BRIDGE_ARGS_META)
+    if raw is None:
+        msg = (
+            f"`gflow {group} {ctx.info_name}` routes on its command-line arguments; run it "
+            "from the command line, not through ctx.invoke()."
+        )
+        raise click.UsageError(msg, ctx=ctx)
+    ctx.meta[json_output.BRIDGE_MODE_META] = mode.name
+    try:
+        sub = mode.make_context(mode.name, list(raw), parent=ctx.parent)
+        with sub:
+            mode.invoke(sub)
+    except click.UsageError as exc:
+        msg = (
+            f"{exc.format_message()}\n`gflow {group} {ctx.info_name}` resolved to "
+            f"`gflow {group} {mode.name}` ({why})."
+        )
+        raise click.UsageError(msg, ctx=exc.ctx) from exc
 
 
 def run_with_handlers(

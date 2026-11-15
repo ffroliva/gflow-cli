@@ -2137,6 +2137,14 @@ async def test_ensure_editor_skips_navigation_when_already_there() -> None:
     assert page.gotos == []
 
 
+async def test_ensure_editor_navigates_away_from_a_character_sub_route() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage(url="https://flow.google.com/project/p1/character/e1")
+    await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    assert page.gotos == ["https://flow.google.com/project/p1"]
+
+
 async def test_ensure_editor_exits_persisted_agent_mode_before_waiting_for_settings() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 

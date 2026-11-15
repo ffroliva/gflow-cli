@@ -17,14 +17,18 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from gflow_cli import __version__, profile_store, telemetry, telemetry_upload
+from gflow_cli import __version__, json_output, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
+from gflow_cli._cli_helpers import command_tree, help_json_path, spends_credits
+from gflow_cli.cli_cancel import cancel as _cancel_command
 from gflow_cli.cli_capabilities import capabilities as _capabilities_command
 from gflow_cli.cli_character import character as _character_group
 from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
 from gflow_cli.cli_docs import docs as _docs_command
 from gflow_cli.cli_doctor import doctor as _doctor_command
+from gflow_cli.cli_gen import image_gen as _image_gen_command
+from gflow_cli.cli_gen import video_gen as _video_gen_command
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
 from gflow_cli.cli_models import models as _models_command
@@ -131,7 +135,21 @@ def _render_profiles_table(profiles: list[profile_store.ProfileMeta]) -> None:
     )
 
 
-@click.group(cls=telemetry.CountingGroup)
+class _RootGroup(telemetry.CountingGroup):
+    """Answers ``--help --json`` anywhere in the tree before Click's eager --help prints."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        # Shell completion parses resiliently; like Click's own --help, stay out of it.
+        path = None if ctx.resilient_parsing else help_json_path(self, args)
+        if path is not None:
+            tree = command_tree(self, path)
+            if tree["commands"]:  # a hidden-only prefix falls through to Click's usage error
+                json_output.emit(tree)
+                ctx.exit(0)
+        return super().parse_args(ctx, args)
+
+
+@click.group(cls=_RootGroup)
 @click.version_option(__version__, "-V", "--version")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging.")
 @click.pass_context
@@ -192,9 +210,12 @@ def main(ctx: click.Context, verbose: bool) -> None:
     # #479: once-a-day PyPI update notice. Best-effort and cache-served — it
     # never blocks (a stale cache refreshes on a daemon thread for the next
     # run) and never raises; stderr so piped/JSON stdout stays clean.
-    update_notice = maybe_notify_update()
-    if update_notice:
-        _print_update_notice(update_notice)
+    # #1163: never show the cached banner on `gflow update` (or `gflow update --check`),
+    # which does its own live PyPI query and would contradict the result.
+    if ctx.invoked_subcommand != "update":
+        update_notice = maybe_notify_update()
+        if update_notice:
+            _print_update_notice(update_notice)
     if ctx.invoked_subcommand and ctx.invoked_subcommand != "telemetry":
         notice_at_command = sys.argv[1:3]
         if notice_at_command not in (["auth", "login"], ["mcp", "setup"]):
@@ -206,6 +227,7 @@ def main(ctx: click.Context, verbose: bool) -> None:
 # --- auth -------------------------------------------------------------------
 
 
+@spends_credits(False)
 @main.group(invoke_without_command=True)
 @click.pass_context
 def auth(ctx: click.Context) -> None:
@@ -259,6 +281,7 @@ def _maybe_rename_first_profile(
     return profiles
 
 
+@spends_credits(False)
 @auth.command("login")
 @click.option(
     "--profile",
@@ -349,6 +372,7 @@ def auth_login(profile: str | None, browser: str | None, account: str | None = N
         console.print(f"[dim]Set [bold]{profiles[0].name}[/bold] as default profile.[/dim]")
 
 
+@spends_credits(False)
 @auth.command("status")
 @click.option("--profile", default=None)
 def auth_status(profile: str | None) -> None:
@@ -416,6 +440,7 @@ def auth_status(profile: str | None) -> None:
     console.print(f"[green]Flow session verified{who}.[/green]")
 
 
+@spends_credits(False)
 @auth.command("renew")
 @click.option("--profile", default=None, help="Profile to renew. Defaults to the default profile.")
 @click.option("--all", "renew_all", is_flag=True, help="Renew every saved profile, one at a time.")
@@ -542,6 +567,7 @@ def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
     sys.exit(1 if failed else 0)
 
 
+@spends_credits(False)
 @auth.command("list")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table.")
 def auth_list(as_json: bool) -> None:
@@ -569,6 +595,7 @@ def auth_list(as_json: bool) -> None:
     _render_profiles_table(profiles)
 
 
+@spends_credits(False)
 @auth.command("use")
 @click.argument("name")
 def auth_use(name: str) -> None:
@@ -583,6 +610,7 @@ def auth_use(name: str) -> None:
     )
 
 
+@spends_credits(False)
 @auth.command("logout")
 @click.option("--profile", default=None)
 @click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt.")
@@ -627,6 +655,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
         )
 
 
+main.add_command(_cancel_command)
 main.add_command(_capabilities_command)
 main.add_command(_character_group)
 main.add_command(_credits_group)
@@ -638,6 +667,9 @@ main.add_command(_movie_group)
 main.add_command(_project_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
+for _name in ("generate", "gen"):  # bridge verbs (#1193), kept in cli_gen; `gen` is an alias
+    _video_group.add_command(_video_gen_command, name=_name)
+    _image_group.add_command(_image_gen_command, name=_name)
 main.add_command(_instructions_group)
 main.add_command(_run_command)
 main.add_command(_models_command)
@@ -677,6 +709,7 @@ def _activate_no_spend(no_spend: bool) -> None:
         sys.stderr.write("[gflow] no-spend mode: generate tools not registered\n")
 
 
+@spends_credits(False)
 @mcp.command("run")
 @click.option(
     "--profile",
@@ -721,6 +754,7 @@ def mcp_run(profile: str | None, no_spend: bool) -> None:
     main_stdio()
 
 
+@spends_credits(False)
 @mcp.command("setup")
 @click.option(
     "--target",
@@ -768,6 +802,7 @@ def mcp_setup(target: str) -> None:
 # --- serve ------------------------------------------------------------------
 
 
+@spends_credits(False)
 @main.command()
 @click.option("--port", default=8000, show_default=True, help="Port to bind the daemon to.")
 @click.option(

@@ -15,6 +15,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     out_file_option,
     run_with_handlers,
+    spends_credits,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.scene import Scene, SceneWorkflow, SceneWorkflowMetadata
@@ -65,6 +66,7 @@ def scene() -> None:
     """Compose ordered, trimmable video clips into a Flow Scene (Add Clip)."""
 
 
+@spends_credits(False)
 @scene.command("create")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.argument("clip_refs", nargs=-1, required=True)
@@ -118,6 +120,7 @@ def create(
     )
 
 
+@spends_credits(False)
 @scene.command("show")
 @click.option("--scene", "scene_id", required=True, help="Scene id to read back.")
 @click.option("--project", "project_id", required=True, help="Flow project id.")

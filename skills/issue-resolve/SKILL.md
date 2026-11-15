@@ -132,7 +132,8 @@ If any fails → do not resolve; return to `issue-assessment` (reply-only).
 ## Autonomy envelope (the action contract)
 
 Allowed autonomously:
-- ✅ Post one issue comment (status / reply to reporter).
+- ✅ Post status comments on the issue: the claim when work starts (step 1), the PR link
+  when it opens, and a reply to the reporter.
 - ✅ Open a **draft** PR (push a `bugfix/`-prefixed branch off `develop`).
 - ✅ Run **browser-free / credit-free** verification (unit, lint, type, recording-verif, Gemini tool-path).
 - ✅ Run the council review (`/gflow:pr-council-review` / `/gflow:branch-review`), `/gflow:check`,
@@ -157,9 +158,33 @@ Urgency does not make an unverified fix verified.
 
 ## Protocol
 
-### 1. Isolate
+### 1. Isolate and claim
 Worktree off `origin/develop` on a `bugfix/<slug>` branch (use the
 `superpowers:using-git-worktrees` skill). Never work on `develop`/`main`.
+
+Then claim the issue, **before the first spike or test**, so nobody else starts the same
+fix without knowing:
+
+1. **Look first**, in three places, because each finds work the others miss:
+   - `gh issue view <N> --comments --json comments,closedByPullRequestsReferences` shows
+     claims, and PRs linked from the issue's sidebar that never mention its number.
+   - `gh pr list --state open --search "<N>"` shows PRs that cite the number.
+   - `git ls-remote --heads origin | grep -i "<N>"` shows a pushed branch with no PR yet.
+
+   If someone has claimed the issue, opened a PR or pushed a branch for it, reconcile
+   with them before writing code: review their PR, take over with credit, or agree a split.
+2. **Say so on the issue:** post one comment, for example "Working on this on
+   `bugfix/<slug>`; PR to follow." Include anything a contributor would need to avoid
+   duplicating you, such as the approach if it is already decided.
+3. **Make the work visible:** push the branch right after its first commit
+   (`git push -u origin bugfix/<slug>`), so `git ls-remote` and the branch list show it.
+   Keep pushing as you commit.
+
+> **Why.** On 2026-11-15, #1298 was worked for three hours (spike, plan, implementation,
+> reviews) on a branch that existed only locally, with no comment on the issue. At 10:34
+> a contributor opened #1303 for the same issue, with a different and weaker fix, because
+> nothing showed the issue was taken. The two efforts met only at merge time, through
+> the PR-overlap hook. A one-line claim and an early push would have prevented it.
 
 ### 2. Find the root cause — lane steps 0–2
 Apply **the surface gate** above, then:
@@ -252,6 +277,8 @@ findings (or record why you declined each), then **STOP** — a human promotes a
   and enforced by `tests/features/test_e2e_binding_guard.py` rather than left to
   judgement.
 - Working on `develop` instead of a `bugfix/` branch off it (memory: `develop-divergence-recovery`).
+- Working an issue without claiming it, or on a branch that exists only locally. A
+  contributor then starts the same fix in good faith (step 1, #1298 and #1303).
 - Treating step 6's council as optional, or asking permission to run it. It is neither
   (memory: `council-review-is-standing-authorized`). Ask before merging, marking a PR
   ready, or spending credits — never before reviewing.

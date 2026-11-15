@@ -22,7 +22,7 @@ class _FailingCharacterClient:
     """Fake FlowApiClient whose list_characters() always raises, simulating an
     upstream Flow API outage (network/auth/rate-limit/etc.)."""
 
-    async def list_characters(self, project_id: str) -> list[Any]:
+    async def list_characters(self, project_id: str, *, migrated_read: bool = True) -> list[Any]:
         raise NetworkError("connection reset")
 
 
@@ -30,7 +30,7 @@ class _EmptyCharacterClient:
     """Fake FlowApiClient whose list_characters() succeeds with zero rows —
     distinct from an outage."""
 
-    async def list_characters(self, project_id: str) -> list[Any]:
+    async def list_characters(self, project_id: str, *, migrated_read: bool = True) -> list[Any]:
         return []
 
 
@@ -436,3 +436,67 @@ async def test_resolve_and_apply_keeps_a_passed_character_single(
     )
     assert out.reference_entities == ("ent-sussy",)
     assert out.reference_entity_names == ("Sussy",)
+
+
+@pytest.mark.parametrize("flow_host", ["auto", "flow.google.com"])
+async def test_resolve_and_apply_on_flow_google_com_keeps_character_catalog_unavailable(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    flow_host: str,
+) -> None:
+    """Slice 2 must not change @Name mention routing on flow.google.com (slice 5 owns that)."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from gflow_cli.api.character import Character
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.config import Settings
+    from gflow_cli.errors import WireFormatError
+    from gflow_cli.services.mentions import resolve_and_apply
+
+    monkeypatch.setattr("gflow_cli.data.queries.list_project_media_assets", lambda **_: [])
+    client = FlowApiClient(
+        profile_dir=tmp_path / "prof",
+        settings=Settings(flow_host=flow_host),
+    )
+    client._page = MagicMock()  # noqa: SLF001
+    client._get_json = AsyncMock(  # type: ignore[method-assign]
+        side_effect=WireFormatError(
+            detail="Flow RPCs have been deprecated and disabled.", status=404
+        )
+    )
+    sussy = Character(
+        entity_id="00000000-0000-4000-8000-000000000004",
+        display_name="Sussy",
+        project_id="proj-1",
+        workflow_ids=("wf-1",),
+        voice="Aoede",
+        personality=None,
+        thumbnail_media_id=None,
+    )
+    with patch(
+        "gflow_cli.api.transports.migrated_character.read_project",
+        new=AsyncMock(return_value=MagicMock(characters=(sussy,))),
+    ) as migrated_read:
+        img_out = await resolve_and_apply(
+            client,
+            GenerateImageRequest(prompt="@Sussy cocinando"),
+            path="image",
+            project_id="proj-1",
+            tool_specs=(),
+        )
+        assert img_out.reference_entities == ()
+        assert img_out.reference_entity_names == ("Sussy",)
+        assert img_out.prompt == "Sussy cocinando"
+
+        with pytest.raises(MentionIndexUnavailableError, match="character"):
+            await resolve_and_apply(
+                client,
+                GenerateVideoRequest(prompt="@Sussy runs"),
+                path="video",
+                project_id="proj-1",
+                tool_specs=(),
+            )
+
+        migrated_read.assert_not_awaited()

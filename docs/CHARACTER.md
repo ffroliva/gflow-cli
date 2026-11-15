@@ -91,7 +91,7 @@ reCAPTCHA browser path and consume credits; all structural operations are free R
 | Generate reference image | `POST /v1/projects/{projectId}/flowMedia:batchGenerateImages` | **Flow UI (passive-capture)** — direct POST is 403-walled | **yes** | **yes** |
 | Set primary image | `PATCH /v1/flowWorkflows/{workflowId}` | Bearer REST | no | no |
 | Save character | `PATCH /v1/flow/entities` | Bearer REST | no | no |
-| List / show | `GET /fx/api/trpc/flow.projectInitialData` | tRPC (session) | no | no |
+| List / show | `GET /fx/api/trpc/flow.projectInitialData` (or `batchexecute` `Zzl0ze` on `flow.google.com`) | tRPC / batchexecute (session) | no | no |
 | Reuse in video | `POST /v1/video:batchAsyncGenerateVideoReferenceImages` | **Flow UI (passive-capture)** — reCAPTCHA-gated | **yes** | **yes** |
 | Poll reuse status | `POST /v1/video:batchCheckAsyncVideoGenerationStatus` | Bearer REST | no | no |
 | (optional) Archetype prompt | `POST /fx/api/trpc/flow.generateCharacterPrompt` | tRPC (session) | no | no |
@@ -231,9 +231,10 @@ sequenceDiagram
 - **Out** (VERIFIED) the persisted `entity`, echoing
   `{ entity: { projectId, entityId, entityInfo: { entityType:"CHARACTER", displayName, characterInfo }, createTime, updateTime } }`.
 
-### 6.5 `flow.projectInitialData` (list/show)
-- **Out** `result.data.json.projectContents.entities[]`, each:
+### 6.5 `flow.projectInitialData` and `Zzl0ze` (list/show)
+- **Out (`labs.google` `flow.projectInitialData`):** `result.data.json.projectContents.entities[]`, each:
   `{ projectId, entityId, entityInfo{ entityType:"CHARACTER", displayName, characterInfo{ imageReferences, audioReferences, personalityNotes } }, thumbnailMediaId, thumbnailDimensions, createTime, updateTime }`
+- **Out (`flow.google.com` `batchexecute` `Zzl0ze`, #875 / #987):** 8-slot positional array where slot `[1]` is workflows (`[workflow_id, _, _, [filename, …, media_id, …], project, entity_id?]`), slot `[2]` is media (`[media_id, project, workflow_id, …, <download links>…]`), slot `[3]` is the live voice catalog (`[id, kind, "Name", [id, …, [[Name, description, …]]]]`), and slot `[5]` is characters (`[project, entity_id, _, [1, name, [images, voices, personality]], thumbnail_media_id, [w, h], created, updated]`). `images` is `[[workflow_id], …]` (slot 0 portrait, 1 body), `voices` is `[[null, "<wire id>"]]` or null (mapped back to the canonical `VOICES` name, e.g. `"aoede"` → `"Aoede"`, with unknown wire ids kept verbatim), and only rows with `info[0] == 1` and matching `project` are returned as `Character` DTOs (without storing signed URLs). Under `GFLOW_CLI_FLOW_HOST=auto`, `list_characters` falls back to `Zzl0ze` when `flow.projectInitialData` answers HTTP 401/404.
 
 ### 6.6 `video:batchAsyncGenerateVideoReferenceImages` (reuse)
 - **In** (per request item):
@@ -253,7 +254,7 @@ sequenceDiagram
 
 ## 7. Voices
 
-A preset library of **29 Gemini-TTS voices** is offered in the UI (`api/character.py::VOICES`).
+A preset library of **30 Gemini-TTS voices** is offered in the UI (`api/character.py::VOICES`).
 `gflow character voices [--json]` lists them — each with a short descriptor and a preview **sample URL**
 following the pattern `https://gstatic.com/aitestkitchen/voices/samples/{Name}.wav`.
 
@@ -298,13 +299,13 @@ is **shipped** (see the table below).
 | Command | Maps to |
 |---|---|
 | `gflow character create --project <id> --name <name> --face-prompt … [--body-prompt …] [--voice <Name>] [--personality …] [--model nano2\|nanopro] [--profile …] [--locale en-US] [--json]` *(SHIPPED v0.12.0 — shipped option names; characters have NO aspect-ratio control)* | createEntity → gen face (slot 0) → commit_workflow → optional gen body (slot 1) → commit_workflow → patch_entity, via the persist-before-spend saga (§4). `--body-prompt` is a **body/outfit DESCRIPTION** — gflow wraps it in a self-contained **front/side/back triptych** instruction and seeds it with the generated face (auto-attached as the body-mode reference), so one body generation yields all three angles. Generated images are **downloaded** to storage; the result reports each slot's local path. |
-| `gflow character list --project <id> [--json]` *(SHIPPED v0.12.0)* | projectInitialData → entities[CHARACTER] |
-| `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | projectInitialData (single); name collision → exit 11 with disambiguation hint |
-| `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 29 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
+| `gflow character list --project <id> [--json]` *(SHIPPED v0.12.0)* | `projectInitialData` on `labs.google`, or `batchexecute` `Zzl0ze` on `flow.google.com` (#875, #987) → `entities[CHARACTER]` |
+| `gflow character show --project <id> (--id <entityId> \| --name <displayName>) [--json]` *(SHIPPED v0.12.0)* | `projectInitialData` or `Zzl0ze` (single); name collision → exit 11 with disambiguation hint |
+| `gflow character voices [--json]` *(SHIPPED v0.12.0)* | list the 30 preset voices (name / description / sample-url); language-agnostic discovery, mirrors `gflow models --json` |
 | `gflow video … --character <id>` *(repeatable → multi-ref, explicit flag)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
 | `gflow character rm` (`--id`/`--name`) | **Shipped v0.13.0 (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
 | `gflow image … --character <id>` *(explicit flag)* | id-based reuse **shipped** as `gflow image t2i/i2i --reference-entity <id>` (wire captured 2026-06-08, `api/image.py`) |
-| `@Name` in a t2i/i2i/video prompt | name-based mention resolution **shipped v0.40.0 (#344)** — resolves to the staged character entity, works on both image and video paths; see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) |
+| `@Name` in a t2i/i2i/video prompt | name-based mention resolution **shipped v0.40.0 (#344)** — resolves to the staged character entity, works on both image and video paths (on flow.google.com, video `@Name` is not ported yet and exits 29 before submit); see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) |
 
 All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
 reuse) is project-scoped; mirrors `gflow scene` / `gflow data` ergonomics. Use `--id`/`--name` flags, never a
@@ -541,7 +542,7 @@ body-mode icon/reference settle signals + picker-include structural selectors un
 
 The following are explicitly **out of the shipped scope** and tracked for future work:
 
-- **Voice listing via the live API.** The 29-voice catalog is currently a **hardcoded constant**
+- **Voice listing via the live API.** The 30-voice catalog is currently a **hardcoded constant**
   (`api/character.py::VOICES`). A future feature should fetch the live voice list from Flow's voice API
   (endpoint TBD) so the catalog cannot drift from what Flow actually offers. As part of this, **confirm the
   wire-case of `presetVoiceId`** — a prior live run sent lowercase `"charon"` and Flow persisted it, but the
