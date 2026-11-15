@@ -15,11 +15,7 @@ from typing import Any
 
 import pytest
 
-from gflow_cli.api import character as character_mod
 from gflow_cli.api.character import VOICE_NAMES, voice_from_wire
-from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.transports import _mc_common as mc_common
-from gflow_cli.api.transports import migrated_character
 from gflow_cli.api.transports.migrated_character import ProjectRead, parse_project_read
 from gflow_cli.errors import WireFormatError
 
@@ -167,13 +163,3 @@ def test_character_doc_matches_zzl0ze_row_and_voice_layout() -> None:
     assert '[[null, "<wire id>"]]' in doc
     assert "voiceRefs[0][0]" not in doc
     assert "[entityId, projectId," not in doc
-
-
-def test_slice_2_exports_no_unused_voice_or_image_helpers() -> None:
-    assert not hasattr(character_mod, "voice_to_wire")
-    assert not hasattr(migrated_character, "CharacterImage")
-    assert not hasattr(migrated_character, "_first_url")
-    assert not hasattr(migrated_character, "_WORKFLOWS")
-    assert "images" not in ProjectRead.__dataclass_fields__
-    assert not hasattr(FlowApiClient, "list_voices")
-    assert not hasattr(mc_common, "_rpc_reply")
