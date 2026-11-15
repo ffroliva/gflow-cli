@@ -252,7 +252,7 @@ async def test_unreadable_reply_reply_is_not_misreported_as_a_timeout(rpcid: str
         await page.fire((_batch(rpcid), None))
 
     with pytest.raises(WireFormatError, match="body was unavailable") as exc:
-        await mc._rpc_reply(page, rpcid, action, timeout_s=0.02, write=True)  # type: ignore[arg-type]
+        await mc.rpc_reply(page, rpcid, action, timeout_s=0.02, write=True)  # type: ignore[arg-type]
     assert exc.value.route == f"batchexecute:{rpcid}"
     assert not is_retryable(exc.value)
     assert "outcome" in exc.value.remediation_hint
@@ -343,7 +343,23 @@ async def test_a_read_rpc_with_a_lost_body_still_times_out() -> None:
         await page.fire((_batch(mc.RENAME_PROJECT_RPC), None))
 
     with pytest.raises(TransportTimeoutError, match="1 batchexecute bodies unreadable"):
-        await mc._rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
+        await mc.rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
+
+
+async def test_rpc_reply_surfaces_refusal_frame_at_once() -> None:
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    err_frame = json.dumps(
+        [["wrb.fr", mc.RENAME_PROJECT_RPC, None, None, None, [3, "bad"], "generic"]]
+    )
+    body = f")]}}'\n\n{len(err_frame)}\n{err_frame}\n"
+
+    async def action() -> None:
+        await page.fire(("https://flow.google.com/project", "ignored"))
+        await page.fire((_batch(mc.RENAME_PROJECT_RPC), body))
+
+    with pytest.raises(WireFormatError, match=f"refused {mc.RENAME_PROJECT_RPC}") as exc:
+        await mc.rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
+    assert exc.value.route == f"batchexecute:{mc.RENAME_PROJECT_RPC}"
 
 
 @pytest.mark.parametrize(
@@ -646,3 +662,42 @@ async def test_create_anchor_wait_stays_at_the_selector_ceiling(
     monkeypatch.setattr(mc, "_wait_anchor", spy)
     await mc.create_project(_page_creating(title="t"), "t")  # type: ignore[arg-type]
     assert seen == [mc.ANCHOR_TIMEOUT_S] and mc.ANCHOR_TIMEOUT_S == 30.0
+
+
+class TestIsAt:
+    """Whether a page is ON a route — not under it (#639 option C, live 2026-10-16).
+
+    A prefix test accepted `/project/<id>/character/<eid>` as `/project/<id>`: after an
+    import left the page on a character editor, image generation drove the editor's
+    prompt box and misreported the account as agent-only (exit 25), and a project
+    rename would have typed into the CHARACTER's title field (same `flow-editable-text`).
+    """
+
+    _P = "https://flow.google.com/project/p1"
+
+    def test_the_route_itself_with_a_query_is_at_it(self) -> None:
+        from gflow_cli.api.transports.migrated_composer import is_at
+
+        assert is_at(self._P + "?pli=1", self._P)
+        assert is_at(self._P + "/", self._P)
+
+    def test_a_sub_route_is_not_at_it(self) -> None:
+        from gflow_cli.api.transports.migrated_composer import is_at
+
+        assert not is_at(self._P + "/character/e1", self._P)
+        assert not is_at(self._P + "/character", self._P)
+
+    def test_another_project_or_host_is_not_at_it(self) -> None:
+        from gflow_cli.api.transports.migrated_composer import is_at
+
+        assert not is_at("https://flow.google.com/project/p10", self._P)
+        assert not is_at("https://labs.google/project/p1", self._P)
+        assert not is_at("", self._P)
+
+    async def test_rename_navigates_away_from_a_character_sub_route(self) -> None:
+        page = FakePage(url=f"https://flow.google.com/project/{PID}/character/e1")
+        page.on_enter = (_batch(mc.RENAME_PROJECT_RPC), _frame("o8DA4", ["t"]))
+
+        await mc.rename_project(page, PID, "t")  # type: ignore[arg-type]
+
+        assert page.gotos == [f"https://flow.google.com/project/{PID}"]

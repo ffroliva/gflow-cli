@@ -9,7 +9,7 @@ No generation, upload, create or delete. Nothing is clicked.
 
 Arms, N >= 10 each, per read:
 - browser_cold : a new FlowApiClient (Chrome start, profile lease) + page.goto + the page's own
-                 reply, read with gflow's `_rpc_reply` (nzlxg: `client.get_credits()`, which is
+                 reply, read with gflow's `rpc_reply` (nzlxg: `client.get_credits()`, which is
                  exactly what `gflow credits` runs). Clock stops when the reply arrives; client
                  entry and Chrome teardown are also timed apart.
 - browser_warm : one FlowApiClient, its page parked on about:blank (untimed), then goto + the
@@ -195,7 +195,7 @@ def direct_arms(profile: str, specs: dict[str, dict[str, Any]], n: int) -> dict[
 
 
 async def browser_read(page: Any, rpc: str, spec: dict[str, Any]) -> None:
-    from gflow_cli.api.transports.migrated_composer import _rpc_reply, read_credits  # noqa: PLC0415
+    from gflow_cli.api.transports.migrated_composer import rpc_reply, read_credits  # noqa: PLC0415
 
     if rpc == "nzlxg":
         await read_credits(page, timeout_s=60)
@@ -204,7 +204,7 @@ async def browser_read(page: Any, rpc: str, spec: dict[str, Any]) -> None:
     async def load() -> None:
         await page.goto(f"{ORIGIN}{spec['path']}", wait_until="domcontentloaded", timeout=60_000)
 
-    await _rpc_reply(page, rpc, load, timeout_s=60)
+    await rpc_reply(page, rpc, load, timeout_s=60)
 
 
 async def browser_arms(profile: str, specs: dict[str, dict[str, Any]], n: int) -> dict[str, Any]:

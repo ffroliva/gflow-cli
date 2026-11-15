@@ -116,7 +116,9 @@ class AssetIndex:
         entities: list[Any] = []
         characters_unavailable = False
         try:
-            entities = list(await client.list_characters(project_id))
+            # Slice 2 keeps @Name mention resolution on the pre-branch read;
+            # slice 5 enables flow.google.com character mention resolution with a billed e2e.
+            entities = list(await client.list_characters(project_id, migrated_read=False))
         except GFlowError as exc:
             if not characters_optional:
                 raise MentionIndexUnavailableError(

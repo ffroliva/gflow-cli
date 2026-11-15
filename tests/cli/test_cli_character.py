@@ -347,9 +347,10 @@ def test_voices_json_parses_and_contains_known_presets():
     data = json.loads(res.output)
     assert data["status"] == "ok"
     assert isinstance(data["voices"], list)
-    assert len(data["voices"]) == 29
+    assert len(data["voices"]) == 30
     names = {v["name"] for v in data["voices"]}
     assert "Gacrux" in names
+    assert "Enceladus" in names
     assert "Zephyr" in names
     # Each entry carries name / description / sample_url
     first = data["voices"][0]

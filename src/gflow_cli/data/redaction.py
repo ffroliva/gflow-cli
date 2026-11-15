@@ -163,7 +163,7 @@ def redact_error_detail(detail: str) -> str:
 
 def scrub_secrets(text: str) -> str:
     """:func:`redact_error_detail` without the length cap, for a caller that runs its own
-    rules after this one and trims the result itself (``batchexecute._discovery_head``).
+    rules after this one and trims the result itself (``batchexecute.discovery_head``).
     Trimming first can cut a token into fragments shorter than any pattern's floor."""
     for pattern, replacement in _SECRET_TEXT_PATTERNS:
         text = pattern.sub(replacement, text)

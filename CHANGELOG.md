@@ -66,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still has the bug, close every gflow process, then run
   `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (venv) or
   `py -m pip install --user --upgrade gflow-cli` (`--user`).
+- **`gflow character list` and `show` now work on accounts Flow serves from `flow.google.com`; the voice list has 30 voices (`Enceladus` added).**
+  The MCP twins `gflow_character_list` and `gflow_character_show` return the same character
+  details on `flow.google.com` ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
+  Thanks to @ziyedbe ([#987](https://github.com/ffroliva/gflow-cli/pull/987)).
 - **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
   accepted and ignored. Link i's clip goes to `<stem>_<i><suffix>` next to PATH
   (`out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`), numbered over the whole manifest so

@@ -139,9 +139,9 @@ def test_retired_labs_rpc_does_not_tell_the_user_to_simplify_a_prompt() -> None:
     assert "File a bug" not in hint
     assert "projectInitialData" in hint
     assert "flow.google.com" in hint
-    # MEASURED 2026-09-20 (denon82, `character list`): pinning the host returns the
-    # SAME 404, because this read has no migrated arm. Suggesting it would repeat the
-    # very mistake this hint fixes, so the hint must never name the setting.
+    assert "character list" in hint
+    assert "has not ported this read" not in hint
+    assert "no working path today" not in hint
     assert "GFLOW_CLI_FLOW_HOST" not in hint
 
 

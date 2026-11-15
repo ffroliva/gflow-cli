@@ -243,7 +243,10 @@ def _clip_url(value: Any) -> str | None:
     return None if url and urlsplit(url).path.startswith("/asb/") else url
 
 
-def _discovery_head(payload: Any) -> str:
+def discovery_head(payload: Any) -> str:
+    """The first 200 chars of ``payload`` for a ``WireFormatError`` discovery, scrubbed.
+
+    Public since #987 slice 2: ``migrated_character`` builds its drift error with it."""
     # Scrub, then slice: slicing first cut tokens into fragments shorter than any token
     # pattern's floor, and those fragments survived. Scrub only the first 4 KB (two status
     # observers build this for every frame that does not match, a 459 KB listing), and
@@ -295,7 +298,7 @@ def generation_record(
                 "a bug at https://github.com/ffroliva/gflow-cli/issues with this error."
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     status_cell = _as_list(_at(rec, 5, 8))
     status: Any = status_cell[0] if status_cell else None
@@ -425,6 +428,6 @@ def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
                 "([media_uuid, …, workflow_uuid, …, details-with-https-url]) in the reply"
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     return records
