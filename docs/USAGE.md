@@ -1972,7 +1972,7 @@ be reached; after an upgrade `latest` is the version the venv actually reports;
   message carries the exact command to run yourself; a plain-venv `pip` install
   on Windows run through `gflow.exe` (pip uninstalls `gflow-cli` before attempting
   to replace the locked launcher, failing with `WinError 32` and leaving the
-  environment unusable): run `python -m gflow_cli update` or `python -m pip install --upgrade gflow-cli`;
+  environment unusable): run `<that venv's python> -m gflow_cli update` or `<that venv's python> -m pip install --upgrade gflow-cli` (or activate that venv first);
 - **after the manager ran** — first, the venv can no longer import gflow-cli at
   all (see below); then, the venv still reports the old version (a receipt
   pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
@@ -2011,7 +2011,7 @@ while it runs.
   locked launcher (`WinError 32`), leaving `gflow-cli` uninstalled and the venv
   broken. `gflow update` therefore refuses a pip upgrade run through `gflow.exe`
   on Windows before anything is spawned (exit 11) with a hint to run
-  `python -m gflow_cli update` (or `python -m pip install --upgrade gflow-cli`),
+  `<that venv's python> -m gflow_cli update` (or `<that venv's python> -m pip install --upgrade gflow-cli`),
   which holds no launcher open and upgrades cleanly.
 
 **Stop every other `gflow` process BEFORE you upgrade — not after.** The `uv tool`

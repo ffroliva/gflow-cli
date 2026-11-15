@@ -60,8 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   On Windows, `pip` removes the installed `gflow-cli` package before attempting to replace
   the entrypoint launcher, which fails with `WinError 32` when invoked through `gflow.exe`
   and leaves the environment unusable (`ModuleNotFoundError`). The command now exits 11
-  (`ConfigurationError`) upfront with instructions to run `python -m gflow_cli update`
-  or `python -m pip install --upgrade gflow-cli`, which hold no launcher lock and upgrade cleanly.
+  (`ConfigurationError`) upfront with instructions to run `<that venv's python> -m gflow_cli update`
+  or `<that venv's python> -m pip install --upgrade gflow-cli`, which hold no launcher lock and upgrade cleanly.
 - **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
   accepted and ignored. Link i's clip goes to `<stem>_<i><suffix>` next to PATH
   (`out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`), numbered over the whole manifest so

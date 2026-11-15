@@ -935,8 +935,28 @@ class TestWindowsPipLauncherLock:
         with pytest.raises(ConfigurationError, match="pip-installed `gflow.exe` launcher") as info:
             uc.run_update(check=False)
         hint = info.value.remediation_hint or ""
-        assert "python -m gflow_cli update" in hint
+        assert "-m gflow_cli update" in hint
         assert "-m pip install --upgrade gflow-cli" in hint
+
+    def test_windows_pip_launcher_spaced_python_quoted(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ConfigurationError
+
+        monkeypatch.setattr(uc.sys, "platform", "win32")
+        monkeypatch.setattr(uc.sys, "executable", r"C:\Work Tools\venv\Scripts\python.exe")
+        monkeypatch.setattr(uc.sys, "argv", [r"C:\Work Tools\venv\Scripts\gflow.exe", "update"])
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        monkeypatch.setattr(
+            uc, "_run_command", lambda cmd, *, capture_output: pytest.fail("must not spawn")
+        )
+        with pytest.raises(ConfigurationError, match="pip-installed `gflow.exe` launcher") as info:
+            uc.run_update(check=False)
+        hint = info.value.remediation_hint or ""
+        assert r'"C:\Work Tools\venv\Scripts\python.exe" -m gflow_cli update' in hint
+        expected_pip = r'"C:\Work Tools\venv\Scripts\python.exe" -m pip install --upgrade gflow-cli'
+        assert expected_pip in hint
 
     def test_windows_pip_launcher_check_mode_does_not_raise(
         self, index_install: Path, monkeypatch: pytest.MonkeyPatch

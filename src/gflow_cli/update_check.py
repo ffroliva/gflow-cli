@@ -362,13 +362,14 @@ def _require_runnable(inst: Installer, shown: str) -> None:
             ),
         )
     if sys.platform == "win32" and inst.name == "pip" and _is_running_as_launcher():
+        py_cmd = f'"{sys.executable}"' if " " in sys.executable else sys.executable
         raise ConfigurationError(
             "On Windows, a pip-installed `gflow.exe` launcher cannot be upgraded while running "
             "(pip uninstalls gflow-cli before failing on the locked launcher with WinError 32, "
             "leaving the environment unusable)",
             remediation_hint=(
-                "Run `python -m gflow_cli update` (or "
-                f"`{sys.executable} -m pip install --upgrade gflow-cli`) "
+                f"Run `{py_cmd} -m gflow_cli update` (or "
+                f"`{py_cmd} -m pip install --upgrade gflow-cli`) "
                 "from your shell instead."
             ),
         )
