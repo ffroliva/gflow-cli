@@ -30,12 +30,14 @@ from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlsplit
 
-from gflow_cli.data.redaction import redact_error_detail
+from gflow_cli.data.redaction import scrub_secrets
 from gflow_cli.errors import WireFormatError
 
 _XSSI_PREFIX = ")]}'"
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{120,}")
+_HEAD_DELIMITERS = " \"',[]"  # where a JSON or repr value ends
+_HEAD_SCRUB_CHARS = 4096
 
 STATUS_RUNNING = 2
 STATUS_DONE = 3
@@ -241,23 +243,25 @@ def _clip_url(value: Any) -> str | None:
     return None if url and urlsplit(url).path.startswith("/asb/") else url
 
 
-_CAPABILITY_URL_RE = re.compile(
-    r"\bhttps?://lh3\.googleusercontent\.com/asb/[^\s\"'\\]+",
-    re.IGNORECASE,
-)
-
-
 def discovery_head(payload: Any) -> str:
-    """First 200 chars of *payload* AFTER scrubbing secrets and capability URLs."""
+    """The first 200 chars of ``payload`` for a ``WireFormatError`` discovery, scrubbed.
+
+    Public since #987 slice 2: ``migrated_character`` builds its drift error with it."""
+    # Scrub, then slice: slicing first cut tokens into fragments shorter than any token
+    # pattern's floor, and those fragments survived. Scrub only the first 4 KB (two status
+    # observers build this for every frame that does not match, a 459 KB listing), and
+    # drop the whole value that cut goes through, back to the last delimiter: once the long
+    # runs before it collapse to "<token>", any part of it (a token, an `at` value cut
+    # inside its timestamp) would slide into the head. The named secret rules run first,
+    # so the generic token rule cannot cut a Bearer token in two (CodeRabbit on #1302).
     try:
-        raw = json.dumps(payload)
+        text = json.dumps(payload)
     except (TypeError, ValueError):
-        raw = repr(payload)
-    scrubbed = _CAPABILITY_URL_RE.sub("<redacted:url>", _TOKEN_RE.sub("<token>", raw))
-    return redact_error_detail(scrubbed)[:200]
-
-
-_discovery_head = discovery_head
+        text = repr(payload)
+    if len(text) > _HEAD_SCRUB_CHARS:
+        text = text[:_HEAD_SCRUB_CHARS]
+        text = text[: max(text.rfind(d) for d in _HEAD_DELIMITERS) + 1]
+    return _TOKEN_RE.sub("<token>", scrub_secrets(text))[:200]
 
 
 def generation_record(
@@ -294,7 +298,7 @@ def generation_record(
                 "a bug at https://github.com/ffroliva/gflow-cli/issues with this error."
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     status_cell = _as_list(_at(rec, 5, 8))
     status: Any = status_cell[0] if status_cell else None
@@ -424,6 +428,6 @@ def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
                 "([media_uuid, …, workflow_uuid, …, details-with-https-url]) in the reply"
             ),
             route=f"batchexecute:{rpcid}",
-            discovery={"rpcid": rpcid, "payload_head": _discovery_head(payload)},
+            discovery={"rpcid": rpcid, "payload_head": discovery_head(payload)},
         )
     return records

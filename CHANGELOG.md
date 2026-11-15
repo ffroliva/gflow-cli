@@ -108,6 +108,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Usage telemetry recorded the wrong command after a root flag ([#1209](https://github.com/ffroliva/gflow-cli/issues/1209)).**
   `gflow -v auth list` counted as `gflow`, because a flag was treated as taking a value.
 
+### Security
+
+- **Error messages and saved failure records no longer leak flow.google.com secrets.** reCAPTCHA
+  tokens, the page's XSRF value and private image links are now replaced with a placeholder,
+  including when a long reply is cut short for the message. Media ids stay readable, so a
+  recovery message can still name the clip. Very long replies no longer stall error reporting.
+  Thanks to @ziyedbe (#987).
+
 ## [0.99.0] — 2026-11-14
 
 ### Added
