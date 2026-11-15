@@ -156,3 +156,82 @@ async def test_character_voices_needs_no_browser_or_profile() -> None:
 
     assert result["status"] == "ok"
     assert result["count"] > 0
+
+
+# --- flow.google.com Zzl0ze project read through MCP (#875, #987) ---------------------
+
+
+def _migrated_client_ctx(tmp_path: Any) -> Any:
+    """Real FlowApiClient instance configured to fall back on retired labs projectInitialData."""
+    from unittest.mock import MagicMock
+
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.config import Settings
+    from gflow_cli.errors import WireFormatError
+
+    client = FlowApiClient(
+        profile_dir=tmp_path / "prof",
+        settings=Settings(flow_host="auto"),
+    )
+    client._page = MagicMock()  # noqa: SLF001
+    client._get_json = AsyncMock(  # type: ignore[method-assign]
+        side_effect=WireFormatError(
+            detail="Flow RPCs have been deprecated and disabled.", status=404
+        )
+    )
+    ctx = AsyncMock()
+    ctx.__aenter__.return_value = client
+    ctx.__aexit__.return_value = False
+    return ctx
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_list_on_flow_google_com_reads_zzl0ze_instead_of_exiting_7(
+    tmp_path: Any,
+) -> None:
+    from gflow_cli.api.transports.migrated_character import ProjectRead
+
+    ctx = _migrated_client_ctx(tmp_path)
+    read = ProjectRead(characters=(_ALDOUS, _MIRA), voices=(), images={})
+    with (
+        patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
+        patch(
+            "gflow_cli.api.transports.migrated_character.read_project",
+            new=AsyncMock(return_value=read),
+        ) as read_mock,
+    ):
+        result: dict[str, Any] = await mcp_tools.gflow_character_list(project=_PROJECT)
+
+    assert result["status"] == "ok"
+    assert result["count"] == 2
+    assert [c["display_name"] for c in result["characters"]] == ["Aldous", "Mira"]
+    read_mock.assert_awaited_once()
+
+
+@pytest.mark.usefixtures("_no_rate_limit")
+async def test_character_show_on_flow_google_com_reads_zzl0ze_and_reports_missing_as_exit_11(
+    tmp_path: Any,
+) -> None:
+    from gflow_cli.api.transports.migrated_character import ProjectRead
+
+    ctx = _migrated_client_ctx(tmp_path)
+    read = ProjectRead(characters=(_ALDOUS,), voices=(), images={})
+    with (
+        patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
+        patch(
+            "gflow_cli.api.transports.migrated_character.read_project",
+            new=AsyncMock(return_value=read),
+        ),
+    ):
+        ok_res: dict[str, Any] = await mcp_tools.gflow_character_show(
+            project=_PROJECT, name="Aldous"
+        )
+        missing_res: dict[str, Any] = await mcp_tools.gflow_character_show(
+            project=_PROJECT, name="Nobody"
+        )
+
+    assert ok_res["status"] == "ok"
+    assert ok_res["character"]["entity_id"] == _ALDOUS.entity_id
+    assert missing_res["status"] == "error"
+    assert missing_res["error"]["exit_code"] == 11
+

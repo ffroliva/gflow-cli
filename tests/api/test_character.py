@@ -356,12 +356,12 @@ def test_character_create_result_voice_defaults_none() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Voice catalog — 29 named Gemini voices
+# Voice catalog — 30 named Gemini voices
 # ---------------------------------------------------------------------------
 
 
-def test_voices_has_29_entries() -> None:
-    assert len(VOICES) == 29
+def test_voices_has_30_entries() -> None:
+    assert len(VOICES) == 30
 
 
 def test_voice_sample_url_pattern() -> None:
