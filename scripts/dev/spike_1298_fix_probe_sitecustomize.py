@@ -1,5 +1,5 @@
 # One-shot sitecustomize probe for #1298 section 9: copy into a pip venv's site-packages,
-# then run `GFLOW_SPIKE_1298=1 Scriptsgflow.exe --version`. Stdlib only; spike evidence, not product code.
+# then run `GFLOW_SPIKE_1298=1 Scripts/gflow.exe --version`. Stdlib only; spike evidence, not product code.
 import os
 
 if os.environ.pop("GFLOW_SPIKE_1298", None):  # pop: no child ever re-arms the hook
