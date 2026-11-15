@@ -17,13 +17,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gflow_cli.api.character import VOICES, Character, Voice
+from gflow_cli.api.character import Character, Voice
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.migrated_character import ProjectRead, read_project
 from gflow_cli.config import Settings
 from gflow_cli.errors import (
     AuthExpiredError,
     ConfigurationError,
+    FlowAppError,
+    TransportTimeoutError,
     WafRejectionError,
     WireFormatError,
 )
@@ -39,7 +41,7 @@ NORA = Character(
     thumbnail_media_id=None,
 )
 LIVE_VOICE = Voice("Enceladus", "Male, breathy, lower pitch")
-READ = ProjectRead(characters=(NORA,), voices=(LIVE_VOICE,), images={})
+READ = ProjectRead(characters=(NORA,), voices=(LIVE_VOICE,))
 RETIRED = WireFormatError(detail="Flow RPCs have been deprecated and disabled.", status=404)
 NO_TOKEN = AuthExpiredError(detail="UNAUTHORIZED", status=401)
 LABS_EMPTY: dict[str, Any] = {"result": {"data": {"json": {"projectContents": {}}}}}
@@ -123,14 +125,15 @@ async def test_show_by_name_works_through_the_migrated_read(tmp_path: Path, migr
         await c.get_character(PID, name="Nobody")
 
 
-async def test_list_voices_reads_live_catalog_or_offline_fallback(
-    tmp_path: Path, migrated: Any
+@pytest.mark.parametrize("host", ["auto", "flow.google.com"])
+async def test_migrated_read_false_does_not_fall_back_to_flow_google_com(
+    tmp_path: Path, migrated: Any, host: str
 ) -> None:
-    c_migrated = _client(tmp_path, "flow.google.com", LABS_EMPTY)
-    assert await c_migrated.list_voices(PID) == (LIVE_VOICE,)
+    c = _client(tmp_path, host, RETIRED)
 
-    c_labs = _client(tmp_path, "labs.google", LABS_EMPTY)
-    assert await c_labs.list_voices(PID) == VOICES
+    with pytest.raises(WireFormatError):
+        await c.list_characters(PID, migrated_read=False)
+    migrated.assert_not_awaited()
 
 
 # --- read_project against a fake page ---------------------------------------------
@@ -145,20 +148,27 @@ class _Resp:
 
 
 class _Page:
-    """Delivers a Zzl0ze frame on navigation — to listeners attached at that moment."""
+    """Delivers Zzl0ze frames on navigation — to listeners attached at that moment."""
 
     def __init__(
         self,
         payload: list[Any] | None,
         *,
+        extra_payloads: list[list[Any]] | None = None,
         url: str = "about:blank",
+        landing_url: str | None = None,
         drop_first: bool = False,
+        goto_error: Exception | None = None,
     ) -> None:
         self._payload = payload
+        self._extra_payloads = list(extra_payloads or [])
         self._drop_first = drop_first
+        self._goto_error = goto_error
+        self._landing_url = landing_url
         self._listeners: list[Callable[[Any], Any]] = []
         self.url = url
         self.gotos: list[str] = []
+        self.goto_kwargs: list[dict[str, Any]] = []
         self.reloads: int = 0
 
     def on(self, event: str, fn: Callable[[Any], Any]) -> None:
@@ -168,21 +178,29 @@ class _Page:
     def remove_listener(self, event: str, fn: Callable[[Any], Any]) -> None:
         self._listeners.remove(fn)
 
-    async def _deliver(self) -> None:
-        if self._drop_first:
-            self._drop_first = False
-            return
-        if self._payload is None:
-            return
-        frame = json.dumps([["wrb.fr", "Zzl0ze", json.dumps(self._payload), None, None, None]])
+    async def _emit(self, payload: list[Any]) -> None:
+        frame = json.dumps([["wrb.fr", "Zzl0ze", json.dumps(payload), None, None, None]])
         body = f")]}}'\n\n{len(frame)}\n{frame}\n"
         resp = _Resp("https://flow.google.com/_/x/data/batchexecute?rpcids=Zzl0ze", body)
         for fn in list(self._listeners):
             await fn(resp)
 
-    async def goto(self, url: str, **_: Any) -> None:
+    async def _deliver(self) -> None:
+        if self._drop_first:
+            self._drop_first = False
+            return
+        for extra in self._extra_payloads:
+            await self._emit(extra)
+        if self._payload is None:
+            return
+        await self._emit(self._payload)
+
+    async def goto(self, url: str, **kwargs: Any) -> None:
         self.gotos.append(url)
-        self.url = url
+        self.goto_kwargs.append(kwargs)
+        self.url = self._landing_url or url
+        if self._goto_error is not None:
+            raise self._goto_error
         await self._deliver()
 
     async def reload(self, **_: Any) -> None:
@@ -190,9 +208,12 @@ class _Page:
         await self._deliver()
 
 
-def _fixture_payload() -> list[Any]:
+def _fixture_payload(*, project_id: str = PID) -> list[Any]:
     path = Path(__file__).parent / "fixtures" / "zzl0ze_reply.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    raw = path.read_text(encoding="utf-8")
+    if project_id != PID:
+        raw = raw.replace(PID, project_id)
+    return json.loads(raw)
 
 
 async def test_read_project_observes_zzl0ze_on_navigation() -> None:
@@ -217,18 +238,58 @@ async def test_read_project_navigates_when_page_is_on_character_subroute() -> No
     assert page.reloads == 0
 
 
-async def test_read_project_reloads_once_on_timeout_then_succeeds() -> None:
+@pytest.mark.parametrize(
+    ("landing_url", "expected_exc"),
+    [
+        ("https://accounts.google.com/v3/signin/identifier", AuthExpiredError),
+        ("https://flow.google.com/about", FlowAppError),
+    ],
+    ids=["signin", "about"],
+)
+async def test_read_project_raises_at_once_on_signin_or_about_landing(
+    landing_url: str, expected_exc: type[Exception]
+) -> None:
+    page = _Page(None, landing_url=landing_url)
+
+    with pytest.raises(expected_exc):
+        await read_project(page, PID, timeout_s=0.1)  # type: ignore[arg-type]
+
+    assert len(page.gotos) == 1
+    assert page.reloads == 0
+
+
+async def test_read_project_ignores_other_project_reply_and_waits_for_requested_project() -> None:
+    other_pid = "00000000-0000-4000-8000-000000000099"
+    other_payload = _fixture_payload(project_id=other_pid)
+
+    page = _Page(_fixture_payload(), extra_payloads=[other_payload])
+    read = await read_project(page, PID, timeout_s=0.5)  # type: ignore[arg-type]
+    assert [c.project_id for c in read.characters] == [PID]
+
+    wrong_only = _Page(other_payload)
+    with pytest.raises(TransportTimeoutError):
+        await read_project(wrong_only, PID, timeout_s=0.1)  # type: ignore[arg-type]
+
+
+async def test_read_project_retries_with_goto_target_and_45s_timeout_not_reload() -> None:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    target = f"https://flow.google.com/project/{PID}"
     page = _Page(_fixture_payload(), drop_first=True)
 
     read = await read_project(page, PID, timeout_s=0.1)  # type: ignore[arg-type]
 
-    assert page.gotos == [f"https://flow.google.com/project/{PID}"]
-    assert page.reloads == 1
+    assert page.gotos == [target, target]
+    assert page.reloads == 0
+    assert [kw.get("timeout") for kw in page.goto_kwargs] == [45_000, 45_000]
     assert len(read.characters) == 1
+
+    timeout_page = _Page(None, goto_error=PlaywrightTimeoutError("Timeout 45000ms exceeded"))
+    with pytest.raises(TransportTimeoutError):
+        await read_project(timeout_page, PID, timeout_s=0.1)  # type: ignore[arg-type]
+    assert timeout_page.gotos == [target, target]
 
 
 async def test_read_project_without_a_reply_times_out_rather_than_reading_empty() -> None:
-    from gflow_cli.errors import TransportTimeoutError
-
     with pytest.raises(TransportTimeoutError):
         await read_project(_Page(None), PID, timeout_s=0.1)  # type: ignore[arg-type]

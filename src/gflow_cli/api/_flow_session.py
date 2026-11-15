@@ -229,17 +229,15 @@ def _labs_rpc_retired_hint(body_text: str, *, route: str) -> str | None:
     """
     if _LABS_RPC_RETIRED_MARKER not in body_text.lower():
         return None
-    # Deliberately suggests no setting. GFLOW_CLI_FLOW_HOST=flow.google.com was
-    # MEASURED not to help (2026-09-20, denon82, `character list`): the same 404
-    # comes back, because this read has no migrated arm to route to. Naming it
-    # here would repeat the mistake this hint exists to fix — advice nothing
-    # measured, on the field a user checks to find out what to do next.
+    # Deliberately suggests no setting: `character list` and `show` already fall back
+    # to flow.google.com on `auto`, while callers that still require this labs route
+    # cannot be rescued by changing the host setting (#875, #987).
     return (
         f"Flow has retired this labs route ({route}) — the request payload is fine, "
         f"there is no prompt to simplify, and there is no bug to file. Flow has moved "
-        f"to flow.google.com, and gflow has not ported this read to that frontend yet, "
-        f"so the command has no working path today. Track "
-        f"https://github.com/ffroliva/gflow-cli/issues/639 for the port."
+        f"to flow.google.com; `gflow character list` and `show` read from that frontend "
+        f"automatically, while callers that still require this labs route are tracked on "
+        f"https://github.com/ffroliva/gflow-cli/issues/639."
     )
 
 
