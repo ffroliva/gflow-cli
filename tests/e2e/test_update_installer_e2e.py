@@ -7,17 +7,30 @@ or refuses before pip runs when another process holds a launcher.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
-import time
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.e2e, pytest.mark.e2e_update]
+# needs_network: gflow's dependencies come from the index; only gflow-cli itself is local.
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_update, pytest.mark.needs_network]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _private_installer_caches(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep pip's and uv's caches under tmp, so a run writes nothing outside it."""
+    caches = tmp_path_factory.mktemp("installer_caches")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("PIP_CACHE_DIR", str(caches / "pip"))
+        mp.setenv("UV_CACHE_DIR", str(caches / "uv"))
+        yield
 
 
 @pytest.fixture(scope="session")
@@ -189,6 +202,29 @@ def test_pip_venv_update_keeps_a_working_install(
     assert old_files == [], f"Unexpected .old files remain: {old_files}"
 
 
+def _wait_until_mcp_answers(child: subprocess.Popen[str], timeout: float = 120) -> None:
+    """Send MCP `initialize` and wait for its reply: by then the server has imported
+    gflow and holds its launcher, which a fixed sleep could not guarantee."""
+    assert child.stdin is not None and child.stdout is not None
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "e2e-update", "version": "0"},
+        },
+    }
+    child.stdin.write(json.dumps(request) + "\n")
+    child.stdin.flush()
+    reply: list[str] = []
+    reader = threading.Thread(target=lambda: reply.append(child.stdout.readline()), daemon=True)
+    reader.start()
+    reader.join(timeout)
+    assert reply and '"id"' in reply[0], f"mcp run did not answer initialize: {reply}"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-specific launcher lock test")
 def test_pip_update_refuses_untouched_while_another_gflow_runs(
     tmp_path: Path, update_wheels: tuple[Path, Path, Path]
@@ -220,7 +256,7 @@ def test_pip_update_refuses_untouched_while_another_gflow_runs(
         env=env,
     )
     try:
-        time.sleep(2)  # Allow process to start and hold file
+        _wait_until_mcp_answers(child)  # a fixed sleep raced a loaded machine (review)
         assert child.poll() is None, "Child mcp run died prematurely"
 
         up_res = subprocess.run(
@@ -234,10 +270,10 @@ def test_pip_update_refuses_untouched_while_another_gflow_runs(
             f"Expected exit 11, got {up_res.returncode}:\n{up_res.stdout}\n{up_res.stderr}"
         )
 
-        # Error message must name a launcher path
-        combined_err = up_res.stdout + up_res.stderr
-        assert "gflow" in combined_err.lower()
-        assert "in use" in combined_err.lower() or "used by another" in combined_err.lower()
+        # The refusal names a launcher and says it is in use
+        combined_err = " ".join((up_res.stdout + up_res.stderr).split())  # undo line wraps
+        assert "is in use by another program" in combined_err, combined_err
+        assert ".exe" in combined_err, combined_err
 
         # The version is still 0.0.1 and the import works
         probe = subprocess.run(

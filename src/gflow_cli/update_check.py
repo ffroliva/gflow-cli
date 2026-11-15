@@ -17,6 +17,7 @@ source, VCS, and direct-URL installs must not get index "upgrade" advice).
 from __future__ import annotations
 
 import contextlib
+import csv
 import gc
 import importlib
 import importlib.util
@@ -212,21 +213,19 @@ class UpdateReport:
 
 
 def _is_user_install() -> bool:
-    """Return True if gflow-cli is installed in a user-site directory."""
-    try:
-        if sys.prefix != sys.base_prefix:
-            return False
-        files = distribution("gflow-cli").files or []
-        if not files:
-            return False
-        first = Path(files[0].locate()).resolve()
-        import site
+    """True when gflow-cli sits in the user site (``pip install --user``), not a venv.
 
-        user_site = Path(site.getusersitepackages()).resolve()
-        user_base = Path(site.getuserbase()).resolve()
-        return first.is_relative_to(user_site) or first.is_relative_to(user_base)
-    except Exception:
+    Such an install must be upgraded with ``--user``: without it pip writes a second copy
+    into the interpreter's own site-packages, which the user site still shadows (#1298)."""
+    if sys.prefix != sys.base_prefix:
         return False
+    import site
+
+    try:
+        here = Path(str(distribution("gflow-cli").locate_file(""))).resolve()
+    except PackageNotFoundError:
+        return False
+    return here == Path(site.getusersitepackages()).resolve()
 
 
 def installer() -> Installer | None:
@@ -318,18 +317,15 @@ def _import_failure() -> str | None:
     user to a plain `uv tool upgrade` that could not repair it.
 
     ``-I`` so a ``gflow_cli`` directory in the user's CWD — or on PYTHONPATH —
-    cannot answer on the venv's behalf. A probe that could not run at all
-    returns None: an environment we failed to ask about must never be reported
-    as a broken one.
+    cannot answer on the venv's behalf. A ``--user`` install lives in the user site,
+    which ``-I`` hides, so it gets ``-E -P``: no PYTHON* variables, no CWD, user site
+    kept. A probe that could not run at all returns None: an environment we failed
+    to ask about must never be reported as a broken one.
     """
-    probe_cmd = (
-        [sys.executable, "-c", _IMPORT_PROBE]
-        if _is_user_install()
-        else [sys.executable, "-I", "-c", _IMPORT_PROBE]
-    )
+    isolation = ("-E", "-P") if _is_user_install() else ("-I",)
     try:
         result = subprocess.run(  # noqa: S603 — fixed argv
-            probe_cmd,
+            [sys.executable, *isolation, "-c", _IMPORT_PROBE],
             capture_output=True,
             text=True,
             timeout=120,
@@ -350,7 +346,8 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     exits 0 having changed nothing — measured in #848, where only a forced
     reinstall completed."""
     pin = f"gflow-cli=={version}" if version else "gflow-cli"
-    user_flag = "--user " if _is_user_install() else ""
+    # From the command, not the metadata: after a failed pip run the metadata is gone.
+    user_flag = "--user " if "--user" in inst.command else ""
     repair = {
         "uv": f'uv tool install "{pin}" --force --reinstall',
         "pipx": f"pipx install --force {pin}",
@@ -382,96 +379,114 @@ def _require_runnable(inst: Installer, shown: str) -> None:
         )
 
 
+_WINERROR_IN_USE = 32  # ERROR_SHARING_VIOLATION
+
+
+def _record_launchers() -> list[Path]:
+    """Every ``.exe`` launcher gflow-cli's RECORD lists, present on disk or not.
+
+    Read from RECORD itself: from Python 3.12 ``Distribution.files`` drops entries
+    missing on disk, which would hide a launcher an interrupted update left aside."""
+    dist = distribution("gflow-cli")
+    rows = csv.reader((dist.read_text("RECORD") or "").splitlines())
+    return [Path(str(dist.locate_file(r[0]))) for r in rows if r and r[0].lower().endswith(".exe")]
+
+
 def _restore_launchers(moved: list[tuple[Path, Path]]) -> None:
-    """Restore launchers whose original paths are missing."""
+    """Put back every launcher pip did not recreate."""
     for orig, aside in moved:
         if not orig.exists() and aside.exists():
             try:
                 os.replace(aside, orig)
-            except OSError:
-                pass
+            except OSError as exc:
+                log.warning(
+                    "update.launcher_restore_failed",
+                    launcher=str(orig),
+                    aside=str(aside),
+                    error=str(exc),
+                )
+
+
+def _move_aside(launchers: list[Path], moved: list[tuple[Path, Path]]) -> None:
+    """Rename each launcher to ``<name>.gflow-update-<pid>.old``, appending to ``moved``.
+
+    A launcher in use (WinError 32: another gflow process holds it) refuses the update
+    before pip runs, with everything restored. Any other error (access denied on an
+    all-users Python) means pip cannot remove the launcher either and falls back as it
+    did before #1298, so the update goes ahead without the guard."""
+    from gflow_cli.errors import ConfigurationError
+
+    pid = os.getpid()
+    for p in launchers:
+        aside = p.with_name(f"{p.name}.gflow-update-{pid}.old")
+        try:
+            os.replace(p, aside)
+        except OSError as exc:
+            _restore_launchers(moved)
+            moved.clear()
+            if getattr(exc, "winerror", None) != _WINERROR_IN_USE:
+                log.warning("update.launcher_not_set_aside", launcher=str(p), error=str(exc))
+                return
+            raise ConfigurationError(
+                f"`{p}` is in use by another program, so `gflow update` changed nothing",
+                remediation_hint=(
+                    "Close every program that may be running gflow (an MCP server, "
+                    "`gflow serve`, another terminal), then run `gflow update` again."
+                ),
+            ) from exc
+        moved.append((p, aside))
 
 
 @contextlib.contextmanager
 def _launchers_set_aside(inst: Installer) -> Generator[None, None, None]:
-    """Windows pip updater guard (#1298): set launchers aside before pip runs.
+    """Set the launchers aside while pip runs, on a Windows pip install (#1298).
 
-    On Windows, pip uninstalls old files before installing new ones. If a launcher
-    is open, pip deletes site-packages, hits WinError 32 on the running .exe, and
-    aborts without rollback, leaving an unimportable venv.
-
-    Dropping importlib.metadata's cache on sys.path[0] lets this process rename
-    its own launchers aside before pip runs. Pip then creates new launchers cleanly.
-    If another process holds a launcher, rename fails BEFORE pip runs, refusing
-    untouched.
-    """
+    pip uninstalls before it installs. A launcher held open fails that uninstall
+    halfway, after ``gflow_cli`` is gone, and pip does not roll back. Every gflow
+    process holds its own launcher through importlib.metadata's cached zip handle on
+    ``sys.path[0]``. This process drops that hold and renames its launchers aside, so
+    pip writes fresh ones; another process's hold refuses the update before pip runs.
+    No metadata call may happen between the release and the end of pip."""
     if inst.name != "pip" or sys.platform != "win32":
         yield
         return
-
     from gflow_cli.errors import ConfigurationError
 
-    files = distribution("gflow-cli").files or []
-    launchers = [Path(f.locate()) for f in files if str(f).lower().endswith(".exe")]
-
-    for p in launchers:
-        if not p.is_file():
-            raise ConfigurationError(
-                f"Launcher `{p}` is missing from disk",
-                remediation_hint=_reinstall_hint(inst, __version__),
-            )
-
+    launchers = _record_launchers()
+    missing = next((p for p in launchers if not p.is_file()), None)
+    if missing is not None:
+        raise ConfigurationError(
+            f"Launcher `{missing}` is missing (an earlier update may have been interrupted)",
+            remediation_hint=_reinstall_hint(inst, __version__),
+        )
     importlib.invalidate_caches()
     gc.collect()
-
-    pid = os.getpid()
     moved: list[tuple[Path, Path]] = []
-    p: Path | None = None
-    try:
-        for p in launchers:
-            old = p.with_name(f"{p.name}.gflow-update-{pid}.old")
-            os.replace(p, old)
-            moved.append((p, old))
-    except OSError as exc:
-        _restore_launchers(moved)
-        in_use = exc.filename or (str(p) if p is not None else "gflow launcher")
-        raise ConfigurationError(
-            f"`{in_use}` is in use by another program, so gflow changed nothing",
-            remediation_hint=(
-                "Close every program that may be running gflow (an MCP server, `gflow serve`, "
-                "another terminal), then run `gflow update` again."
-            ),
-        ) from exc
-
-    try:
+    try:  # one finally for the renames and pip: Ctrl-C anywhere restores
+        _move_aside(launchers, moved)
         yield
     finally:
         _restore_launchers(moved)
 
 
 def _sweep_set_aside() -> None:
-    """Delete leftover .old launchers from previous update runs (#1298).
+    """Delete ``.old`` launchers an earlier update left, on Windows (#1298).
 
-    Only deletes an .old launcher when the primary launcher exists. If the primary
-    launcher is missing, leaves the .old file for force-reinstall diagnosis.
-    Any in-use launcher (OSError) is silently skipped.
-    """
+    Only where the launcher itself exists: a missing one means an update was
+    interrupted, and its ``.old`` is the evidence. A ``.old`` still in use (its
+    process has not exited) is skipped; the next run removes it. Runs on
+    ``--check`` too: it changes nothing but leftovers of gflow's own."""
     if sys.platform != "win32":
         return
     try:
-        files = distribution("gflow-cli").files or []
+        launchers = _record_launchers()
     except PackageNotFoundError:
         return
-    for f in files:
-        if str(f).lower().endswith(".exe"):
-            p = Path(f.locate())
-            if not p.is_file():
-                continue
+    for p in launchers:
+        if p.is_file():
             for old in p.parent.glob(f"{p.name}.gflow-update-*.old"):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(old)
-                except OSError:
-                    pass
 
 
 def run_update(
@@ -572,8 +587,8 @@ def run_update(
         _show_output(res.stdout, res.stderr)
         notes.append(
             f"Note: `{shown}` exited {returncode} AFTER installing {after}. On Windows this is "
-            "usually uv's failed launcher copy, which cannot overwrite the running binary; "
-            "it keeps working."
+            "usually the installer failing to copy over the launcher running this command "
+            "(uv tool does this); that launcher keeps working."
         )
     playwright_after = _version_in_venv("playwright")
     if playwright_before != playwright_after:

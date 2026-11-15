@@ -10,6 +10,7 @@ cap holds even when the daemon fetch thread dies with a fast command.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -277,9 +278,15 @@ class TestInstalledFromIndex:
 
 @pytest.fixture
 def index_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """An index-installed wheel whose venv root (sys.prefix) is `tmp_path`."""
+    """An index-installed wheel whose venv root (sys.prefix) is `tmp_path`.
+
+    The #1298 launcher guard is stubbed: unstubbed, a pip `run_update` test on Windows
+    renamed this checkout's own `.venv/Scripts/*.exe` (review of #1298). The guard has
+    its own tests below, on files under `tmp_path`."""
     monkeypatch.setattr(uc, "_installed_from_index", lambda: True)
     monkeypatch.setattr(uc.sys, "prefix", str(tmp_path))
+    monkeypatch.setattr(uc, "_launchers_set_aside", lambda inst: contextlib.nullcontext())
+    monkeypatch.setattr(uc, "_sweep_set_aside", lambda: None)
     return tmp_path
 
 
@@ -966,20 +973,25 @@ class TestReinstallHint:
         assert '"gflow-cli" --force --reinstall' in hint
 
 
-class _FakePackagePath:
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def __str__(self) -> str:
-        return self._path.name
-
-    def locate(self) -> Path:
-        return self._path
-
-
 class _FakeDistribution:
-    def __init__(self, files: list[_FakePackagePath]) -> None:
-        self.files = files
+    """Python 3.12+ semantics: ``files`` drops entries missing on disk, RECORD keeps them.
+
+    The guard must read RECORD: with ``files`` a launcher an interrupted update left
+    aside simply vanished from the list (review of #1298)."""
+
+    def __init__(self, paths: list[Path]) -> None:
+        self._paths = {p.name: p for p in paths}
+
+    @property
+    def files(self) -> list[Path]:
+        return [p for p in self._paths.values() if p.exists()]
+
+    def read_text(self, name: str) -> str:
+        assert name == "RECORD"
+        return "".join(f"../../Scripts/{n},sha256=x,1\n" for n in self._paths)
+
+    def locate_file(self, rel: object) -> Path:
+        return self._paths[Path(str(rel)).name]
 
 
 class TestLaunchersSetAside:
@@ -993,7 +1005,7 @@ class TestLaunchersSetAside:
         gflow_exe.write_text("gflow", encoding="utf-8")
         flow_exe.write_text("flow", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe), _FakePackagePath(flow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe, flow_exe])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -1017,7 +1029,7 @@ class TestLaunchersSetAside:
         gflow_exe = tmp_path / "gflow.exe"
         gflow_exe.write_text("original", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -1050,7 +1062,7 @@ class TestLaunchersSetAside:
         gflow1.write_text("bin1", encoding="utf-8")
         gflow2.write_text("bin2", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow1), _FakePackagePath(gflow2)])
+        fake_dist = _FakeDistribution([gflow1, gflow2])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -1075,7 +1087,7 @@ class TestLaunchersSetAside:
         assert not manager_called
         assert EXIT_CODE_MAP[type(exc_info.value)] == 11
         msg = str(exc_info.value)
-        assert str(gflow2) in msg or "flow.exe" in msg
+        assert f"`{gflow2}`" in msg
         assert "is in use by another program" in msg
         hint = exc_info.value.remediation_hint or ""
         assert "python -m" not in hint
@@ -1093,7 +1105,7 @@ class TestLaunchersSetAside:
         gflow_exe = tmp_path / "gflow.exe"
         gflow_exe.write_text("original", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -1116,7 +1128,7 @@ class TestLaunchersSetAside:
         gflow_exe = tmp_path / "gflow.exe"
         gflow_exe.write_text("original", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -1140,7 +1152,7 @@ class TestLaunchersSetAside:
         from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError
 
         gflow_exe = tmp_path / "gflow.exe"
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -1170,7 +1182,7 @@ class TestLaunchersSetAside:
         gflow_exe = tmp_path / "gflow.exe"
         gflow_exe.write_text("original", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe])
         call_log: list[str] = []
 
         def _spy_distribution(name: str) -> _FakeDistribution:
@@ -1221,7 +1233,7 @@ class TestLaunchersSetAside:
         gflow_exe = tmp_path / "gflow.exe"
         gflow_exe.write_text("original", encoding="utf-8")
 
-        fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
+        fake_dist = _FakeDistribution([gflow_exe])
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
         monkeypatch.setattr(sys, "platform", platform)
 
@@ -1236,6 +1248,109 @@ class TestLaunchersSetAside:
         assert manager_ran
         assert gflow_exe.exists()
         assert list(tmp_path.glob("*.old")) == []
+
+    def test_r3b_access_denied_lets_pip_run_as_before(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review of #1298: only WinError 32 means "in use". Access denied (an all-users
+        Python, run without admin rights) also stops pip removing the launcher, so pip
+        falls back as it did before the guard: no refusal, nothing left renamed."""
+        first = tmp_path / "gflow.exe"
+        second = tmp_path / "flow.exe"
+        first.write_text("bin1", encoding="utf-8")
+        second.write_text("bin2", encoding="utf-8")
+        monkeypatch.setattr(uc, "distribution", lambda name: _FakeDistribution([first, second]))
+        monkeypatch.setattr(sys, "platform", "win32")
+        real_replace = os.replace
+
+        def _fake_replace(src: str | Path, dst: str | Path) -> None:
+            if str(src) == str(second):
+                raise PermissionError(13, "Access is denied", str(second), 5)
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _fake_replace)
+        inst = uc.Installer("pip", (sys.executable, "-m", "pip", "install", "-U", "gflow-cli"))
+        with uc._launchers_set_aside(inst):
+            assert first.read_text(encoding="utf-8") == "bin1"  # put back before pip
+            assert second.exists()
+        assert list(tmp_path.glob("*.old")) == []
+
+    def test_r4b_ctrl_c_during_the_renames_restores_what_moved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review of #1298: a KeyboardInterrupt between two renames left the first
+        launcher set aside, because only the pip phase was under the finally."""
+        first = tmp_path / "flow.exe"
+        second = tmp_path / "gflow.exe"
+        first.write_text("bin1", encoding="utf-8")
+        second.write_text("bin2", encoding="utf-8")
+        monkeypatch.setattr(uc, "distribution", lambda name: _FakeDistribution([first, second]))
+        monkeypatch.setattr(sys, "platform", "win32")
+        real_replace = os.replace
+
+        def _fake_replace(src: str | Path, dst: str | Path) -> None:
+            if str(src) == str(second):
+                raise KeyboardInterrupt
+            real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", _fake_replace)
+        inst = uc.Installer("pip", (sys.executable, "-m", "pip", "install", "-U", "gflow-cli"))
+        with pytest.raises(KeyboardInterrupt), uc._launchers_set_aside(inst):
+            pass
+        assert first.read_text(encoding="utf-8") == "bin1"
+        assert list(tmp_path.glob("*.old")) == []
+
+
+class TestUserInstall:
+    """`pip install --user` (#1298 e2e case C): upgraded with --user, probed with the
+    user site visible, repaired with --user even after pip removed the metadata."""
+
+    @pytest.fixture
+    def user_site(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        import site
+
+        site_dir = tmp_path / "user-site"
+        site_dir.mkdir()
+        monkeypatch.setattr(uc, "_installed_from_index", lambda: True)
+        monkeypatch.setattr(uc.sys, "base_prefix", uc.sys.prefix)  # not a venv
+        monkeypatch.setattr(site, "getusersitepackages", lambda: str(site_dir))
+
+        class _Dist:
+            def locate_file(self, rel: object) -> Path:
+                return site_dir / str(rel)
+
+        monkeypatch.setattr(uc, "distribution", lambda name: _Dist())
+        return site_dir
+
+    def test_a_user_site_install_upgrades_with_user(self, user_site: Path) -> None:
+        inst = uc.installer()
+        assert inst is not None
+        assert inst.command[-2:] == ("--user", "gflow-cli")
+
+    def test_a_venv_install_never_gets_user(
+        self, user_site: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(uc.sys, "base_prefix", "/somewhere/else")
+        inst = uc.installer()
+        assert inst is not None
+        assert "--user" not in inst.command
+
+    def test_the_repair_hint_keeps_user_once_metadata_is_gone(self) -> None:
+        inst = uc.Installer("pip", ("py", "-m", "pip", "install", "-U", "--user", "gflow-cli"))
+        assert "--force-reinstall --user gflow-cli==1.0" in uc._reinstall_hint(inst, "1.0")
+
+    def test_the_import_probe_keeps_the_user_site_but_not_the_cwd(
+        self, user_site: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[list[str]] = []
+
+        def _run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, "", "")
+
+        monkeypatch.setattr(uc.subprocess, "run", _run)
+        assert uc._import_failure() is None
+        assert seen[0][1:3] == ["-E", "-P"]
 
 
 class TestSweepSetAside:
@@ -1260,9 +1375,9 @@ class TestSweepSetAside:
 
         fake_dist = _FakeDistribution(
             [
-                _FakePackagePath(gflow),
-                _FakePackagePath(tmp_path / "flow.exe"),
-                _FakePackagePath(other),
+                gflow,
+                tmp_path / "flow.exe",
+                other,
             ]
         )
         monkeypatch.setattr(uc, "distribution", lambda name: fake_dist)
