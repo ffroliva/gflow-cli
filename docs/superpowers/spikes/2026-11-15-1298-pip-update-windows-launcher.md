@@ -251,6 +251,35 @@ From `pipx upgrade --verbose gflow-cli`:
 - **uv tool**: Fully functional (exit 0). uv installs to `site-packages` before updating entrypoints; `os error 32` on `uv_bin\gflow.exe` fails the entrypoint copy, but `gflow update` handles the non-zero manager exit and the existing launcher runs the upgraded code.
 
 
+## 9. The planned fix, end to end inside a real gflow.exe (2026-11-15)
+
+Section 7 proved the self-rename; nothing had yet shown rename aside → pip → a working venv in one
+process. A one-shot `sitecustomize` probe in a fresh 0.98.99 venv (`sv2`) ran, at the exit of a real
+`Scripts\gflow.exe --version`, exactly the sequence the fix will run:
+
+1. launchers read from RECORD (`distribution("gflow-cli").files`, `.exe` entries, `.locate()`);
+2. `importlib.invalidate_caches()` + `gc.collect()`;
+3. `os.replace` each to `<name>.gflow-update-<pid>.old`;
+4. `python -m pip install --upgrade gflow-cli` (PyPI holds 0.99.0), no metadata call in between;
+5. restore any launcher whose original path is missing; then a fresh-interpreter import check.
+
+| Step | Result |
+|---|---|
+| launchers found | `flow.exe`, `gflow-cli.exe`, `gflow.exe` (three, not one: every console script) |
+| rename aside | all three OK |
+| pip | **exit 0**: `Successfully uninstalled gflow-cli-0.98.99`, `Successfully installed gflow-cli-0.99.0` |
+| launchers after pip | all three re-created by pip, so nothing was restored |
+| `python -I -c "import gflow_cli.cli"` | rc 0, `0.99.0` |
+| the process's own exit | rc 0 |
+| new `gflow.exe --version` | `gflow, version 0.99.0` |
+| the three `.old` files | deleted once the process had exited |
+
+**Method note (a defect in the first attempt, not in the product).** The first probe gated its hook on
+an environment variable and left it set, so the pip child inherited it, re-ran the hook at its own exit
+and started another pip: a chain of pip processes until the hook file was deleted and every PID it had
+started was stopped. The probe now pops the variable and deletes itself first. The real fix has no such
+hook, but the lesson stands for any `sitecustomize` probe: a child inherits the environment.
+
 ## Not Measured
 
 - `pip install --user` on Windows: user-site script directory installations were not tested.
