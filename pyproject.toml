@@ -27,6 +27,9 @@ keywords = [
     "google",
     "video",
     "playwright",
+    "macos",
+    "linux",
+    "windows",
 ]
 # Every entry is checked against the official trove list; an invented classifier
 # fails the upload outright. Keep "Development Status :: 3 - Alpha" in step with
@@ -172,6 +175,8 @@ Repository = "https://github.com/ffroliva/gflow-cli"
 Changelog = "https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md"
 Issues = "https://github.com/ffroliva/gflow-cli/issues"
 Funding = "https://github.com/sponsors/ffroliva"
+"LobeHub Market" = "https://lobechat.com/discover/plugin/gflow-cli"
+"Glama" = "https://glama.ai/mcp/servers/ffroliva/gflow-cli"
 
 [build-system]
 requires = ["hatchling"]
