@@ -362,16 +362,18 @@ gflow video gen "knight walks forward" --ref armor.png      # video r2v
 ```
 
 - The resolved verb parses the arguments itself, so its defaults, limits, environment
-  variables and checks apply exactly as on a direct call. An option it does not take is
-  its own usage error (exit 2), followed by a line naming the verb the bridge picked:
+  variables and checks apply exactly as on a direct call. The bridge routes on `--ref`,
+  `--initial-frame` and `--end-frame` alone. Any usage error the resolved verb raises (an
+  option it does not take, or one of its own rules) is exit 2,
+  followed by a line naming the verb the bridge picked:
 
   ```text
   $ gflow image gen "a cat" --ref a.png --stdin
-  Error: No such option '--stdin'.
+  Error: No such option '--stdin'. Did you mean '--json'?
   `gflow image gen` resolved to `gflow image i2i` (--ref was given).
 
   $ gflow video gen "a knight" --ref a.png --ui-mode classic
-  Error: No such option '--ui-mode'.
+  Error: No such option '--ui-mode'. Did you mean '--model'?
   `gflow video gen` resolved to `gflow video r2v` (--ref was given).
 
   $ gflow video gen "a knight" --end-frame a.png
@@ -385,9 +387,13 @@ gflow video gen "knight walks forward" --ref armor.png      # video r2v
   in a future release `-o` selects the output format.
 - `--json` emits the resolved verb's payload (its `command` is the mode verb, e.g.
   `"image t2i"`) plus a top-level `"mode": "<resolved>"`, on failure payloads too.
-- The mode verbs stay and are not deprecated. Use them when you want the mode fixed. The
-  MCP tools `gflow_generate_image` / `gflow_generate_video` already take the mode, so they
-  have no bridge twin to add.
+- `video gen` refuses a prompt that is an existing image file (`video gen hero.png`) with
+  exit 2 and the `--initial-frame` form to use, rather than billing a t2v clip whose prompt
+  is the file name.
+- The mode verbs stay and are not deprecated. Use them when you want the mode fixed. Over
+  MCP no bridge twin is needed: `gflow_generate_image` has no mode parameter and runs i2i
+  when `reference_images` is given (t2i otherwise), and `gflow_generate_video` takes the
+  mode explicitly (`mode`: `t2v`, the default, `i2v` or `r2v`).
 
 ## `gflow image t2i`
 

@@ -6,6 +6,7 @@ Each picks the mode verb from its inputs, then runs exactly that verb (see
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import click
@@ -13,6 +14,7 @@ import click
 from gflow_cli._cli_helpers import BridgeCommand, bridge_params, run_bridged, spends_credits
 from gflow_cli.cli_image import i2i, t2i
 from gflow_cli.cli_video import i2v, r2v, t2v
+from gflow_cli.tools.runtime import IMAGE_EXTS
 
 
 def resolve_image_mode(*, refs: bool) -> tuple[click.Command, str]:
@@ -45,17 +47,14 @@ def resolve_image_mode(*, refs: bool) -> tuple[click.Command, str]:
 )
 @click.argument("prompts", nargs=-1, required=False)
 @click.pass_context
-def image_gen(ctx: click.Context, prompts: tuple[str, ...], **values: Any) -> None:
+def image_gen(ctx: click.Context, positionals: tuple[str, ...], **values: Any) -> None:
     """Route to `image t2i` or `image i2i` (#1193)."""
     mode, why = resolve_image_mode(refs=bool(values["refs"]))
-    if mode is i2i and len(prompts) != 1:
-        msg = f"`gflow image i2i` (picked by --ref) takes one PROMPT; got {len(prompts)}."
-        raise click.UsageError(msg, ctx=ctx)
     run_bridged(ctx, mode, why)
 
 
-image_gen.params = bridge_params(
-    image_gen.params,
+bridge_params(
+    image_gen,
     t2i,
     i2i,
     help_for={
@@ -65,11 +64,11 @@ image_gen.params = bridge_params(
         ),
         "reference_entities": (
             "Flow CHARACTER entity id to reference for consistency (repeatable). The "
-            "entity must live in the --project you target."
+            "entity must live in the --project you target. Single-prompt only."
         ),
         "ui_mode": (
             "Which Flow UI arm to require: 'classic', 'agentic' (needed for -i) or "
-            "'auto' (default). Overrides GFLOW_CLI_UI_MODE."
+            "'auto' (default). Overrides GFLOW_CLI_UI_MODE. Single-prompt only."
         ),
     },
 )
@@ -94,6 +93,20 @@ def resolve_video_mode(*, initial: bool, end: bool, refs: bool) -> tuple[click.C
     if initial:
         return i2v, "--initial-frame was given"
     return (r2v, "--ref was given") if refs else (t2v, "no frame and no --ref")
+
+
+def _refuse_an_image_as_the_prompt(positionals: tuple[str, ...]) -> None:
+    """`video gen hero.png` would bill a t2v clip whose prompt is the file name."""
+    for value in positionals:
+        path = Path(value)
+        if path.suffix.lower() in IMAGE_EXTS and path.is_file():
+            others = [v for v in positionals if v != value]
+            prompt = f'"{others[0]}"' if len(others) == 1 else "PROMPT"
+            msg = (
+                f"{value} is an image file, not a prompt. To animate it, pass it as the "
+                f"start frame: gflow video gen --initial-frame {value} {prompt}"
+            )
+            raise click.UsageError(msg)
 
 
 @spends_credits(True)  # resolves to t2v/i2v/r2v, all spend Veo credits
@@ -125,8 +138,9 @@ def resolve_video_mode(*, initial: bool, end: bool, refs: bool) -> tuple[click.C
 )
 @click.argument("prompt")
 @click.pass_context
-def video_gen(ctx: click.Context, prompt: str, **values: Any) -> None:
+def video_gen(ctx: click.Context, positionals: tuple[str, ...], **values: Any) -> None:
     """Route to `video t2v`, `video i2v` or `video r2v` (#1193)."""
+    _refuse_an_image_as_the_prompt(positionals)
     mode, why = resolve_video_mode(
         initial=values["initial_frame"] is not None,
         end=values["end_frame"] is not None,
@@ -135,8 +149,8 @@ def video_gen(ctx: click.Context, prompt: str, **values: Any) -> None:
     run_bridged(ctx, mode, why)
 
 
-video_gen.params = bridge_params(
-    video_gen.params,
+bridge_params(
+    video_gen,
     t2v,
     i2v,
     r2v,

@@ -92,9 +92,72 @@ def test_image_t2i_only_option_with_ref_is_a_usage_error(extra: list[str], png: 
     assert "`gflow image i2i`" in out
 
 
-def test_image_several_prompts_with_ref_is_a_usage_error(png: Path) -> None:
+def test_image_several_prompts_with_ref_is_i2is_own_usage_error(png: Path) -> None:
     out = _usage_error(["image", "gen", "one", "two", "--ref", str(png)])
-    assert "image i2i" in out
+    assert "unexpected extra argument (two)" in out
+    assert "resolved to `gflow image i2i` (--ref was given)" in out
+
+
+def test_image_ref_without_prompt_reports_the_bad_option_not_the_prompt_count(png: Path) -> None:
+    out = _usage_error(["image", "gen", "--ref", str(png), "--stdin"])
+    assert "No such option '--stdin'" in out
+    assert "resolved to `gflow image i2i`" in out
+
+
+# Routing reads only the routing inputs; every other option is the resolved verb's to judge.
+def test_an_option_the_resolved_verb_lacks_is_never_validated_by_the_bridge(png: Path) -> None:
+    out = _usage_error(["image", "gen", "a", "--ref", str(png), "--jitter", "bad"])
+    assert "No such option '--jitter'" in out
+    assert "resolved to `gflow image i2i`" in out
+
+
+def test_frame_and_ref_is_refused_before_any_file_is_checked(png: Path) -> None:
+    argv = ["video", "gen", "x", "--initial-frame", str(png), "--ref", "missing.png"]
+    out = _usage_error(argv)
+    assert "video i2v" in out
+    assert "video r2v" in out
+    assert "does not exist" not in out
+
+
+@pytest.mark.parametrize("prompts", [["{png}"], ["{png}", "zoom in"]], ids=["alone", "then-prompt"])
+def test_video_gen_refuses_an_image_file_as_the_prompt(
+    prompts: list[str], png: Path, tmp_path: Path
+) -> None:
+    # `video gen hero.png` would otherwise bill a t2v clip whose prompt is the file name.
+    argv = ["video", "gen", *(p.replace("{png}", str(png)) for p in prompts)]
+    runners = ("_run_t2v", "_run_i2v", "_run_r2v")
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch.multiple("gflow_cli.cli_video", **{r: AsyncMock() for r in runners}) as runs,
+    ):
+        out = _usage_error(argv)
+    assert f"--initial-frame {png}" in out
+    for run in runs.values():
+        run.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("argv", "line"),
+    [
+        (["image", "gen", "a", "b", "--out-file", "x.png"], "resolved to `gflow image t2i`"),
+        (["video", "gen", "x", "--ui-mode", "agentic"], "resolved to `gflow video t2v`"),
+    ],
+)
+def test_a_usage_error_from_the_resolved_verbs_own_code_names_the_route(
+    argv: list[str], line: str
+) -> None:
+    assert line in _usage_error(argv)
+
+
+def test_a_bridge_invoked_without_its_parsed_arguments_is_a_usage_error() -> None:
+    from gflow_cli.cli_gen import image_gen
+
+    parent = click.Context(main, info_name="gflow")
+    ctx = click.Context(image_gen, info_name="gen", parent=parent)
+    ctx.params = {"positionals": ("a cat",), "refs": ()}
+    with ctx, pytest.raises(click.UsageError, match="command line"):
+        image_gen.invoke(ctx)
 
 
 @pytest.mark.parametrize(
@@ -147,15 +210,28 @@ def test_documented_usage_errors_say_what_the_docs_say(
 ) -> None:
     import shlex
 
-    usage = (Path(__file__).parents[2] / "docs" / "USAGE.md").read_text(encoding="utf-8")
-    assert example in usage, "the example is no longer in docs/USAGE.md"
-    for needle in needles:
-        assert needle in usage
+    documented = _documented_usage_errors()
+    assert example in documented, "the example is no longer in docs/USAGE.md"
     (tmp_path / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     monkeypatch.chdir(tmp_path)
     out = _usage_error(shlex.split(example)[1:])
     for needle in needles:
         assert needle in out
+    # The doc block is shown verbatim: every line from `Error:` on, exactly.
+    lines = [line.strip() for line in out.splitlines()]
+    shown = lines[next(i for i, line in enumerate(lines) if line.startswith("Error:")) :]
+    assert shown == documented[example]
+
+
+def _documented_usage_errors() -> dict[str, list[str]]:
+    usage = (Path(__file__).parents[2] / "docs" / "USAGE.md").read_text(encoding="utf-8")
+    intro = "followed by a line naming the verb the bridge picked:"
+    block = usage.split(intro, 1)[1].split("```text", 1)[1].split("```", 1)[0]
+    examples: dict[str, list[str]] = {}
+    for chunk in block.strip().split("\n\n"):
+        first, *rest = (line.strip() for line in chunk.splitlines())
+        examples[first.removeprefix("$ ")] = rest
+    return examples
 
 
 # ------------------------------------------------------------------------------ help
@@ -189,7 +265,16 @@ def test_gen_help_defers_defaults_and_limits_to_the_resolved_verb(group: str) ->
 def test_image_gen_help_does_not_reuse_mode_only_wording() -> None:
     text = _flat_help(["image", "gen"])
     assert "use `gflow image t2i` instead" not in text
-    assert "Single-prompt only" not in text
+
+
+@pytest.mark.parametrize("name", ["reference_entities", "ui_mode"])
+def test_image_gen_help_keeps_t2is_single_prompt_limit(name: str) -> None:
+    # Several prompts resolve to `image t2i`, which refuses these with more than one.
+    from gflow_cli.cli_gen import image_gen
+
+    (param,) = [p for p in image_gen.params if p.name == name]
+    assert isinstance(param, click.Option)
+    assert "Single-prompt only." in (param.help or "")
 
 
 def test_video_gen_help_does_not_promise_t2vs_model_default() -> None:
@@ -451,24 +536,14 @@ def test_video_gen_keeps_where_project_name_came_from(
 # ------------------------------- the real entrypoint, at $0 (no profile, no browser)
 
 
-@pytest.mark.parametrize(
-    ("argv", "names"),
-    [
-        (["video", "gen", "x", "--initial-frame", "{png}", "--ref", "{png}"], ["i2v", "r2v"]),
-        (["image", "gen", "x", "--ref", "{png}", "--stdin"], ["image i2i", "--stdin"]),
-        (["video", "gen", "x", "--end-frame", "{png}"], ["--end-frame needs --initial-frame"]),
-        (["video", "gen", "x", "--ref", "{png}", "--ui-mode", "classic"], ["video r2v"]),
-    ],
-)
-def test_entrypoint_usage_errors_exit_2_before_any_browser(
-    argv: list[str], names: list[str], png: Path, tmp_path: Path
-) -> None:
+def test_entrypoint_usage_error_exits_2_before_any_browser(png: Path, tmp_path: Path) -> None:
+    # One subprocess proves the real `python -m gflow_cli` path; the rest run in-process.
     import os
     import subprocess
     import sys
 
     env = {**os.environ, "GFLOW_CLI_HOME": str(tmp_path / "home"), "PYTHONUTF8": "1"}
-    args = [a.replace("{png}", str(png)) for a in argv]
+    args = ["video", "gen", "x", "--initial-frame", str(png), "--ref", str(png)]
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
@@ -478,8 +553,27 @@ def test_entrypoint_usage_errors_exit_2_before_any_browser(
         check=False,
     )
     assert proc.returncode == 2, proc.stderr
+    assert "i2v" in proc.stderr
+    assert "r2v" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("argv", "names"),
+    [
+        (["image", "gen", "x", "--ref", "{png}", "--stdin"], ["image i2i", "--stdin"]),
+        (["video", "gen", "x", "--end-frame", "{png}"], ["--end-frame needs --initial-frame"]),
+        (["video", "gen", "x", "--ref", "{png}", "--ui-mode", "classic"], ["video r2v"]),
+    ],
+)
+def test_usage_errors_exit_2_before_any_browser(
+    argv: list[str], names: list[str], png: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "home"))
+    with patch("gflow_cli.cli_video._make_provider_dir") as browser:
+        out = _usage_error([a.replace("{png}", str(png)) for a in argv])
+    browser.assert_not_called()
     for name in names:
-        assert name in proc.stderr
+        assert name in out
 
 
 def test_emit_adds_the_mode_a_bridge_recorded(capsys: pytest.CaptureFixture[str]) -> None:

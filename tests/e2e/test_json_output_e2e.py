@@ -178,6 +178,38 @@ def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb:
     )
 
 
+@pytest.mark.e2e_image
+def test_e2e_image_gen_with_a_local_ref_resolves_to_i2i(
+    e2e_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`gflow image gen PROMPT --ref <local png> --json` runs `image i2i` against real Flow
+    (#1193): the payload's `command` is the mode verb and `mode` the resolved one. One
+    image generation, zero credits."""
+    from .test_image_i2i_ref_cap_e2e import _tiny_png
+
+    ref = _tiny_png(tmp_path / "ref.png", color=(40, 120, 200))
+    env = dict(e2e_env)
+    env.pop("GFLOW_CLI_HOME", None)  # the real profile, as in the t2i test above
+    argv = ["image", "gen", "a small blue tile, studio light", "--ref", str(ref)]
+    argv += ["--project-name", "e2e-1193-gen", "--model", "nano2"]
+    argv += ["--out", str(tmp_path / "out"), "--json"]
+    proc = subprocess.run(
+        [sys.executable, "-m", "gflow_cli", *argv],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"exit {proc.returncode}; stderr tail: {proc.stderr[-600:]!r}"
+    data = json.loads(proc.stdout)
+    assert data["status"] == "ok"
+    assert data["command"] == "image i2i"
+    assert data["mode"] == "i2i"
+    saved = Path(data["images"][0]["local_path"])
+    assert saved.exists() and saved.stat().st_size > 0
+
+
 @pytest.mark.e2e_video
 @pytest.mark.parametrize("verb", ["t2v", "gen"])  # `gen` is the #1193 bridge to t2v
 def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb: str) -> None:

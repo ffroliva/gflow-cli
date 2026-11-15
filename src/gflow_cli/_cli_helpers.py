@@ -637,37 +637,83 @@ _BRIDGE_ARGS_META = "gflow.bridge_args"
 
 
 class BridgeCommand(click.Command):
-    """A bridge verb: keeps its raw arguments so the resolved verb can parse them."""
+    """A bridge verb: routes on its raw arguments, then hands them to the resolved verb.
+
+    Only ``--help`` and shell completion parse against the union of the mode verbs'
+    options. A run parses loosely (no types, callbacks, envvars or required checks) just
+    to read the routing inputs, so every other option is judged by the resolved verb.
+    """
+
+    #: Deprecated spellings the mode verbs accept and a bridge refuses (set by bridge_params).
+    refused: tuple[click.Option, ...] = ()
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        ahead = args[: args.index("--")] if "--" in args else args
+        if ctx.resilient_parsing or any(a in ctx.help_option_names for a in ahead):
+            return super().parse_args(ctx, args)
         ctx.meta[_BRIDGE_ARGS_META] = list(args)
-        return super().parse_args(ctx, args)
+        ctx.params = _routing_values(ctx, self, args)
+        return []
+
+
+def _routing_values(ctx: click.Context, cmd: BridgeCommand, args: list[str]) -> dict[str, Any]:
+    """The bridge's arguments read loosely: ``positionals`` plus each option's raw value."""
+    options = (p for p in (*cmd.params, *cmd.refused) if isinstance(p, click.Option))
+    router = click.Command(
+        cmd.name,
+        params=[click.Argument(["positionals"], nargs=-1), *map(_loose_copy, options)],
+        context_settings={"ignore_unknown_options": True, "help_option_names": []},
+    )
+    values = router.make_context(ctx.info_name, list(args), parent=ctx.parent).params
+    for param in cmd.refused:
+        if values.pop(param.name or "", None):
+            typed = next((a for a in args if a.split("=", 1)[0] in param.opts), param.opts[0])
+            raise click.NoSuchOption(typed, ctx=ctx)
+    return values
+
+
+def _loose_copy(param: click.Option) -> click.Option:
+    """*param* reduced to its spelling and arity, so reading it can never fail or prompt."""
+    loose = copy.copy(param)
+    loose.required = False
+    loose.callback = None
+    loose.envvar = None
+    loose.allow_from_autoenv = False
+    loose.prompt = None
+    loose.is_eager = False
+    if not (param.is_flag or param.count):
+        loose.type = click.STRING
+        loose.default = None
+    return loose
 
 
 def bridge_params(
-    own: list[click.Parameter],
+    cmd: BridgeCommand,
     *modes: click.Command,
     exclude: tuple[str, ...] = (),
     help_for: dict[str, str] | None = None,
-) -> list[click.Parameter]:
-    """The bridge verb's parameters: its own arguments, then every mode verb's options.
+) -> None:
+    """Give *cmd* its own arguments plus every mode verb's options, for ``--help``.
 
-    The union exists so the bridge can read the routing inputs and show one ``--help``;
-    the resolved verb re-parses the arguments with its own options. An option a mode
-    requires (``--ref``) is relaxed, and ``help_for`` rewrites help that only reads right
-    on one mode verb, each on a copy so the mode verb is untouched. A deprecated spelling
-    (``-o/--output PATH``, #1158) is left out: a new verb starts on the current flags, so
-    the bridge's own parse refuses it before the mode verb could accept it.
+    An option a mode requires (``--ref``) is relaxed, and ``help_for`` rewrites help that
+    only reads right on one mode verb, each on a copy so the mode verb is untouched. A
+    deprecated spelling (``-o/--output PATH``, #1158, and *exclude*) is refused instead: a
+    new verb starts on the current flags.
     """
     overrides = help_for or {}
-    params = list(own)
-    seen = {p.name for p in own} | set(exclude)
+    params = list(cmd.params)
+    refused: dict[str, click.Option] = {}
+    seen = {p.name for p in params}
     for param in (p for mode in modes for p in mode.params):
-        if isinstance(param, click.Argument | DeprecatedAliasOption) or param.name in seen:
-            continue
-        seen.add(param.name)
-        params.append(_bridge_copy(param, overrides))
-    return params
+        if isinstance(param, click.Option) and (
+            isinstance(param, DeprecatedAliasOption) or param.name in exclude
+        ):
+            refused.setdefault(param.name or "", param)
+        elif not isinstance(param, click.Argument) and param.name not in seen:
+            seen.add(param.name)
+            params.append(_bridge_copy(param, overrides))
+    cmd.params = params
+    cmd.refused = tuple(refused.values())
 
 
 def _bridge_copy(param: click.Parameter, overrides: dict[str, str]) -> click.Parameter:
@@ -687,18 +733,24 @@ def run_bridged(ctx: click.Context, mode: click.Command, why: str) -> None:
     A usage error the mode raises names the verb the bridge resolved to and why.
     """
     group = ctx.parent.info_name if ctx.parent is not None else ""
+    raw: list[str] | None = ctx.meta.get(_BRIDGE_ARGS_META)
+    if raw is None:
+        msg = (
+            f"`gflow {group} {ctx.info_name}` routes on its command-line arguments; run it "
+            "from the command line, not through ctx.invoke()."
+        )
+        raise click.UsageError(msg, ctx=ctx)
     ctx.meta[json_output.BRIDGE_MODE_META] = mode.name
-    raw: list[str] = ctx.meta[_BRIDGE_ARGS_META]
     try:
         sub = mode.make_context(mode.name, list(raw), parent=ctx.parent)
+        with sub:
+            mode.invoke(sub)
     except click.UsageError as exc:
         msg = (
             f"{exc.format_message()}\n`gflow {group} {ctx.info_name}` resolved to "
             f"`gflow {group} {mode.name}` ({why})."
         )
         raise click.UsageError(msg, ctx=exc.ctx) from exc
-    with sub:
-        mode.invoke(sub)
 
 
 def run_with_handlers(
