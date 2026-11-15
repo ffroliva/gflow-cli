@@ -330,6 +330,18 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     )
 
 
+_LAUNCHER_NAMES = frozenset({"gflow", "flow", "gflow-cli"})
+
+
+def _is_running_as_launcher() -> bool:
+    """Return whether this process was invoked through an executable launcher
+    rather than as a module (`python -m gflow_cli`)."""
+    if not sys.argv or not sys.argv[0]:
+        return False
+    basename = sys.argv[0].replace("\\", "/").rstrip("/").split("/")[-1]
+    return Path(basename).stem.lower() in _LAUNCHER_NAMES
+
+
 def _require_runnable(inst: Installer, shown: str) -> None:
     """Raise ConfigurationError (exit 11) when the manager cannot be started here."""
     from gflow_cli.errors import ConfigurationError
@@ -347,6 +359,17 @@ def _require_runnable(inst: Installer, shown: str) -> None:
             remediation_hint=(
                 f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
                 "(or reinstall the way you installed it)."
+            ),
+        )
+    if sys.platform == "win32" and inst.name == "pip" and _is_running_as_launcher():
+        raise ConfigurationError(
+            "On Windows, a pip-installed `gflow.exe` launcher cannot be upgraded while running "
+            "(pip uninstalls gflow-cli before failing on the locked launcher with WinError 32, "
+            "leaving the environment unusable)",
+            remediation_hint=(
+                "Run `python -m gflow_cli update` (or "
+                f"`{sys.executable} -m pip install --upgrade gflow-cli`) "
+                "from your shell instead."
             ),
         )
 

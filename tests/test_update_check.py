@@ -919,6 +919,81 @@ class TestPipWithoutPipModule:
             uc.run_update(check=False)
 
 
+class TestWindowsPipLauncherLock:
+    def test_windows_pip_launcher_refused_before_spawning(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import ConfigurationError
+
+        monkeypatch.setattr(uc.sys, "platform", "win32")
+        monkeypatch.setattr(uc.sys, "argv", [r"C:\venv\Scripts\gflow.exe", "update"])
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        monkeypatch.setattr(
+            uc, "_run_command", lambda cmd, *, capture_output: pytest.fail("must not spawn")
+        )
+        with pytest.raises(ConfigurationError, match="pip-installed `gflow.exe` launcher") as info:
+            uc.run_update(check=False)
+        hint = info.value.remediation_hint or ""
+        assert "python -m gflow_cli update" in hint
+        assert "-m pip install --upgrade gflow-cli" in hint
+
+    def test_windows_pip_launcher_check_mode_does_not_raise(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(uc.sys, "platform", "win32")
+        monkeypatch.setattr(uc.sys, "argv", [r"C:\venv\Scripts\gflow.exe", "update", "--check"])
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        report = uc.run_update(check=True)
+        assert report.update_available is True
+        assert report.upgraded is False
+        assert report.installer == "pip"
+
+    def test_windows_pip_module_invocation_allowed_to_run(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess
+
+        monkeypatch.setattr(uc.sys, "platform", "win32")
+        monkeypatch.setattr(
+            uc.sys, "argv", [r"C:\venv\Lib\site-packages\gflow_cli\__main__.py", "update"]
+        )
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        monkeypatch.setattr(
+            uc,
+            "_run_command",
+            lambda cmd, *, capture_output: subprocess.CompletedProcess(list(cmd), 0, "ok", ""),
+        )
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", lambda: None)
+
+        report = uc.run_update(check=False)
+        assert report.upgraded is True
+        assert report.installer == "pip"
+
+    def test_non_windows_pip_launcher_allowed_to_run(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import subprocess
+
+        monkeypatch.setattr(uc.sys, "platform", "linux")
+        monkeypatch.setattr(uc.sys, "argv", ["/venv/bin/gflow", "update"])
+        monkeypatch.setattr(uc, "fetch_latest", lambda timeout: "999.0.0")
+        monkeypatch.setattr(uc.importlib.util, "find_spec", lambda name: object())
+        monkeypatch.setattr(
+            uc,
+            "_run_command",
+            lambda cmd, *, capture_output: subprocess.CompletedProcess(list(cmd), 0, "ok", ""),
+        )
+        monkeypatch.setattr(uc, "_version_in_venv", lambda dist: "999.0.0")
+        monkeypatch.setattr(uc, "_import_failure", lambda: None)
+
+        report = uc.run_update(check=False)
+        assert report.upgraded is True
+        assert report.installer == "pip"
+
+
 class TestImportFailure:
     """The probe itself — a real subprocess, because a stubbed one proves nothing
     about whether `-I` can still see the venv it is asked about."""

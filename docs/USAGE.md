@@ -1969,7 +1969,10 @@ be reached; after an upgrade `latest` is the version the venv actually reports;
   install (PEP 610 `direct_url.json` present): update those the way they were
   installed (`git pull`, reinstall from the checkout); `uv` / `pipx` detected
   but not on `PATH`, or a plain venv with no `pip` module (a `uv venv`): the
-  message carries the exact command to run yourself;
+  message carries the exact command to run yourself; a plain-venv `pip` install
+  on Windows run through `gflow.exe` (pip uninstalls `gflow-cli` before attempting
+  to replace the locked launcher, failing with `WinError 32` and leaving the
+  environment unusable): run `python -m gflow_cli update` or `python -m pip install --upgrade gflow-cli`;
 - **after the manager ran** — first, the venv can no longer import gflow-cli at
   all (see below); then, the venv still reports the old version (a receipt
   pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
@@ -1993,18 +1996,27 @@ metadata, finds it current and changes nothing.
 
 The venv is the truth, not the manager's exit code: after the manager runs,
 `gflow update` re-reads the installed gflow-cli version from a fresh interpreter
-and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
-its own file open, so it can be neither overwritten nor renamed while it runs.
-Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
-the launcher ("os error 32"). The upgrade *did* happen — the launcher only
-points at the venv's python — so `gflow update` reports it as upgraded, prints
-the manager's captured output, and adds a note quoting its exit code. The old
-launcher keeps working. A later `gflow update` reports "up to date" and does not
-run the manager, so it does not replace the launcher either.
+and reports *that*. **Windows launcher lock:** the `gflow.exe` launcher you are
+running holds its own file open, so it can be neither overwritten nor renamed
+while it runs.
+- **`uv tool upgrade`:** this is the benign case where the upgrade lands anyway.
+  The new wheel installs, then uv exits 1 copying the launcher ("os error 32").
+  The launcher only points at the venv's python, so `gflow update` reports it as
+  upgraded, prints the manager's captured output, and adds a note quoting its
+  exit code. The old launcher keeps working. A later `gflow update` reports
+  "up to date" and does not run the manager, so it does not replace the
+  launcher either.
+- **Plain-venv `pip`:** pip uninstalls the existing package before installing the
+  new wheel. Running `gflow update` through `gflow.exe` causes pip to fail on the
+  locked launcher (`WinError 32`), leaving `gflow-cli` uninstalled and the venv
+  broken. `gflow update` therefore refuses a pip upgrade run through `gflow.exe`
+  on Windows before anything is spawned (exit 11) with a hint to run
+  `python -m gflow_cli update` (or `python -m pip install --upgrade gflow-cli`),
+  which holds no launcher open and upgrades cleanly.
 
-**Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
-lock just above is the benign case: it is the `gflow.exe` *you* are running, and
-the upgrade lands anyway. A **different** gflow, holding the install's contents
+**Stop every other `gflow` process BEFORE you upgrade — not after.** The `uv tool`
+launcher lock just above is the benign case: it is the `gflow.exe` *you* are running,
+and the upgrade lands anyway. A **different** gflow, holding the install's contents
 open, is not — there the manager can abort part-way and leave the environment
 broken. The holder reported so far is **`gflow mcp run`**: an editor with gflow
 registered as an MCP server starts one per session, and they outlive the command

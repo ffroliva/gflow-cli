@@ -222,3 +222,19 @@ def test_status_callback_prints_when_not_json(monkeypatch: pytest.MonkeyPatch) -
     payload = json.loads(res_json.stdout)
     assert payload["status"] == "ok"
     assert "Updating" not in res_json.stdout
+
+
+def test_windows_pip_launcher_lock_cli_exit_11(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _fake(*, check: bool, **_kwargs: object) -> UpdateReport:
+        raise ConfigurationError(
+            "On Windows, a pip-installed `gflow.exe` launcher cannot be upgraded while running "
+            "(pip uninstalls gflow-cli before failing on the locked launcher with WinError 32, "
+            "leaving the environment unusable)",
+            remediation_hint="Run `python -m gflow_cli update` from your shell instead.",
+        )
+
+    monkeypatch.setattr(cli_update, "run_update", _fake)
+    res = CliRunner().invoke(main, ["update"])
+    assert res.exit_code == 11
+    assert "WinError 32" in res.output
+    assert "python -m gflow_cli update" in res.output

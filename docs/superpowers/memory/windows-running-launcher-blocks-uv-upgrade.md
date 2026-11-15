@@ -38,8 +38,12 @@ machine exited 0 and refreshed its launcher.
    silently replaced by the cached first build until `uv cache clean gflow-cli` — bump the
    version between test builds.
 
-**Not measured:** plain-venv `pip` on Windows (pip removes `Scripts/gflow.exe` — likely the
-same lock), macOS / Linux for any manager (POSIX allows replacing a running binary, so the
+**Measured 2026-11-14 (#1295, #1298):** plain-venv `pip` on Windows removes `Scripts/gflow.exe`
+as part of uninstalling `gflow-cli` before installing the new wheel; when invoked through `gflow.exe`
+the lock (`WinError 32`) aborts pip mid-way and leaves the environment unusable (`ModuleNotFoundError`).
+Refused before spawning pip (exit 11); `python -m gflow_cli update` in the same venv upgrades cleanly.
+
+**Not measured:** macOS / Linux for any manager (POSIX allows replacing a running binary, so the
 manager should exit 0 there).
 
 **Related:** [[windows-dev-quirks]] (the wider Windows environment list),
