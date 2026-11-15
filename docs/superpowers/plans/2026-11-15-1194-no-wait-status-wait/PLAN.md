@@ -4,7 +4,7 @@
 > the next unchecked task. Implement one task at a time. Run `/gflow:check` before every
 > commit.
 
-**Status:** DRAFT, awaiting owner approval of the decisions marked **[D1]–[D5]**.
+**Status:** decisions D1, D2, D3 and D5 approved by the owner on 2026-11-15 (the recommendations); D4 taken as the default (task id only). Ready for Task 1.
 
 **Goal:** a shell script can submit a generation, carry on, and come back:
 `gflow image t2i "…" --no-wait --json` prints an id at once; `gflow status <id>` reads it
@@ -236,4 +236,5 @@ items) - [ ] POSIX detach in CI (ubuntu, macos).
 | 2026-11-15 | Liveness = per-job kernel lock | Windows pid reuse; `os.kill(pid, 0)` is CTRL_C on Windows; the lease's own docstring says pid metadata never authorizes reclaim | pid in the claimant (kept as diagnostics only) |
 | 2026-11-15 | Payload builder in `worker/codec.py` | Keeps the CLI from importing `mcp/`; one mapping, inverse of `build_*_request` | builders left in `mcp/tools.py` |
 | 2026-11-15 | Split into PR A (status/wait) and PR B (--no-wait) | PR A is useful and $0-verifiable on MCP-queued rows alone | one PR |
+| 2026-11-15 | D1-D5 as recommended: legacy 45 / core 4; child waits on the lease (180 s); parent spawn handshake <= 5 s, orphan grace 60 s; task id only; `gflow_status` only, `wait` exempt | Owner answers | 9/44 reuse; fail fast; fire and forget; `gflow_wait` |
 | 2026-11-15 | Correction: `recover_processing` is not reused | It sweeps every `processing` row for a profile (live MCP jobs too) and runs only from the unreachable `ui/app.py` | the option text offered to the owner said it would settle a crashed child |
