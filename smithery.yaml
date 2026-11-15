@@ -1,0 +1,14 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      gflowHome:
+        type: string
+        description: "Path where gflow-cli stores browser profile, configuration, and data"
+  commandFunction: |-
+    (config) => ({
+      command: 'uvx',
+      args: ['gflow-cli', 'mcp', 'run'],
+      env: config.gflowHome ? { GFLOW_CLI_HOME: config.gflowHome } : {}
+    })
