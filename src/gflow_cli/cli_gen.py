@@ -1,4 +1,4 @@
-"""`gflow image gen` / `gflow video gen`: bridge verbs that infer the mode (#1193).
+"""`gflow image generate` / `gflow video generate`: bridge verbs that infer the mode (#1193).
 
 Each picks the mode verb from its inputs, then runs exactly that verb (see
 ``_cli_helpers.run_bridged``). Kept out of ``cli_image`` / ``cli_video`` so neither grows.
@@ -18,13 +18,13 @@ from gflow_cli.tools.runtime import IMAGE_EXTS
 
 
 def resolve_image_mode(*, refs: bool) -> tuple[click.Command, str]:
-    """Routing table for `image gen` (#1193): a reference image makes it i2i."""
+    """Routing table for `image generate` (#1193): a reference image makes it i2i."""
     return (i2i, "--ref was given") if refs else (t2i, "no --ref")
 
 
 @spends_credits(True)  # resolves to t2i/i2i, both spend the image quota
 @click.command(
-    "gen",
+    "generate",
     cls=BridgeCommand,
     short_help="Generate image(s); picks t2i or i2i from the inputs.",
     help=(
@@ -41,8 +41,8 @@ def resolve_image_mode(*, refs: bool) -> tuple[click.Command, str]:
         "mode fixed.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow image gen "a serene mountain lake at dawn"\n'
-        '  gflow image gen "make it cinematic" --ref hero.png'
+        '  gflow image generate "a serene mountain lake at dawn"\n'
+        '  gflow image generate "make it cinematic" --ref hero.png'
     ),
 )
 @click.argument("prompts", nargs=-1, required=False)
@@ -75,7 +75,7 @@ bridge_params(
 
 
 def resolve_video_mode(*, initial: bool, end: bool, refs: bool) -> tuple[click.Command, str]:
-    """Routing table for `video gen` (#1193): frames -> i2v, --ref -> r2v, neither -> t2v.
+    """Routing table for `video generate` (#1193): frames -> i2v, --ref -> r2v, neither -> t2v.
 
     A frame and refs together, or an end frame without a start, is a usage error, never a
     guess.
@@ -96,7 +96,7 @@ def resolve_video_mode(*, initial: bool, end: bool, refs: bool) -> tuple[click.C
 
 
 def _refuse_an_image_as_the_prompt(positionals: tuple[str, ...]) -> None:
-    """`video gen hero.png` would bill a t2v clip whose prompt is the file name."""
+    """`video generate hero.png` would bill a t2v clip whose prompt is the file name."""
     for value in positionals:
         path = Path(value)
         try:  # an unstat-able prompt (ENAMETOOLONG on POSIX < 3.13) is just a prompt
@@ -108,14 +108,14 @@ def _refuse_an_image_as_the_prompt(positionals: tuple[str, ...]) -> None:
             prompt = f'"{others[0]}"' if len(others) == 1 else "PROMPT"
             msg = (
                 f"{value} is an image file, not a prompt. To animate it, pass it as the "
-                f"start frame: gflow video gen --initial-frame {value} {prompt}"
+                f"start frame: gflow video generate --initial-frame {value} {prompt}"
             )
             raise click.UsageError(msg)
 
 
 @spends_credits(True)  # resolves to t2v/i2v/r2v, all spend Veo credits
 @click.command(
-    "gen",
+    "generate",
     cls=BridgeCommand,
     short_help="Generate a video; picks t2v, i2v or r2v from the inputs.",
     help=(
@@ -135,9 +135,9 @@ def _refuse_an_image_as_the_prompt(positionals: tuple[str, ...]) -> None:
         "fixed.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video gen "a golden sunset over mountains"\n'
-        '  gflow video gen "slow pan left" --initial-frame hero.png\n'
-        '  gflow video gen "knight walks forward" --ref armor.png --model omni-flash'
+        '  gflow video generate "a golden sunset over mountains"\n'
+        '  gflow video generate "slow pan left" --initial-frame hero.png\n'
+        '  gflow video generate "knight walks forward" --ref armor.png --model omni-flash'
     ),
 )
 @click.argument("prompt")

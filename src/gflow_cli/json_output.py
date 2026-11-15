@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from gflow_cli.services.doctor import DoctorReport
 
 
-#: ``ctx.meta`` key a bridge verb (``image gen`` / ``video gen``, #1193) sets to the mode it
-#: resolved to. :func:`emit` adds it to every document, so no emit path can forget it.
+#: ``ctx.meta`` key a bridge verb (``image generate`` / ``video generate``, #1193) sets to
+#: the mode it resolved to. :func:`emit` adds it to every document, so no emit path can forget it.
 BRIDGE_MODE_META = "gflow.bridge_mode"
 
 

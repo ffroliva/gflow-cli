@@ -667,8 +667,9 @@ main.add_command(_movie_group)
 main.add_command(_project_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
-_video_group.add_command(_video_gen_command)  # bridge verbs (#1193), kept in cli_gen
-_image_group.add_command(_image_gen_command)
+for _name in ("generate", "gen"):  # bridge verbs (#1193), kept in cli_gen; `gen` is an alias
+    _video_group.add_command(_video_gen_command, name=_name)
+    _image_group.add_command(_image_gen_command, name=_name)
 main.add_command(_instructions_group)
 main.add_command(_run_command)
 main.add_command(_models_command)
