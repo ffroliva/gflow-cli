@@ -224,6 +224,19 @@ def test_a_token_cut_at_the_scrub_window_cannot_slide_into_the_head() -> None:
     assert "0cAF" not in head
 
 
+def test_an_at_value_cut_inside_its_timestamp_cannot_slide_into_the_head() -> None:
+    """CodeRabbit on #1302: a cut through the 13-digit timestamp left `<28 chars>:` plus
+    digits; stripping token chars stopped at the colon, so the XSRF prefix survived."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    secret = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"  # 28 chars, the measured `at` length
+    # the 4 KB cut lands 12 digits into the timestamp
+    payload = [None, 881, [["Z" * 2000, "Z" * 2032, secret + ":1730000000000"]]]
+    with pytest.raises(WireFormatError) as exc_info:
+        generation_record("maseQ", payload)
+    assert secret[:12] not in str(exc_info.value.discovery["payload_head"])
+
+
 def test_a_head_that_json_cannot_encode_is_still_scrubbed() -> None:
     from gflow_cli.api.transports.batchexecute import generation_record
 

@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import re
-import string
 from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlsplit
@@ -37,7 +36,7 @@ from gflow_cli.errors import WireFormatError
 _XSSI_PREFIX = ")]}'"
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_\-]{120,}")
-_TOKEN_CHARS = string.ascii_letters + string.digits + "_-"
+_HEAD_DELIMITERS = " \"',[]"  # where a JSON or repr value ends
 _HEAD_SCRUB_CHARS = 4096
 
 STATUS_RUNNING = 2
@@ -248,15 +247,17 @@ def _discovery_head(payload: Any) -> str:
     # Scrub, then slice: slicing first cut tokens into fragments shorter than any token
     # pattern's floor, and those fragments survived. Scrub only the first 4 KB (two status
     # observers build this for every frame that does not match, a 459 KB listing), and
-    # drop the token run that cut leaves at the end: once the long runs before it collapse
-    # to "<token>", it would slide into the head. The named secret rules run first, so
-    # the generic token rule cannot cut a Bearer token in two (CodeRabbit on #1302).
+    # drop the whole value that cut goes through, back to the last delimiter: once the long
+    # runs before it collapse to "<token>", any part of it (a token, an `at` value cut
+    # inside its timestamp) would slide into the head. The named secret rules run first,
+    # so the generic token rule cannot cut a Bearer token in two (CodeRabbit on #1302).
     try:
         text = json.dumps(payload)
     except (TypeError, ValueError):
         text = repr(payload)
     if len(text) > _HEAD_SCRUB_CHARS:
-        text = text[:_HEAD_SCRUB_CHARS].rstrip(_TOKEN_CHARS)
+        text = text[:_HEAD_SCRUB_CHARS]
+        text = text[: max(text.rfind(d) for d in _HEAD_DELIMITERS) + 1]
     return _TOKEN_RE.sub("<token>", scrub_secrets(text))[:200]
 
 

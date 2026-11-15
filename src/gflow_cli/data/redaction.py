@@ -11,7 +11,7 @@ PromptMode = Literal["store", "redacted"]
 SENSITIVE_URL_KEYS = {"fifeurl", "fife_url", "signedurl", "downloadurl", "mediaurl"}
 SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=", "expires=")
 _REDACTED_URL = "<redacted:url>"
-_REDACTED_TOKEN = "<redacted:token>"  # noqa: S105 - the placeholder, not a credential
+_REDACTED_TOKEN = "<redacted:token>"  # noqa: S105  # the placeholder, not a credential
 
 # Free-text secret patterns for error_detail scrubbing (#341). `redact_metadata`
 # redacts by dict key name / URL markers only, so a secret interpolated into an
