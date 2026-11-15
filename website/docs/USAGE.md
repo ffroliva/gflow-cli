@@ -406,8 +406,8 @@ prompts through one Flow session/project.
 > (`nano2`, #958), Nano Banana 2 Lite (`nano2-lite`) and Nano Banana Pro (`nano-pro`), all five aspects (`16:9`,
 > `4:3`, `1:1`, `3:4`, `9:16`), and count 1–4. Without `--project` (and without `GFLOW_CLI_PROJECT`), gflow creates a fresh project
 > there first ([#864](https://github.com/ffroliva/gflow-cli/issues/864)). The
-> migrated page owns its reCAPTCHA + `ogiZ0b` submit. Imagen 4, Agent instructions,
-> character/entity references and `image batch` remain unavailable on that host and
+> migrated page owns its reCAPTCHA + `ogiZ0b` submit. A character id without its name,
+> Imagen 4, Agent instructions and `image batch` remain unavailable on that host and
 > fail before submit. On Flow's agent-only composer (#799), t2i runs through the agent
 > driver; see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm).
 
@@ -679,7 +679,7 @@ mentions on image **only**:
 |---|---|---|
 | `image t2i` | ✅ | ✅ (in-project asset → `referenceImages`) |
 | `image i2i` | ✅ | ✅ |
-| `video t2v` / `i2v` / `r2v` | ✅ | ❌ — media-on-video is Phase 3; fails fast with **exit 11** |
+| `video t2v` / `i2v` / `r2v` | ✅ where Flow serves labs (not observed this cycle); on flow.google.com not ported yet (**exit 29**, before submit) — pass `--reference-entity` + `--reference-entity-name` to `r2v` instead | ❌ — media-on-video is Phase 3; fails fast with **exit 11** |
 
 Rules:
 - **`--project <id>` is required** — mentions resolve against that project's assets.
@@ -2509,7 +2509,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --out-file`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link, or a `video chain --resume-from` whose last completed clip is no longer at its recorded path (refused before anything is billed, [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)) | Check the source video downloaded intact; retry the link. For a resume, put the clip back at the path named, or start a new chain |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
-| `22` | `UpscaleUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
+| `22` | `UpscaleUnavailableError`, `ServerCancelUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled; or `gflow cancel` hit a job a gflow worker already submitted (#1198) | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | If the detail says the model picker is **hidden**, nothing was submitted: turn the **Agent** chip off in a browser and re-run ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). Otherwise update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation — **or**, on `flow.google.com`'s agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), the agent did something other than what was asked: a second credit confirmation, more results than requested, or an image turn that made nothing (a video turn that makes nothing ends in exit 9, `TransportTimeoutError`, instead) | On labs this is rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`. On the agent-only composer it is `retryable: false` — read `detail` (it may include the agent's last reply), rephrase the prompt, and check the project before re-running a video. See KNOWN_ISSUES |

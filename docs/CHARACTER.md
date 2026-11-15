@@ -305,7 +305,7 @@ is **shipped** (see the table below).
 | `gflow video … --character <id>` *(repeatable → multi-ref, explicit flag)* | **not yet implemented** (Phase 3) — `referenceEntities` on `video:batchAsyncGenerateVideoReferenceImages` |
 | `gflow character rm` (`--id`/`--name`) | **Shipped v0.13.0 (#150)** — `POST flow:batchDeleteAssets` (Bearer; FREE — no reCAPTCHA/credit) |
 | `gflow image … --character <id>` *(explicit flag)* | id-based reuse **shipped** as `gflow image t2i/i2i --reference-entity <id>` (wire captured 2026-06-08, `api/image.py`) |
-| `@Name` in a t2i/i2i/video prompt | name-based mention resolution **shipped v0.40.0 (#344)** — resolves to the staged character entity, works on both image and video paths; see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) |
+| `@Name` in a t2i/i2i/video prompt | name-based mention resolution **shipped v0.40.0 (#344)** — resolves to the staged character entity, works on both image and video paths (on flow.google.com, video `@Name` is not ported yet and exits 29 before submit); see [REFERENCE_STRATEGIES](REFERENCE_STRATEGIES.md) |
 
 All commands take **`--project <id>` (required)** — every endpoint (`createEntity`, `projectInitialData`,
 reuse) is project-scoped; mirrors `gflow scene` / `gflow data` ergonomics. Use `--id`/`--name` flags, never a

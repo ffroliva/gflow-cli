@@ -5,7 +5,7 @@ skillopt_epoch: 0
 description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch image pipelines, or spending Flow credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Drives the real Flow web UI through a headed Chrome session (Playwright) after a one-time browser sign-in — it does not bypass the UI, it automates it.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
-  - Wrong subcommand: agents emit 'gflow video generate' / 'gflow video create' instead of 'gflow video t2v' or 'gflow video i2v'
+  - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'
   - Output flag confusion: '--out-file' takes a FILE path (single asset, legacy '-o/--output'); '--out' (image) / '--out-dir' (video) take a DIRECTORY
   - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
   - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
@@ -143,7 +143,7 @@ gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent
 gflow --help --json                                       # also: gflow <group> [<cmd>] --help --json
 
 # Keeping gflow-cli current (other commands show a banner when a newer release exists)
-gflow update [--check] [-v|--verbose] [--json]                         # upgrades via uv tool / pipx / pip; source installs refused (exit 11); -v streams the installer output
+gflow update [--check] [-v|--verbose] [--json]                         # upgrades via uv tool / pipx / pip; source installs refused (exit 11); on Windows pip, exit 11 also when another gflow process holds a launcher (nothing changed: close it, retry); a Windows pip install at <=0.99.0 upgrades once by hand: close every gflow process, then `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (docs/USAGE.md#gflow-update); -v streams the installer output
 gflow docs [TOPIC] [--search TERM] [--json]
 
 # Usage statistics and weekly telemetry (local counters; upload after interactive notice)

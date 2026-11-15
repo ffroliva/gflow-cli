@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.0] — 2026-11-15
+
 ### Added
 
 - **`gflow image generate` and `gflow video generate`: one generate verb per media type, the mode
@@ -65,7 +67,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *One-time manual upgrade for existing installs at 0.99.0 and below:* because their own updater
   still has the bug, close every gflow process, then run
   `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (venv) or
-  `py -m pip install --user --upgrade gflow-cli` (`--user`).
+  `py -3.X -m pip install --user --upgrade gflow-cli` (`--user`; `3.X` is the Python gflow was
+  installed under, and `py -0p` lists them).
 - **`gflow character list` and `show` now work on accounts Flow serves from `flow.google.com`; the voice list has 30 voices (`Enceladus` added).**
   The MCP twins `gflow_character_list` and `gflow_character_show` return the same character
   details on `flow.google.com` ([#875](https://github.com/ffroliva/gflow-cli/issues/875)).
@@ -7202,7 +7205,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...HEAD
+[0.100.0]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
 [0.97.0]: https://github.com/ffroliva/gflow-cli/compare/v0.96.1...v0.97.0

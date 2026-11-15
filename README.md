@@ -53,6 +53,9 @@ Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x
 uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 # later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
+# Windows pip install at 0.99.0 or older? Upgrade once by hand first (#1298):
+#   close every gflow process, then <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
+#   (a --user install: py -3.X -m pip install --user --upgrade gflow-cli; see https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md#gflow-update)
 
 # 2 · Authenticate (one-time, opens a real Chrome window)
 # Behind a proxy (e.g. Clash)? Set GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897 first (docs/CONFIGURATION.md)
@@ -133,6 +136,8 @@ gflow-cli ships four agent entry points. Pick the one your tool reads first.
 | [**CLAUDE.md**](CLAUDE.md) | Claude Code's auto-loaded memory | Claude Code |
 | [**llms.txt**](llms.txt) | LLM-readable summary (llmstxt.org format) | Paste into ChatGPT, Claude, or Gemini to onboard the model |
 | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | Claude Code Skill | Symlink into `~/.claude/skills/` |
+
+An agent can also read the whole command tree from the CLI itself: `gflow --help --json`.
 
 ### Install the plugin (Claude Code)
 

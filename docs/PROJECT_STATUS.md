@@ -4,6 +4,33 @@
 
 ## Current release
 
+**v0.100.0 — alpha.** One verb to generate, a machine-readable command tree, a local cancel,
+and a `gflow update` that no longer breaks a Windows pip install. No CLI flag or exit code changes;
+a script that reads the queue table must also match the new `cancelled` / `abandoned` states.
+
+**`image generate` / `video generate` (alias `gen`, #1193).** One verb per media type picks the
+mode from its inputs (t2i/i2i, t2v/i2v/r2v); a frame plus `--ref` is refused with exit 2.
+**`gflow --help --json`** prints the whole command tree (#1203). **`gflow cancel <id>`** aborts a
+queued job locally and says plainly when Flow may still charge an already-submitted one (#1198).
+
+**Fixed.**
+- **`gflow update` in a Windows pip install keeps it working (#1298).** It renames the launchers
+  aside before pip runs, and refuses with nothing changed while another gflow process holds
+  one. `pip --user` installs upgrade with `--user`. Installs at 0.99.0 and below need one manual
+  upgrade, because their own updater still has the bug: the command is in
+  [USAGE § `gflow update`](USAGE.md#gflow-update).
+- **`gflow character list` / `show` and their MCP twins work on flow.google.com** (#987 slice 2,
+  ported from @ziyedbe).
+- **`video chain`:** `--out-file` writes the clips (#1293), and `--resume-from` continues the
+  chain instead of restarting it (#1300).
+
+**Security.** Error details and saved failure records no longer leak flow.google.com
+reCAPTCHA tokens, the XSRF value or private image links (#987 slice 1).
+
+Full ledger: [LIVE_VERIFICATION_v0.100.0](LIVE_VERIFICATION_v0.100.0.md).
+
+<details><summary>v0.99.0 — --out-file, opt-in stable exit codes</summary>
+
 **v0.99.0 — alpha.** Output flags start moving to the convention of the major CLIs, and exit
 codes get a stable core you can opt in to now. Nothing breaks in this release.
 
@@ -26,6 +53,8 @@ Internally, `UiAutomationTransport` and `MigratedComposer` are split into single
 (#1249 wave 2).
 
 Full ledger: [LIVE_VERIFICATION_v0.99.0](LIVE_VERIFICATION_v0.99.0.md).
+
+</details>
 
 <details><summary>v0.98.0 — errors say whether you were charged, billed requests sent once</summary>
 
@@ -891,6 +920,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `image`/`video generate` (#1193), `--help --json` (#1203), `gflow cancel` (#1198), Windows pip `gflow update` kept working (#1298), character list/show on flow.google.com and secret redaction (#987 slices 1-2), chain `--out-file` and `--resume-from` (#1293, #1300), `gflow update` reports one result (#1163), extend catalog fix (#1184), telemetry command naming (#1209) | ✅ done (v0.100.0) |
 | `--out-file PATH` with `-o/--output PATH` deprecated (#1158), opt-in stable exit-code core `GFLOW_CLI_EXIT_CODES=2` (#1202) | ✅ done (v0.99.0) |
 | Errors carry `charged` / `next_action` (#1201), billed requests and image submits sent once (#1260, #1274, #1275), `gflow capabilities` + `capabilities://self` (#1197), `gflow models list/show` (#1196), caption heal on flow.google.com (#546), language-independent classic selectors (#1273) | ✅ done (v0.98.0) |
 | Credits read without a browser, wire health in `doctor` and `gflow_auth_status`, Chrome close no longer waits 30 s, `video extend` reports its model, no httpx request URL logged (#1229, #1140, #1180) | ✅ done (v0.97.0) |
