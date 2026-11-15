@@ -202,10 +202,11 @@ async def _cancel(db: DataStore, task_id: str) -> dict[str, Any]:
     )
 
 
-async def test_cancel_after_submit_leaves_the_row_indeterminate(
+async def test_cancel_after_submit_leaves_the_row_abandoned(
     db: DataStore, wired: dict[str, Any]
 ) -> None:
-    """A credit may already be spent, so the row must never read as a clean failure."""
+    """A credit may already be spent, so the row must never read as a clean failure. The
+    shared abort marks it before the job is stopped, as `gflow cancel` would (#1198)."""
     submitted = _hang_after_submit(db, wired["client"])
     reply = await tools.gflow_generate_image(prompt="x", wait=False)
     await asyncio.wait_for(submitted.wait(), timeout=5)
@@ -213,22 +214,38 @@ async def test_cancel_after_submit_leaves_the_row_indeterminate(
     assert await _cancel(db, reply["task_id"]) == {}
 
     # The cancel waited for the job's own handler: the very next read is settled.
-    assert _status(db, reply["task_id"]) == "indeterminate"
+    assert _status(db, reply["task_id"]) == "abandoned"
     assert (await _get(db, reply["task_id"]))["status"] == "cancelled"
     assert reply["task_id"] not in tasks_extension.DETACHED
 
 
 @pytest.mark.sharpit(allow_n_plus_one=True)  # polls a row until its state changes
-async def test_cancel_of_a_row_nobody_runs_fails_only_a_pending_row(db: DataStore) -> None:
+async def test_cancel_of_a_row_nobody_runs_here_uses_the_shared_abort(db: DataStore) -> None:
+    """Same semantics as ``gflow cancel`` (#1198): pending -> cancelled, a row another
+    process is running -> abandoned (it may still be charged), terminal -> untouched."""
     repo = QueueRepository(db)
-    repo.enqueue_task(task_id="p", profile_name="default", task_type="t2i", payload={})
-    repo.enqueue_task(task_id="c", profile_name="default", task_type="t2i", payload={})
+    for task_id in ("p", "w", "r", "c"):
+        repo.enqueue_task(
+            task_id=task_id,
+            profile_name="default",
+            task_type="t2i",
+            payload={"prompt": "p", "aspect": "1:1", "count": 1},
+        )
+    repo.claim_task("w", "other-server")  # claimed, not submitted yet
+    repo.claim_task("r", "other-server")
+    repo.update_checkpoint(
+        "r", claimant="other-server", phase="submit_attempted", may_have_spent=True
+    )
     repo.update_task_status("c", "completed")
 
-    await _cancel(db, "p")
-    await _cancel(db, "c")
+    for task_id in ("p", "w", "r", "c"):
+        await _cancel(db, task_id)
 
-    assert (_status(db, "p"), (await _get(db, "p"))["status"]) == ("failed", "cancelled")
+    assert (_status(db, "p"), (await _get(db, "p"))["status"]) == ("cancelled", "cancelled")
+    assert (_status(db, "w"), (await _get(db, "w"))["status"]) == ("cancelled", "cancelled")
+    abandoned = await _get(db, "r")
+    assert (_status(db, "r"), abandoned["status"]) == ("abandoned", "cancelled")
+    assert "charged" in abandoned["statusMessage"]
     assert (_status(db, "c"), (await _get(db, "c"))["status"]) == ("completed", "completed")
 
 
@@ -368,6 +385,20 @@ async def test_a_job_cancelled_before_its_first_step_still_settles_its_row(
     await tasks_extension.drain_detached()  # same tick as the detach: the job never ran
 
     assert _status(db, reply["task_id"]) == "failed"
+
+
+async def test_a_pending_job_this_server_holds_is_stored_cancelled(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    """A wait=false job not yet claimed is still queued: the shared abort marks it cancelled
+    (nothing reached Flow), and stopping the job after must not overwrite that (#1198)."""
+    reply = await tools.gflow_generate_image(prompt="x", wait=False)
+    assert reply["task_id"] in tasks_extension.DETACHED  # same tick: the job never ran
+
+    await _cancel(db, reply["task_id"])
+
+    assert _status(db, reply["task_id"]) == "cancelled"
+    assert reply["task_id"] not in tasks_extension.DETACHED
 
 
 @pytest.mark.sharpit(allow_n_plus_one=True)  # polls a row until its state changes

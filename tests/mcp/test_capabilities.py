@@ -50,6 +50,7 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "data download": "download",
     "image upload": "upload",
     "data sync": "reconcile",
+    "cancel": "abort.local",
     "credits user": "credits.balance",
     "credits list": "credits.balance",
     "auth": None,
@@ -282,8 +283,8 @@ def test_capabilities_doc_json_block_matches_the_code() -> None:
 
 
 def test_lifecycle_verbs_the_notes_call_unbuilt_still_do_not_exist() -> None:
-    """When #1194/#1198/#1199/#1200 land, this fails: update the capability values."""
-    built = {"status", "wait", "cancel", "reconcile", "upload"} & set(main.commands)
+    """When #1194/#1199/#1200 land, this fails: update the capability values."""
+    built = {"status", "wait", "reconcile", "upload"} & set(main.commands)
     no_wait = [
         path
         for path in ("image t2i", "video t2v", "video i2v", "video r2v")

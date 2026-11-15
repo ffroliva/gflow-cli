@@ -110,9 +110,9 @@ _FIXED: dict[str, Entry] = {
     ),
     "abort.local": (
         "partial",
-        "Ctrl-C stops a CLI run; MCP tasks/cancel (a client with the SEP-2663 Tasks "
-        "extension) stops a wait=false task. Neither stops a generation Flow already "
-        "accepted, which may still be charged. No `cancel <id>` yet (#1198).",
+        "Ctrl-C stops a CLI run; `gflow cancel <id>` and MCP tasks/cancel (a client with "
+        "the SEP-2663 Tasks extension) abort a queued wait=false job (#1198). None of "
+        "them stops a generation Flow already accepted, which may still be charged.",
     ),
     "cancel.server": (
         "no",
