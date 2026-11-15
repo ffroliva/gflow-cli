@@ -486,7 +486,9 @@ def _launchers_set_aside(inst: Installer) -> Generator[None, None, None]:
         details = ", ".join(f"`{orig}` (saved at `{aside}`)" for orig, aside in unrestored)
         raise ConfigurationError(
             f"Could not restore launcher(s) {details} after `gflow update`",
-            remediation_hint=_reinstall_hint(inst, __version__),
+            # Unpinned: pip may already have installed a newer release, and pinning this
+            # process's version would tell the user to downgrade.
+            remediation_hint=_reinstall_hint(inst, None),
         )
 
 

@@ -1069,7 +1069,7 @@ class TestLaunchersSetAside:
     ) -> None:
         """Finding 2a: os.replace failing during restore after a normal yield raises
         ConfigurationError (exit 11) naming the launcher path and its .old file, with
-        _reinstall_hint(inst, __version__)."""
+        an unpinned _reinstall_hint: pip may already have installed a newer release."""
         from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError
 
         gflow_exe = tmp_path / "gflow.exe"
@@ -1099,7 +1099,7 @@ class TestLaunchersSetAside:
         msg = str(exc_info.value)
         assert str(gflow_exe) in msg
         assert str(old_file) in msg
-        assert exc_info.value.remediation_hint == uc._reinstall_hint(inst, __version__)
+        assert exc_info.value.remediation_hint == uc._reinstall_hint(inst, None)
 
     def test_r4c_keyboard_interrupt_not_masked_when_restore_also_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
