@@ -112,7 +112,8 @@ def test_e2e_models_list_and_show_json() -> None:
 
 
 @pytest.mark.e2e_image
-def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> None:
+@pytest.mark.parametrize("verb", ["t2i", "gen"])  # `gen` is the #1193 bridge to t2i
+def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb: str) -> None:
     """`gflow image t2i --json` produces a pure-JSON document with the
     ``image_result`` schema (status / command / project_id / model / count /
     images[]) when run against real Flow. Runs 1 image generation (zero credits).
@@ -132,7 +133,7 @@ def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
             "-m",
             "gflow_cli",
             "image",
-            "t2i",
+            verb,
             "a calm forest at dawn",
             "--model",
             "nano2",
@@ -154,6 +155,8 @@ def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
     data = json.loads(proc.stdout)
     assert data["status"] == "ok"
     assert data["command"] == "image t2i"
+    # The bridge adds the mode it resolved to; the mode verb itself does not.
+    assert data.get("mode") == ("t2i" if verb == "gen" else None)
     assert data["count"] == 1
     img = data["images"][0]
     assert img["media_name"], "media_name must be non-empty"
@@ -175,8 +178,41 @@ def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
     )
 
 
+@pytest.mark.e2e_image
+def test_e2e_image_gen_with_a_local_ref_resolves_to_i2i(
+    e2e_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`gflow image gen PROMPT --ref <local png> --json` runs `image i2i` against real Flow
+    (#1193): the payload's `command` is the mode verb and `mode` the resolved one. One
+    image generation, zero credits."""
+    from .test_image_i2i_ref_cap_e2e import _tiny_png
+
+    ref = _tiny_png(tmp_path / "ref.png", color=(40, 120, 200))
+    env = dict(e2e_env)
+    env.pop("GFLOW_CLI_HOME", None)  # the real profile, as in the t2i test above
+    argv = ["image", "gen", "a small blue tile, studio light", "--ref", str(ref)]
+    argv += ["--project-name", "e2e-1193-gen", "--model", "nano2"]
+    argv += ["--out", str(tmp_path / "out"), "--json"]
+    proc = subprocess.run(
+        [sys.executable, "-m", "gflow_cli", *argv],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"exit {proc.returncode}; stderr tail: {proc.stderr[-600:]!r}"
+    data = json.loads(proc.stdout)
+    assert data["status"] == "ok"
+    assert data["command"] == "image i2i"
+    assert data["mode"] == "i2i"
+    saved = Path(data["images"][0]["local_path"])
+    assert saved.exists() and saved.stat().st_size > 0
+
+
 @pytest.mark.e2e_video
-def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> None:
+@pytest.mark.parametrize("verb", ["t2v", "gen"])  # `gen` is the #1193 bridge to t2v
+def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb: str) -> None:
     """`gflow video t2v --json` produces a pure-JSON document with the
     ``video_result`` schema (status / command / media_id / generation_status /
     succeeded / local_path / request) when run against real Flow. Costs 1
@@ -202,7 +238,7 @@ def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
             "-m",
             "gflow_cli",
             "video",
-            "t2v",
+            verb,
             "a golden sunset over mountains",
             "--model",
             "veo-lite",
@@ -230,6 +266,7 @@ def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path) -> No
     assert data["succeeded"] is True
     assert data["media_id"], "media_id must be non-empty"
     assert data["request"]["mode"] == "t2v"
+    assert data.get("mode") == ("t2v" if verb == "gen" else None)
     saved = Path(data["local_path"])
     assert saved.exists() and saved.stat().st_size > 0, (
         f"local_path must point to a downloaded mp4 of non-zero size; "

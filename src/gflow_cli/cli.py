@@ -27,6 +27,8 @@ from gflow_cli.cli_credits import credits as _credits_group
 from gflow_cli.cli_data import data as _data_group
 from gflow_cli.cli_docs import docs as _docs_command
 from gflow_cli.cli_doctor import doctor as _doctor_command
+from gflow_cli.cli_gen import image_gen as _image_gen_command
+from gflow_cli.cli_gen import video_gen as _video_gen_command
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
 from gflow_cli.cli_models import models as _models_command
@@ -665,6 +667,8 @@ main.add_command(_movie_group)
 main.add_command(_project_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
+_video_group.add_command(_video_gen_command)  # bridge verbs (#1193), kept in cli_gen
+_image_group.add_command(_image_gen_command)
 main.add_command(_instructions_group)
 main.add_command(_run_command)
 main.add_command(_models_command)

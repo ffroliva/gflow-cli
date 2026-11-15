@@ -47,6 +47,9 @@ _NINE_COMMANDS = (
     ("video", "extend"),
 )
 
+# New verbs (the #1193 bridges): --out-file and no -o/--output PATH spelling at all.
+_OUT_FILE_ONLY = {"image gen", "video gen"}
+
 
 def _get_command(path: tuple[str, ...]) -> click.Command:
     current: click.BaseCommand = main
@@ -118,7 +121,7 @@ def test_nine_commands_have_out_file_option(cmd_path: tuple[str, ...]) -> None:
 def test_click_tree_guard() -> None:
     """Click-tree guard: walk every leaf of gflow_cli.cli.main.
 
-    Exactly the nine commands have --out-file.
+    Exactly the nine commands, plus the --out-file-only bridge verbs, have --out-file.
     Any option anywhere spelled -o or --output that takes a path must be the
     deprecated one from task 1/2 (a DeprecatedAliasOption).
     """
@@ -143,7 +146,12 @@ def test_click_tree_guard() -> None:
         for path, cmd in commands.items()
         if any(isinstance(p, click.Option) and "--out-file" in p.opts for p in cmd.params)
     }
-    assert commands_with_out_file == expected_nine
+    assert commands_with_out_file == expected_nine | _OUT_FILE_ONLY
+
+    # A verb added after #1158 never had -o PATH, so it gets no deprecated spelling either.
+    for path in _OUT_FILE_ONLY:
+        opts = {o for p in commands[path].params if isinstance(p, click.Option) for o in p.opts}
+        assert not opts & {"-o", "--output"}, f"{path} must take --out-file only"
 
     # Check that any -o or --output option taking a Path is marked as deprecated alias
     for path, cmd in commands.items():
