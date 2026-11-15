@@ -79,6 +79,7 @@ def test_leaf_walks_groups() -> None:
         (["--verbose", "video", "t2v", "a cat"], "video t2v"),
         (["-v", "data", "list", "projects"], "data list projects"),
         (["auth", "list"], "auth list"),
+        (["video", "gen", "a cat"], "video generate"),  # an alias counts as its command
     ],
 )
 def test_root_flags_do_not_swallow_the_command(argv: list[str], command: str) -> None:

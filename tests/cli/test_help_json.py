@@ -285,3 +285,5 @@ def test_generate_is_the_bridge_verb_and_gen_its_alias(group: str) -> None:
     assert leaf["path"] == [group, "generate"]
     assert leaf["spends_credits"] is True
     assert CliRunner().invoke(main, [group, "gen", "--help"]).exit_code == 0
+    # Typed through the alias, --help --json still answers with the one leaf, as JSON.
+    assert _paths(_tree(group, "gen", "--help", "--json")) == [f"{group} generate"]

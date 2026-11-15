@@ -578,7 +578,7 @@ def _command_path(root: click.Group, argv: Sequence[str]) -> tuple[str, click.Co
         command = group.commands.get(arg)
         if command is None:
             break
-        path.append(arg)
+        path.append(command.name or arg)  # an alias (`video gen`) counts as its command
         index += 1
         if not isinstance(command, click.Group):
             leaf = command

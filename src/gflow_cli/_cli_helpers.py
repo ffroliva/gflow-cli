@@ -433,7 +433,7 @@ def help_json_path(root: click.Group, args: list[str]) -> tuple[str, ...] | None
         if sub is None or name is None:
             return None
         cmd = sub
-        path.append(name)
+        path.append(sub.name or name)  # an alias resolves to the leaf's own name
         ctx = click.Context(sub, parent=ctx, info_name=name, resilient_parsing=True)
 
 
