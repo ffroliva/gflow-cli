@@ -72,33 +72,33 @@ fails on develop for the bug's own reason.
 account`).
 
 **Steps:**
-- [ ] Build two wheels from the tree under test, as `scripts/dev/spike_1298_pip_launcher.py build`
+- [x] Build two wheels from the tree under test, as `scripts/dev/spike_1298_pip_launcher.py build`
   does: `git archive HEAD` into tmp, set the version, then `uv build --wheel` (`UV_LINK_MODE=copy`).
   LOW is `0.0.1` and HIGH is `9999.0.0`. They are built once per session (a session fixture). Build
   from the working tree, not HEAD, if HEAD lacks the fix under test. Copy the tree into tmp, so the
   fix is in both wheels.
-- [ ] Install LOW from `--find-links <wheels>`. The deps come from PyPI, and the install must look
+- [x] Install LOW from `--find-links <wheels>`. The deps come from PyPI, and the install must look
   like an index install: no `direct_url.json`. Run `update` with `PIP_NO_INDEX=1`,
   `PIP_FIND_LINKS=<wheels>`, `GFLOW_CLI_HOME=<tmp>`, and telemetry and the update notice off.
-- [ ] Case A, `pip` venv uncontested: `<venv>/Scripts/gflow.exe update` (`bin/gflow` on POSIX)
+- [x] Case A, `pip` venv uncontested: `<venv>/Scripts/gflow.exe update` (`bin/gflow` on POSIX)
   exits 0. `python -I -c "import gflow_cli.cli"` reports `9999.0.0`. The new `gflow --version`
   runs. After a second `gflow --version` and `update --check`, no `*.gflow-update-*.old` is left.
-- [ ] Case B, Windows only: a live `gflow.exe mcp run` (stdin=PIPE) in the same venv. `update`
+- [x] Case B, Windows only: a live `gflow.exe mcp run` (stdin=PIPE) in the same venv. `update`
   exits 11 before pip. The version is still `0.0.1`, the import works, every launcher is present,
   there is no `.old`, and the message names a launcher path. Stop the child by PID.
-- [ ] Case C, Windows only: a `--user` install with `PYTHONUSERBASE=<tmp>`. The interpreter is
+- [x] Case C, Windows only: a `--user` install with `PYTHONUSERBASE=<tmp>`. The interpreter is
   `sys._base_executable`, never the user's real user site. Same expectations as case A.
-- [ ] Cases D and E: uv tool and pipx, each skipped when the tool is missing. Every home goes under
+- [x] Cases D and E: uv tool and pipx, each skipped when the tool is missing. Every home goes under
   tmp (`UV_TOOL_DIR`, `UV_TOOL_BIN_DIR`, `PIPX_HOME`, `PIPX_BIN_DIR`), installed the
   index-simulated way of spike section 8. `update` exits 0 and the install is usable afterwards.
-- [ ] Run it on develop's code: case A must fail with exit 11 and `ModuleNotFoundError` (the bug),
+- [x] Run it on develop's code: case A must fail with exit 11 and `ModuleNotFoundError` (the bug),
   not with a harness error. Quote that red in the commit body.
 
 **Tests created (red):**
-- [ ] `test_pip_venv_update_keeps_a_working_install` - case A
-- [ ] `test_pip_update_refuses_untouched_while_another_gflow_runs` - case B
-- [ ] `test_pip_user_update_keeps_a_working_install` - case C
-- [ ] `test_uv_tool_update_still_works`, `test_pipx_update_still_works` - D, E (green before and after)
+- [x] `test_pip_venv_update_keeps_a_working_install` - case A
+- [x] `test_pip_update_refuses_untouched_while_another_gflow_runs` - case B
+- [x] `test_pip_user_update_keeps_a_working_install` - case C
+- [x] `test_uv_tool_update_still_works`, `test_pipx_update_still_works` - D, E (green before and after)
 
 ---
 
