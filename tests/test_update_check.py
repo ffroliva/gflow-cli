@@ -973,6 +973,21 @@ class TestReinstallHint:
         assert '"gflow-cli" --force --reinstall' in hint
 
 
+class _WinPermissionError(PermissionError):
+    """A PermissionError that carries ``winerror`` on every platform.
+
+    ``PermissionError(13, msg, path, 32)`` sets ``winerror`` only on Windows; on the
+    Linux CI legs the guard saw no 32 and the in-use test failed there (#1304)."""
+
+    def __init__(self, errno: int, msg: str, filename: str, *, winerror: int) -> None:
+        super().__init__(errno, msg, filename)
+        self._winerror = winerror
+
+    @property
+    def winerror(self) -> int:  # type: ignore[override]
+        return self._winerror
+
+
 class _FakeDistribution:
     """Python 3.12+ semantics: ``files`` drops entries missing on disk, RECORD keeps them.
 
@@ -1070,7 +1085,7 @@ class TestLaunchersSetAside:
 
         def _fake_replace(src: str | Path, dst: str | Path) -> None:
             if str(src) == str(gflow2):
-                raise PermissionError(13, "Permission denied", str(gflow2), 32)
+                raise _WinPermissionError(13, "Permission denied", str(gflow2), winerror=32)
             real_replace(src, dst)
 
         monkeypatch.setattr(os, "replace", _fake_replace)
@@ -1265,7 +1280,7 @@ class TestLaunchersSetAside:
 
         def _fake_replace(src: str | Path, dst: str | Path) -> None:
             if str(src) == str(second):
-                raise PermissionError(13, "Access is denied", str(second), 5)
+                raise _WinPermissionError(13, "Access is denied", str(second), winerror=5)
             real_replace(src, dst)
 
         monkeypatch.setattr(os, "replace", _fake_replace)
