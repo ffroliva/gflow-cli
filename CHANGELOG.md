@@ -56,17 +56,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`gflow update` in a Windows pip install no longer breaks the environment ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)).**
-  On Windows, pip uninstalls old files before installing new ones; when deleting the running
-  executable hit `[WinError 32]`, pip aborted without rollback and left `site-packages/gflow_cli/`
-  deleted. `gflow update` now clears `importlib.metadata`'s cache and renames the running
-  console-script launchers aside before pip runs. If another process (such as `gflow mcp run`)
-  holds a launcher, the rename fails before pip runs and refuses untouched with exit 11. Any
-  launcher not recreated by pip is restored in `finally`, and leftover `.old` launchers are swept
-  on subsequent runs.
-  *One-time manual upgrade note for existing installs at <= 0.99.0:* because existing installs
-  run their older `update` command, upgrade them once directly:
-  `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli`
+- **`gflow update` in a Windows pip install no longer leaves gflow unusable ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)).**
+  On Windows, `gflow update` in a pip install could leave gflow unusable when pip attempted
+  to replace the running executable. `gflow update` now moves its launchers aside so the
+  upgrade can complete; or, while another gflow process (an MCP server, `gflow serve`) holds
+  a launcher, it stops before changing anything (exit 11). Installs in the user site
+  (`pip install --user`) now upgrade with `--user`.
+  *One-time manual upgrade for existing installs at 0.99.0 and below:* because their own updater
+  still has the bug, close every gflow process, then run
+  `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (venv) or
+  `py -m pip install --user --upgrade gflow-cli` (`--user`).
 - **`video chain --out-file PATH` (and the deprecated `-o`) now writes the clips there.** It was
   accepted and ignored. Link i's clip goes to `<stem>_<i><suffix>` next to PATH
   (`out/clip.mp4` gives `out/clip_1.mp4`, `out/clip_2.mp4`), numbered over the whole manifest so

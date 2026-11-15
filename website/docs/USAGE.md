@@ -1946,7 +1946,7 @@ The installer is read off the install itself, never guessed from `PATH`:
 |---|---|---|
 | `uv-receipt.toml` | `uv tool` | `uv tool upgrade gflow-cli` |
 | `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
-| neither | plain venv | `<that venv's python> -m pip install --upgrade gflow-cli` |
+| neither | plain venv or user install | `<that interpreter> -m pip install --upgrade gflow-cli` (adds `--user` for a user-site install) |
 
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs
@@ -1969,7 +1969,8 @@ be reached; after an upgrade `latest` is the version the venv actually reports;
   install (PEP 610 `direct_url.json` present): update those the way they were
   installed (`git pull`, reinstall from the checkout); `uv` / `pipx` detected
   but not on `PATH`, or a plain venv with no `pip` module (a `uv venv`): the
-  message carries the exact command to run yourself;
+  message carries the exact command to run yourself; on Windows under pip, a
+  launcher held by another program or missing from an interrupted update;
 - **after the manager ran** — first, the venv can no longer import gflow-cli at
   all (see below); then, the venv still reports the old version (a receipt
   pinned to one version makes `uv tool upgrade` a silent no-op, for instance),
@@ -2001,23 +2002,35 @@ output, and adds a note quoting its exit code. On `pipx`, the running trampoline
 outside the venv, so pip upgrades the venv cleanly and pipx skips overwriting the
 bin copy.
 
-Under a **pip virtual environment or user install**, `gflow update` drops
-`importlib.metadata`'s cache and renames the running console-script launchers aside
-before pip runs ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)). Pip then
-uninstalls old files and creates fresh launchers without hitting WinError 32. If
-another program holds a launcher, the rename fails *before* pip runs, refusing
-untouched with exit 11 so the venv is never stranded. Any leftover `.old` launchers
-are swept on subsequent runs.
+Under a **pip virtual environment or user install**, on Windows `gflow update`
+renames the running console-script launchers aside before pip runs
+([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)). Pip can then uninstall old
+files and create fresh launchers cleanly. User-site installs (`pip install --user`)
+are detected and upgraded with `--user` so pip does not create a duplicate shadowing
+copy. If another running gflow process (an MCP server, `gflow serve`) holds a
+launcher, the update stops before changing anything (exit 11) to protect the
+environment. Any launcher pip did not recreate is restored. On any other rename error
+(for example access denied on an all-users Python), the update runs as before without
+the guard. Leftover launcher backups (`*.gflow-update-<pid>.old`) from an earlier update
+are removed on subsequent runs, including `gflow update --check`.
 
 > [!NOTE]
 > **One-time manual upgrade for Windows pip installs at 0.99.0 and below ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)):**
 > Because installs at <= 0.99.0 run their *existing* `gflow update` code, upgrading
 > directly via `gflow update` hits the old launcher lock and leaves the environment
-> stripped of `gflow_cli`. Run this one-time command instead from a shell with no
-> gflow processes running:
+> stripped of `gflow_cli`. Close every gflow process, then run this one-time command
+> instead:
+>
+> Virtual environment:
 > ```powershell
 > <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
 > ```
+>
+> User-site install (`--user`):
+> ```powershell
+> py -m pip install --user --upgrade gflow-cli
+> ```
+>
 > Once upgraded past 0.99.0, normal `gflow update` handles future upgrades cleanly.
 
 **Stop every other `gflow` process BEFORE you upgrade — not after.** While the running

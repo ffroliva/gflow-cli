@@ -36,7 +36,7 @@ in the interleavings below.
 | Medium | Two `gflow update` runs at once | The second finds launchers missing (the first moved them) and refuses, as for r6. |
 | Medium | Existing installs (<= 0.99.0) run the OLD updater on their first hop to the fixed version, and are still stranded | Docs, CHANGELOG and the #1298 reply give the one-time command: close every gflow process, then `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli`. |
 | Low | `.old` files pile up | The sweep deletes `<name>.gflow-update-<pid>.old` only when `<name>` exists, and skips an `OSError` (the file is still in use). |
-| Low | Python 3.11/3.12 behave differently | 3.13 and 3.14 were checked here (`MetadataPathFinder.invalidate_caches` clears `FastPath`). CI's Windows leg runs the unit tests on 3.11 and 3.12. |
+| Low | Python 3.11/3.12 behave differently | The Windows CI job runs only `test_profile_lease*` on 3.13; the cache release was measured on 3.11, 3.12 and 3.14 locally (`MetadataPathFinder.invalidate_caches` clears `FastPath`). |
 
 ---
 
@@ -172,7 +172,7 @@ account`).
 
 - [x] Task 1's case A seen red on develop's code for the bug's reason (exit 11 + `ModuleNotFoundError`)
 - [x] All steps checked; `/gflow:check` green; `check_size.py` green
-- [x] `e2e_update` run on the final tree on Windows: A, B and C pass; D and E pass, or are skipped
+- [ ] `e2e_update` run on the final tree on Windows: A, B and C pass; D and E pass, or are skipped
   with the missing tool named
 - [ ] Two fresh xhigh reviews (`/code-review`, `ponytail-review`) and one fix round
 - [ ] CodeRabbit answered; the SonarCloud scan step concluded success with 0 new issues
@@ -186,3 +186,4 @@ account`).
 | 2026-11-15 | Scope: pip on win32 only | Section 8: pipx and uv tool already exit 0 and stay usable; POSIX unlinks open files | Wrapping every installer |
 | 2026-11-15 | A missing launcher means refuse with the force-reinstall hint | Neither a hard kill nor a concurrent update can be told apart without a PID probe, and both are repaired by closing gflow and force-reinstalling | Auto-restoring an `.old` from a possibly live update |
 | 2026-11-15 | One-time manual step for <= 0.99.0 | The old updater runs on the first hop, so no code shipped now can reach it | none |
+| 2026-11-15 | Review round: RECORD-based launchers, WinError 32 only refusal, `--user` | RECORD lists launchers even if missing (Python 3.12 `files` drops missing); only WinError 32 means "in use" (other rename errors let pip run without guard); `--user` upgrades with `--user` to prevent duplicate shadowing copy | Reading `Distribution.files`; refusing on all rename errors (breaks all-users Python); omitting `--user` from pip command |
