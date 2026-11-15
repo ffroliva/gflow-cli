@@ -51,7 +51,10 @@ class _FakePage:
 
 
 def _client_with(page: _FakePage) -> FlowApiClient:
+    from gflow_cli.config import Settings
+
     c = FlowApiClient.__new__(FlowApiClient)
+    c.settings = Settings()
     c._page = page
     c._page_queue = None
     c._context = None

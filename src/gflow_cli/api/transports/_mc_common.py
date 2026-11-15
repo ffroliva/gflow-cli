@@ -1435,7 +1435,22 @@ def _navigated_project_id(url: str, before: str) -> str | None:
     return segments[2]
 
 
-async def _rpc_reply(
+def is_at(url: object, target: str) -> bool:
+    """True when *url* is the route *target* itself (query/fragment/trailing slash aside).
+
+    Prefix matching (``url.startswith(target)``) treated
+    ``/project/<id>/character/<eid>`` as ``/project/<id>``, so a generation or a
+    project rename after a character operation ran against the character editor (#639).
+    """
+    cur, want = urlsplit(str(url or "")), urlsplit(target)
+    return (cur.scheme, cur.netloc, cur.path.rstrip("/")) == (
+        want.scheme,
+        want.netloc,
+        want.path.rstrip("/"),
+    )
+
+
+async def rpc_reply(
     page: Page,
     rpcid: str,
     action: Callable[[], Awaitable[None]],
@@ -1505,3 +1520,6 @@ async def _rpc_reply(
             ) from e
     finally:
         page.remove_listener("response", on_response)
+
+
+_rpc_reply = rpc_reply

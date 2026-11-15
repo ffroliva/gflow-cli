@@ -233,5 +233,5 @@ async def test_character_show_on_flow_google_com_reads_zzl0ze_and_reports_missin
     assert ok_res["status"] == "ok"
     assert ok_res["character"]["entity_id"] == _ALDOUS.entity_id
     assert missing_res["status"] == "error"
-    assert missing_res["error"]["exit_code"] == 11
-
+    assert missing_res["error"]["type"].endswith("/configuration")
+    assert "character not found" in missing_res["error"]["detail"]

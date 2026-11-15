@@ -7,7 +7,7 @@ bodies are unchanged.
 from __future__ import annotations
 
 import json
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
 
 import structlog
@@ -15,17 +15,30 @@ import structlog
 from gflow_cli.api import routes
 from gflow_cli.api._flow_media_edit import MediaEditSurface
 from gflow_cli.api._flow_session import _APPLICATION_JSON, JsonObject  # pyright: ignore[reportPrivateUsage]
-from gflow_cli.api._flow_workspace import _unwrap_trpc  # pyright: ignore[reportPrivateUsage]
-from gflow_cli.api.character import Character, CharacterImageRequest, parse_characters
+from gflow_cli.api._flow_workspace import (
+    _MIGRATED_FLOW_HOST,  # pyright: ignore[reportPrivateUsage]
+    _unwrap_trpc,  # pyright: ignore[reportPrivateUsage]
+)
+from gflow_cli.api.character import (
+    VOICES,
+    Character,
+    CharacterImageRequest,
+    Voice,
+    parse_characters,
+)
 from gflow_cli.api.dto import (
     GeneratedImage,
 )
 from gflow_cli.errors import (
+    AuthExpiredError,
     ConfigurationError,
     WireFormatError,
 )
 from gflow_cli.paths import character_output_path
 from gflow_cli.storage import AnyPath
+
+if TYPE_CHECKING:
+    from gflow_cli.api.transports.migrated_character import ProjectRead
 
 logger = structlog.get_logger(__name__)
 
@@ -59,18 +72,47 @@ class CharacterSurface(MediaEditSurface):
         logger.debug("character.entity_created", project_id=project_id, entity_id=entity_id)
         return str(entity_id)
 
+    async def _read_migrated_project(self, project_id: str) -> ProjectRead:
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            return await migrated_character.read_project(page, project_id)
+        finally:
+            self._checkin_page(page)
+
     async def list_characters(self, project_id: str) -> list[Character]:
         """Return all CHARACTER entities in *project_id*.
 
-        Maps to ``GET .../trpc/flow.projectInitialData?input=…``.
+        Maps to ``GET .../trpc/flow.projectInitialData?input=…``, and to
+        ``flow.google.com``'s ``Zzl0ze`` project read when that route refuses
+        with the measured 404/401 or when ``flow_host=flow.google.com`` (#875).
         Session-cookie auth.  FREE — no reCAPTCHA, no credit.
         """
-        trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
-        url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
-        data = await self._get_json(url, route_name="projectInitialData")
-        chars = parse_characters(_unwrap_trpc(data))
+        flow_host = getattr(getattr(self, "settings", None), "flow_host", "auto")
+        if flow_host != _MIGRATED_FLOW_HOST:
+            trpc_input = json.dumps({"json": {"projectId": project_id}}, separators=(",", ":"))
+            url = f"{routes.PROJECT_INITIAL_DATA_URL}?input={quote(trpc_input, safe='')}"
+            try:
+                data = await self._get_json(url, route_name="projectInitialData")
+                chars = parse_characters(_unwrap_trpc(data))
+                logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
+                return chars
+            except (AuthExpiredError, WireFormatError) as exc:
+                if not self._labs_project_route_refused(exc, event="character.labs_route_refused"):
+                    raise
+        chars = list((await self._read_migrated_project(project_id)).characters)
         logger.debug("character.list_fetched", project_id=project_id, count=len(chars))
         return chars
+
+    async def list_voices(self, project_id: str) -> tuple[Voice, ...]:
+        """Return the live voice catalog from ``Zzl0ze`` when *project_id* is read on
+        ``flow.google.com``, otherwise the offline ``VOICES`` tuple."""
+        flow_host = getattr(getattr(self, "settings", None), "flow_host", "auto")
+        if flow_host == "labs.google":
+            return VOICES
+        read = await self._read_migrated_project(project_id)
+        return read.voices or VOICES
 
     async def get_character(
         self,

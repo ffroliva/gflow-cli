@@ -685,4 +685,3 @@ class TestIsAt:
         await mc.rename_project(page, PID, "t")  # type: ignore[arg-type]
 
         assert page.gotos == [f"https://flow.google.com/project/{PID}"]
-

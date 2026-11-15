@@ -86,6 +86,7 @@ VOICES: tuple[Voice, ...] = (
     Voice("Callirrhoe", "Female, easy-going, mid pitch"),
     Voice("Charon", "Male, informative, lower pitch"),
     Voice("Despina", "Female, smooth, mid pitch"),  # descriptor unverified
+    Voice("Enceladus", "Male, breathy, lower pitch"),
     Voice("Erinome", "Female, clear, mid pitch"),
     Voice("Fenrir", "Male, excitable, younger pitch"),
     Voice("Gacrux", "Female, mature, mid pitch"),
@@ -109,6 +110,18 @@ VOICES: tuple[Voice, ...] = (
 
 # Convenience tuple of just the canonical names — for validation / back-compat.
 VOICE_NAMES: tuple[str, ...] = tuple(v.name for v in VOICES)
+_VOICE_BY_WIRE: dict[str, str] = {v.name.lower(): v.name for v in VOICES}
+
+
+def voice_to_wire(name: str) -> str:
+    """Canonical ``Aoede`` (or any case) -> ``aoede`` for ``flow.google.com``'s wire."""
+    return name.strip().lower()
+
+
+def voice_from_wire(wire_id: str) -> str:
+    """Wire ``aoede`` -> canonical ``Aoede``; an unknown id is capitalized, never dropped."""
+    cleaned = wire_id.strip()
+    return _VOICE_BY_WIRE.get(cleaned.lower(), cleaned.capitalize())
 
 
 # ---------------------------------------------------------------------------

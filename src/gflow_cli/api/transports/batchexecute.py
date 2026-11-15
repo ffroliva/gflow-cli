@@ -241,12 +241,23 @@ def _clip_url(value: Any) -> str | None:
     return None if url and urlsplit(url).path.startswith("/asb/") else url
 
 
-def _discovery_head(payload: Any) -> str:
+_CAPABILITY_URL_RE = re.compile(
+    r"\bhttps?://lh3\.googleusercontent\.com/asb/[^\s\"'\\]+",
+    re.IGNORECASE,
+)
+
+
+def discovery_head(payload: Any) -> str:
+    """First 200 chars of *payload* AFTER scrubbing secrets and capability URLs."""
     try:
-        head = json.dumps(payload)[:200]
+        raw = json.dumps(payload)
     except (TypeError, ValueError):
-        head = repr(payload)[:200]
-    return redact_error_detail(_TOKEN_RE.sub("<token>", head))
+        raw = repr(payload)
+    scrubbed = _CAPABILITY_URL_RE.sub("<redacted:url>", _TOKEN_RE.sub("<token>", raw))
+    return redact_error_detail(scrubbed)[:200]
+
+
+_discovery_head = discovery_head
 
 
 def generation_record(

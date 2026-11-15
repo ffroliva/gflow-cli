@@ -289,6 +289,9 @@ from gflow_cli.api.transports._mc_common import (
     body_rpcid as body_rpcid,
 )
 from gflow_cli.api.transports._mc_common import (
+    is_at as is_at,
+)
+from gflow_cli.api.transports._mc_common import (
     migrated_can_serve as migrated_can_serve,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -296,6 +299,9 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     request_body as request_body,
+)
+from gflow_cli.api.transports._mc_common import (
+    rpc_reply as rpc_reply,
 )
 from gflow_cli.api.transports._mc_common import (
     url_rpcid as url_rpcid,
@@ -647,7 +653,7 @@ async def rename_project(
     ``timeout_s`` bounds the rename reply; the selector wait stays at ``ANCHOR_TIMEOUT_S``.
     A lost or late reply is settled by reading the saved title back (#992, #1037)."""
     target = MIGRATED_PROJECT_URL.format(project_id=project_id)
-    if not str(getattr(page, "url", "") or "").startswith(target):
+    if not is_at(getattr(page, "url", ""), target):
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
     await MigratedComposer._dismiss_dialog(page)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     field = await _wait_anchor(
