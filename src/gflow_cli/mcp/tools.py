@@ -1653,9 +1653,12 @@ def _character_to_dict(char: Any) -> dict[str, Any]:
     description=(
         "List the saved Flow CHARACTER entities in a project. Read-only, spends no credits. "
         "On flow.google.com, returns each character's entity_id, display_name, voice, "
-        "personality, workflow_ids and thumbnail_media_id. An entity_id goes to "
-        "reference_entities (with display_name in reference_entity_names on flow.google.com) "
-        "and display_name works as @Name in a prompt. Drives a browser."
+        "personality, workflow_ids and thumbnail_media_id. Pass entity_id in "
+        "reference_entities paired with display_name in reference_entity_names (image and "
+        "video r2v). On flow.google.com, an image @Name still attaches the first word "
+        "after @ by name via the @ picker without reading the character catalog, while "
+        "video @Name is not supported yet (exit 29, mention index unavailable); video r2v "
+        "takes reference_entities plus reference_entity_names. Drives a browser."
     ),
 )
 @_guarded
@@ -1663,15 +1666,7 @@ async def gflow_character_list(
     project: str,
     profile: str = _DEFAULT_PROFILE,
 ) -> dict[str, Any]:
-    """List a project's Flow Character entities.
-
-    Args:
-        project: Flow project id to enumerate (mirrors the CLI ``--project``).
-        profile: gflow-cli profile name; resolves like the CLI when left as "default".
-
-    Returns:
-        ``{"status": "ok", "characters": [...], "count": N}`` (#499).
-    """
+    """List a project's Flow Character entities (#499)."""
     log.info("mcp.tool.character_list", project=project, profile=profile)
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):

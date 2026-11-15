@@ -146,6 +146,21 @@ class TestDrift:
         with pytest.raises(WireFormatError, match="a character row has no"):
             parse_project_read(payload)
 
+    def test_non_list_character_parts_is_wire_drift_while_none_parses(self) -> None:
+        drifted = _payload()
+        drifted[5][0][3] = [1, "Nora", "oops"]
+        with pytest.raises(WireFormatError, match="character parts") as exc:
+            parse_project_read(drifted)
+        assert exc.value.route == "batchexecute:Zzl0ze"
+
+        none_parts = _payload()
+        none_parts[5][0][3] = [1, "Nora", None]
+        (char,) = parse_project_read(none_parts).characters
+        assert char.display_name == "Nora"
+        assert char.workflow_ids == ()
+        assert char.voice is None
+        assert char.personality is None
+
     def test_non_list_voice_refs_cell_is_wire_drift(self) -> None:
         payload = _payload()
         payload[5][0][3][2][1] = "aoede"

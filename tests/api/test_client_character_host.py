@@ -260,15 +260,48 @@ async def test_read_project_reloads_when_already_at_project_url() -> None:
     ids=["signin", "about"],
 )
 async def test_read_project_raises_at_once_on_signin_or_about_landing(
-    landing_url: str, expected_exc: type[Exception]
+    monkeypatch: pytest.MonkeyPatch, landing_url: str, expected_exc: type[Exception]
 ) -> None:
+    from gflow_cli.api.transports import _mc_common
+
+    waits: list[float] = []
+
+    async def fake_wait_for(fut: Any, timeout: float) -> Any:
+        waits.append(timeout)
+        if not fut.done():
+            fut.cancel()
+            raise TimeoutError
+        return await fut
+
+    monkeypatch.setattr(_mc_common.asyncio, "wait_for", fake_wait_for)
     page = _Page(None, landing_url=landing_url)
 
-    with pytest.raises(expected_exc):
-        await read_project(page, PID, timeout_s=0.1)  # type: ignore[arg-type]
+    with pytest.raises(expected_exc) as exc:
+        await read_project(page, PID, timeout_s=45.0)  # type: ignore[arg-type]
 
+    assert not isinstance(exc.value, TransportTimeoutError)
+    assert waits == [45.0]
     assert len(page.gotos) == 1
     assert page.reloads == 0
+
+
+@pytest.mark.parametrize(
+    "landing_url",
+    [
+        "https://flow.google.com/about",
+        "https://accounts.google.com/v3/signin/identifier",
+    ],
+    ids=["about", "signin"],
+)
+async def test_read_project_does_not_abort_reply_when_landing_seen_before_reply(
+    landing_url: str,
+) -> None:
+    page = _Page(_fixture_payload(), landing_url=landing_url)
+
+    read = await read_project(page, PID, timeout_s=2)  # type: ignore[arg-type]
+
+    assert [c.entity_id for c in read.characters] == [NORA.entity_id]
+    assert len(page.gotos) == 1
 
 
 async def test_read_project_ignores_other_project_reply_and_waits_for_requested_project() -> None:

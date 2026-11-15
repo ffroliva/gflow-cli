@@ -237,6 +237,21 @@ async def test_character_show_on_flow_google_com_reads_zzl0ze_and_reports_missin
     assert "character not found" in missing_res["error"]["detail"]
 
 
+def _assert_changelog_has_character_read_entry(changelog: str) -> None:
+    import re
+
+    blocks = re.split(r"\n(?=- \*\*|## )", changelog)
+    entry = next(
+        (b for b in blocks if "gflow character list" in b and "#987" in b),
+        None,
+    )
+    assert entry is not None, "CHANGELOG.md is missing the #987 character read entry"
+    assert "Enceladus" in entry
+    assert "@ziyedbe" in entry
+    for internal_name in ("Zzl0ze", "read_project", "parse_project_read", "voice_from_wire"):
+        assert internal_name not in entry
+
+
 @pytest.mark.parametrize("tool_name", ["gflow_character_list", "gflow_character_show"])
 def test_character_read_tool_descriptions_document_flow_google_com_support(
     tool_name: str,
@@ -250,9 +265,57 @@ def test_character_read_tool_descriptions_document_flow_google_com_support(
     assert "#875" not in tool.description
 
     changelog = (Path(__file__).resolve().parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = changelog.split("## [", 2)[1]
-    assert "gflow character list" in unreleased
-    assert "Enceladus" in unreleased
-    assert "@ziyedbe (#987)" in unreleased
-    for internal_name in ("Zzl0ze", "read_project", "parse_project_read", "voice_from_wire"):
-        assert internal_name not in unreleased
+    _assert_changelog_has_character_read_entry(changelog)
+
+
+def test_changelog_character_read_entry_survives_release_heading_move(tmp_path: Any) -> None:
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
+    renamed = tmp_path / "CHANGELOG_renamed.md"
+    renamed.write_text(src.replace("## [Unreleased]", "## [0.100.0]", 1), encoding="utf-8")
+    _assert_changelog_has_character_read_entry(renamed.read_text(encoding="utf-8"))
+
+    released = tmp_path / "CHANGELOG_released.md"
+    released.write_text(
+        src.replace("## [Unreleased]", "## [Unreleased]\n\n## [0.100.0] - 2026-11-15", 1),
+        encoding="utf-8",
+    )
+    _assert_changelog_has_character_read_entry(released.read_text(encoding="utf-8"))
+
+
+def test_character_list_tool_description_states_flow_google_com_mention_limits() -> None:
+    desc = mcp_tools.server._tool_manager._tools["gflow_character_list"].description  # noqa: SLF001
+    assert "works as @Name in a prompt" not in desc
+    for phrase in (
+        "first word",
+        "@ picker",
+        "exit 29",
+        "mention index unavailable",
+        "video r2v",
+        "reference_entities",
+        "reference_entity_names",
+    ):
+        assert phrase in desc, f"gflow_character_list description lacks {phrase!r}"
+
+
+def test_mcp_doc_character_list_states_flow_google_com_mention_limits() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    for rel in ("docs/MCP.md", "website/docs/MCP.md"):
+        doc = (root / rel).read_text(encoding="utf-8")
+        line = next(
+            ln for ln in doc.splitlines() if ln.startswith("* `gflow_character_list(project,")
+        )
+        assert "can be used as an `@Name` mention" not in line, rel
+        for phrase in (
+            "migrated_read=False",
+            "first whitespace-delimited word",
+            "exit 29",
+            "mention index unavailable",
+            "video r2v",
+            "reference_entities",
+            "reference_entity_names",
+        ):
+            assert phrase in line, f"{rel} gflow_character_list line lacks {phrase!r}"

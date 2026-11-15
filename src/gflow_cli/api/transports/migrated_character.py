@@ -101,13 +101,22 @@ def _character_voice(parts: list[Any], payload: object) -> str | None:
     return voice_from_wire(voice_id) if voice_id else None
 
 
+def _character_parts(info: list[Any], payload: object) -> list[Any]:
+    raw = info[2] if len(info) > 2 else None
+    if raw is None:
+        return []
+    parts = _list(raw)
+    if parts is None:
+        raise _drift(payload, "character parts (info[2]) is not a list")
+    return parts
+
+
 def _character(row: object, payload: object) -> Character | None:
     cells = _list(row) or []
     project, entity, info = _character_row_header(cells, payload)
     if info[0] != 1:
         return None
-    parts = _list(info[2]) if len(info) > 2 else None
-    parts = parts or []
+    parts = _character_parts(info, payload)
     workflow_ids = _workflow_ids(parts)
     voice = _character_voice(parts, payload)
     personality = _str(parts[2]) if len(parts) > 2 else None
@@ -187,11 +196,9 @@ async def read_project(
             await page.reload(wait_until="domcontentloaded", timeout=45_000)
         else:
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
-        await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
 
     async def retry() -> None:
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
-        await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
 
     def accept(payload: object) -> bool:
         return _matches_project(payload, project_id)
