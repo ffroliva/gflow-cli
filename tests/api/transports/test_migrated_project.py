@@ -346,6 +346,22 @@ async def test_a_read_rpc_with_a_lost_body_still_times_out() -> None:
         await mc.rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
 
 
+async def test_rpc_reply_surfaces_refusal_frame_at_once() -> None:
+    page = FakePage(url=f"https://flow.google.com/project/{PID}")
+    err_frame = json.dumps(
+        [["wrb.fr", mc.RENAME_PROJECT_RPC, None, None, None, [3, "bad"], "generic"]]
+    )
+    body = f")]}}'\n\n{len(err_frame)}\n{err_frame}\n"
+
+    async def action() -> None:
+        await page.fire(("https://flow.google.com/project", "ignored"))
+        await page.fire((_batch(mc.RENAME_PROJECT_RPC), body))
+
+    with pytest.raises(WireFormatError, match=f"refused {mc.RENAME_PROJECT_RPC}") as exc:
+        await mc.rpc_reply(page, mc.RENAME_PROJECT_RPC, action, timeout_s=0.02)  # type: ignore[arg-type]
+    assert exc.value.route == f"batchexecute:{mc.RENAME_PROJECT_RPC}"
+
+
 @pytest.mark.parametrize(
     ("url", "before", "expected"),
     [

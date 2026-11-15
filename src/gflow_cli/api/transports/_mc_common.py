@@ -1450,6 +1450,53 @@ def is_at(url: object, target: str) -> bool:
     )
 
 
+def _record_unreadable_rpc_body(
+    reply: asyncio.Future[Any],
+    unreadable: list[int],
+    page: Page,
+    *,
+    rpcid: str,
+    url: str,
+    exc: Exception,
+    write: bool,
+) -> None:
+    unreadable[0] += 1
+    ours = url_rpcid(url) == rpcid
+    log.debug(
+        "migrated.rpc_reply_body_unreadable",
+        rpcid=rpcid,
+        carries_rpcid=ours,
+        error_type=type(exc).__name__,
+    )
+    if write and ours and not reply.done():
+        # A write's reply arrived and was lost: the outcome is unknown, not late.
+        reply.set_exception(_unreadable_rpc_error(rpcid, location=safe_page_url(page.url)))
+
+
+def _deliver_rpc_reply_frames(
+    reply: asyncio.Future[Any],
+    text: str,
+    rpcid: str,
+    accept: Callable[[Any], bool] | None,
+) -> None:
+    for err in rpc_errors(text):
+        if err.rpcid == rpcid and not reply.done():
+            reply.set_exception(
+                WireFormatError(
+                    detail=f"flow.google.com refused {rpcid} (code={err.code}, "
+                    f"reasons={list(err.reasons)})",
+                    route=f"batchexecute:{rpcid}",
+                    remediation_hint=(
+                        "Flow answered this request with an error frame, not with data. "
+                        "Retry once; if it persists, report it with the code and reasons."
+                    ),
+                )
+            )
+    for rid, payload in parse_frames(text):
+        if rid == rpcid and not reply.done() and (accept is None or accept(payload)):
+            reply.set_result(payload)
+
+
 async def rpc_reply(
     page: Page,
     rpcid: str,
@@ -1477,34 +1524,11 @@ async def rpc_reply(
         try:
             text = await response.text()
         except Exception as exc:  # noqa: BLE001 - recorded, never fatal: it may not be ours
-            unreadable[0] += 1
-            ours = url_rpcid(url) == rpcid
-            log.debug(
-                "migrated.rpc_reply_body_unreadable",
-                rpcid=rpcid,
-                carries_rpcid=ours,
-                error_type=type(exc).__name__,
+            _record_unreadable_rpc_body(
+                reply, unreadable, page, rpcid=rpcid, url=url, exc=exc, write=write
             )
-            if write and ours and not reply.done():
-                # A write's reply arrived and was lost: the outcome is unknown, not late.
-                reply.set_exception(_unreadable_rpc_error(rpcid, location=safe_page_url(page.url)))
             return
-        for err in rpc_errors(text):
-            if err.rpcid == rpcid and not reply.done():
-                reply.set_exception(
-                    WireFormatError(
-                        detail=f"flow.google.com refused {rpcid} (code={err.code}, "
-                        f"reasons={list(err.reasons)})",
-                        route=f"batchexecute:{rpcid}",
-                        remediation_hint=(
-                            "Flow answered this request with an error frame, not with data. "
-                            "Retry once; if it persists, report it with the code and reasons."
-                        ),
-                    )
-                )
-        for rid, payload in parse_frames(text):
-            if rid == rpcid and not reply.done() and (accept is None or accept(payload)):
-                reply.set_result(payload)
+        _deliver_rpc_reply_frames(reply, text, rpcid, accept)
 
     page.on("response", on_response)
     try:

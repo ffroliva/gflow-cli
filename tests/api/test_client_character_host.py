@@ -238,6 +238,19 @@ async def test_read_project_navigates_when_page_is_on_character_subroute() -> No
     assert page.reloads == 0
 
 
+async def test_read_project_reloads_when_already_at_project_url() -> None:
+    page = _Page(
+        _fixture_payload(),
+        url=f"https://flow.google.com/project/{PID}",
+    )
+
+    read = await read_project(page, PID, timeout_s=2)  # type: ignore[arg-type]
+
+    assert page.gotos == []
+    assert page.reloads == 1
+    assert [c.entity_id for c in read.characters] == [NORA.entity_id]
+
+
 @pytest.mark.parametrize(
     ("landing_url", "expected_exc"),
     [

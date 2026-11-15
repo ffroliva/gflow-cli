@@ -134,7 +134,7 @@
     "read_credits": "function (page: 'Page', *, timeout_s: 'float' = 30.0) -> 'CreditsInfo' sha=dff8170f35f0f010",
     "rename_project": "function (page: 'Page', project_id: 'str', title: 'str', *, timeout_s: 'float' = 120.0) -> 'None' sha=e9a2a042b205d021",
     "request_body": "function (request: 'Any') -> 'str' sha=5bd59f1d6a05e9c7",
-    "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=d440ef1b9721af8a",
+    "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=501c1df69835b67c",
     "run_images": "function (page: 'Page', request: 'GenerateImageRequest', *, project_id: 'str | None', out_dir: 'Path | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=c41e825c06a7fd3e",
     "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=37ee9871c778a6d3",
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"
@@ -148,7 +148,7 @@
     "read_credits": "function (page: 'Page', *, timeout_s: 'float' = 30.0) -> 'CreditsInfo' sha=dff8170f35f0f010",
     "rename_project": "function (page: 'Page', project_id: 'str', title: 'str', *, timeout_s: 'float' = 120.0) -> 'None' sha=e9a2a042b205d021",
     "request_body": "function (request: 'Any') -> 'str' sha=5bd59f1d6a05e9c7",
-    "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=d440ef1b9721af8a",
+    "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=501c1df69835b67c",
     "run_images": "function (page: 'Page', request: 'GenerateImageRequest', *, project_id: 'str | None', out_dir: 'Path | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=c41e825c06a7fd3e",
     "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=37ee9871c778a6d3",
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"

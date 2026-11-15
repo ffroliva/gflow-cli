@@ -42,6 +42,7 @@ log = structlog.get_logger(__name__)
 PROJECT_READ_RPC = "Zzl0ze"
 
 _CHARACTERS, _VOICES = 5, 3
+_CHARACTER_AT = "migrated.character"
 
 
 @dataclass(frozen=True)
@@ -66,8 +67,7 @@ def _str(node: object) -> str | None:
     return node if isinstance(node, str) and node else None
 
 
-def _character(row: object, payload: object) -> Character | None:
-    cells = _list(row) or []
+def _character_row_header(cells: list[Any], payload: object) -> tuple[str, str, list[Any]]:
     info = _list(cells[3]) if len(cells) > 3 else None
     project = _str(cells[0]) if cells else None
     entity = _str(cells[1]) if len(cells) > 1 else None
@@ -79,14 +79,15 @@ def _character(row: object, payload: object) -> Character | None:
         or type(info[0]) is not int
     ):
         raise _drift(payload, "a character row has no [project, entity, _, [kind, name, …]]")
-    if info[0] != 1:
-        return None
-    parts = _list(info[2]) if len(info) > 2 else None
-    parts = parts or []
+    return project, entity, info
+
+
+def _workflow_ids(parts: list[Any]) -> tuple[str, ...]:
     images = _list(parts[0]) if parts else None
-    workflow_ids = tuple(
-        wf for ref in images or [] if (wf := _str((_list(ref) or [None])[0])) is not None
-    )
+    return tuple(wf for ref in images or [] if (wf := _str((_list(ref) or [None])[0])) is not None)
+
+
+def _character_voice(parts: list[Any], payload: object) -> str | None:
     voice_cell = parts[1] if len(parts) > 1 else None
     voice_refs = _list(voice_cell)
     if voice_cell is not None and voice_refs is None:
@@ -97,13 +98,25 @@ def _character(row: object, payload: object) -> Character | None:
         if first_ref is None or len(first_ref) < 2:
             raise _drift(payload, "character voice ref has no [_, wire_id]")
         voice_id = _str(first_ref[1])
+    return voice_from_wire(voice_id) if voice_id else None
+
+
+def _character(row: object, payload: object) -> Character | None:
+    cells = _list(row) or []
+    project, entity, info = _character_row_header(cells, payload)
+    if info[0] != 1:
+        return None
+    parts = _list(info[2]) if len(info) > 2 else None
+    parts = parts or []
+    workflow_ids = _workflow_ids(parts)
+    voice = _character_voice(parts, payload)
     personality = _str(parts[2]) if len(parts) > 2 else None
     return Character(
         entity_id=entity,
         display_name=_str(info[1]) or "",
         project_id=project,
         workflow_ids=workflow_ids,
-        voice=voice_from_wire(voice_id) if voice_id else None,
+        voice=voice,
         personality=personality,
         thumbnail_media_id=_str(cells[4]) if len(cells) > 4 else None,
     )
@@ -174,11 +187,11 @@ async def read_project(
             await page.reload(wait_until="domcontentloaded", timeout=45_000)
         else:
             await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
-        await raise_if_known_landing(page, requested=target, at="migrated.character")
+        await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
 
     async def retry() -> None:
         await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
-        await raise_if_known_landing(page, requested=target, at="migrated.character")
+        await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
 
     def accept(payload: object) -> bool:
         return _matches_project(payload, project_id)
@@ -189,11 +202,11 @@ async def read_project(
                 page, PROJECT_READ_RPC, trigger, timeout_s=timeout_s, accept=accept
             )
         except (TransportTimeoutError, PlaywrightTimeoutError):
-            await raise_if_known_landing(page, requested=target, at="migrated.character")
+            await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
             log.warning("character.project_read_retry", project_id=project_id, timeout_s=timeout_s)
             raw = await rpc_reply(page, PROJECT_READ_RPC, retry, timeout_s=timeout_s, accept=accept)
     except PlaywrightTimeoutError as e:
-        await raise_if_known_landing(page, requested=target, at="migrated.character")
+        await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
         raise TransportTimeoutError(
             detail=(
                 f"flow.google.com navigation to {safe_page_url(target)} timed out "
@@ -201,7 +214,7 @@ async def read_project(
             ),
         ) from e
     except TransportTimeoutError:
-        await raise_if_known_landing(page, requested=target, at="migrated.character")
+        await raise_if_known_landing(page, requested=target, at=_CHARACTER_AT)
         raise
     return parse_project_read(raw, project_id=project_id)
 

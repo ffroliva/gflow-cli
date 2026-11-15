@@ -134,6 +134,24 @@ class TestDrift:
             parse_project_read(payload)
         assert "Zzl0ze" in str(exc.value)
 
+    def test_non_list_character_slot_is_wire_drift(self) -> None:
+        payload = _payload()
+        payload[5] = "not-a-list"
+        with pytest.raises(WireFormatError, match=r"slot 5 \(characters\) is not a list"):
+            parse_project_read(payload)
+
+    def test_bool_entity_kind_is_wire_drift(self) -> None:
+        payload = _payload()
+        payload[5][0][3][0] = True
+        with pytest.raises(WireFormatError, match="a character row has no"):
+            parse_project_read(payload)
+
+    def test_non_list_voice_refs_cell_is_wire_drift(self) -> None:
+        payload = _payload()
+        payload[5][0][3][2][1] = "aoede"
+        with pytest.raises(WireFormatError, match="character voice refs are not"):
+            parse_project_read(payload)
+
     def test_drifted_single_element_voice_ref_raises_wire_format_error(self) -> None:
         payload = _payload()
         payload[0] = "https://lh3.googleusercontent.com/asb/SECRET-VOICE-CAPABILITY"
