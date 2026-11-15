@@ -76,7 +76,7 @@ Child process: `gflow.exe mcp run` (PID 37440) holding files active in memory.
 | `_pydantic_core.cp313-win_amd64.pyd` (loaded DLL) | `PermissionError: [Errno 13]` | `PermissionError: [WinError 5]` | **SUCCESS** (replace ok, write ok, restore ok) | **SUCCESS** (rename & restore ok) |
 
 **Key finding:**  
-Windows NT enforces a strict image lock on running `.exe` files. A running launcher executable **cannot be renamed, replaced, or removed**, even within the same directory on NTFS. In contrast, loaded C-extension `.pyd` libraries **can** be renamed or replaced aside on the same filesystem volume.
+**Corrected by the coordinator's controls (section 7):** the `WinError 32` is real, but its cause is not an NT image lock on running executables. A running pip launcher with nothing else holding it CAN be renamed aside. What holds `gflow.exe` is the gflow process itself: pip's launcher makes Python run `gflow.exe` as a zip (`sys.path[0]`), and `importlib.metadata` caches a `FastPath` whose `zipfile.Path` keeps that archive open. Loaded `.pyd` files can be renamed or replaced, as measured here.
 
 ### 3. Attempting to Rename Launcher Aside (`venv c`)
 
@@ -156,12 +156,31 @@ Running `reproduce` in fresh `venv f` with `TMP` and `TEMP` explicitly pointed t
 
 | Fix Option | Viability | Evidence |
 |---|---|---|
-| **Option 1: Rename `gflow.exe` aside before running pip** | **KILLED** | Windows NT image section lock forbids `os.rename` and `os.replace` on running `.exe` (`WinError 32`). Measured in `locks b` and `renamed c`. |
+| **Option 1: Rename `gflow.exe` aside before running pip** | **SUPPORTED (root-cause fix)** | Section 7: after `importlib.metadata.FastPath.__new__.cache_clear()` + `gc.collect()` the gflow process renames its own running launcher. Another gflow process (for example `gflow mcp run`) still holds it, so the rename doubles as a pre-flight: if it fails, refuse BEFORE pip runs and nothing has changed. |
 | **Option 2: Detached helper process** | **SUPPORTED** | A lightweight detached background process (e.g. `python -c "import time, subprocess, sys; time.sleep(1); subprocess.run([...])"` or spawned with `CREATE_NEW_PROCESS_GROUP`/`DETACHED_PROCESS`) that waits for `gflow.exe` (PID) to terminate before executing `pip install --upgrade`. Once `gflow.exe` exits, `Scripts\gflow.exe` is unlocked and pip succeeds. |
 | **Option 3: Refuse `gflow update` with a remediation hint when under `pip` on Windows** | **SUPPORTED (Simplest & Safest)** | If `sys.platform == "win32"` and `inst.name == "pip"` and invoked via `gflow.exe`: raise `ConfigurationError` (exit 11) *before* invoking pip, instructing the user: `"On Windows, 'gflow update' cannot replace its own running launcher in a pip venv. Run 'python -m gflow_cli update' or 'python -m pip install -U gflow-cli' instead."` As proven by `pymodule d`, `python -m gflow_cli update` works cleanly without corrupting the environment. |
 | **Option 4: Correct documentation (`docs/USAGE.md`)** | **REQUIRED** | `docs/USAGE.md` currently claims the launcher lock on Windows is always benign ("the upgrade lands anyway"). This statement is only true for `uv tool`, but dangerously false for `pip`. |
 
 ---
+
+## 7. Coordinator controls (2026-11-15)
+
+The `locks b` / `renamed c` runs left no log in `_spike_out/1298`, and their claim decides the fix, so they
+were re-measured with controls.
+
+| Run | Setup | Result |
+|---|---|---|
+| A: bare pip launcher | `sleeper.exe` (a pip console script that sleeps 30 s), alive | `open(r+b)` and `remove` refused (WinError 5); **`os.rename` aside OK**; a new file at the original path OK; the `.old` is deletable only after it exits |
+| B: real `gflow.exe` held by another process | a live `gflow.exe mcp run`, then rename from outside | **rename refused, WinError 32**; `pip install --upgrade` then exits 1 and `import gflow_cli` fails (the bug) |
+| C: gflow renames its own launcher | `sitecustomize` probe in a 0.98.99 venv, `gflow.exe --version` | at startup (before `__main__`): rename OK. At exit: `sys.path[0]` is `...\Scripts\gflow.exe`, `__main__.__loader__` is `zipimporter`, rename refused (WinError 32). Clearing zipimport caches: still refused |
+| D: release the hold | as C, then `importlib.metadata.FastPath.__new__.cache_clear()` + `gc.collect()` | `FastPath` cache had 10 entries; **after clearing, the self-rename succeeds** |
+
+**Conclusion.** The launcher is held by `importlib.metadata`'s cached `zipfile.Path` on `sys.path[0]` (the
+zip-launched `gflow.exe`), in every gflow process. The updating process can drop its own hold and rename the
+launchers aside. A second live gflow process cannot be released from here, so a failed rename means: stop,
+change nothing, tell the user which processes to close. pip only runs once every launcher path is free, so
+its uninstall-first order can no longer strand the venv.
+
 
 ## Not Measured
 
