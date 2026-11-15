@@ -46,7 +46,7 @@ AV_DURATION_TOLERANCE = 0.1  # video vs audio stream length on an assembled cut
 def run(args: list[str], cwd: Path) -> str:
     """ffmpeg, failing loudly. A silent failure here would leave the previous clip's
     metadata file on disk and report ITS numbers as this clip's."""
-    r = subprocess.run(args, capture_output=True, text=True, cwd=cwd)
+    r = subprocess.run(args, capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed ffmpeg args
     if r.returncode != 0:
         target = args[args.index("-i") + 1]
         raise RuntimeError(f"ffmpeg failed ({r.returncode}) on {target}:\n{r.stderr[-800:]}")
@@ -62,10 +62,20 @@ def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
     is not a gate).
     """
     dur = float(
-        subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", str(clip)],
-            capture_output=True, text=True, check=True,
+        subprocess.run(  # noqa: S603 - fixed ffprobe args
+            [  # noqa: S607 - system tool
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(clip),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         or 0
     )
@@ -83,8 +93,8 @@ def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
 
 
 def probe_fps(clip: Path) -> float:
-    out = subprocess.run(
-        [
+    out = subprocess.run(  # noqa: S603 - fixed ffprobe args
+        [  # noqa: S607 - system tool
             "ffprobe",
             "-v",
             "error",
@@ -226,8 +236,8 @@ def sync(motion: list[float], envelope: list[float], fps: float, window_s: float
 def av_duration_delta(clip: Path) -> float:
     """Video stream length minus audio stream length. The 25 fps title cards concatenated
     into 24 fps clips produced 164 s of video under 171 s of audio — this is that check."""
-    out = subprocess.run(
-        [
+    out = subprocess.run(  # noqa: S603 - fixed ffprobe args
+        [  # noqa: S607 - system tool
             "ffprobe",
             "-v",
             "error",
