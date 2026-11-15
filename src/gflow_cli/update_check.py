@@ -475,14 +475,14 @@ def _launchers_set_aside(inst: Installer) -> Generator[None, None, None]:
     importlib.invalidate_caches()
     gc.collect()
     moved: list[tuple[Path, Path]] = []
-    try:
+    pip_returned = False
+    try:  # one finally for the renames and pip: Ctrl-C or any error anywhere restores
         _move_aside(launchers, moved)
         yield
-    except BaseException:
-        _restore_launchers(moved)
-        raise
-    unrestored = _restore_launchers(moved)
-    if unrestored:
+        pip_returned = True
+    finally:
+        unrestored = _restore_launchers(moved)
+    if pip_returned and unrestored:  # never masks an exception already on its way out
         details = ", ".join(f"`{orig}` (saved at `{aside}`)" for orig, aside in unrestored)
         raise ConfigurationError(
             f"Could not restore launcher(s) {details} after `gflow update`",
