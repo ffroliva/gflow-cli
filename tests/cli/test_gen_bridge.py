@@ -125,16 +125,24 @@ def test_video_gen_refuses_an_image_file_as_the_prompt(
 ) -> None:
     # `video gen hero.png` would otherwise bill a t2v clip whose prompt is the file name.
     argv = ["video", "gen", *(p.replace("{png}", str(png)) for p in prompts)]
-    runners = ("_run_t2v", "_run_i2v", "_run_r2v")
+    runs = {r: AsyncMock() for r in ("_run_t2v", "_run_i2v", "_run_r2v")}
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
         patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
-        patch.multiple("gflow_cli.cli_video", **{r: AsyncMock() for r in runners}) as runs,
+        patch.multiple("gflow_cli.cli_video", **runs),
     ):
         out = _usage_error(argv)
     assert f"--initial-frame {png}" in out
     for run in runs.values():
         run.assert_not_awaited()
+
+
+def test_a_prompt_the_filesystem_cannot_stat_is_still_a_prompt() -> None:
+    # Python 3.11/3.12 on POSIX raise ENAMETOOLONG from is_file() for a long "name.png" prompt.
+    from gflow_cli.cli_gen import _refuse_an_image_as_the_prompt
+
+    with patch("pathlib.Path.is_file", side_effect=OSError(36, "File name too long")):
+        _refuse_an_image_as_the_prompt(("a very long prompt about a sunset.png",))
 
 
 @pytest.mark.parametrize(

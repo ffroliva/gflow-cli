@@ -99,7 +99,11 @@ def _refuse_an_image_as_the_prompt(positionals: tuple[str, ...]) -> None:
     """`video gen hero.png` would bill a t2v clip whose prompt is the file name."""
     for value in positionals:
         path = Path(value)
-        if path.suffix.lower() in IMAGE_EXTS and path.is_file():
+        try:  # an unstat-able prompt (ENAMETOOLONG on POSIX < 3.13) is just a prompt
+            is_image = path.suffix.lower() in IMAGE_EXTS and path.is_file()
+        except OSError:
+            is_image = False
+        if is_image:
             others = [v for v in positionals if v != value]
             prompt = f'"{others[0]}"' if len(others) == 1 else "PROMPT"
             msg = (

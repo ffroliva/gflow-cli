@@ -387,9 +387,10 @@ gflow video gen "knight walks forward" --ref armor.png      # video r2v
   in a future release `-o` selects the output format.
 - `--json` emits the resolved verb's payload (its `command` is the mode verb, e.g.
   `"image t2i"`) plus a top-level `"mode": "<resolved>"`, on failure payloads too.
-- `video gen` refuses a prompt that is an existing image file (`video gen hero.png`) with
-  exit 2 and the `--initial-frame` form to use, rather than billing a t2v clip whose prompt
-  is the file name.
+- `video gen` refuses a prompt that names an existing file with an image extension (`.png`,
+  `.jpg`, `.jpeg` or `.webp`; e.g. `video gen hero.png`) with exit 2 and the
+  `--initial-frame` form to use, rather than billing a t2v clip whose prompt is the file
+  name. A file without one of those extensions is not checked.
 - The mode verbs stay and are not deprecated. Use them when you want the mode fixed. Over
   MCP no bridge twin is needed: `gflow_generate_image` has no mode parameter and runs i2i
   when `reference_images` is given (t2i otherwise), and `gflow_generate_video` takes the
