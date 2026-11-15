@@ -1,4 +1,4 @@
-"""`image gen` / `video gen` — bridge verbs that infer the mode from the inputs (#1193).
+"""`image generate` / `video generate` — bridge verbs that infer the mode from the inputs (#1193).
 
 A bridge verb is the mode verb it resolves to, reached by another name: same options,
 same output, same exit codes. These tests pin the routing table, the usage errors a
@@ -87,32 +87,32 @@ def _usage_error(args: list[str]) -> str:
     [["--prompts-file", "p.txt"], ["--stdin"], ["--fail-fast"], ["--jitter", "1-2"]],
 )
 def test_image_t2i_only_option_with_ref_is_a_usage_error(extra: list[str], png: Path) -> None:
-    out = _usage_error(["image", "gen", "a cat", "--ref", str(png), *extra])
+    out = _usage_error(["image", "generate", "a cat", "--ref", str(png), *extra])
     assert f"No such option '{extra[0]}'" in out
     assert "`gflow image i2i`" in out
 
 
 def test_image_several_prompts_with_ref_is_i2is_own_usage_error(png: Path) -> None:
-    out = _usage_error(["image", "gen", "one", "two", "--ref", str(png)])
+    out = _usage_error(["image", "generate", "one", "two", "--ref", str(png)])
     assert "unexpected extra argument (two)" in out
     assert "resolved to `gflow image i2i` (--ref was given)" in out
 
 
 def test_image_ref_without_prompt_reports_the_bad_option_not_the_prompt_count(png: Path) -> None:
-    out = _usage_error(["image", "gen", "--ref", str(png), "--stdin"])
+    out = _usage_error(["image", "generate", "--ref", str(png), "--stdin"])
     assert "No such option '--stdin'" in out
     assert "resolved to `gflow image i2i`" in out
 
 
 # Routing reads only the routing inputs; every other option is the resolved verb's to judge.
 def test_an_option_the_resolved_verb_lacks_is_never_validated_by_the_bridge(png: Path) -> None:
-    out = _usage_error(["image", "gen", "a", "--ref", str(png), "--jitter", "bad"])
+    out = _usage_error(["image", "generate", "a", "--ref", str(png), "--jitter", "bad"])
     assert "No such option '--jitter'" in out
     assert "resolved to `gflow image i2i`" in out
 
 
 def test_frame_and_ref_is_refused_before_any_file_is_checked(png: Path) -> None:
-    argv = ["video", "gen", "x", "--initial-frame", str(png), "--ref", "missing.png"]
+    argv = ["video", "generate", "x", "--initial-frame", str(png), "--ref", "missing.png"]
     out = _usage_error(argv)
     assert "video i2v" in out
     assert "video r2v" in out
@@ -123,8 +123,8 @@ def test_frame_and_ref_is_refused_before_any_file_is_checked(png: Path) -> None:
 def test_video_gen_refuses_an_image_file_as_the_prompt(
     prompts: list[str], png: Path, tmp_path: Path
 ) -> None:
-    # `video gen hero.png` would otherwise bill a t2v clip whose prompt is the file name.
-    argv = ["video", "gen", *(p.replace("{png}", str(png)) for p in prompts)]
+    # `video generate hero.png` would otherwise bill a t2v clip whose prompt is the file name.
+    argv = ["video", "generate", *(p.replace("{png}", str(png)) for p in prompts)]
     runs = {r: AsyncMock() for r in ("_run_t2v", "_run_i2v", "_run_r2v")}
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
@@ -148,8 +148,8 @@ def test_a_prompt_the_filesystem_cannot_stat_is_still_a_prompt() -> None:
 @pytest.mark.parametrize(
     ("argv", "line"),
     [
-        (["image", "gen", "a", "b", "--out-file", "x.png"], "resolved to `gflow image t2i`"),
-        (["video", "gen", "x", "--ui-mode", "agentic"], "resolved to `gflow video t2v`"),
+        (["image", "generate", "a", "b", "--out-file", "x.png"], "resolved to `gflow image t2i`"),
+        (["video", "generate", "x", "--ui-mode", "agentic"], "resolved to `gflow video t2v`"),
     ],
 )
 def test_a_usage_error_from_the_resolved_verbs_own_code_names_the_route(
@@ -162,7 +162,7 @@ def test_a_bridge_invoked_without_its_parsed_arguments_is_a_usage_error() -> Non
     from gflow_cli.cli_gen import image_gen
 
     parent = click.Context(main, info_name="gflow")
-    ctx = click.Context(image_gen, info_name="gen", parent=parent)
+    ctx = click.Context(image_gen, info_name="generate", parent=parent)
     ctx.params = {"positionals": ("a cat",), "refs": ()}
     with ctx, pytest.raises(click.UsageError, match="command line"):
         image_gen.invoke(ctx)
@@ -183,32 +183,32 @@ def test_a_bridge_invoked_without_its_parsed_arguments_is_a_usage_error() -> Non
 def test_video_mode_only_inputs_on_the_wrong_mode(
     args: list[str], flag: str, mode: str, png: Path
 ) -> None:
-    argv = ["video", "gen", "a knight", *(a.replace("{png}", str(png)) for a in args)]
+    argv = ["video", "generate", "a knight", *(a.replace("{png}", str(png)) for a in args)]
     out = _usage_error(argv)
     assert f"No such option '{flag}'" in out
     assert f"`gflow video {mode}`" in out
 
 
 def test_video_frame_and_ref_is_ambiguous(png: Path) -> None:
-    argv = ["video", "gen", "a knight", "--initial-frame", str(png), "--ref", str(png)]
+    argv = ["video", "generate", "a knight", "--initial-frame", str(png), "--ref", str(png)]
     out = _usage_error(argv)
     assert "video i2v" in out
     assert "video r2v" in out
 
 
 def test_video_end_frame_alone_is_a_usage_error(png: Path) -> None:
-    out = _usage_error(["video", "gen", "a knight", "--end-frame", str(png)])
+    out = _usage_error(["video", "generate", "a knight", "--end-frame", str(png)])
     assert "--end-frame needs --initial-frame" in out
 
 
 # Every usage-error example docs/USAGE.md shows, with the message it promises.
 _DOCUMENTED = [
-    ('gflow image gen "a cat" --ref a.png --stdin', ["No such option '--stdin'", "image i2i"]),
+    ('gflow image generate "a cat" --ref a.png --stdin', ["No such option '--stdin'", "image i2i"]),
     (
-        'gflow video gen "a knight" --ref a.png --ui-mode classic',
+        'gflow video generate "a knight" --ref a.png --ui-mode classic',
         ["No such option '--ui-mode'", "video r2v"],
     ),
-    ('gflow video gen "a knight" --end-frame a.png', ["--end-frame needs --initial-frame"]),
+    ('gflow video generate "a knight" --end-frame a.png', ["--end-frame needs --initial-frame"]),
 ]
 
 
@@ -246,14 +246,14 @@ def _documented_usage_errors() -> dict[str, list[str]]:
 
 
 def test_image_gen_help_names_its_mode_verbs() -> None:
-    result = CliRunner().invoke(main, ["image", "gen", "--help"])
+    result = CliRunner().invoke(main, ["image", "generate", "--help"])
     assert result.exit_code == 0
     assert "image t2i" in result.output
     assert "image i2i" in result.output
 
 
 def test_video_gen_help_names_its_mode_verbs() -> None:
-    result = CliRunner().invoke(main, ["video", "gen", "--help"])
+    result = CliRunner().invoke(main, ["video", "generate", "--help"])
     assert result.exit_code == 0
     for verb in ("video t2v", "video i2v", "video r2v"):
         assert verb in result.output
@@ -267,11 +267,11 @@ def _flat_help(args: list[str]) -> str:
 
 @pytest.mark.parametrize("group", ["image", "video"])
 def test_gen_help_defers_defaults_and_limits_to_the_resolved_verb(group: str) -> None:
-    assert "defaults and limits are the resolved verb's" in _flat_help([group, "gen"])
+    assert "defaults and limits are the resolved verb's" in _flat_help([group, "generate"])
 
 
 def test_image_gen_help_does_not_reuse_mode_only_wording() -> None:
-    text = _flat_help(["image", "gen"])
+    text = _flat_help(["image", "generate"])
     assert "use `gflow image t2i` instead" not in text
 
 
@@ -286,7 +286,7 @@ def test_image_gen_help_keeps_t2is_single_prompt_limit(name: str) -> None:
 
 
 def test_video_gen_help_does_not_promise_t2vs_model_default() -> None:
-    assert "Omit to use Flow's current default" not in _flat_help(["video", "gen"])
+    assert "Omit to use Flow's current default" not in _flat_help(["video", "generate"])
 
 
 def test_same_named_options_agree_across_bridged_verbs() -> None:
@@ -337,8 +337,10 @@ def test_image_gen_forwards_the_same_arguments(
 ) -> None:
     args = [a.replace("{png}", str(png)) for a in args]
     direct = _captured("cli_image", runner_name, ["image", mode, *args], tmp_path)
-    bridged = _captured("cli_image", runner_name, ["image", "gen", *args], tmp_path)
+    bridged = _captured("cli_image", runner_name, ["image", "generate", *args], tmp_path)
     assert bridged == direct
+    # `gen` is the same command, so a run through the alias is the same call too.
+    assert _captured("cli_image", runner_name, ["image", "gen", *args], tmp_path) == direct
 
 
 @pytest.mark.parametrize(
@@ -355,8 +357,9 @@ def test_video_gen_forwards_the_same_arguments(
     args = [a.replace("{png}", str(png)) for a in args]
     with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {})):
         direct = _captured("cli_video", runner_name, ["video", mode, *args], tmp_path)
-        bridged = _captured("cli_video", runner_name, ["video", "gen", *args], tmp_path)
-    assert bridged == direct
+        bridged = _captured("cli_video", runner_name, ["video", "generate", *args], tmp_path)
+        aliased = _captured("cli_video", runner_name, ["video", "gen", *args], tmp_path)
+    assert bridged == direct == aliased
 
 
 # ------------------------------------------- the file flag is --out-file only (#1158)
@@ -380,13 +383,15 @@ def test_gen_out_file_reaches_the_modes_output_file(
     module = f"cli_{group}"
     with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {})):
         direct = _captured(module, runner_name, [group, mode, *argv], tmp_path)
-        bridged = _captured(module, runner_name, [group, "gen", *argv], tmp_path)
+        bridged = _captured(module, runner_name, [group, "generate", *argv], tmp_path)
     assert bridged == direct
     assert bridged.kwargs["output_file"] == out
 
 
 @pytest.mark.parametrize("flag", ["-o", "--output"])
-@pytest.mark.parametrize("argv", [["image", "gen", "a cat"], ["video", "gen", "a sunset"]])
+@pytest.mark.parametrize(
+    "argv", [["image", "generate", "a cat"], ["video", "generate", "a sunset"]]
+)
 def test_gen_has_no_deprecated_output_path_spelling(argv: list[str], flag: str) -> None:
     # A new verb starts on --out-file; -o is about to mean the output format (#1158).
     out = _usage_error([*argv, flag, "x.png"])
@@ -409,7 +414,7 @@ def test_image_gen_json_adds_the_resolved_mode(extra: list[str], mode: str, tmp_
         patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
         patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
     ):
-        argv = ["image", "gen", "a cat", *extra, "--json", "--out", str(tmp_path)]
+        argv = ["image", "generate", "a cat", *extra, "--json", "--out", str(tmp_path)]
         result = CliRunner().invoke(main, argv)
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
@@ -463,7 +468,7 @@ def test_video_gen_json_adds_the_resolved_mode(tmp_path: Path) -> None:
         client = MagicMock(spec=FlowApiClient)
         client.generate_video = fake_generate_video
         enter.return_value = client
-        result = CliRunner().invoke(main, ["video", "gen", "a sunset", "--json"])
+        result = CliRunner().invoke(main, ["video", "generate", "a sunset", "--json"])
     assert result.exit_code == 0, result.output
     data = json.loads(result.stdout)
     assert data["mode"] == "t2v"
@@ -482,7 +487,7 @@ def test_gen_json_error_payload_carries_the_mode(tmp_path: Path) -> None:
             side_effect=ConfigurationError("nope"),
         ),
     ):
-        result = CliRunner().invoke(main, ["video", "gen", "a sunset", "--json"])
+        result = CliRunner().invoke(main, ["video", "generate", "a sunset", "--json"])
     assert result.exit_code == 11, result.output
     data = json.loads(result.stdout)
     assert data["status"] == "fail"
@@ -512,7 +517,7 @@ def test_gen_json_error_keeps_the_exit_code_fields(
                 side_effect=NetworkError("down"),
             ),
         ):
-            result = CliRunner().invoke(main, ["image", "gen", "a cat", "--json"])
+            result = CliRunner().invoke(main, ["image", "generate", "a cat", "--json"])
     finally:
         get_settings.cache_clear()
     assert result.exit_code == exit_code, result.output
@@ -536,7 +541,7 @@ def test_video_gen_keeps_where_project_name_came_from(
         return project_id
 
     with patch("gflow_cli.cli_video.default_project", side_effect=spy):
-        for verb in ("t2v", "gen"):
+        for verb in ("t2v", "generate"):
             _captured("cli_video", "_run_t2v", ["video", verb, "a sunset"], tmp_path)
     assert seen == [ParameterSource.ENVIRONMENT, ParameterSource.ENVIRONMENT]
 
@@ -551,7 +556,7 @@ def test_entrypoint_usage_error_exits_2_before_any_browser(png: Path, tmp_path: 
     import sys
 
     env = {**os.environ, "GFLOW_CLI_HOME": str(tmp_path / "home"), "PYTHONUTF8": "1"}
-    args = ["video", "gen", "x", "--initial-frame", str(png), "--ref", str(png)]
+    args = ["video", "generate", "x", "--initial-frame", str(png), "--ref", str(png)]
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
@@ -568,9 +573,9 @@ def test_entrypoint_usage_error_exits_2_before_any_browser(png: Path, tmp_path: 
 @pytest.mark.parametrize(
     ("argv", "names"),
     [
-        (["image", "gen", "x", "--ref", "{png}", "--stdin"], ["image i2i", "--stdin"]),
-        (["video", "gen", "x", "--end-frame", "{png}"], ["--end-frame needs --initial-frame"]),
-        (["video", "gen", "x", "--ref", "{png}", "--ui-mode", "classic"], ["video r2v"]),
+        (["image", "generate", "x", "--ref", "{png}", "--stdin"], ["image i2i", "--stdin"]),
+        (["video", "generate", "x", "--end-frame", "{png}"], ["--end-frame needs --initial-frame"]),
+        (["video", "generate", "x", "--ref", "{png}", "--ui-mode", "classic"], ["video r2v"]),
     ],
 )
 def test_usage_errors_exit_2_before_any_browser(

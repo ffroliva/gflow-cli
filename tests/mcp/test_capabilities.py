@@ -36,14 +36,14 @@ _VIDEO = "generate.video"
 COMMAND_CAPABILITY: dict[str, str | None] = {
     "image t2i": _IMAGE,
     "image i2i": _IMAGE,
-    "image gen": _IMAGE,  # bridge to t2i/i2i (#1193)
+    "image generate": _IMAGE,  # bridge to t2i/i2i (#1193)
     "image batch": _IMAGE,
     "run": _IMAGE,
     "character create": _IMAGE,  # generates face/body images (per-model image quota)
     "video t2v": _VIDEO,
     "video i2v": _VIDEO,
     "video r2v": _VIDEO,
-    "video gen": _VIDEO,  # bridge to t2v/i2v/r2v (#1193)
+    "video generate": _VIDEO,  # bridge to t2v/i2v/r2v (#1193)
     "video chain": _VIDEO,
     "video extend": _VIDEO,
     "movie run": _VIDEO,

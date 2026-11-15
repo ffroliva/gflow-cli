@@ -72,14 +72,14 @@ EXPECTED_TREE: dict[str, bool] = {
     "video r2v": True,
     "video chain": True,
     "video extend": True,
-    "video gen": True,
+    "video generate": True,
     "video upscale": False,
     "image upload": False,
     "image upscale": False,
     "image t2i": True,
     "image batch": True,
     "image i2i": True,
-    "image gen": True,
+    "image generate": True,
     "instructions add": False,
     "instructions list": False,
     "instructions enable": False,
@@ -275,3 +275,15 @@ def test_real_entrypoint_prints_parseable_json() -> None:
     tree = json.loads(out.stdout)
     assert tree["name"] == "gflow"
     assert ["video", "t2v"] in [c["path"] for c in tree["commands"]]
+
+
+@pytest.mark.parametrize("group", ["image", "video"])
+def test_generate_is_the_bridge_verb_and_gen_its_alias(group: str) -> None:
+    """The big-player spelling is `generate`; `gen` stays as an alias of the same command."""
+    tree = _tree("--help", "--json")
+    (leaf,) = [c for c in tree["commands"] if c["path"][0] == group and "gen" in c["aliases"]]
+    assert leaf["path"] == [group, "generate"]
+    assert leaf["spends_credits"] is True
+    assert CliRunner().invoke(main, [group, "gen", "--help"]).exit_code == 0
+    # Typed through the alias, --help --json still answers with the one leaf, as JSON.
+    assert _paths(_tree(group, "gen", "--help", "--json")) == [f"{group} generate"]

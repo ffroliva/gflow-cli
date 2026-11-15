@@ -22,7 +22,7 @@ something a pipeline can act on, and a small exit-code core is stable.
   document ([#1201](https://github.com/ffroliva/gflow-cli/issues/1201)), and a stable exit-code core with a deprecation cycle ([#1202](https://github.com/ffroliva/gflow-cli/issues/1202), breaking).
 - Lifecycle verbs: `--no-wait`, `status`, `wait` ([#1194](https://github.com/ffroliva/gflow-cli/issues/1194)); `download` and `generations`
   ([#1195](https://github.com/ffroliva/gflow-cli/issues/1195)); `cancel`, local only and explicit that a submitted generation cannot be cancelled
-  on the server ([#1198](https://github.com/ffroliva/gflow-cli/issues/1198)); `reconcile` ([#1199](https://github.com/ffroliva/gflow-cli/issues/1199)); `upload` ([#1200](https://github.com/ffroliva/gflow-cli/issues/1200)); `image gen` / `video gen`
+  on the server ([#1198](https://github.com/ffroliva/gflow-cli/issues/1198)); `reconcile` ([#1199](https://github.com/ffroliva/gflow-cli/issues/1199)); `upload` ([#1200](https://github.com/ffroliva/gflow-cli/issues/1200)); `image generate` / `video generate`
   bridge verbs ([#1193](https://github.com/ffroliva/gflow-cli/issues/1193)).
 - **Browser to submit, HTTP to observe.** The [#1192](https://github.com/ffroliva/gflow-cli/issues/1192) spike measured that `flow.google.com`'s
   own read calls (status, listing, balance) answer without a page, and that the signed clip

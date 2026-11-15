@@ -433,7 +433,7 @@ def help_json_path(root: click.Group, args: list[str]) -> tuple[str, ...] | None
         if sub is None or name is None:
             return None
         cmd = sub
-        path.append(name)
+        path.append(sub.name or name)  # an alias resolves to the leaf's own name
         ctx = click.Context(sub, parent=ctx, info_name=name, resilient_parsing=True)
 
 
@@ -629,7 +629,7 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
 
 
 # ------------------------------------------------------------ bridge verbs (#1193)
-# `image gen` / `video gen` pick the mode verb from the inputs and then ARE that verb:
+# `image generate` / `video generate` pick the mode verb from the inputs and then ARE that verb:
 # the raw arguments are parsed again by the mode verb itself, so its envvars, callbacks,
 # required checks, parameter sources and "No such option" errors are a direct call's.
 

@@ -339,26 +339,27 @@ Notes:
 - **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
 - Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
-## `gflow image gen` / `gflow video gen`
+## `gflow image generate` / `gflow video generate`
 
 Bridge verbs: one generate verb per media type, with the mode read from the inputs. Each
 resolves to a mode verb and then runs exactly that verb, so its options, output and exit
 codes are the ones documented in the mode verb's section below.
+`gen` is an alias of `generate` (`gflow image gen`, `gflow video gen`): the same command.
 
 | Inputs | Resolves to |
 |---|---|
-| `image gen PROMPT...` | `image t2i` |
-| `image gen PROMPT --ref IMAGE` | `image i2i` |
-| `video gen PROMPT` | `video t2v` |
-| `video gen PROMPT --initial-frame F [--end-frame E]` | `video i2v` |
-| `video gen PROMPT --ref IMAGE` | `video r2v` |
-| `video gen` with a frame **and** `--ref` | usage error (exit 2) naming `video i2v` and `video r2v` |
+| `image generate PROMPT...` | `image t2i` |
+| `image generate PROMPT --ref IMAGE` | `image i2i` |
+| `video generate PROMPT` | `video t2v` |
+| `video generate PROMPT --initial-frame F [--end-frame E]` | `video i2v` |
+| `video generate PROMPT --ref IMAGE` | `video r2v` |
+| `video generate` with a frame **and** `--ref` | usage error (exit 2) naming `video i2v` and `video r2v` |
 
 ```bash
-gflow image gen "a serene mountain lake at dawn"            # image t2i
-gflow image gen "make it cinematic" --ref hero.png          # image i2i
-gflow video gen "slow pan left" --initial-frame hero.png    # video i2v
-gflow video gen "knight walks forward" --ref armor.png      # video r2v
+gflow image generate "a serene mountain lake at dawn"            # image t2i
+gflow image generate "make it cinematic" --ref hero.png          # image i2i
+gflow video generate "slow pan left" --initial-frame hero.png    # video i2v
+gflow video generate "knight walks forward" --ref armor.png      # video r2v
 ```
 
 - The resolved verb parses the arguments itself, so its defaults, limits, environment
@@ -368,27 +369,27 @@ gflow video gen "knight walks forward" --ref armor.png      # video r2v
   followed by a line naming the verb the bridge picked:
 
   ```text
-  $ gflow image gen "a cat" --ref a.png --stdin
+  $ gflow image generate "a cat" --ref a.png --stdin
   Error: No such option '--stdin'. Did you mean '--json'?
-  `gflow image gen` resolved to `gflow image i2i` (--ref was given).
+  `gflow image generate` resolved to `gflow image i2i` (--ref was given).
 
-  $ gflow video gen "a knight" --ref a.png --ui-mode classic
+  $ gflow video generate "a knight" --ref a.png --ui-mode classic
   Error: No such option '--ui-mode'. Did you mean '--model'?
-  `gflow video gen` resolved to `gflow video r2v` (--ref was given).
+  `gflow video generate` resolved to `gflow video r2v` (--ref was given).
 
-  $ gflow video gen "a knight" --end-frame a.png
+  $ gflow video generate "a knight" --end-frame a.png
   Error: --end-frame needs --initial-frame (that is `gflow video i2v`).
   ```
 - A character by id (`--reference-entity`) without `--ref` is passed to `video t2v`
   unchanged, with whatever `video t2v` does with it on the host Flow serves (see that
   section); with a frame it is a usage error, because `video i2v` takes none.
-- The file destination is `--out-file PATH` (`gflow image gen "a cat" --out-file cat.png`).
+- The file destination is `--out-file PATH` (`gflow image generate "a cat" --out-file cat.png`).
   The bridges have no `-o/--output PATH` spelling: `-o` is a usage error (exit 2), because
   in a future release `-o` selects the output format.
 - `--json` emits the resolved verb's payload (its `command` is the mode verb, e.g.
   `"image t2i"`) plus a top-level `"mode": "<resolved>"`, on failure payloads too.
-- `video gen` refuses a prompt that names an existing file with an image extension (`.png`,
-  `.jpg`, `.jpeg` or `.webp`; e.g. `video gen hero.png`) with exit 2 and the
+- `video generate` refuses a prompt that names an existing file with an image extension (`.png`,
+  `.jpg`, `.jpeg` or `.webp`; e.g. `video generate hero.png`) with exit 2 and the
   `--initial-frame` form to use, rather than billing a t2v clip whose prompt is the file
   name. A file without one of those extensions is not checked.
 - The mode verbs stay and are not deprecated. Use them when you want the mode fixed. Over
@@ -2133,7 +2134,7 @@ gflow capabilities --json   # {"schema": 1, "adapter": ..., "host": ..., "capabi
 ## JSON output (`--json`)
 
 The generation commands (`image t2i` / `image i2i`, `video t2v` / `i2v` /
-`r2v`, and the `image gen` / `video gen` bridges that resolve to them), `auth list`, `gflow models`, `gflow capabilities`, and `gflow docs` accept `--json` for machine-to-machine
+`r2v`, and the `image generate` / `video generate` bridges that resolve to them), `auth list`, `gflow models`, `gflow capabilities`, and `gflow docs` accept `--json` for machine-to-machine
 use. When set:
 
 - The command emits **one** parseable JSON object (or array, for `auth list`)
@@ -2154,7 +2155,7 @@ use. When set:
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
   `duration`, `count`, `seed`).
-- `image gen` / `video gen` emit the payload of the verb they resolved to, plus a
+- `image generate` / `video generate` emit the payload of the verb they resolved to, plus a
   top-level `"mode"` (`t2i`, `i2i`, `t2v`, `i2v` or `r2v`), on success and on failure.
 - On failure, the command still emits a JSON payload — an RFC 9457
   problem-details object including a `retryable` flag that a worker scheduler
