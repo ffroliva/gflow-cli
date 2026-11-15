@@ -1043,7 +1043,7 @@ class TestLaunchersSetAside:
         """r3 os.replace raising PermissionError(13, ..., None, 32) on the 2nd launcher
         restores the 1st and raises ConfigurationError (exit 11). The manager is never called.
         The message names the path and does not suggest python -m."""
-        from gflow_cli.errors import ConfigurationError
+        from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError
 
         gflow1 = tmp_path / "gflow.exe"
         gflow2 = tmp_path / "flow.exe"
@@ -1073,7 +1073,7 @@ class TestLaunchersSetAside:
                 manager_called = True
 
         assert not manager_called
-        assert exc_info.value.exit_code == 11
+        assert EXIT_CODE_MAP[type(exc_info.value)] == 11
         msg = str(exc_info.value)
         assert str(gflow2) in msg or "flow.exe" in msg
         assert "is in use by another program" in msg
@@ -1137,7 +1137,7 @@ class TestLaunchersSetAside:
     ) -> None:
         """r6 a RECORD launcher missing on disk refuses with exit 11, the hint is
         _reinstall_hint(inst, __version__), and the manager is not called."""
-        from gflow_cli.errors import ConfigurationError
+        from gflow_cli.errors import EXIT_CODE_MAP, ConfigurationError
 
         gflow_exe = tmp_path / "gflow.exe"
         fake_dist = _FakeDistribution([_FakePackagePath(gflow_exe)])
@@ -1154,7 +1154,7 @@ class TestLaunchersSetAside:
                 manager_called = True
 
         assert not manager_called
-        assert exc_info.value.exit_code == 11
+        assert EXIT_CODE_MAP[type(exc_info.value)] == 11
         hint = exc_info.value.remediation_hint or ""
         expected_hint = uc._reinstall_hint(inst, __version__)
         assert hint == expected_hint

@@ -135,7 +135,7 @@ account`).
 **Files:** `src/gflow_cli/update_check.py`
 
 **Steps:**
-- [ ] `_launchers_set_aside(inst)`: a `contextlib.contextmanager`. It yields at once unless
+- [x] `_launchers_set_aside(inst)`: a `contextlib.contextmanager`. It yields at once unless
   `inst.name == "pip"` and `sys.platform == "win32"`.
   1. Read the launchers: `distribution("gflow-cli").files` entries ending in `.exe`, resolved with
      `.locate()`. Add none from anywhere else.
@@ -144,13 +144,13 @@ account`).
   4. Move each one with `os.replace` to `<name>.gflow-update-<pid>.old`. On `OSError`, restore and
      raise (r3).
   5. `yield`. The `finally` restores any launcher whose original path is missing.
-- [ ] `_sweep_set_aside()`: called once in `run_update` right after `installer()`. It is a plain
+- [x] `_sweep_set_aside()`: called once in `run_update` right after `installer()`. It is a plain
   call, so it adds no new branch to `run_update`.
-- [ ] Wrap only `res = _run_command(...)` at `:405`.
-- [ ] Refusal text (r3), neutral about who holds the file: "`<path>` is in use by another program,
+- [x] Wrap only `res = _run_command(...)` at `:405`.
+- [x] Refusal text (r3), neutral about who holds the file: "`<path>` is in use by another program,
   so gflow changed nothing". The hint: "close every program that may be running gflow (an MCP
   server, `gflow serve`, another terminal), then run `gflow update` again".
-- [ ] Tasks 1 and 2 go green. Keep `run_update` C901 at 12 or below, and run `check_size.py`.
+- [x] Tasks 1 and 2 go green. Keep `run_update` C901 at 12 or below, and run `check_size.py`.
 
 ## Task 4 - docs
 

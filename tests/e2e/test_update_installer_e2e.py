@@ -278,20 +278,15 @@ def test_pip_user_update_keeps_a_working_install(
     user_base = tmp_path / "userbase"
     home_dir = tmp_path / "home_c"
 
-    env = {
+    install_env = {
         **os.environ,
         "PYTHONUSERBASE": str(user_base),
-        "PIP_NO_INDEX": "1",
-        "PIP_FIND_LINKS": str(wheels_dir),
         "PIP_BREAK_SYSTEM_PACKAGES": "1",
-        "GFLOW_CLI_HOME": str(home_dir),
-        "GFLOW_CLI_UPDATE_CHECK": "0",
-        "GFLOW_CLI_TELEMETRY": "0",
         "UV_LINK_MODE": "copy",
         "PYTHONUTF8": "1",
     }
 
-    # Install LOW to user site using sys._base_executable
+    # Install LOW to user site using sys._base_executable (deps from PyPI)
     install_res = subprocess.run(
         [
             sys._base_executable,
@@ -306,7 +301,7 @@ def test_pip_user_update_keeps_a_working_install(
         ],
         capture_output=True,
         text=True,
-        env=env,
+        env=install_env,
         check=False,
     )
     assert install_res.returncode == 0, f"user pip install failed:\n{install_res.stderr}"
@@ -318,11 +313,24 @@ def test_pip_user_update_keeps_a_working_install(
     assert len(launchers) >= 1, f"gflow.exe not found under {user_base}"
     gflow_exe = launchers[0]
 
+    update_env = {
+        **os.environ,
+        "PYTHONUSERBASE": str(user_base),
+        "PIP_NO_INDEX": "1",
+        "PIP_FIND_LINKS": str(wheels_dir),
+        "PIP_BREAK_SYSTEM_PACKAGES": "1",
+        "GFLOW_CLI_HOME": str(home_dir),
+        "GFLOW_CLI_UPDATE_CHECK": "0",
+        "GFLOW_CLI_TELEMETRY": "0",
+        "UV_LINK_MODE": "copy",
+        "PYTHONUTF8": "1",
+    }
+
     up_res = subprocess.run(
         [str(gflow_exe), "update"],
         capture_output=True,
         text=True,
-        env=env,
+        env=update_env,
         check=False,
     )
     assert up_res.returncode == 0, (
@@ -332,13 +340,12 @@ def test_pip_user_update_keeps_a_working_install(
     probe = subprocess.run(
         [
             sys._base_executable,
-            "-I",
             "-c",
             "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)",
         ],
         capture_output=True,
         text=True,
-        env=env,
+        env=update_env,
         check=False,
     )
     assert probe.returncode == 0, f"Import probe failed:\n{probe.stderr}"
@@ -348,15 +355,17 @@ def test_pip_user_update_keeps_a_working_install(
         [str(gflow_exe), "--version"],
         capture_output=True,
         text=True,
-        env=env,
+        env=update_env,
         check=False,
     )
     assert ver_res.returncode == 0
     assert "9999.0.0" in ver_res.stdout
 
     # Clean sweep verification
-    subprocess.run([str(gflow_exe), "--version"], capture_output=True, env=env, check=True)
-    subprocess.run([str(gflow_exe), "update", "--check"], capture_output=True, env=env, check=True)
+    subprocess.run([str(gflow_exe), "--version"], capture_output=True, env=update_env, check=True)
+    subprocess.run(
+        [str(gflow_exe), "update", "--check"], capture_output=True, env=update_env, check=True
+    )
     scripts_dir = gflow_exe.parent
     old_files = list(scripts_dir.glob("*.gflow-update-*.old"))
     assert old_files == [], f"Unexpected .old files remain: {old_files}"
@@ -394,6 +403,17 @@ def test_uv_tool_update_still_works(tmp_path: Path, update_wheels: tuple[Path, P
         check=False,
     )
     assert install_res.returncode == 0, f"uv tool install failed:\n{install_res.stderr}"
+
+    # Simulate index install by removing specifier pin from uv-receipt.toml
+    # and stripping direct_url.json
+    receipt_file = tool_dir / "gflow-cli" / "uv-receipt.toml"
+    if receipt_file.exists():
+        content = receipt_file.read_text(encoding="utf-8")
+        content = re.sub(r',\s*specifier\s*=\s*"==0\.0\.1"', "", content)
+        content = re.sub(r'specifier\s*=\s*"==0\.0\.1",?\s*', "", content)
+        receipt_file.write_text(content, encoding="utf-8")
+    for p in tool_dir.glob("**/gflow_cli-*.dist-info/direct_url.json"):
+        p.unlink(missing_ok=True)
 
     gflow_bin = bin_dir / ("gflow.exe" if sys.platform == "win32" else "gflow")
     assert gflow_bin.exists(), f"Launcher missing at {gflow_bin}"
@@ -458,6 +478,11 @@ def test_pipx_update_still_works(tmp_path: Path, update_wheels: tuple[Path, Path
 
     for p in pipx_home.glob("**/gflow_cli-*.dist-info/direct_url.json"):
         p.unlink(missing_ok=True)
+    meta_file = pipx_home / "venvs" / "gflow-cli" / "pipx_metadata.json"
+    if meta_file.exists():
+        content = meta_file.read_text(encoding="utf-8")
+        content = content.replace("gflow-cli==0.0.1", "gflow-cli")
+        meta_file.write_text(content, encoding="utf-8")
 
     gflow_bin = bin_dir / ("gflow.exe" if sys.platform == "win32" else "gflow")
     assert gflow_bin.exists(), f"Launcher missing at {gflow_bin}"
