@@ -1,0 +1,981 @@
+{
+  "identifier": "ffroliva-gflow-cli",
+  "name": "gflow-cli",
+  "version": "0.99.0",
+  "author": "ffroliva",
+  "authorUrl": "https://github.com/ffroliva",
+  "homepage": "https://github.com/ffroliva/gflow-cli",
+  "icon": "🎬",
+  "category": "media-generate",
+  "description": "Drive Google Flow from Claude, Cursor, or CLI: generate Google Veo video and Imagen 3 images using your Google Flow subscription credits.",
+  "tags": [
+    "google-flow",
+    "veo",
+    "imagen",
+    "video-generation",
+    "image-generation",
+    "mcp"
+  ],
+  "tools": [
+    {
+      "name": "gflow_generate_image",
+      "description": "Generate an image using Google Flow's image models. Produces 1-4 images from a text prompt. out_file, if given, must resolve inside the configured output directory (output is deprecated: use out_file). Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), nano2-lite (Nano Banana 2 Lite), nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). Aspects: 1:1, 9:16, 16:9, 4:3, 3:4. The prompt supports @AssetName mentions to tag saved project characters/assets by name (resolves to referenceEntities/referenceImages). Reference a SAVED named asset via @Name; reference an arbitrary one-off image via reference_images. See docs/REFERENCE_STRATEGIES.md. On accounts served from flow.google.com, use an existing project and local reference files. A character attaches there by name (@Name, or reference_entities paired with reference_entity_names); a UUID media reference the local catalog records in that same project is referenced in place (#995), but any other UUID, an entity id without a name, and image4 are not ported to that composer yet and fail before submit; retrying will not clear it. On an agent-only composer (#799) only text-to-image runs, so reference_images and character references fail there too. Returns local file paths to the generated images.",
+      "inputSchema": {
+        "properties": {
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "model": {
+            "default": "nano2",
+            "title": "Model",
+            "type": "string"
+          },
+          "aspect": {
+            "default": "1:1",
+            "title": "Aspect",
+            "type": "string"
+          },
+          "count": {
+            "default": 1,
+            "title": "Count",
+            "type": "integer"
+          },
+          "reference_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Images"
+          },
+          "reference_entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Saved character entity ids to attach. On flow.google.com each id needs its display name at the same position in reference_entity_names, or the call fails before submit; gflow_character_list returns both.",
+            "title": "Reference Entities"
+          },
+          "reference_entity_names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Display name of each reference_entities id, same order. Required on flow.google.com, where an id without its name fails before submit.",
+            "title": "Reference Entity Names"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Prompt tools applied before generation. Each item is {\"name\": <slug>, \"options\": {...}}, e.g. [{\"name\": \"creative-director\"}]. gflow_list_tools lists the valid names.",
+            "title": "Tools"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Name"
+          },
+          "instructions": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instructions"
+          },
+          "ui_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ui Mode"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Deprecated: use out_file (removed in a future release). Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Output"
+          },
+          "wait": {
+            "default": true,
+            "description": "true (default): run the generation inside this call and return the finished result. The call stays open for the whole generation, minutes for a video, which can outlast an MCP client's tool timeout; raise that timeout, or use false. false: return {status: 'pending', task_id} at once and run the job in the background of this server process. With the SEP-2663 Tasks extension, poll tasks/get by task_id: while it runs the status is working; once done it is completed and its result field holds the same reply wait=true would (files, project id, seed). A failed generation is also completed, with result.isError true, so check isError. tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet submitted to Flow stops before submitting and nothing is charged; once a gflow worker has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage says which). gflow cancel <id> is the CLI twin. The job runs only while this server runs: if the client closes the server, it is cancelled.",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "gflow_generate_imageArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_generate_video",
+      "description": "Generate a video using Google Flow's Veo model. Modes: t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video). Aspects: 9:16, 16:9. Optional model (veo_lite/veo_fast/veo_quality/omni_flash/omni_1_2_flash), duration (seconds; omni_1_2_flash takes 3-15, at most 10 with an end_frame), and count select the Veo model, clip length, and batch size (CLI parity). The prompt supports @CharacterName mentions to tag saved project characters by name (resolves to referenceEntities). Reference a SAVED character via @Name; pass one-off ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts before spending credits if unreachable; 'agentic' is not supported for video. out_file, if given, must resolve inside the configured output directory (output is deprecated: use out_file). Returns the local file path to the generated video.",
+      "inputSchema": {
+        "properties": {
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "mode": {
+            "default": "t2v",
+            "title": "Mode",
+            "type": "string"
+          },
+          "aspect": {
+            "default": "9:16",
+            "title": "Aspect",
+            "type": "string"
+          },
+          "initial_frame": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Initial Frame"
+          },
+          "end_frame": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Frame"
+          },
+          "reference_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Images"
+          },
+          "reference_entities": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Saved character entity ids to attach. On flow.google.com each id needs its display name at the same position in reference_entity_names, or the call fails before submit; gflow_character_list returns both. Character references need mode r2v there.",
+            "title": "Reference Entities"
+          },
+          "reference_entity_names": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Display name of each reference_entities id, same order. Required on flow.google.com, where an id without its name fails before submit.",
+            "title": "Reference Entity Names"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution"
+          },
+          "count": {
+            "default": 1,
+            "title": "Count",
+            "type": "integer"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Prompt tools applied before generation. Each item is {\"name\": <slug>, \"options\": {...}}, e.g. [{\"name\": \"creative-director\"}]. gflow_list_tools lists the valid names.",
+            "title": "Tools"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Name"
+          },
+          "ui_mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ui Mode"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Deprecated: use out_file (removed in a future release). Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Output"
+          },
+          "wait": {
+            "default": true,
+            "description": "true (default): run the generation inside this call and return the finished result. The call stays open for the whole generation, minutes for a video, which can outlast an MCP client's tool timeout; raise that timeout, or use false. false: return {status: 'pending', task_id} at once and run the job in the background of this server process. With the SEP-2663 Tasks extension, poll tasks/get by task_id: while it runs the status is working; once done it is completed and its result field holds the same reply wait=true would (files, project id, seed). A failed generation is also completed, with result.isError true, so check isError. tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet submitted to Flow stops before submitting and nothing is charged; once a gflow worker has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage says which). gflow cancel <id> is the CLI twin. The job runs only while this server runs: if the client closes the server, it is cancelled.",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "gflow_generate_videoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_list_tools",
+      "description": "List available gflow prompt tools (name, title, description, category).",
+      "inputSchema": {
+        "properties": {},
+        "title": "gflow_list_toolsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_list_models",
+      "description": "List the image and video models the generate tools accept: name, Flow's menu label (image), accepted aliases, reference cap, max duration (video), aspects and tiers. Static catalog, the same as `gflow models --json`; no browser, no spend.",
+      "inputSchema": {
+        "properties": {},
+        "title": "gflow_list_modelsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_get_credits",
+      "description": "Read the current Google Flow credit balance for one saved profile or all profiles - the number Flow's account menu shows. Read directly from flow.google.com with the profile's saved session (no browser) when Flow accepts it; otherwise read in that profile's browser (one browser launch per profile, sequential for all_profiles). The direct read is off on macOS by default, behind a proxy, or with GFLOW_CLI_WIRE_READS=0. HTTP 429/503 returns a retryable error with no browser fallback: wait, do not loop. Spends no credits. Set all_profiles=true when choosing an account for generation; partial profile failures remain visible in the result. Set refresh=true to renew a signed-out session (rewrites that profile's saved cookies) in a headless browser and read again (slower - one more Chrome launch per signed-out profile; a revoked session still needs `gflow auth login`). The tier fields (sku, service_tier, user_paygate_tier, subscription_credits) are always null: flow.google.com does not report them.",
+      "inputSchema": {
+        "properties": {
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "all_profiles": {
+            "default": false,
+            "title": "All Profiles",
+            "type": "boolean"
+          },
+          "refresh": {
+            "default": false,
+            "title": "Refresh",
+            "type": "boolean"
+          }
+        },
+        "title": "gflow_get_creditsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_character_list",
+      "description": "List the saved Flow CHARACTER entities in a project. Read-only, spends no credits. On flow.google.com, returns each character's entity_id, display_name, voice, personality, workflow_ids and thumbnail_media_id. Pass entity_id in reference_entities paired with display_name in reference_entity_names (image and video r2v). On flow.google.com, an image @Name still attaches the first word after @ by name via the @ picker without reading the character catalog, while video @Name is not supported yet (exit 29, mention index unavailable); video r2v takes reference_entities plus reference_entity_names. Drives a browser.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "gflow_character_listArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_character_voices",
+      "description": "List the preset voices available for a Flow Character's TTS. Static lookup — no network, no browser, no cost. Call it before creating a character to choose a valid voice name.",
+      "inputSchema": {
+        "properties": {},
+        "title": "gflow_character_voicesArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_character_show",
+      "description": "Show one saved Flow CHARACTER entity by id or by exact display name. Read-only, spends no credits. On flow.google.com, returns the character's entity_id, display_name, voice, personality, workflow_ids and thumbnail_media_id. Exactly one of entity_id or name is required; ambiguous names fail. Drives a browser.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "entity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Entity Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "gflow_character_showArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_download_media",
+      "description": "Fetch an already-generated VIDEO from Flow by its media ID and write it to disk. For a generation that finished and was billed but whose download failed — the clip is in the Flow project and the local catalog shows no file for it. Spends no credits: the generation was already paid for. The bytes are verified against the size Flow reports before the file is written. out_dir, if given, must resolve inside the configured output directory. Video only: an image media ID is refused immediately (exit 11) because the signed URL this needs comes from a record only a clip's route emits. See issue #877. The transfer already retries a dropped connection internally, so a failure marked retryable means wait a moment and call again — never immediately, and never in a tight loop: each call opens a browser under a per-profile lease, and a second concurrent call fails on that lease instead (exit 11).",
+      "inputSchema": {
+        "properties": {
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "out_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Out Dir"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "gflow_download_mediaArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_upscale_image",
+      "description": "Upscale a platform-generated Flow image to 2K or 4K and save it locally. media_id is the UUID of the image to upscale. scale is '2k' or '4k' (4k requires Ultra subscription; Pro/Plus accounts support 2k). project is optional (resolved from the local catalog when omitted). out_dir is the output directory (defaults to configured images directory; must resolve inside the configured output directory). profile selects the auth profile (defaults to the active profile). Spends no credits: image upscale is free.",
+      "inputSchema": {
+        "properties": {
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "scale": {
+            "default": "2k",
+            "title": "Scale",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "out_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Out Dir"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "gflow_upscale_imageArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_upscale_video",
+      "description": "Upscale or export a platform-generated Flow video to 1080p Full HD (or 270p GIF). media_id is the UUID of the video to upscale. scale is '1080p' (Full HD), '720p' (original), or '270p' (animated GIF). project is optional (resolved from the local catalog when omitted). out_dir is the output directory (defaults to configured videos directory; must resolve inside the configured output directory). profile selects the auth profile (defaults to the active profile). flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). Measured free (1 observation, 2026-10-07): the 1080p export spent no credits.",
+      "inputSchema": {
+        "properties": {
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "scale": {
+            "default": "1080p",
+            "title": "Scale",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "out_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Out Dir"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "gflow_upscale_videoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_list_projects",
+      "description": "List all projects in the local gflow catalog. Returns project IDs, names, and creation dates from the SQLite database.",
+      "inputSchema": {
+        "properties": {
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "title": "gflow_list_projectsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_usage_stats",
+      "description": "Summarize local gflow-cli usage statistics over the last N weeks. Returns command invocation counts from local telemetry (when enabled) and generation counts from the local catalog. Like every gflow tool call, it may start the weekly background upload of usage totals when one is due (only on machines where a person has seen the usage notice; see the telemetry block's upload state).",
+      "inputSchema": {
+        "properties": {
+          "weeks": {
+            "default": 12,
+            "title": "Weeks",
+            "type": "integer"
+          }
+        },
+        "title": "gflow_usage_statsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_auth_status",
+      "description": "Non-interactive, credit-free Flow session probe (#497). Call this BEFORE a generation tool to fail fast on expired auth, before a long blocking generation call. Never starts an interactive login flow. May boot a short-lived headless browser, which on flow.google.com is the usual path, and may take up to ~2 min on a slow network. Every session result also carries `wire: {status, build}`, the health of the direct (browser-free) credits read, probed first with one GET and one POST to flow.google.com unless the direct read is off. `wire.status` is `accepted` (the saved cookies work), `signed_out_shell` or `http_401` (Flow refused the saved session), `store_unreadable` (the profile's cookies could not be read: Chrome has it open, or it has no saved session), `disabled` (GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable` or `unexpected`. With `accepted`, credit reads need no browser; any other status means they use the browser instead and does not change `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the result is `status: throttled` with a retryable 429 `error` carrying `retry_after` seconds. `build` is Flow's build label when read, else null.",
+      "inputSchema": {
+        "properties": {
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "title": "gflow_auth_statusArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_instructions_list",
+      "description": "List a Flow project's persistent Agent-Mode instruction cards (reads the live server brief). Credits-free.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "gflow_instructions_listArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_instructions_add",
+      "description": "Add a persistent instruction card to a Flow project's Agent-Mode brief (credits-free). Each ref is classified automatically: local image path → uploaded as an image reference; asset UUID → image reference; anything else → character id/name.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "refs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refs"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "title",
+          "text"
+        ],
+        "title": "gflow_instructions_addArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_instructions_set_enabled",
+      "description": "Enable or disable one instruction card on a Flow project's brief, selected by title or card id (exactly one). Credits-free.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Card Id"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "enabled"
+        ],
+        "title": "gflow_instructions_set_enabledArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_instructions_rm",
+      "description": "Remove one instruction card from a Flow project's brief, selected by title or card id (exactly one). Credits-free.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title"
+          },
+          "card_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Card Id"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "gflow_instructions_rmArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_instructions_toggle_mode",
+      "description": "Turn a Flow project's brief master switch on or off. When off, NO cards apply even if individually enabled. Cards are left untouched. Credits-free.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "enabled"
+        ],
+        "title": "gflow_instructions_toggle_modeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_instructions_apply",
+      "description": "Declaratively FULL-SYNC a Flow project's brief: REPLACES all existing instruction cards with the given set (destructive — cards not listed are removed). Each card is {'title', 'text', 'ref': [...], 'enabled'}. Credits-free.",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "cards": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Cards",
+            "type": "array"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "cards"
+        ],
+        "title": "gflow_instructions_applyArguments",
+        "type": "object"
+      }
+    }
+  ]
+}
