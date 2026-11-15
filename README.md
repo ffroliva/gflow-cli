@@ -8,6 +8,7 @@
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
 [![Release](https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/release.yml)
 [![Python versions](https://img.shields.io/pypi/pyversions/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
+[![Platforms: macOS · Windows · Linux](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey.svg)](docs/CONFIGURATION.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](docs/PROJECT_STATUS.md)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
@@ -44,6 +45,8 @@ You have a Google account with Flow access, you have Veo credits, and you run re
 Same Veo and Imagen models, same quality, same billing against your own Google account, now programmatic.
 
 ## 60-second quick start
+
+Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x86_64 / Xvfb).
 
 ```bash
 # 1 · Install (uv recommended; also: pip install gflow-cli)
