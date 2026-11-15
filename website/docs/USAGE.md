@@ -1504,8 +1504,7 @@ gflow character list --project PROJECT_ID [--json] [--profile NAME]
 ```
 
 Lists every Character entity in a project (name, entity id, voice, reference
-count). Works on accounts Flow serves from `labs.google` (`flow.projectInitialData`)
-and from `flow.google.com` (`Zzl0ze` project reply, #875 / #987).
+count), including on accounts Flow serves from `flow.google.com` (#875, #987).
 
 ### `gflow character show`
 
@@ -1514,7 +1513,7 @@ gflow character show --project PROJECT_ID (--id ENTITY_ID | --name NAME) [--json
 ```
 
 Shows one character's detail (entity id, project, voice, personality, reference
-workflow ids) on both `labs.google` and `flow.google.com`. Provide **exactly one** of `--id` or `--name`. An ambiguous
+workflow ids), including on accounts Flow serves from `flow.google.com`. Provide **exactly one** of `--id` or `--name`. An ambiguous
 `--name` (multiple characters share it) exits with code **11**.
 
 ### `gflow character rm`

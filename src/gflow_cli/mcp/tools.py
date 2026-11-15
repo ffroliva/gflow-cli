@@ -106,7 +106,7 @@ _ToolsParam = Annotated[
 _ENTITIES_DESCRIPTION = (
     "Saved character entity ids to attach. On flow.google.com each id needs its display "
     "name at the same position in reference_entity_names, or the call fails before "
-    "submit; gflow_character_list returns both on both hosts."
+    "submit; gflow_character_list returns both."
 )
 _ImageEntitiesParam = Annotated[list[str] | None, Field(description=_ENTITIES_DESCRIPTION)]
 _VideoEntitiesParam = Annotated[
@@ -1651,10 +1651,11 @@ def _character_to_dict(char: Any) -> dict[str, Any]:
 @server.tool(
     name="gflow_character_list",
     description=(
-        "List the saved Flow CHARACTER entities in a project, with their entity ids. "
-        "Read-only, spends no credits, works on labs.google and flow.google.com (Zzl0ze). "
-        "An id goes to reference_entities (with display_name in reference_entity_names on "
-        "flow.google.com) and display_name works as @Name in a prompt. Drives a browser."
+        "List the saved Flow CHARACTER entities in a project. Read-only, spends no credits. "
+        "On flow.google.com, returns each character's entity_id, display_name, voice, "
+        "personality, workflow_ids and thumbnail_media_id. An entity_id goes to "
+        "reference_entities (with display_name in reference_entity_names on flow.google.com) "
+        "and display_name works as @Name in a prompt. Drives a browser."
     ),
 )
 @_guarded
@@ -1728,7 +1729,8 @@ async def gflow_character_voices() -> dict[str, Any]:
     name="gflow_character_show",
     description=(
         "Show one saved Flow CHARACTER entity by id or by exact display name. "
-        "Read-only, spends no credits, works on labs.google and flow.google.com (Zzl0ze). "
+        "Read-only, spends no credits. On flow.google.com, returns the character's "
+        "entity_id, display_name, voice, personality, workflow_ids and thumbnail_media_id. "
         "Exactly one of entity_id or name is required; ambiguous names fail. Drives a browser."
     ),
 )

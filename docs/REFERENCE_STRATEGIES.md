@@ -84,15 +84,15 @@ Notes:
 On an account Flow serves from `flow.google.com`, `image t2i` and `image i2i` take a character
 mention (`@Name` or `--reference-entity`) through the composer's own `@` picker. **Video:**
 local-file `video r2v` takes a character there with `--reference-entity` paired with
-`--reference-entity-name` (#723). Other video modes still refuse characters (exit 36), and a
-video `@Name` on `flow.google.com` is not ported yet (use `--reference-entity` + `--reference-entity-name`).
+`--reference-entity-name` (#723; `gflow character list` reads both on `flow.google.com`, #987).
+Other video modes still refuse characters (exit 36), and a video `@Name` exits 29 because
+`@Name` mention resolution does not query the `flow.google.com` character catalog yet.
 
-- **Project read via `Zzl0ze` and image mention fallback.** On `flow.google.com`, `gflow character list` and
-  `gflow character show` read the project's `Zzl0ze` `batchexecute` reply ([#875](https://github.com/ffroliva/gflow-cli/issues/875),
-  [#987](https://github.com/ffroliva/gflow-cli/pull/987)). On the image path, if the character source fails, an image mention that matches no media asset
-  still becomes a character **by name**: the name is the **first word after `@`**. A character
-  whose name has several words needs the catalog to resolve, so use a one-word name when
-  relying on that fallback. The name stays in the prompt as plain text (`@Sussy cooks` → chip + `Sussy cooks`).
+- **No catalog needed for image `@Name`.** On `flow.google.com`, `@Name` mention resolution keeps
+  the pre-#987 labs catalog probe (`migrated_read=False`); when that character source fails, an image mention that matches no media asset
+  becomes a character **by name**: the name is the **first word after `@`**. A character
+  whose name has several words needs the catalog to resolve, so use a one-word name on that
+  host. The name stays in the prompt as plain text (`@Sussy cooks` → chip + `Sussy cooks`).
   Media mentions resolve as before.
 - **The option titled exactly the name is picked, not the first option.** The picker
   lists characters and media in one list, and their DOM is identical apart from a translated

@@ -192,7 +192,7 @@ async def test_character_list_on_flow_google_com_reads_zzl0ze_instead_of_exiting
     from gflow_cli.api.transports.migrated_character import ProjectRead
 
     ctx = _migrated_client_ctx(tmp_path)
-    read = ProjectRead(characters=(_ALDOUS, _MIRA), voices=(), images={})
+    read = ProjectRead(characters=(_ALDOUS, _MIRA), voices=())
     with (
         patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
         patch(
@@ -215,7 +215,7 @@ async def test_character_show_on_flow_google_com_reads_zzl0ze_and_reports_missin
     from gflow_cli.api.transports.migrated_character import ProjectRead
 
     ctx = _migrated_client_ctx(tmp_path)
-    read = ProjectRead(characters=(_ALDOUS,), voices=(), images={})
+    read = ProjectRead(characters=(_ALDOUS,), voices=())
     with (
         patch.object(mcp_tools, "FlowApiClient", return_value=ctx),
         patch(
@@ -241,7 +241,18 @@ async def test_character_show_on_flow_google_com_reads_zzl0ze_and_reports_missin
 def test_character_read_tool_descriptions_document_flow_google_com_support(
     tool_name: str,
 ) -> None:
+    from pathlib import Path
+
     tool = mcp_tools.server._tool_manager._tools[tool_name]  # noqa: SLF001
     assert "flow.google.com" in tool.description
-    assert "Zzl0ze" in tool.description
+    assert "Zzl0ze" not in tool.description
+    assert "labs.google" not in tool.description
     assert "#875" not in tool.description
+
+    changelog = (Path(__file__).resolve().parents[2] / "CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = changelog.split("## [", 2)[1]
+    assert "gflow character list" in unreleased
+    assert "Enceladus" in unreleased
+    assert "@ziyedbe (#987)" in unreleased
+    for internal_name in ("Zzl0ze", "read_project", "parse_project_read", "voice_from_wire"):
+        assert internal_name not in unreleased
