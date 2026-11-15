@@ -182,6 +182,20 @@ flowchart LR
     S4 --> S5["Slice 5<br/>Generation --character<br/>(Billed, Veo credits)"]
 ```
 
+> **Coordinator rescoping (2026-11-15).** Each slice ships only code that something in that slice
+> calls. Slice 1 is the redaction hardening alone, from `ba92dc97` and `f1fbe256`:
+> - the `lh3…/asb/` URL;
+> - the bare `at` value (`<token>:<13-digit ms>`), since develop already scrubs the `at=` form
+>   field (#1229);
+> - `0cAF…` and runs of 120 or more token characters;
+> - the anchored signed-query pattern;
+> - scrub-then-slice in `batchexecute._discovery_head`.
+>
+> These move to the slices whose callers they serve:
+> - `scrub_secrets` and a public `discovery_head` go to slice 3, with `migrated_character.py`;
+> - `generation_records` serves only the dropped `[5]` adoption;
+> - `character_bundle.py` and `image_files.py` go to slice 4, with export/import.
+
 ### Slice 1: Foundations, Redaction Hardening & Character Bundle Core
 - **Scope:**
   - `src/gflow_cli/image_files.py`: Extract image container detection (PNG, JPEG, WebP, GIF) and 20 MB size limit from `client.py`.
