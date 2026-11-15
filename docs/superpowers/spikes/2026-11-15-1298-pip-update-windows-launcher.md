@@ -182,8 +182,76 @@ change nothing, tell the user which processes to close. pip only runs once every
 its uninstall-first order can no longer strand the venv.
 
 
+## 8. pipx and uv tool (2026-11-15)
+
+Tested on Windows 11 (Python 3.13.3, pipx 1.18.16, uv 0.8.16) in clean isolated directories under `scripts/dev/_spike_out/1298/installers/`. Baseline wheel: lowered `0.98.99`; PyPI holds `0.99.0`.
+
+### Installer Layout & Launcher Semantics
+
+| Installer | Runnable Launcher (`gflow.exe`) | Size | Link Type | `sys.prefix` | Metadata File in Prefix |
+|---|---|---|---|---|---|
+| **pipx** | `PIPX_BIN_DIR\gflow.exe` | 108,427 B | File copy (`nlink=1`) | `pipx_home\venvs\gflow-cli` | `pipx_metadata.json` (9,466 B) |
+| **uv tool** | `UV_TOOL_BIN_DIR\gflow.exe` | 41,615 B | File copy (`nlink=1`) | `uv_tools\gflow-cli` | `uv-receipt.toml` (352 B) |
+
+Both package managers place an independent file copy (trampoline executable) in their respective bin directories rather than a symlink or hardlink (`os.path.samefile` is False, `is_symlink` is False).
+
+### Experimental Results
+
+| Installer | Scenario | `gflow update` Exit | Manager Return Code | Usable Afterwards? | Error Line / Failure Point |
+|---|---|---|---|---|---|
+| **pipx** | Literal wheel (`pipx install <wheel>`) | **exit 11** | N/A (not run) | Yes (still 0.98.99) | `ConfigurationError: This gflow-cli is not a PyPI install` (`direct_url.json` present) |
+| **pipx** | Case A: index-simulated (uncontested) | **exit 0** | 0 | **Yes (0.99.0)** | None (`pipx` emits warning and skips overwriting `PIPX_BIN_DIR\gflow.exe`) |
+| **pipx** | Case B: index-simulated + child `mcp run` | **exit 0** | 0 | **Yes (0.99.0)** | None (`pipx` emits warning and skips overwriting `PIPX_BIN_DIR\gflow.exe`) |
+| **uv tool** | Literal wheel (`uv tool install <wheel>`) | **exit 11** | N/A (not run) | Yes (still 0.98.99) | `ConfigurationError: This gflow-cli is not a PyPI install` (`direct_url.json` present) |
+| **uv tool** | Case A: index-simulated (uncontested) | **exit 0** | 1 | **Yes (0.99.0)** | `os error 32` copying to `UV_TOOL_BIN_DIR\gflow.exe` (caught by `gflow update`) |
+| **uv tool** | Case B: index-simulated + child `mcp run` | **exit 0** | 1 | **Yes (0.99.0)** | `os error 32` copying to `UV_TOOL_BIN_DIR\gflow.exe` (caught by `gflow update`) |
+
+### Detailed Findings
+
+#### 1. Literal Wheel vs Index Detection (`_installed_from_index`)
+When installed directly via `pipx install <wheel_path>` or `uv tool install <wheel_path>`, PEP 610 `direct_url.json` is created in `.dist-info`. Consequently, `_installed_from_index()` returns `False`, and `gflow update` refuses to proceed, raising exit 11:
+```
+Configuration error: This gflow-cli is not a PyPI install (editable, local-path, VCS or source run)
+-> Update it the way it was installed — `git pull` / reinstall from the checkout. `gflow update` only manages index installs (uv tool / pipx / pip).
+```
+Neither `pipx upgrade` nor `uv tool upgrade` is invoked. Removing `direct_url.json` and tracking the package spec `gflow-cli` restores normal index-installed behavior.
+
+#### 2. pipx Upgrade Mechanics
+From `pipx upgrade --verbose gflow-cli`:
+- **Uninstall order**: pip runs inside the pipx venv and uninstalls the old package first:
+  ```
+  Attempting uninstall: gflow-cli
+    Found existing installation: gflow-cli 0.98.99
+    Uninstalling gflow-cli-0.98.99:
+      Successfully uninstalled gflow-cli-0.98.99
+  Successfully installed gflow-cli-0.99.0
+  ```
+- **Why pip does not hit `WinError 32` in the venv**: The running updater is `PIPX_BIN_DIR\gflow.exe`, which invokes `venv\Scripts\python.exe` directly. The internal launcher `venv\Scripts\gflow.exe` is **not running** and therefore not locked.
+- **Launcher copy behavior**: After upgrading the venv, pipx attempts to update `PIPX_BIN_DIR\gflow.exe`. Detecting that the file already exists and differs, pipx intentionally refrains from modifying it:
+  ```
+  ⚠️  File exists at ...\pipx_bin\gflow.exe and does not match ...\pipx_home\venvs\gflow-cli\Scripts\gflow.exe. Not modifying.
+  upgraded package gflow-cli from 0.98.99 to 0.99.0
+  ```
+  Because pipx refuses to overwrite the existing binary, it never encounters `WinError 32`. The existing trampoline points to the venv's python and seamlessly executes 0.99.0.
+
+#### 3. uv tool Upgrade Mechanics
+- **Staging-first install**: `uv tool upgrade` cleanly unpacks `gflow-cli==0.99.0` into the venv `site-packages`.
+- **Launcher copy failure (`os error 32`)**: When `uv` attempts to install entrypoints into `UV_TOOL_BIN_DIR`, it fails to overwrite the running executable:
+  ```
+  error: Failed to upgrade gflow-cli
+    Caused by: Failed to install entrypoint
+    Caused by: failed to copy file from C:\...\installers\uv_tools\gflow-cli\Scripts\gflow.exe to C:\...\installers\uv_bin\gflow.exe: The process cannot access the file because it is being used by another process. (os error 32)
+  ```
+  **Path named:** `C:\development\github\gflow-cli\.worktrees\1298\scripts\dev\_spike_out\1298\installers\uv_bin\gflow.exe`
+- **Tolerated by `gflow update`**: Because the venv was already upgraded to 0.99.0, `update_check.py` recognizes that `after == "0.99.0"` and `_import_failure()` is `None`. It prints an informational note and exits **0**, leaving the environment fully functional.
+
+#### 4. Summary & Comparison with Bare pip
+- **pip venv**: Broken and unimportable (exit 11, `ModuleNotFoundError: No module named 'gflow_cli'`). pip deletes `site-packages/gflow_cli/`, then fails on running `Scripts\gflow.exe` with `[WinError 32]`, aborting without rollback.
+- **pipx**: Fully functional (exit 0). pip uninstalls in venv without conflict because `venv\Scripts\gflow.exe` is not running, and pipx skips overwriting `PIPX_BIN_DIR\gflow.exe` with a non-fatal warning.
+- **uv tool**: Fully functional (exit 0). uv installs to `site-packages` before updating entrypoints; `os error 32` on `uv_bin\gflow.exe` fails the entrypoint copy, but `gflow update` handles the non-zero manager exit and the existing launcher runs the upgraded code.
+
+
 ## Not Measured
 
-- `pipx` installs on Windows: `pipx` is not installed on this test machine (`pipx` uses isolated venvs and may invoke pip similarly; behavior under `pipx upgrade` remains unmeasured).
 - `pip install --user` on Windows: user-site script directory installations were not tested.
 - POSIX platforms: Unix-like systems unlink open files via inode reference semantics, so this issue is Windows-specific by design.
