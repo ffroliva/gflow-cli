@@ -158,7 +158,13 @@ def redact_error_detail(detail: str) -> str:
     addresses; drops URLs carrying signed-query material and ``lh*…/asb/`` capability
     links; and truncates post-redaction as defense-in-depth against a scrub bypass.
     """
+    return scrub_secrets(detail)[:ERROR_DETAIL_MAX_CHARS]
+
+
+def scrub_secrets(text: str) -> str:
+    """:func:`redact_error_detail` without the length cap, for a caller that runs its own
+    rules after this one and trims the result itself (``batchexecute._discovery_head``).
+    Trimming first can cut a token into fragments shorter than any pattern's floor."""
     for pattern, replacement in _SECRET_TEXT_PATTERNS:
-        detail = pattern.sub(replacement, detail)
-    detail = _WHITESPACE_TOKEN.sub(_drop_signed_query_token, detail)
-    return detail[:ERROR_DETAIL_MAX_CHARS]
+        text = pattern.sub(replacement, text)
+    return _WHITESPACE_TOKEN.sub(_drop_signed_query_token, text)

@@ -131,7 +131,7 @@ The recommended course (Course b) was evaluated against the five expert personas
 
 #### 2. Security / reCAPTCHA — GO (9/10)
 - **Bundle Ingestion Defense:** Untrusted bundle directories are rigorously validated before touching Flow: checks file extensions, verifies image magic bytes (`image_files.py`), restricts file sizes to <=20 MB, enforces SHA256 checksums, strips bidi/control characters from strings, and rejects symlinks and directory traversal.
-- **Secret Scrubbing:** Porting `scrub_secrets` and pattern anchoring into `data/redaction.py` ensures `0cAF...` tokens, `at=` XSRF tokens, and `lh3.../asb/` URLs never leak to logs or incident bundles. Anchoring `_SIGNED_QUERY_TOKEN_PATTERN` with `(?<!\S)` prevents ReDoS/quadratic backtracking.
+- **Secret Scrubbing:** Porting the pattern work into `data/redaction.py` scrubs `0cAF...` tokens, the bare `at` XSRF value, and `lh3.../asb/` URLs on the paths that go through `redact_error_detail` / `scrub_secrets` (persisted error details, transport snippets, worker payloads, discovery heads). It is not a guarantee for every log line: three DOM-text sites (`agent_only_composer.py:553`, `:626`, `_mc_editor_gate.py:387`) still slice before they redact, and they carry page text rather than token-dense replies.
 - **Trust Boundary:** No self-minted reCAPTCHA tokens or G12 stealth bypasses; automation uses real Chrome profiles under `GFLOW_CLI_HOME`.
 
 #### 3. Performance / Playwright — GO (8/10)
@@ -176,7 +176,7 @@ The takeover is partitioned into 5 independent, ordered PR slices against `devel
 
 ```mermaid
 flowchart LR
-    S1["Slice 1<br/>Foundations & Bundle Core<br/>($0, offline)"] --> S2["Slice 2<br/>Zzl0ze Reads & list/show<br/>($0, browser read)"]
+    S1["Slice 1<br/>Redaction hardening<br/>($0, offline)"] --> S2["Slice 2<br/>Zzl0ze Reads & list/show<br/>($0, browser read)"]
     S2 --> S3["Slice 3<br/>Local Image Create<br/>($0, browser UI)"]
     S3 --> S4["Slice 4<br/>character export/import<br/>($0, browser UI)"]
     S4 --> S5["Slice 5<br/>Generation --character<br/>(Billed, Veo credits)"]
@@ -187,24 +187,24 @@ flowchart LR
 > - the `lh3…/asb/` URL;
 > - the bare `at` value (`<token>:<13-digit ms>`), since develop already scrubs the `at=` form
 >   field (#1229);
-> - `0cAF…` and runs of 120 or more token characters;
+> - `0cAF…` tokens;
 > - the anchored signed-query pattern;
-> - scrub-then-slice in `batchexecute._discovery_head`.
+> - scrub-then-slice in `batchexecute._discovery_head`, through `scrub_secrets` (its caller).
+>
+> The contributor's generic "120 or more token characters" rule is **dropped**: it erased Flow
+> media ids and cut Bearer tokens and addresses in two (PR #1302 review). Do not bring it back.
 >
 > These move to the slices whose callers they serve:
-> - `scrub_secrets` and a public `discovery_head` go to slice 3, with `migrated_character.py`;
+> - a public `discovery_head` goes to slice 3, with `migrated_character.py`;
 > - `generation_records` serves only the dropped `[5]` adoption;
 > - `character_bundle.py` and `image_files.py` go to slice 4, with export/import.
 
-### Slice 1: Foundations, Redaction Hardening & Character Bundle Core
-- **Scope:**
-  - `src/gflow_cli/image_files.py`: Extract image container detection (PNG, JPEG, WebP, GIF) and 20 MB size limit from `client.py`.
-  - `src/gflow_cli/data/redaction.py`: Add `scrub_secrets`, linear pattern anchoring `(?<!\S)`, regexes for `lh3.../asb/`, `0cAF...`, `at=` tokens.
-  - `src/gflow_cli/character_bundle.py`: Pure domain models (`CharacterBundle`, `BundleImage`), manifest v1 schema, validation, SHA256 integrity, bidi/control char stripping.
-- **Contributor Commits Ported:** `ba92dc97`, `f1fbe256`, `b98e6d2c`.
-- **MCP Twin:** Offline validator utility available to MCP server; parity gate neutral.
-- **E2E & Cost:** **$0, zero credits, 100% offline.** Tests: `test_character_bundle.py`, `tests/features/character_bundle.feature`, `test_redaction.py`.
-- **Main Risk:** Regex performance on large payloads. *Mitigation:* Bounded regexes with lookbehind anchors prevent quadratic scanning.
+### Slice 1: Redaction Hardening (PR #1302)
+- **Scope:** `src/gflow_cli/data/redaction.py` and `batchexecute._discovery_head`, as the rescoping note above lists. `image_files.py` and `character_bundle.py` are in slice 4.
+- **Contributor Commits Ported:** `ba92dc97`, `f1fbe256`.
+- **MCP Twin:** none; no CLI or MCP surface changes, so the parity gate is unaffected.
+- **E2E & Cost:** **$0, offline.** Tests: `tests/data/test_redaction.py`, `tests/api/transports/test_batchexecute.py`.
+- **Main Risk:** Regex performance on large payloads. *Mitigation:* bounded patterns, a token-by-token signed-query check, and timing tests on 160 KB inputs.
 
 ### Slice 2: Migrated Host Character Reads (`Zzl0ze`) + `character list` / `show`
 - **Scope:**

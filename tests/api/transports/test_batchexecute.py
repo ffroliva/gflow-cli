@@ -197,6 +197,33 @@ def test_a_token_cut_by_the_head_window_leaves_no_fragment() -> None:
     assert "0cAF" not in head
 
 
+def test_a_long_bearer_token_in_a_head_is_redacted_whole() -> None:
+    """CodeRabbit on #1302: the generic token rule ran before the Bearer rule, so it
+    replaced the first run and the Bearer rule could not reach the tail after the dot."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    payload = [None, 881, [["Bearer " + "A" * 150 + "." + "B" * 80]]]
+    with pytest.raises(WireFormatError) as exc_info:
+        generation_record("maseQ", payload)
+    assert "BBBB" not in str(exc_info.value.discovery["payload_head"])
+
+
+def test_a_token_cut_at_the_scrub_window_cannot_slide_into_the_head() -> None:
+    """CodeRabbit on #1302: the head scrubs only the first 4 KB. A token cut there was
+    a fragment below every floor, and once the long runs before it collapsed to
+    `<token>`, it moved into the 200-char head."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    filler = ["Z" * 2000] * 2  # two long runs: ~4 KB that collapse to ~30 chars
+    secret = "0cAFcWe" + "Q7_x-" * 400
+    payload = [None, 881, [[*filler, secret]]]
+    with pytest.raises(WireFormatError) as exc_info:
+        generation_record("maseQ", payload)
+    head = str(exc_info.value.discovery["payload_head"])
+    assert "Q7_x" not in head
+    assert "0cAF" not in head
+
+
 def test_a_head_that_json_cannot_encode_is_still_scrubbed() -> None:
     from gflow_cli.api.transports.batchexecute import generation_record
 
