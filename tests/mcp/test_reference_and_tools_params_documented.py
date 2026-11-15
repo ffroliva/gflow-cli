@@ -30,13 +30,15 @@ def test_tools_schema_states_the_item_shape(mcp_server: Any, tool: str, phrase: 
 
 @pytest.mark.parametrize("tool", _GENERATE)
 @pytest.mark.parametrize(
-    "phrase", ["reference_entity_names", "same position", "flow.google.com", "Flow's UI"]
+    "phrase",
+    ["reference_entity_names", "same position", "flow.google.com", "gflow_character_list"],
 )
 def test_reference_entities_schema_requires_paired_names(
     mcp_server: Any, tool: str, phrase: str
 ) -> None:
     description = _param(mcp_server, tool, "reference_entities").get("description", "")
     assert phrase in description, f"{tool}: `reference_entities` description lacks {phrase!r}"
+    assert "#875" not in description
 
 
 def test_video_reference_entities_names_the_r2v_requirement(mcp_server: Any) -> None:

@@ -235,3 +235,13 @@ async def test_character_show_on_flow_google_com_reads_zzl0ze_and_reports_missin
     assert missing_res["status"] == "error"
     assert missing_res["error"]["type"].endswith("/configuration")
     assert "character not found" in missing_res["error"]["detail"]
+
+
+@pytest.mark.parametrize("tool_name", ["gflow_character_list", "gflow_character_show"])
+def test_character_read_tool_descriptions_document_flow_google_com_support(
+    tool_name: str,
+) -> None:
+    tool = mcp_tools.server._tool_manager._tools[tool_name]  # noqa: SLF001
+    assert "flow.google.com" in tool.description
+    assert "Zzl0ze" in tool.description
+    assert "#875" not in tool.description

@@ -1,5 +1,5 @@
 # Plan: Slice 2 of #987 — `gflow character list` / `show` and voice catalog on `flow.google.com`
-> Created: 2026-11-15 | Status: IN_PROGRESS | Branch: `feature/987-character-reads-migrated`
+> Created: 2026-11-15 | Status: COMPLETED | Branch: `feature/987-character-reads-migrated`
 
 ## Context
 - **Goal:** Port Slice 2 of contributor PR #987 (`@ziyedbe`) onto current `develop` so `gflow character list` and `gflow character show` (and their MCP twins `gflow_character_list` and `gflow_character_show`) work on accounts Flow serves from `flow.google.com` by reading its `Zzl0ze` `batchexecute` project reply when `flow.projectInitialData` is refused (HTTP 401/404 under `GFLOW_CLI_FLOW_HOST=auto`) or when `GFLOW_CLI_FLOW_HOST=flow.google.com`. Also update the offline voice catalog (`VOICES`) to 30 voices (`Enceladus` added), add `voice_to_wire` / `voice_from_wire`, and fix the route-prefix bug (`startswith(target)` → exact path `is_at(url, target)`) so `/project/<id>/character/<eid>` is never mistaken for `/project/<id>`.
@@ -42,7 +42,7 @@
   - **Files:** `docs/superpowers/plans/2026-11-15-987-s2-character-reads/PLAN.md`
   - **Action:** Write this plan with the 5-persona `/gflow:predict` pass, the `/gflow:scenario` table (including MCP twins), and the `is_at` route-matching design, then commit.
 
-- [ ] **Task 2 — Red Tests (TDD first)**
+- [x] **Task 2 — Red Tests (TDD first)**
   - **Files:**
     - `tests/api/fixtures/zzl0ze_reply.json` (new)
     - `tests/api/transports/test_migrated_character.py` (new)
@@ -53,7 +53,7 @@
     - `tests/api/test_character.py` & `tests/cli/test_cli_character.py` (modify — expect 30 voices including `Enceladus`)
   - **Action:** Port and add the failing tests first. Run `pytest` on each target, record the exact red failure reason for every test group, and commit the red tests.
 
-- [ ] **Task 3 — Implementation (Green)**
+- [x] **Task 3 — Implementation (Green)**
   - **Files:**
     - `src/gflow_cli/api/character.py` (modify — add `Enceladus` to `VOICES`, add `voice_to_wire` and `voice_from_wire`)
     - `src/gflow_cli/api/transports/batchexecute.py` (modify — export `discovery_head`, scrub full JSON string and `lh3.googleusercontent.com/asb/` capability URLs before slicing to 200 chars)
@@ -63,7 +63,7 @@
     - `tests/api/test_client_character.py` (modify — attach `c.settings = Settings()` in `_client_with` fixture helper)
   - **Action:** Implement cleanly within `check_size.py` complexity/statement bounds, turn all tests green, and commit.
 
-- [ ] **Task 4 — MCP Twin & Documentation**
+- [x] **Task 4 — MCP Twin & Documentation**
   - **Files:**
     - `src/gflow_cli/mcp/tools.py` (modify — update `_ENTITIES_DESCRIPTION` and `gflow_character_list` / `gflow_character_show` `description=` strings)
     - `docs/MCP.md`, `docs/REFERENCE_STRATEGIES.md`, `KNOWN_ISSUES.md`, `docs/CHARACTER.md`, `docs/USAGE.md`, `skills/video-production/SKILL.md` (modify)
@@ -71,12 +71,12 @@
     - `website/docs/**` & `plugins/**` (regenerate via `scripts/ci/generate_website_docs.py` and `scripts/ci/generate_plugin_skills.py`)
   - **Action:** Update MCP descriptions, docs, and changelog; sync generated mirrors; commit.
 
-- [ ] **Task 5 — Full Impeccable Gate Sweep**
+- [x] **Task 5 — Full Impeccable Gate Sweep**
   - **Action:** Run all 11 CI/check gates (`check_repo_hygiene.py`, `check_size.py`, `check_doc_links.py`, `check_website_docs_pii.py`, `generate_website_docs.py --check`, `check_council_memory.py`, `generate_plugin_skills.py --check`, `ruff check src tests`, `ruff format --check src tests`, `pyright src`, `pytest -q -n 4 tests/api tests/mcp tests/cli`) and verify exit 0 on every gate.
 
 ## Exit Criteria
-- [ ] All scenario rows S1–S12 covered by automated offline unit/integration tests.
-- [ ] Red → Green progression recorded for each test suite.
-- [ ] MCP `description=` and docs accurately describe `gflow_character_list` / `gflow_character_show` on `flow.google.com`.
-- [ ] All 11 CI gates exit 0.
-- [ ] Every commit carries `Co-authored-by: ziyedbe <ziyedbecha@hotmail.fr>` and zero AI attribution.
+- [x] All scenario rows S1–S12 covered by automated offline unit/integration tests.
+- [x] Red → Green progression recorded for each test suite.
+- [x] MCP `description=` and docs accurately describe `gflow_character_list` / `gflow_character_show` on `flow.google.com`.
+- [x] All 11 CI gates exit 0.
+- [x] Every commit carries `Co-authored-by: ziyedbe <ziyedbecha@hotmail.fr>` and zero AI attribution.
