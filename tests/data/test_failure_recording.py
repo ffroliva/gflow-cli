@@ -74,7 +74,9 @@ def test_redact_error_detail_scrubs_signed_urls() -> None:
 
 
 def test_redact_error_detail_truncates() -> None:
-    assert len(redact_error_detail("x" * 2000)) == ERROR_DETAIL_MAX_CHARS
+    # Prose, not one unbroken run: a 120+ char token-alphabet run is itself scrubbed
+    # as a credential (TestBatchexecuteSecrets), which would mask what this pins.
+    assert len(redact_error_detail("word " * 400)) == ERROR_DETAIL_MAX_CHARS
 
 
 # ---------------------------------------------------------------------------

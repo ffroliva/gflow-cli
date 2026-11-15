@@ -242,11 +242,13 @@ def _clip_url(value: Any) -> str | None:
 
 
 def _discovery_head(payload: Any) -> str:
+    # Scrub the WHOLE payload, then slice: slicing first cut tokens into fragments
+    # shorter than any token pattern's floor, and those fragments survived.
     try:
-        head = json.dumps(payload)[:200]
+        text = json.dumps(payload)
     except (TypeError, ValueError):
-        head = repr(payload)[:200]
-    return redact_error_detail(_TOKEN_RE.sub("<token>", head))
+        text = repr(payload)
+    return redact_error_detail(_TOKEN_RE.sub("<token>", text))[:200]
 
 
 def generation_record(
