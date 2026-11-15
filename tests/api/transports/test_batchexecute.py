@@ -197,6 +197,18 @@ def test_a_token_cut_by_the_head_window_leaves_no_fragment() -> None:
     assert "0cAF" not in head
 
 
+def test_a_head_that_json_cannot_encode_is_still_scrubbed() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    token = "0cAFcWe" + "Q7_x-" * 40
+    payload = [None, 881, [[{1, 2}, token]]]  # a set: json.dumps raises, repr is used
+    with pytest.raises(WireFormatError) as exc_info:
+        generation_record("maseQ", payload)
+    head = str(exc_info.value.discovery["payload_head"])
+    assert "{1, 2}" in head
+    assert "Q7_x-Q7_x-" not in head
+
+
 def test_a_huge_unmatched_frame_builds_its_head_fast() -> None:
     """Review of slice 1: two status observers build a WireFormatError for every frame
     that does not match and drop it, so the head must not scrub a whole listing (459 KB

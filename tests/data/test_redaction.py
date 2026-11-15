@@ -38,6 +38,11 @@ def test_redact_metadata_masks_snake_case_fife_url() -> None:
     assert redact_metadata(raw)["fife_url"] == "<redacted:url>"
 
 
+def test_redact_metadata_drops_a_signed_url_under_any_key() -> None:
+    raw = {"note": "https://flow-content.google/x?Expires=1&Signature=abc"}
+    assert redact_metadata(raw)["note"] == "<redacted:url>"
+
+
 def test_session_id_is_redacted() -> None:
     """The extend request body carries `clientContext.sessionId`. It is not a
     credential, but it is account-correlatable and appears in any body we log

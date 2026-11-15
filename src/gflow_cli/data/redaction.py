@@ -10,6 +10,8 @@ PromptMode = Literal["store", "redacted"]
 # which the camelCase-only "fifeurl" entry missed (#542).
 SENSITIVE_URL_KEYS = {"fifeurl", "fife_url", "signedurl", "downloadurl", "mediaurl"}
 SENSITIVE_QUERY_KEYS = ("signature=", "x-goog-signature=", "x-goog-credential=", "expires=")
+_REDACTED_URL = "<redacted:url>"
+_REDACTED_TOKEN = "<redacted:token>"  # noqa: S105 - the placeholder, not a credential
 
 # Free-text secret patterns for error_detail scrubbing (#341). `redact_metadata`
 # redacts by dict key name / URL markers only, so a secret interpolated into an
@@ -33,15 +35,15 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # delimiter, so the rest of a compact reply survives.
     (
         re.compile(r"https?://lh\d\.googleusercontent\.com/asb/[^\s\"'\\,\]]+", re.IGNORECASE),
-        "<redacted:url>",
+        _REDACTED_URL,
     ),
     # The `at` XSRF value: 28 token chars measured, ':' (or '%3A' in a form body), ms
     # timestamp. The lookbehind lets a match START only where a token run starts, and
     # the length is bounded: unanchored and unbounded, every position inside a long run
     # re-scanned the run for its ':' — quadratic, minutes on a 160 KB body (#852 class).
     (
-        re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,64}(?::|%3A)\d{13}(?!\d)", re.IGNORECASE),
-        "<redacted:token>",
+        re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,64}(?::|%3[Aa])\d{13}(?!\d)"),
+        _REDACTED_TOKEN,
     ),
     (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE), "<redacted:secret>"),
     (re.compile(r"SAPISIDHASH\s+\S+", re.IGNORECASE), "<redacted:secret>"),
@@ -86,19 +88,22 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # reCAPTCHA Enterprise tokens (`maseQ` carries one). A shape, not a length: a
     # generic "120+ token chars" rule would also erase Flow media ids, which recovery
     # messages must name. Last, so it cannot cut a Bearer token or an address in two.
-    (re.compile(r"0cAF[A-Za-z0-9_-]{100,}"), "<redacted:token>"),
+    (re.compile(r"0cAF[A-Za-z0-9_-]{100,}"), _REDACTED_TOKEN),
 )
 # Any whitespace-delimited token carrying signed-query material — covers full
 # URLs and bare "path?X-Goog-Signature=..." fragments alike.
 #
-# Anchored: a match may only START where a whitespace-delimited token starts. Unanchored,
-# every position inside one long whitespace-free run re-scanned the rest of the run —
-# quadratic (10k URL-like chars took ~2 s; council D3, 2026-10-16, the #852 class).
-_SIGNED_QUERY_TOKEN_PATTERN = re.compile(
-    r"(?<!\S)\S*(?:signature=|x-goog-signature=|x-goog-credential=|expires=)\S*",
-    re.IGNORECASE,
-)
+# Token by token, not one pattern: an unanchored `\S*marker\S*` re-scanned the rest of a
+# long whitespace-free run from every position — quadratic (10k URL-like chars took ~2 s;
+# council D3, 2026-10-16, the #852 class).
+_WHITESPACE_TOKEN = re.compile(r"\S+")
 ERROR_DETAIL_MAX_CHARS = 500
+
+
+def _drop_signed_query_token(match: re.Match[str]) -> str:
+    token = match.group()
+    lowered = token.lower()
+    return _REDACTED_URL if any(marker in lowered for marker in SENSITIVE_QUERY_KEYS) else token
 
 
 @dataclass(frozen=True)
@@ -128,11 +133,11 @@ def redact_metadata(value: Any) -> Any:
             # is account-correlatable and would otherwise survive verbatim into
             # any logged body or diagnostics bundle.
             if lowered in {"token", "recaptchatoken", "sessionid", "session_id"}:
-                out[key] = "<redacted:token>"
+                out[key] = _REDACTED_TOKEN
             elif lowered in {"authorization", "cookie", "set-cookie"}:
                 out[key] = "<redacted:secret>"
             elif lowered in SENSITIVE_URL_KEYS and isinstance(item, str):
-                out[key] = "<redacted:url>"
+                out[key] = _REDACTED_URL
             else:
                 out[key] = redact_metadata(item)
         return out
@@ -140,7 +145,7 @@ def redact_metadata(value: Any) -> Any:
         items = cast("list[Any]", value)
         return [redact_metadata(item) for item in items]
     if isinstance(value, str) and any(marker in value.lower() for marker in SENSITIVE_QUERY_KEYS):
-        return "<redacted:url>"
+        return _REDACTED_URL
     return value
 
 
@@ -155,5 +160,5 @@ def redact_error_detail(detail: str) -> str:
     """
     for pattern, replacement in _SECRET_TEXT_PATTERNS:
         detail = pattern.sub(replacement, detail)
-    detail = _SIGNED_QUERY_TOKEN_PATTERN.sub("<redacted:url>", detail)
+    detail = _WHITESPACE_TOKEN.sub(_drop_signed_query_token, detail)
     return detail[:ERROR_DETAIL_MAX_CHARS]
