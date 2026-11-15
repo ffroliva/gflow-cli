@@ -148,13 +148,28 @@ class TestBatchexecuteSecrets:
         assert "ANfakeASB" not in out
         assert out == "download <redacted:url> failed"
 
-    def test_a_long_token_cut_by_a_head_window_is_still_scrubbed(self) -> None:
-        # batchexecute._discovery_head once sliced to 200 chars BEFORE its own token
-        # regex, so a token starting near the window's end survives as a fragment
-        # shorter than that regex's floor. The central scrub must not depend on it.
-        out = redact_error_detail("x" * 10 + " " + "A1b2_C3d4-" * 13)
-        assert "A1b2_C3d4" not in out
-        assert "<redacted:token>" in out
+    def test_a_flow_media_id_survives(self) -> None:
+        """Review of slice 1: a generic "120+ token chars" rule erased Flow media ids
+        (162 chars, the token alphabet), and the billed-but-not-downloaded message names
+        exactly that id for `gflow_download_media`. Only credential SHAPES are scrubbed."""
+        media_id = "CAUSJGI" + "x2Y_-z" * 26  # 163 chars, fake
+        text = f"Flow took segment 2 ({media_id}), so it may have billed"
+        assert redact_error_detail(text) == text
+
+    def test_a_long_bearer_token_is_redacted_whole(self) -> None:
+        # Review of slice 1: a token rule placed before the Bearer rule replaced the
+        # first run, and the Bearer rule could no longer reach the tail after the ".".
+        out = redact_error_detail("Bearer " + "A" * 150 + "." + "B" * 80)
+        assert out == "<redacted:secret>"
+
+    def test_an_address_with_a_long_local_part_is_redacted_whole(self) -> None:
+        out = redact_error_detail("user." + "n" * 130 + "@example.com failed")
+        assert out == "<redacted:email> failed"
+
+    def test_an_asb_link_inside_compact_json_keeps_the_next_field(self) -> None:
+        url = "https://lh3.googleusercontent.com/asb/ANfakeASBlink0000-fake_0000"
+        out = redact_error_detail(f'["{url}",null,"rpc rzMKMb"]')
+        assert out == '["<redacted:url>",null,"rpc rzMKMb"]'
 
     def test_the_scrub_stays_linear_on_a_long_token_run(self) -> None:
         """Found by measuring, before review: the first `at` pattern let every position
@@ -165,7 +180,13 @@ class TestBatchexecuteSecrets:
         without making this a stopwatch race."""
         import time
 
-        for blob in ("A" * 220_000, "abcDEF012_-" * 20_000, "a" * 160_000):
+        for blob in (
+            "A" * 220_000,
+            "abcDEF012_-" * 20_000,
+            "a" * 160_000,
+            "a-" * 80_000,  # the URL-credential scheme scan (review of slice 1)
+            "x@" + "a." * 80_000,  # the address domain scan (review of slice 1)
+        ):
             started = time.perf_counter()
             redact_error_detail(blob)
             assert time.perf_counter() - started < 1.0

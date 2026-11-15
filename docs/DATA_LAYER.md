@@ -281,8 +281,10 @@ This means the recorder OWNS redaction — call sites cannot leak signed URLs in
 Failure rows persist the exception's Problem-Details `detail` string through
 [`redact_error_detail`](../src/gflow_cli/data/redaction.py): free-text
 `Bearer …` / `SAPISIDHASH …` tokens and auth-cookie pairs become
-`<redacted:secret>`, URLs carrying signed-query markers become
-`<redacted:url>`, and the result is truncated to 500 chars post-redaction as
+`<redacted:secret>`, flow.google.com's bare `at` XSRF value and `0cAF…` reCAPTCHA
+tokens become `<redacted:token>`, URLs carrying signed-query markers and
+`lh*.googleusercontent.com/asb/…` capability links become `<redacted:url>`, account
+addresses become `<redacted:email>`, and the result is truncated to 500 chars post-redaction as
 defense-in-depth. The experimental REST transports also redact response bodies
 BEFORE truncating them into exception messages, so a clipped secret can't
 reach the DB. Non-`GFlowError` details are stored only as SHA-256 hashes.

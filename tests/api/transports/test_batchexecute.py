@@ -183,8 +183,8 @@ def test_drift_raises_wire_format_error_with_redacted_discovery_head() -> None:
 
 
 def test_a_token_cut_by_the_head_window_leaves_no_fragment() -> None:
-    """The head is sliced to 200 chars before the token regex runs, so a token that
-    starts near the cut survives as a fragment below that regex's 120-char floor.
+    """The head was once sliced to 200 chars before the token regex ran, so a token
+    starting near the cut survived as a fragment below that regex's 120-char floor.
     Placed so ~90 chars of it fall inside the window; none may reach the error."""
     from gflow_cli.api.transports.batchexecute import generation_record
 
@@ -195,6 +195,21 @@ def test_a_token_cut_by_the_head_window_leaves_no_fragment() -> None:
     head = str(exc_info.value.discovery["payload_head"])
     assert "Q7_x-Q7_x-" not in head
     assert "0cAF" not in head
+
+
+def test_a_huge_unmatched_frame_builds_its_head_fast() -> None:
+    """Review of slice 1: two status observers build a WireFormatError for every frame
+    that does not match and drop it, so the head must not scrub a whole listing (459 KB
+    measured)."""
+    import time
+
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    payload = [None, 881, [["x@" + "a." * 20_000]]]  # HEAD before the fix: 7.6 s
+    started = time.perf_counter()
+    with pytest.raises(WireFormatError):
+        generation_record("jwpduf", payload)
+    assert time.perf_counter() - started < 0.5
 
 
 def test_record_matches_by_shape_not_position() -> None:

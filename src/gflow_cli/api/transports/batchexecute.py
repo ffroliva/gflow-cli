@@ -242,12 +242,14 @@ def _clip_url(value: Any) -> str | None:
 
 
 def _discovery_head(payload: Any) -> str:
-    # Scrub the WHOLE payload, then slice: slicing first cut tokens into fragments
-    # shorter than any token pattern's floor, and those fragments survived.
+    # Scrub, then slice: slicing first cut tokens into fragments shorter than any token
+    # pattern's floor, and those fragments survived. Scrub only the first 4 KB: two
+    # status observers build this for every frame that does not match (a 459 KB
+    # listing), and a token cut at 4 KB still leaves a run far above _TOKEN_RE's floor.
     try:
-        text = json.dumps(payload)
+        text = json.dumps(payload)[:4096]
     except (TypeError, ValueError):
-        text = repr(payload)
+        text = repr(payload)[:4096]
     return redact_error_detail(_TOKEN_RE.sub("<token>", text))[:200]
 
 

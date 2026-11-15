@@ -101,12 +101,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **Free-text error and transport snippet redaction hardened against flow.google.com secrets.**
-  Redacts `0cAF...` reCAPTCHA Enterprise tokens, bare `at` XSRF tokens (plain and URL-encoded,
-  with bounded linear lookbehind), `lh3.googleusercontent.com/asb/` capability URLs, and token-alphabet
-  runs of 120+ characters. Anchors signed-query token scrubbing to eliminate quadratic backtracking
-  on long non-whitespace payloads, and scrubs entire discovery payloads in `batchexecute._discovery_head`
-  before slicing to avoid leaking fragments across the window boundary. Thanks to @ziyedbe (#987).
+- **Error messages and saved failure records no longer leak flow.google.com secrets.** reCAPTCHA
+  tokens, the page's XSRF value and private image links are now replaced with a placeholder,
+  including when a long reply is cut short for the message. Media ids stay readable, so a
+  recovery message can still name the clip. Very long replies no longer stall error reporting.
+  Thanks to @ziyedbe (#987).
 
 ## [0.99.0] — 2026-11-14
 
