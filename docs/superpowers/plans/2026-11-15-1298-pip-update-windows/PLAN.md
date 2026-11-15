@@ -154,25 +154,25 @@ account`).
 
 ## Task 4 - docs
 
-- [ ] `docs/USAGE.md` ~1996-2006: replace "the benign case". uv (installs first) and pipx (the
+- [x] `docs/USAGE.md` ~1996-2006: replace "the benign case". uv (installs first) and pipx (the
   running copy is outside its venv) were always fine. pip now sets the launchers aside, or refuses
   untouched when another program holds one. Add the one-time command for installs at 0.99.0 and
   below.
-- [ ] `update_check.py` `:408-412`: the claim that the trampoline "cannot be renamed aside" is false
+- [x] `update_check.py` `:408-412`: the claim that the trampoline "cannot be renamed aside" is false
   (sections 7 and 9). `:449-451`: name uv's failed launcher copy, not "the launcher".
-- [ ] `cli_update.py` docstring 5-7, `docs/E2E_TESTING.md` (the `e2e_update` row and tree), the
+- [x] `cli_update.py` docstring 5-7, `docs/E2E_TESTING.md` (the `e2e_update` row and tree), the
   AGENTS.md marker list, and `CHANGELOG.md` `[Unreleased]` `### Fixed`, with the one-time command.
   Regenerate the website mirror.
-- [ ] grep the whole repo for "benign", "cannot be renamed aside" and "cannot be replaced while in
+- [x] grep the whole repo for "benign", "cannot be renamed aside" and "cannot be replaced while in
   use". `docs/LIVE_VERIFICATION_v0.68.0.md` is a historical record: leave it.
 
 ---
 
 ## Definition of done
 
-- [ ] Task 1's case A seen red on develop's code for the bug's reason (exit 11 + `ModuleNotFoundError`)
-- [ ] All steps checked; `/gflow:check` green; `check_size.py` green
-- [ ] `e2e_update` run on the final tree on Windows: A, B and C pass; D and E pass, or are skipped
+- [x] Task 1's case A seen red on develop's code for the bug's reason (exit 11 + `ModuleNotFoundError`)
+- [x] All steps checked; `/gflow:check` green; `check_size.py` green
+- [x] `e2e_update` run on the final tree on Windows: A, B and C pass; D and E pass, or are skipped
   with the missing tool named
 - [ ] Two fresh xhigh reviews (`/code-review`, `ponytail-review`) and one fix round
 - [ ] CodeRabbit answered; the SonarCloud scan step concluded success with 0 new issues

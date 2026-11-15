@@ -1993,22 +1993,39 @@ metadata, finds it current and changes nothing.
 
 The venv is the truth, not the manager's exit code: after the manager runs,
 `gflow update` re-reads the installed gflow-cli version from a fresh interpreter
-and reports *that*. **Windows:** the `gflow.exe` launcher you are running holds
-its own file open, so it can be neither overwritten nor renamed while it runs.
-Measured on `uv tool upgrade`: the new wheel installs, then uv exits 1 copying
-the launcher ("os error 32"). The upgrade *did* happen — the launcher only
-points at the venv's python — so `gflow update` reports it as upgraded, prints
-the manager's captured output, and adds a note quoting its exit code. The old
-launcher keeps working. A later `gflow update` reports "up to date" and does not
-run the manager, so it does not replace the launcher either.
+and reports *that*. **Windows:** on `uv tool upgrade`, the new wheel installs into
+site-packages before updating entrypoints, then uv exits 1 copying the launcher
+("os error 32"). The upgrade *did* happen — the launcher only points at the venv's
+python — so `gflow update` reports it as upgraded, prints the manager's captured
+output, and adds a note quoting its exit code. On `pipx`, the running trampoline is
+outside the venv, so pip upgrades the venv cleanly and pipx skips overwriting the
+bin copy.
 
-**Stop every other `gflow` process BEFORE you upgrade — not after.** The launcher
-lock just above is the benign case: it is the `gflow.exe` *you* are running, and
-the upgrade lands anyway. A **different** gflow, holding the install's contents
-open, is not — there the manager can abort part-way and leave the environment
-broken. The holder reported so far is **`gflow mcp run`**: an editor with gflow
-registered as an MCP server starts one per session, and they outlive the command
-that started them. Reported with a reproduction in
+Under a **pip virtual environment or user install**, `gflow update` drops
+`importlib.metadata`'s cache and renames the running console-script launchers aside
+before pip runs ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)). Pip then
+uninstalls old files and creates fresh launchers without hitting WinError 32. If
+another program holds a launcher, the rename fails *before* pip runs, refusing
+untouched with exit 11 so the venv is never stranded. Any leftover `.old` launchers
+are swept on subsequent runs.
+
+> [!NOTE]
+> **One-time manual upgrade for Windows pip installs at 0.99.0 and below ([#1298](https://github.com/ffroliva/gflow-cli/issues/1298)):**
+> Because installs at <= 0.99.0 run their *existing* `gflow update` code, upgrading
+> directly via `gflow update` hits the old launcher lock and leaves the environment
+> stripped of `gflow_cli`. Run this one-time command instead from a shell with no
+> gflow processes running:
+> ```powershell
+> <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
+> ```
+> Once upgraded past 0.99.0, normal `gflow update` handles future upgrades cleanly.
+
+**Stop every other `gflow` process BEFORE you upgrade — not after.** While the running
+launcher is handled cleanly, a **different** gflow process holding the install's contents
+open will cause the update to refuse (or abort) to protect the environment. The holder
+reported so far is **`gflow mcp run`**: an editor with gflow registered as an MCP server
+starts one per session, and they outlive the command that started them. Reported with a
+reproduction in
 [#848](https://github.com/ffroliva/gflow-cli/issues/848#issuecomment-5704903340):
 `uv tool install --force` failed with *"Access is denied"* on
 `…\uv\tools\gflow-cli\Scripts` and left the install answering

@@ -531,10 +531,10 @@ def run_update(
     returncode = res.returncode
 
     # The venv is the truth, not the manager's exit code: on Windows `uv tool
-    # upgrade` installs the new wheel and THEN fails copying `gflow.exe` over
-    # the launcher running this very command (os error 32 — the trampoline
-    # holds its own file open, so it cannot be renamed aside either). The
-    # stale launcher keeps working: it only points at the venv's python.
+    # upgrade` installs the new wheel into site-packages and then fails copying
+    # `gflow.exe` into its bin dir over the launcher running this very command
+    # (os error 32). The stale launcher keeps working: it only points at the
+    # venv's python.
     after = _version_in_venv("gflow-cli")
     log.info("update.command_finished", installer=inst.name, returncode=returncode, after=after)
     # Before any version arithmetic: is the environment still usable at all?
@@ -572,7 +572,7 @@ def run_update(
         _show_output(res.stdout, res.stderr)
         notes.append(
             f"Note: `{shown}` exited {returncode} AFTER installing {after}. On Windows this is "
-            "usually the running `gflow.exe` launcher, which cannot be replaced while in use; "
+            "usually uv's failed launcher copy, which cannot overwrite the running binary; "
             "it keeps working."
         )
     playwright_after = _version_in_venv("playwright")
