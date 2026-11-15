@@ -110,21 +110,21 @@ account`).
 **Files:** `tests/test_update_check.py`
 
 **Tests created (red):**
-- [ ] r1 every RECORD `.exe` launcher is moved aside BEFORE the manager runs: the fake
+- [x] r1 every RECORD `.exe` launcher is moved aside BEFORE the manager runs: the fake
   `_run_command` asserts that the originals are absent.
-- [ ] r2 after the manager returns (rc 0 and rc 1), a launcher pip recreated is kept and its `.old`
+- [x] r2 after the manager returns (rc 0 and rc 1), a launcher pip recreated is kept and its `.old`
   is left for the sweep. A launcher pip did not recreate is restored.
-- [ ] r3 `os.replace` raising `PermissionError(13, ..., None, 32)` on the 2nd launcher restores the
+- [x] r3 `os.replace` raising `PermissionError(13, ..., None, 32)` on the 2nd launcher restores the
   1st and raises `ConfigurationError` (exit 11). The manager is never called. The message names the
   path and does not suggest `python -m`.
-- [ ] r4 `KeyboardInterrupt` from the manager restores the moved launchers and re-raises.
-- [ ] r5 any other exception from the manager does the same.
-- [ ] r6 a RECORD launcher missing on disk refuses with exit 11, the hint is
+- [x] r4 `KeyboardInterrupt` from the manager restores the moved launchers and re-raises.
+- [x] r5 any other exception from the manager does the same.
+- [x] r6 a RECORD launcher missing on disk refuses with exit 11, the hint is
   `_reinstall_hint(inst, __version__)`, and the manager is not called.
-- [ ] r7 order: RECORD is read, THEN `importlib.invalidate_caches` and `gc.collect`, THEN the first
+- [x] r7 order: RECORD is read, THEN `importlib.invalidate_caches` and `gc.collect`, THEN the first
   `os.replace`. Spy on all three.
-- [ ] r8 `uv`, `pipx` and non-win32 `pip`: no rename, the manager runs as before.
-- [ ] r9 the sweep deletes `gflow.exe.gflow-update-123.old` when `gflow.exe` exists, keeps it when
+- [x] r8 `uv`, `pipx` and non-win32 `pip`: no rename, the manager runs as before.
+- [x] r9 the sweep deletes `gflow.exe.gflow-update-123.old` when `gflow.exe` exists, keeps it when
   `gflow.exe` is missing (r6 needs it), and skips an `OSError` on delete. It runs before
   `run_update`'s "already up to date" return.
 

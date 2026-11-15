@@ -150,11 +150,18 @@ def test_pip_venv_update_keeps_a_working_install(
         env=env,
         check=False,
     )
-    assert up_res.returncode == 0, f"gflow update failed (exit {up_res.returncode}):\n{up_res.stdout}\n{up_res.stderr}"
+    assert up_res.returncode == 0, (
+        f"gflow update failed (exit {up_res.returncode}):\n{up_res.stdout}\n{up_res.stderr}"
+    )
 
     # Verify import reports 9999.0.0
     probe = subprocess.run(
-        [str(python_exe), "-I", "-c", "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)"],
+        [
+            str(python_exe),
+            "-I",
+            "-c",
+            "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -212,7 +219,6 @@ def test_pip_update_refuses_untouched_while_another_gflow_runs(
         text=True,
         env=env,
     )
-    child_pid = child.pid
     try:
         time.sleep(2)  # Allow process to start and hold file
         assert child.poll() is None, "Child mcp run died prematurely"
@@ -224,7 +230,9 @@ def test_pip_update_refuses_untouched_while_another_gflow_runs(
             env=env,
             check=False,
         )
-        assert up_res.returncode == 11, f"Expected exit 11, got {up_res.returncode}:\n{up_res.stdout}\n{up_res.stderr}"
+        assert up_res.returncode == 11, (
+            f"Expected exit 11, got {up_res.returncode}:\n{up_res.stdout}\n{up_res.stderr}"
+        )
 
         # Error message must name a launcher path
         combined_err = up_res.stdout + up_res.stderr
@@ -233,7 +241,12 @@ def test_pip_update_refuses_untouched_while_another_gflow_runs(
 
         # The version is still 0.0.1 and the import works
         probe = subprocess.run(
-            [str(python_exe), "-I", "-c", "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)"],
+            [
+                str(python_exe),
+                "-I",
+                "-c",
+                "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -312,10 +325,17 @@ def test_pip_user_update_keeps_a_working_install(
         env=env,
         check=False,
     )
-    assert up_res.returncode == 0, f"gflow update failed (exit {up_res.returncode}):\n{up_res.stdout}\n{up_res.stderr}"
+    assert up_res.returncode == 0, (
+        f"gflow update failed (exit {up_res.returncode}):\n{up_res.stdout}\n{up_res.stderr}"
+    )
 
     probe = subprocess.run(
-        [sys._base_executable, "-I", "-c", "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)"],
+        [
+            sys._base_executable,
+            "-I",
+            "-c",
+            "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)",
+        ],
         capture_output=True,
         text=True,
         env=env,
@@ -342,9 +362,7 @@ def test_pip_user_update_keeps_a_working_install(
     assert old_files == [], f"Unexpected .old files remain: {old_files}"
 
 
-def test_uv_tool_update_still_works(
-    tmp_path: Path, update_wheels: tuple[Path, Path, Path]
-) -> None:
+def test_uv_tool_update_still_works(tmp_path: Path, update_wheels: tuple[Path, Path, Path]) -> None:
     """Case D: uv tool upgrade still works and leaves a working installation."""
     if shutil.which("uv") is None:
         pytest.skip("uv is not installed")
@@ -400,9 +418,7 @@ def test_uv_tool_update_still_works(
     assert "9999.0.0" in ver_res.stdout
 
 
-def test_pipx_update_still_works(
-    tmp_path: Path, update_wheels: tuple[Path, Path, Path]
-) -> None:
+def test_pipx_update_still_works(tmp_path: Path, update_wheels: tuple[Path, Path, Path]) -> None:
     """Case E: pipx update still works and leaves a working installation."""
     if shutil.which("pipx") is None:
         pytest.skip("pipx is not installed")
