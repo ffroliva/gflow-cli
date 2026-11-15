@@ -202,7 +202,7 @@ class TestBatchexecuteSecrets:
         assert redact_error_detail(ids_text) == ids_text
 
     def test_near_miss_file_paths_survive(self) -> None:
-        path_text = r"file at C:\Users\user\data\image_01.png and /var/log/app.log"
+        path_text = r"file at C:\dev\projects\data\image_01.png and /var/log/app.log"
         assert redact_error_detail(path_text) == path_text
 
     def test_near_miss_short_base64_survives(self) -> None:

@@ -81,11 +81,11 @@ CHANGELOG.md
 - `tests/api/transports/test_batchexecute.py`
 
 **Steps:**
-- [ ] Add `TestBatchexecuteSecrets` to `tests/data/test_redaction.py` (excluding `TestScrubSecrets` which is deferred to Slice 3).
-- [ ] Adapt `test_the_at_xsrf_value_is_scrubbed_plain_and_url_encoded` to include bare `at` value verification since develop already has `(at|f\.sid)=` from #1229.
-- [ ] Add `test_a_token_cut_by_the_head_window_leaves_no_fragment` to `tests/api/transports/test_batchexecute.py`.
-- [ ] Run pytest on the new tests against the unfixed code and record failure reasons.
-- [ ] Commit red tests locally with contributor attribution trailer.
+- [x] Add `TestBatchexecuteSecrets` to `tests/data/test_redaction.py` (excluding `TestScrubSecrets` which is deferred to Slice 3).
+- [x] Adapt `test_the_at_xsrf_value_is_scrubbed_plain_and_url_encoded` to include bare `at` value verification since develop already has `(at|f\.sid)=` from #1229.
+- [x] Add `test_a_token_cut_by_the_head_window_leaves_no_fragment` to `tests/api/transports/test_batchexecute.py`.
+- [x] Run pytest on the new tests against the unfixed code and record failure reasons.
+- [x] Commit red tests locally with contributor attribution trailer.
 
 ---
 
@@ -99,14 +99,14 @@ CHANGELOG.md
 - `tests/data/test_failure_recording.py`
 
 **Steps:**
-- [ ] Add `https?://lh3\.googleusercontent\.com/asb/\S+` to `_SECRET_TEXT_PATTERNS`.
-- [ ] Add `(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,64}(?::|%3A)\d{13}(?!\d)` to `_SECRET_TEXT_PATTERNS`.
-- [ ] Add `0cAF[A-Za-z0-9_-]{100,}` and `[A-Za-z0-9_-]{120,}` to `_SECRET_TEXT_PATTERNS`.
-- [ ] Anchor `_SIGNED_QUERY_TOKEN_PATTERN` with `(?<!\S)`.
-- [ ] Update `_discovery_head` in `batchexecute.py` to scrub before slicing to 200 chars.
-- [ ] Update `test_redact_error_detail_truncates` in `tests/data/test_failure_recording.py` to use spaced words (`"word " * 400`).
-- [ ] Run `scripts/ci/check_size.py`, `ruff check`, `ruff format --check`, `pyright src`, and pytest.
-- [ ] Commit implementation locally with contributor attribution trailer.
+- [x] Add `https?://lh3\.googleusercontent\.com/asb/\S+` to `_SECRET_TEXT_PATTERNS`.
+- [x] Add `(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{20,64}(?::|%3A)\d{13}(?!\d)` to `_SECRET_TEXT_PATTERNS`.
+- [x] Add `0cAF[A-Za-z0-9_-]{100,}` and `[A-Za-z0-9_-]{120,}` to `_SECRET_TEXT_PATTERNS`.
+- [x] Anchor `_SIGNED_QUERY_TOKEN_PATTERN` with `(?<!\S)`.
+- [x] Update `_discovery_head` in `batchexecute.py` to scrub before slicing to 200 chars.
+- [x] Update `test_redact_error_detail_truncates` in `tests/data/test_failure_recording.py` to use spaced words (`"word " * 400`).
+- [x] Run `scripts/ci/check_size.py`, `ruff check`, `ruff format --check`, `pyright src`, and pytest.
+- [x] Commit implementation locally with contributor attribution trailer.
 
 ---
 
@@ -118,23 +118,23 @@ CHANGELOG.md
 - `CHANGELOG.md`
 
 **Steps:**
-- [ ] Add a note under `[Unreleased]` -> `### Security` (or `### Fixed`) crediting `@ziyedbe (#987)`.
-- [ ] Verify formatting and doc gates.
-- [ ] Commit changelog locally with contributor attribution trailer.
+- [x] Add a note under `[Unreleased]` -> `### Security` (or `### Fixed`) crediting `@ziyedbe (#987)`.
+- [x] Verify formatting and doc gates.
+- [x] Commit changelog locally with contributor attribution trailer.
 
 ---
 
 ## Definition of Done
 
-- [ ] All task steps checked off.
-- [ ] All new and existing tests pass (`pytest tests/data tests/api/transports/test_batchexecute.py`).
-- [ ] `uv run python scripts/ci/check_size.py` exits 0.
-- [ ] `uv run ruff check src tests` exits 0.
-- [ ] `uv run ruff format --check src tests` exits 0.
-- [ ] `uv run pyright src` exits 0.
-- [ ] `CHANGELOG.md` updated with `@ziyedbe (#987)`.
-- [ ] All commits end with `Co-authored-by: ziyedbe <ziyedbecha@hotmail.fr>` trailer.
-- [ ] Zero AI attribution in git history.
+- [x] All task steps checked off.
+- [x] All new and existing tests pass (`pytest tests/data tests/api/transports/test_batchexecute.py`).
+- [x] `uv run python scripts/ci/check_size.py` exits 0.
+- [x] `uv run ruff check src tests` exits 0.
+- [x] `uv run ruff format --check src tests` exits 0.
+- [x] `uv run pyright src` exits 0.
+- [x] `CHANGELOG.md` updated with `@ziyedbe (#987)`.
+- [x] All commits end with `Co-authored-by: ziyedbe <ziyedbecha@hotmail.fr>` trailer.
+- [x] Zero AI attribution in git history.
 
 ---
 
