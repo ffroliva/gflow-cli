@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: S603, S607
 """Spike: #1298 pip update vs the running gflow.exe launcher on Windows.
 
 Measures on Windows:
@@ -17,7 +18,6 @@ Stdlib only. Run with `py -3.13`.
 from __future__ import annotations
 
 import argparse
-import glob
 import os
 import pathlib
 import shutil
@@ -31,6 +31,14 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 SPICEOUT_ROOT = REPO_ROOT / "scripts" / "dev" / "_spike_out" / "1298"
 WHEELS_DIR = SPICEOUT_ROOT / "wheels"
 SRC_DIR = SPICEOUT_ROOT / "src"
+
+
+def _venv_dir(name: str) -> pathlib.Path:
+    root = SPICEOUT_ROOT.resolve()
+    venv_dir = (root / name).resolve()
+    if pathlib.Path(name).is_absolute() or venv_dir == root or root not in venv_dir.parents:
+        raise ValueError(f"venv name must resolve strictly inside {root}: {name!r}")
+    return venv_dir
 
 
 def _print_table(headers: list[str], rows: list[list[str]]) -> None:
@@ -63,14 +71,15 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     tar_path = SPICEOUT_ROOT / "src.tar"
     print(f"[build] Creating git archive at {tar_path}...")
-    subprocess.run(["git", "archive", "HEAD", "--format=tar", "-o", str(tar_path)], check=True, cwd=REPO_ROOT)
+    subprocess.run(
+        ["git", "archive", "HEAD", "--format=tar", "-o", str(tar_path)],
+        check=True,
+        cwd=REPO_ROOT,
+    )
 
     print(f"[build] Extracting archive to {SRC_DIR}...")
     with tarfile.open(tar_path) as tar:
-        if hasattr(tarfile, "data_filter"):
-            tar.extractall(SRC_DIR, filter="data")
-        else:
-            tar.extractall(SRC_DIR)
+        tar.extractall(SRC_DIR, filter="data")
     if tar_path.exists():
         tar_path.unlink()
 
@@ -118,7 +127,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 def cmd_venv(args: argparse.Namespace) -> int:
     name = args.name
     print(f"=== Subcommand: venv {name} ===")
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     if venv_dir.exists():
         print(f"[venv] Removing existing {venv_dir}...")
         shutil.rmtree(venv_dir)
@@ -129,7 +138,7 @@ def cmd_venv(args: argparse.Namespace) -> int:
     python_exe = venv_dir / "Scripts" / "python.exe"
     assert python_exe.exists(), f"Python not found at {python_exe}"
 
-    print(f"[venv] Installing gflow-cli==0.98.99 with pip...")
+    print("[venv] Installing gflow-cli==0.98.99 with pip...")
     res = subprocess.run(
         [
             str(python_exe),
@@ -166,7 +175,7 @@ def cmd_venv(args: argparse.Namespace) -> int:
 def cmd_reproduce(args: argparse.Namespace) -> int:
     name = args.name
     print(f"=== Subcommand: reproduce {name} ===")
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     gflow_exe = venv_dir / "Scripts" / "gflow.exe"
     python_exe = venv_dir / "Scripts" / "python.exe"
 
@@ -210,8 +219,12 @@ def cmd_reproduce(args: argparse.Namespace) -> int:
         text=True,
         check=False,
     )
-    import_ok = (probe.returncode == 0)
-    import_report = probe.stdout.strip() if import_ok else f"FAILED (exit {probe.returncode}: {probe.stderr.strip().splitlines()[-1] if probe.stderr.strip() else 'no err'})"
+    import_ok = probe.returncode == 0
+    err_lines = probe.stderr.strip().splitlines()
+    last_err = err_lines[-1] if err_lines else "no err"
+    import_report = (
+        probe.stdout.strip() if import_ok else f"FAILED (exit {probe.returncode}: {last_err})"
+    )
 
     # List gflow*.exe*
     gflow_files = list((venv_dir / "Scripts").glob("gflow*.exe*"))
@@ -249,7 +262,7 @@ def cmd_reproduce(args: argparse.Namespace) -> int:
 def cmd_locks(args: argparse.Namespace) -> int:
     name = args.name
     print(f"=== Subcommand: locks {name} ===")
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     gflow_exe = venv_dir / "Scripts" / "gflow.exe"
 
     if not gflow_exe.exists():
@@ -358,7 +371,7 @@ def cmd_locks(args: argparse.Namespace) -> int:
 def cmd_renamed(args: argparse.Namespace) -> int:
     name = args.name
     print(f"=== Subcommand: renamed {name} ===")
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     gflow_exe = venv_dir / "Scripts" / "gflow.exe"
     python_exe = venv_dir / "Scripts" / "python.exe"
 
@@ -423,7 +436,9 @@ def cmd_renamed(args: argparse.Namespace) -> int:
         text=True,
         check=False,
     )
-    reported_ver = probe.stdout.strip() if probe.returncode == 0 else f"FAIL ({probe.stderr.strip()})"
+    reported_ver = (
+        probe.stdout.strip() if probe.returncode == 0 else f"FAIL ({probe.stderr.strip()})"
+    )
 
     # Can old file be deleted while child runs?
     try:
@@ -479,7 +494,7 @@ def cmd_renamed(args: argparse.Namespace) -> int:
 def cmd_pymodule(args: argparse.Namespace) -> int:
     name = args.name
     print(f"=== Subcommand: pymodule {name} ===")
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     python_exe = venv_dir / "Scripts" / "python.exe"
 
     if not python_exe.exists():
@@ -508,7 +523,9 @@ def cmd_pymodule(args: argparse.Namespace) -> int:
         text=True,
         check=False,
     )
-    import_report = probe.stdout.strip() if probe.returncode == 0 else f"FAILED: {probe.stderr.strip()}"
+    import_report = (
+        probe.stdout.strip() if probe.returncode == 0 else f"FAILED: {probe.stderr.strip()}"
+    )
 
     rows = [[name, f"exit {update_res.returncode}", import_report]]
     _print_table(["Venv", "update Exit", "Import Version Afterwards"], rows)
@@ -518,7 +535,7 @@ def cmd_pymodule(args: argparse.Namespace) -> int:
 def cmd_pipdry(args: argparse.Namespace) -> int:
     name = args.name
     print(f"=== Subcommand: pipdry {name} ===")
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     python_exe = venv_dir / "Scripts" / "python.exe"
     gflow_exe = venv_dir / "Scripts" / "gflow.exe"
 
@@ -573,7 +590,15 @@ def cmd_pipdry(args: argparse.Namespace) -> int:
         print(f"  -> {m}")
 
     mtime_after = gflow_exe.stat().st_mtime if gflow_exe.exists() else 0
-    rows = [[name, f"exit {pip_res.returncode}", str(mtime_before), str(mtime_after), f"{len(milestones)} milestones recorded"]]
+    rows = [
+        [
+            name,
+            f"exit {pip_res.returncode}",
+            str(mtime_before),
+            str(mtime_after),
+            f"{len(milestones)} milestones recorded",
+        ]
+    ]
     _print_table(["Venv", "pip Exit", "mtime before", "mtime after", "Order analysis"], rows)
     return 0
 
@@ -583,9 +608,9 @@ def cmd_check_temp(args: argparse.Namespace) -> int:
     print(f"=== Subcommand: check-temp {name} ===")
     temp_dir = tempfile.gettempdir()
     temp_drive = pathlib.Path(temp_dir).drive
-    venv_dir = SPICEOUT_ROOT / name
+    venv_dir = _venv_dir(name)
     venv_drive = venv_dir.resolve().drive
-    same_volume = (temp_drive.upper() == venv_drive.upper())
+    same_volume = temp_drive.upper() == venv_drive.upper()
 
     rows = [
         ["tempfile.gettempdir()", temp_dir, temp_drive],
@@ -597,7 +622,9 @@ def cmd_check_temp(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Spike #1298: pip update vs running launcher on Windows")
+    parser = argparse.ArgumentParser(
+        description="Spike #1298: pip update vs running launcher on Windows"
+    )
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
     # build
@@ -613,11 +640,15 @@ def main() -> int:
     parser_rep.add_argument("--tmp-dir", default=None, help="Optional custom TMP/TEMP directory")
 
     # locks
-    parser_locks = subparsers.add_parser("locks", help="Measure Windows lock semantics on running launcher")
+    parser_locks = subparsers.add_parser(
+        "locks", help="Measure Windows lock semantics on running launcher"
+    )
     parser_locks.add_argument("name", help="Name of venv")
 
     # renamed
-    parser_renamed = subparsers.add_parser("renamed", help="Test renaming launcher aside before pip install")
+    parser_renamed = subparsers.add_parser(
+        "renamed", help="Test renaming launcher aside before pip install"
+    )
     parser_renamed.add_argument("name", help="Name of venv")
 
     # pymodule
@@ -625,7 +656,9 @@ def main() -> int:
     parser_pymod.add_argument("name", help="Name of venv")
 
     # pipdry
-    parser_dry = subparsers.add_parser("pipdry", help="Trace pip upgrade order (uninstall vs install)")
+    parser_dry = subparsers.add_parser(
+        "pipdry", help="Trace pip upgrade order (uninstall vs install)"
+    )
     parser_dry.add_argument("name", help="Name of venv")
 
     # check-temp

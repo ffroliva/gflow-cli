@@ -2026,16 +2026,18 @@ are removed on subsequent runs, including `gflow update --check`.
 > <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
 > ```
 >
-> User-site install (`--user`):
+> User-site install (`--user` — use the interpreter that owns the install, where `3.12` is the Python version gflow was installed under; `gflow --version` does not show it, but `py -0p` lists the interpreters):
 > ```powershell
-> py -m pip install --user --upgrade gflow-cli
+> py -3.12 -m pip install --user --upgrade gflow-cli
 > ```
 >
 > Once upgraded past 0.99.0, normal `gflow update` handles future upgrades cleanly.
 
-**Stop every other `gflow` process BEFORE you upgrade — not after.** While the running
-launcher is handled cleanly, a **different** gflow process holding the install's contents
-open will cause the update to refuse (or abort) to protect the environment. The holder
+**Stop every other `gflow` process BEFORE you upgrade — not after.** On a Windows pip
+install, another gflow process holding a launcher causes `gflow update` to refuse before
+`pip` runs, which protects the install; an interrupted or failed `pip` / installer run can
+still leave `gflow` unimportable, and the repair is the force-reinstall command `gflow update`
+prints. The holder
 reported so far is **`gflow mcp run`**: an editor with gflow registered as an MCP server
 starts one per session, and they outlive the command that started them. Reported with a
 reproduction in

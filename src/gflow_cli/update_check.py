@@ -392,8 +392,9 @@ def _record_launchers() -> list[Path]:
     return [Path(str(dist.locate_file(r[0]))) for r in rows if r and r[0].lower().endswith(".exe")]
 
 
-def _restore_launchers(moved: list[tuple[Path, Path]]) -> None:
-    """Put back every launcher pip did not recreate."""
+def _restore_launchers(moved: list[tuple[Path, Path]]) -> list[tuple[Path, Path]]:
+    """Put back every launcher pip did not recreate, returning any still missing."""
+    unrestored: list[tuple[Path, Path]] = []
     for orig, aside in moved:
         if not orig.exists() and aside.exists():
             try:
@@ -405,15 +406,19 @@ def _restore_launchers(moved: list[tuple[Path, Path]]) -> None:
                     aside=str(aside),
                     error=str(exc),
                 )
+        if not orig.exists():
+            unrestored.append((orig, aside))
+    return unrestored
 
 
 def _move_aside(launchers: list[Path], moved: list[tuple[Path, Path]]) -> None:
     """Rename each launcher to ``<name>.gflow-update-<pid>.old``, appending to ``moved``.
 
-    A launcher in use (WinError 32: another gflow process holds it) refuses the update
-    before pip runs, with everything restored. Any other error (access denied on an
-    all-users Python) means pip cannot remove the launcher either and falls back as it
-    did before #1298, so the update goes ahead without the guard."""
+    A launcher in use (WinError 32: another gflow process holds it) or one that vanished
+    mid-rename (another ``gflow update`` moved it) refuses the update before pip runs,
+    with everything restored. Any other error (access denied on an all-users Python)
+    means pip cannot remove the launcher either and falls back as it did before #1298,
+    so the update goes ahead without the guard."""
     from gflow_cli.errors import ConfigurationError
 
     pid = os.getpid()
@@ -424,6 +429,14 @@ def _move_aside(launchers: list[Path], moved: list[tuple[Path, Path]]) -> None:
         except OSError as exc:
             _restore_launchers(moved)
             moved.clear()
+            if isinstance(exc, FileNotFoundError):
+                raise ConfigurationError(
+                    f"`{p}` disappeared during the update, so `gflow update` changed nothing",
+                    remediation_hint=(
+                        "Another `gflow update` may be running. Wait for it to finish, then "
+                        "run `gflow update` again."
+                    ),
+                ) from exc
             if getattr(exc, "winerror", None) != _WINERROR_IN_USE:
                 log.warning("update.launcher_not_set_aside", launcher=str(p), error=str(exc))
                 return
@@ -462,11 +475,19 @@ def _launchers_set_aside(inst: Installer) -> Generator[None, None, None]:
     importlib.invalidate_caches()
     gc.collect()
     moved: list[tuple[Path, Path]] = []
-    try:  # one finally for the renames and pip: Ctrl-C anywhere restores
+    try:
         _move_aside(launchers, moved)
         yield
-    finally:
+    except BaseException:
         _restore_launchers(moved)
+        raise
+    unrestored = _restore_launchers(moved)
+    if unrestored:
+        details = ", ".join(f"`{orig}` (saved at `{aside}`)" for orig, aside in unrestored)
+        raise ConfigurationError(
+            f"Could not restore launcher(s) {details} after `gflow update`",
+            remediation_hint=_reinstall_hint(inst, __version__),
+        )
 
 
 def _sweep_set_aside() -> None:
