@@ -339,6 +339,8 @@ def test_image_gen_forwards_the_same_arguments(
     direct = _captured("cli_image", runner_name, ["image", mode, *args], tmp_path)
     bridged = _captured("cli_image", runner_name, ["image", "generate", *args], tmp_path)
     assert bridged == direct
+    # `gen` is the same command, so a run through the alias is the same call too.
+    assert _captured("cli_image", runner_name, ["image", "gen", *args], tmp_path) == direct
 
 
 @pytest.mark.parametrize(
@@ -356,7 +358,8 @@ def test_video_gen_forwards_the_same_arguments(
     with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {})):
         direct = _captured("cli_video", runner_name, ["video", mode, *args], tmp_path)
         bridged = _captured("cli_video", runner_name, ["video", "generate", *args], tmp_path)
-    assert bridged == direct
+        aliased = _captured("cli_video", runner_name, ["video", "gen", *args], tmp_path)
+    assert bridged == direct == aliased
 
 
 # ------------------------------------------- the file flag is --out-file only (#1158)
