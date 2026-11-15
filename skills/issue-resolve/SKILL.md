@@ -165,9 +165,14 @@ Worktree off `origin/develop` on a `bugfix/<slug>` branch (use the
 Then claim the issue, **before the first spike or test**, so nobody else starts the same
 fix without knowing:
 
-1. **Look first:** run `gh issue view <N> --comments` and `gh pr list --state open --search "<N>"`.
-   If someone has claimed the issue or opened a PR for it, reconcile with them before
-   writing code: review their PR, take over with credit, or agree a split.
+1. **Look first**, in three places, because each finds work the others miss:
+   - `gh issue view <N> --comments --json comments,closedByPullRequestsReferences` shows
+     claims, and PRs linked from the issue's sidebar that never mention its number.
+   - `gh pr list --state open --search "<N>"` shows PRs that cite the number.
+   - `git ls-remote --heads origin | grep -i "<N>"` shows a pushed branch with no PR yet.
+
+   If someone has claimed the issue, opened a PR or pushed a branch for it, reconcile
+   with them before writing code: review their PR, take over with credit, or agree a split.
 2. **Say so on the issue:** post one comment, for example "Working on this on
    `bugfix/<slug>`; PR to follow." Include anything a contributor would need to avoid
    duplicating you, such as the approach if it is already decided.
