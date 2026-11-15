@@ -161,6 +161,13 @@ The recommended course (Course b) was evaluated against the five expert personas
 
 ### Predict Verdict: **GO** (Confidence: 9.8/10)
 
+> **Coordinator note (2026-11-15):** the five personas above were played by one model
+> (Gemini 3.8 Flash; the Claude band was out of quota), so this verdict is a pre-read, not a
+> council. The course choice rests on the measured numbers in section 3 (re-checked: ruff on
+> `pr-987:src/gflow_cli/api/transports/migrated_character.py` gives C901 18 and 11, PLR0915
+> 65, PLR0912 15). Each slice gets its own `/gflow:predict` before code. Item 9 (drop the
+> `[5]` adoption) is re-verified on current develop before it is dropped.
+
 ---
 
 ## 5. Slice Implementation Plan
