@@ -679,7 +679,7 @@ mentions on image **only**:
 |---|---|---|
 | `image t2i` | ✅ | ✅ (in-project asset → `referenceImages`) |
 | `image i2i` | ✅ | ✅ |
-| `video t2v` / `i2v` / `r2v` | ✅ on labs; on flow.google.com not ported yet (**exit 29**, before submit) — pass `--reference-entity` + `--reference-entity-name` to `r2v` instead | ❌ — media-on-video is Phase 3; fails fast with **exit 11** |
+| `video t2v` / `i2v` / `r2v` | ✅ where Flow serves labs (not observed this cycle); on flow.google.com not ported yet (**exit 29**, before submit) — pass `--reference-entity` + `--reference-entity-name` to `r2v` instead | ❌ — media-on-video is Phase 3; fails fast with **exit 11** |
 
 Rules:
 - **`--project <id>` is required** — mentions resolve against that project's assets.

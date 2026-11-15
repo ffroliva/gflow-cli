@@ -7,7 +7,7 @@ Release ledger for v0.100.0. It covers:
 - `video chain --out-file` and `--resume-from` (#1293, #1300);
 - `video extend` on flow.google.com (#1184), and telemetry command naming (#1209).
 
-Nothing in this release changes a default.
+No CLI flag or exit code changes. MCP `tasks/cancel` now stores `cancelled` / `abandoned` (see the CHANGELOG's Changed entry).
 
 ## Environment
 
@@ -17,7 +17,7 @@ Nothing in this release changes a default.
 | Host Flow served | `flow.google.com` |
 | Entrypoint | the real `gflow` CLI (`uv run gflow` in the release worktree); the CLI e2e drive it as a subprocess or through Click's runner, the MCP e2e call the tool in-process, `e2e_update` drives the installed `gflow.exe` from real pip / uv venvs |
 | OS | Windows 11 |
-| Tree | `chore/release-v0.100.0`, cut from `f36959e5` (develop after #1306), plus the #1300 resume e2e (`67eb827c`) |
+| Tree | `chore/release-v0.100.0`, cut from `f36959e5` (develop after #1306), plus the #1300 resume e2e (`67eb827c`). Every run here except `video generate` and the final `e2e_update` ran before the version bump and the `gflow_generate_video` description edit in the release commit; neither changes a code path those runs drive |
 | Veo credits spent | 4 veo-lite clips on `ffroliva` (586 → 546): 2 for the `--resume-from` e2e, 1 for the release-tree t2v, 1 for the `video generate` e2e |
 
 ## Summary
