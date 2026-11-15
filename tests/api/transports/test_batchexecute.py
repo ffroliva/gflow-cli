@@ -182,6 +182,21 @@ def test_drift_raises_wire_format_error_with_redacted_discovery_head() -> None:
     assert len(msg) < 600
 
 
+def test_a_token_cut_by_the_head_window_leaves_no_fragment() -> None:
+    """The head is sliced to 200 chars before the token regex runs, so a token that
+    starts near the cut survives as a fragment below that regex's 120-char floor.
+    Placed so ~90 chars of it fall inside the window; none may reach the error."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    token = "0cAFcWe" + "Q7_x-" * 400
+    payload = [None, 881, [["p" * 90, token]]]
+    with pytest.raises(WireFormatError) as exc_info:
+        generation_record("maseQ", payload)
+    head = str(exc_info.value.discovery["payload_head"])
+    assert "Q7_x-Q7_x-" not in head
+    assert "0cAF" not in head
+
+
 def test_record_matches_by_shape_not_position() -> None:
     """A future wrapper that nests the record one level deeper must still resolve."""
     from gflow_cli.api.transports.batchexecute import generation_record
