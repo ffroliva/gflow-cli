@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.101.0] — 2026-11-16
+
 ### Breaking Changes
 
 - **Universal `-o/--output [json|table|id]` format selector across all commands ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
@@ -7222,7 +7224,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.101.0...HEAD
+[0.101.0]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...v0.101.0
 [0.100.1]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...v0.100.1
 [0.100.0]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
