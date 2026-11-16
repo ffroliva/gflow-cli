@@ -45,9 +45,9 @@ local layout:
 
 The layout is the same whichever host Flow serves (labs.google or flow.google.com).
 Before #1003, a flow.google.com video ignored the storage URI and was written locally.
-With a cloud storage URI, `gflow video t2v`/`i2v`/`r2v --out-file` (and legacy `-o/--output`), `gflow video chain`,
+With a cloud storage URI, `gflow video t2v`/`i2v`/`r2v --out-file`, `gflow video chain`,
 `gflow movie run --stitch` and an MCP video
-`out_file` (or legacy `output`) cannot work on either host: each needs the clip as a local file, and the
+`out_file` cannot work on either host: each needs the clip as a local file, and the
 clip is a bucket object. gflow refuses that combination before submitting, with exit 11
 (an MCP configuration error), so nothing is billed
 ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)). Leave the storage URI unset

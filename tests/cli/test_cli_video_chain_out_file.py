@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog
 
-from gflow_cli._cli_helpers import _OUT_FILE_DEPRECATION_WARNING
 from gflow_cli.api.video import GenerateVideoRequest, Mode, VideoResult, VideoStatus
 from gflow_cli.cli_video import video
 from tests.cli.test_out_file_deprecation import CliRunner
@@ -109,12 +108,11 @@ def _catalog_paths(catalog: MagicMock) -> list[Path]:
     return [c.kwargs["result"].local_path for c in catalog.record_completed_video.call_args_list]
 
 
-@pytest.mark.parametrize("flag", ["--out-file", "-o"])
-def test_chain_out_file_writes_each_link_to_a_numbered_path(tmp_path: Path, flag: str) -> None:
+def test_chain_out_file_writes_each_link_to_a_numbered_path(tmp_path: Path) -> None:
     """Two links with ``--out-file out/clip.mp4`` land at clip_1.mp4 and clip_2.mp4."""
     flow = _Flow(tmp_path)
     out = tmp_path / "out"
-    result, catalog = _invoke(tmp_path, flow, links=2, args=[flag, str(out / "clip.mp4")])
+    result, catalog = _invoke(tmp_path, flow, links=2, args=["--out-file", str(out / "clip.mp4")])
 
     assert result.exit_code == 0, result.output
     expected = [out / "clip_1.mp4", out / "clip_2.mp4"]
@@ -125,10 +123,15 @@ def test_chain_out_file_writes_each_link_to_a_numbered_path(tmp_path: Path, flag
     assert _catalog_paths(catalog) == expected
     assert flow.calls[1][2] == "clip_1.mp4"  # link 2 was seeded from the moved clip
     assert "does not apply --out-file" not in result.stderr
-    if flag == "-o":
-        assert result.stderr.strip() == _OUT_FILE_DEPRECATION_WARNING
-    else:
-        assert _OUT_FILE_DEPRECATION_WARNING not in result.stderr
+
+
+def test_chain_dash_o_path_rejected_with_remediation(tmp_path: Path) -> None:
+    """#1158: -o/--output selects format; passing a path is rejected with remediation."""
+    flow = _Flow(tmp_path)
+    out = tmp_path / "out"
+    result, _ = _invoke(tmp_path, flow, links=2, args=["-o", str(out / "clip.mp4")])
+    assert result.exit_code == 2
+    assert "--output now selects the format; use --out-file" in result.output
 
 
 @pytest.mark.sharpit(allow_n_plus_one=True)  # three runs of one chain, on purpose (#1300)

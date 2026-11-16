@@ -25,7 +25,7 @@ from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import spends_credits
+from gflow_cli._cli_helpers import OutputFormat, output_format_option, spends_credits
 from gflow_cli.config import get_settings
 
 console = Console()
@@ -186,8 +186,8 @@ def current_capabilities(*, no_spend: bool = False) -> dict[str, Any]:
 
 @spends_credits(False)
 @click.command("capabilities")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON document.")
-def capabilities(as_json: bool) -> None:
+@output_format_option(allow_id=False, help="Output format (json|table).")
+def capabilities(as_json: bool, output_format: str = "table") -> None:
     """Show what gflow can drive: yes / no / partial / unknown per capability.
 
     Makes no call to Flow: reads only GFLOW_CLI_FLOW_HOST. Key meanings:
@@ -195,7 +195,7 @@ def capabilities(as_json: bool) -> None:
     document (except on a no-spend server, where generation is "no").
     """
     doc = current_capabilities()
-    if as_json:
+    if as_json or output_format == OutputFormat.JSON.value:
         json_output.emit(doc)
         return
     table = Table(title=f"gflow capabilities (host setting: {doc['host']})")

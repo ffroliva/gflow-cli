@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import sys
 import uuid
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import click
 import structlog
@@ -19,7 +20,13 @@ from rich.table import Table
 
 from gflow_cli import __version__, json_output, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
-from gflow_cli._cli_helpers import command_tree, help_json_path, spends_credits
+from gflow_cli._cli_helpers import (
+    OutputFormat,
+    command_tree,
+    help_json_path,
+    output_format_option,
+    spends_credits,
+)
 from gflow_cli.cli_cancel import cancel as _cancel_command
 from gflow_cli.cli_capabilities import capabilities as _capabilities_command
 from gflow_cli.cli_character import character as _character_group
@@ -440,12 +447,86 @@ def auth_status(profile: str | None) -> None:
     console.print(f"[green]Flow session verified{who}.[/green]")
 
 
+def _render_renew_row(
+    r: dict[str, Any],
+    authenticated: str,
+    about: str,
+    console: Console,
+) -> None:
+    from gflow_cli.auth.verification import FlowSessionOutcome
+
+    name = escape(str(r["profile"]))
+    if r["result"] == authenticated:
+        who = f" as [bold]{escape(r['email'])}[/bold]" if r["email"] else ""
+        console.print(f"[green]{name}: session renewed and verified{who}.[/green]")
+    elif r["result"] == "in_use":
+        console.print(f"[dim]{name}: in use by another gflow process — skipped.[/dim]")
+    elif r["result"] in ("engine_downgrade", "launch_error"):
+        reason = (
+            "profile was written by a newer browser"
+            if r["result"] == "engine_downgrade"
+            else "the browser could not start"
+        )
+        console.print(f"[yellow]{name}: {reason} — skipped.[/yellow]")
+        if r["hint"]:
+            console.print(f"[dim]{escape(r['hint'])}[/dim]")
+    elif r["result"] == "public_landing":
+        console.print(
+            f"[yellow]{name}: not renewed — Flow is holding this account at its public "
+            f"page, waiting for Google to confirm it's you.[/yellow] Run "
+            f'[bold]gflow auth login --profile {name}[/bold] and finish the "Confirm '
+            f"it's you\" step ({about}).",
+        )
+    elif r["result"] in ("labs_stale", "labs_unverified"):
+        reason = (
+            "labs.google did not finish its silent sign-in in time"
+            if r["result"] == "labs_stale"
+            else "labs.google did not return a readable session"
+        )
+        console.print(
+            f"[yellow]{name}: not renewed — {reason}.[/yellow] Retry later; if it "
+            f"persists, run [bold]gflow auth login --profile {name}[/bold].",
+        )
+    elif r["result"] == FlowSessionOutcome.VERIFICATION_ERROR.value:
+        console.print(
+            f"[yellow]{name}: could not verify the session.[/yellow] Check network "
+            "connectivity and retry; re-login is only needed if the session is dead.",
+        )
+    else:
+        console.print(
+            f"[yellow]{name}: session could not be renewed.[/yellow] "
+            f"Run [bold]gflow auth login --profile {name}[/bold].",
+        )
+
+
+def _render_renew_results(
+    results: list[dict[str, Any]],
+    output_format: str,
+    authenticated: str,
+    failed: bool,
+    console: Console,
+) -> None:
+    if output_format == "json":
+        click.echo(json.dumps(results))
+        sys.exit(1 if failed else 0)
+    elif output_format == "id":
+        for r in results:
+            if r["result"] == authenticated:
+                click.echo(r["profile"])
+        sys.exit(1 if failed else 0)
+
+    about = "see KNOWN_ISSUES.md, 'Every command lands on flow.google.com/about'"
+    for r in results:
+        _render_renew_row(r, authenticated, about, console)
+    sys.exit(1 if failed else 0)
+
+
 @spends_credits(False)
 @auth.command("renew")
 @click.option("--profile", default=None, help="Profile to renew. Defaults to the default profile.")
 @click.option("--all", "renew_all", is_flag=True, help="Renew every saved profile, one at a time.")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of text.")
-def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
+@output_format_option()
+def auth_renew(profile: str | None, renew_all: bool, output_format: str, as_json: bool) -> None:
     """Refresh saved sessions headlessly, without signing in again.
 
     Opens each profile in a hidden browser, loads Flow and labs.google so Google
@@ -491,7 +572,7 @@ def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
         if not (s["exists"] and s["cookies_present"]):
             row["result"] = FlowSessionOutcome.NO_SESSION.value
             continue
-        if not as_json:
+        if not (as_json or output_format == OutputFormat.ID.value):
             console.print(f"[dim]Renewing {escape(name)}...[/dim]")
         try:
             renewal = asyncio.run(renew.renew_profile(auth_mod.profile_dir(name)))
@@ -516,64 +597,16 @@ def auth_renew(profile: str | None, renew_all: bool, as_json: bool) -> None:
         row["result"] = renewal.result
 
     failed = any(r["result"] not in (authenticated, "in_use") for r in results)
-    if as_json:
-        click.echo(json.dumps(results))
-        sys.exit(1 if failed else 0)
-
-    about = "see KNOWN_ISSUES.md, 'Every command lands on flow.google.com/about'"
-    for r in results:
-        name = escape(str(r["profile"]))
-        if r["result"] == authenticated:
-            who = f" as [bold]{escape(r['email'])}[/bold]" if r["email"] else ""
-            console.print(f"[green]{name}: session renewed and verified{who}.[/green]")
-        elif r["result"] == "in_use":
-            console.print(f"[dim]{name}: in use by another gflow process — skipped.[/dim]")
-        elif r["result"] in ("engine_downgrade", "launch_error"):
-            reason = (
-                "profile was written by a newer browser"
-                if r["result"] == "engine_downgrade"
-                else "the browser could not start"
-            )
-            console.print(f"[yellow]{name}: {reason} — skipped.[/yellow]")
-            if r["hint"]:
-                console.print(f"[dim]{escape(r['hint'])}[/dim]")
-        elif r["result"] == "public_landing":
-            console.print(
-                f"[yellow]{name}: not renewed — Flow is holding this account at its public "
-                f"page, waiting for Google to confirm it's you.[/yellow] Run "
-                f'[bold]gflow auth login --profile {name}[/bold] and finish the "Confirm '
-                f"it's you\" step ({about}).",
-            )
-        elif r["result"] in ("labs_stale", "labs_unverified"):
-            reason = (
-                "labs.google did not finish its silent sign-in in time"
-                if r["result"] == "labs_stale"
-                else "labs.google did not return a readable session"
-            )
-            console.print(
-                f"[yellow]{name}: not renewed — {reason}.[/yellow] Retry later; if it "
-                f"persists, run [bold]gflow auth login --profile {name}[/bold].",
-            )
-        elif r["result"] == FlowSessionOutcome.VERIFICATION_ERROR.value:
-            console.print(
-                f"[yellow]{name}: could not verify the session.[/yellow] Check network "
-                "connectivity and retry; re-login is only needed if the session is dead.",
-            )
-        else:
-            console.print(
-                f"[yellow]{name}: session could not be renewed.[/yellow] "
-                f"Run [bold]gflow auth login --profile {name}[/bold].",
-            )
-    sys.exit(1 if failed else 0)
+    _render_renew_results(results, output_format, authenticated, failed, console)
 
 
 @spends_credits(False)
 @auth.command("list")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table.")
-def auth_list(as_json: bool) -> None:
+@output_format_option()
+def auth_list(output_format: str, as_json: bool) -> None:
     """List every profile and indicate the current default."""
     profiles = profile_store.list_profiles()
-    if as_json:
+    if output_format == "json":
         import json
 
         click.echo(
@@ -591,6 +624,10 @@ def auth_list(as_json: bool) -> None:
                 ],
             ),
         )
+        return
+    elif output_format == "id":
+        for p in profiles:
+            click.echo(p.name)
         return
     _render_profiles_table(profiles)
 

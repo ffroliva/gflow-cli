@@ -12,7 +12,7 @@ from typing import NoReturn
 import click
 
 from gflow_cli import telemetry as telemetry_mod
-from gflow_cli._cli_helpers import spends_credits
+from gflow_cli._cli_helpers import OutputFormat, output_format_option, spends_credits
 from gflow_cli.config import _resolve_home  # pyright: ignore[reportPrivateUsage]
 
 
@@ -23,14 +23,14 @@ def telemetry() -> None:
 
 @spends_credits(False)
 @telemetry.command("status")
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON status.")
-def status_cmd(as_json: bool) -> None:
+@output_format_option(allow_id=False, help="Output format (json|table).")
+def status_cmd(as_json: bool, output_format: str = "table") -> None:
     """Show what is counted locally, where, and the kill switch in force."""
     state, switch = telemetry_mod.state()
     upload_reason = telemetry_mod.upload_disabled_reason()
     upload = {"enabled": upload_reason is None, "reason": upload_reason}
 
-    if as_json:
+    if as_json or output_format == OutputFormat.JSON.value:
         payload = {
             "state": state,
             "switch": switch,

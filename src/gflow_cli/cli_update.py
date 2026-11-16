@@ -12,7 +12,12 @@ from __future__ import annotations
 import click
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import run_with_handlers, spends_credits
+from gflow_cli._cli_helpers import (
+    OutputFormat,
+    output_format_option,
+    run_with_handlers,
+    spends_credits,
+)
 
 # Bound in THIS module's namespace so tests can monkeypatch
 # ``gflow_cli.cli_update.run_update`` and never spawn a package manager.
@@ -32,8 +37,13 @@ from gflow_cli.update_check import UpdateReport, run_update
     is_flag=True,
     help="Stream the package manager's output live (not with --json).",
 )
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON report.")
-def update(check: bool, verbose: bool, as_json: bool) -> None:
+@output_format_option(allow_id=False, help="Output format (json|table).")
+def update(
+    check: bool,
+    verbose: bool,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """Upgrade gflow-cli to the latest PyPI release.
 
     Runs the package manager that installed gflow-cli (uv tool, pipx, or the
@@ -41,12 +51,13 @@ def update(check: bool, verbose: bool, as_json: bool) -> None:
     or the upgrade fails. Source / editable installs are refused (exit 11) —
     update those the way they were installed.
     """
+    is_json = as_json or output_format == OutputFormat.JSON.value
     # --json keeps stdout one JSON document, so it always captures.
-    stream_output = verbose and not as_json
+    stream_output = verbose and not is_json
     run_with_handlers(
-        lambda: _run(check, as_json, stream_output=stream_output),
+        lambda: _run(check, is_json, stream_output=stream_output),
         cli_command="update",
-        as_json=as_json,
+        as_json=is_json,
     )
 
 

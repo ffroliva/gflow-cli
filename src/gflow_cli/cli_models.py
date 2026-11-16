@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import spends_credits
+from gflow_cli._cli_helpers import output_format_option, spends_credits
 from gflow_cli.api import image as image_api
 from gflow_cli.api import video as video_api
 from gflow_cli.docs_catalog import closest_matches
@@ -93,33 +93,39 @@ def build_catalog() -> dict[str, Any]:
     }
 
 
-_json_flag = click.option(
-    "--json", "as_json", is_flag=True, help="Machine-readable JSON instead of a table."
-)
+_format_flag = output_format_option(help="Output format (json|table|id).")
 
 
 @spends_credits(False)
 @click.group("models", invoke_without_command=True)
-@_json_flag
+@_format_flag
 @click.pass_context
-def models(ctx: click.Context, as_json: bool) -> None:
+def models(ctx: click.Context, output_format: str, as_json: bool) -> None:
     """List the image + video models, their aliases, and reference caps.
 
     Bare `gflow models` is `gflow models list`.
     """
     if ctx.invoked_subcommand is None:
-        ctx.invoke(models_list)
+        ctx.invoke(models_list, output_format=output_format, as_json=as_json)
 
 
 @spends_credits(False)
 @models.command("list")
-@_json_flag
+@_format_flag
 @click.pass_context
-def models_list(ctx: click.Context, as_json: bool) -> None:
+def models_list(ctx: click.Context, output_format: str, as_json: bool) -> None:
     """List the image + video models, their aliases, and reference caps."""
     catalog = build_catalog()
-    if as_json or _group_json(ctx):
+    fmt = output_format if output_format != "table" else (_group_format(ctx) or output_format)
+    if fmt == "json":
         json_output.emit(catalog)
+        return
+    elif fmt == "id":
+        all_models = cast(list[dict[str, Any]], catalog["image"]["models"]) + cast(
+            list[dict[str, Any]], catalog["video"]["models"]
+        )
+        for entry in all_models:
+            click.echo(entry["name"])
         return
     _render_catalog(catalog)
 
@@ -127,21 +133,32 @@ def models_list(ctx: click.Context, as_json: bool) -> None:
 @spends_credits(False)
 @models.command("show")
 @click.argument("model_id")
-@_json_flag
+@_format_flag
 @click.pass_context
-def models_show(ctx: click.Context, model_id: str, as_json: bool) -> None:
+def models_show(ctx: click.Context, model_id: str, output_format: str, as_json: bool) -> None:
     """Show one model by name or any spelling `--model` accepts."""
     catalog = build_catalog()
     kind, entry = find_model(catalog, model_id)
-    if as_json or _group_json(ctx):
+    fmt = output_format if output_format != "table" else (_group_format(ctx) or output_format)
+    if fmt == "json":
         json_output.emit(entry)
+        return
+    elif fmt == "id":
+        click.echo(entry["name"])
         return
     _render_model(catalog, kind, entry)
 
 
-def _group_json(ctx: click.Context) -> bool:
-    """`gflow models --json show X` must not print a table to a script expecting JSON."""
-    return bool(ctx.parent and ctx.parent.params.get("as_json"))
+def _group_format(ctx: click.Context) -> str | None:
+    """`gflow models -o id show X` must inherit parent format."""
+    if not ctx.parent:
+        return None
+    parent_fmt = ctx.parent.params.get("output_format")
+    if parent_fmt and parent_fmt != "table":
+        return parent_fmt
+    if ctx.parent.params.get("json_alias") or ctx.parent.params.get("as_json"):
+        return "json"
+    return parent_fmt
 
 
 def _resolve(model_id: str) -> tuple[str, str] | None:

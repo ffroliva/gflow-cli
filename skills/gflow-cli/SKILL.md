@@ -6,7 +6,7 @@ description: Use when the user wants to drive Google Flow (Veo image-to-video, V
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'
-  - Output flag confusion: '--out-file' takes a FILE path (single asset, legacy '-o/--output'); '--out' (image) / '--out-dir' (video) take a DIRECTORY
+  - Output flag confusion: '--out-file' takes a FILE path (single asset); '-o/--output' selects output format (json|table|id); '--out' (image) / '--out-dir' (video) take a DIRECTORY
   - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
   - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
   - reCAPTCHA direction inverted: agents suggest GFLOW_CLI_HEADLESS=true to fix detection; correct fix is =false
@@ -322,8 +322,8 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | Mistake | Correct behaviour |
 |---|---|
 | `gflow video create` | `gflow video generate` (alias `gen`; mode read from the inputs), or the mode verb itself: `gflow video t2v` (text→video) / `gflow video i2v` (image→video) |
-| `--output DIR` (a directory) as the output location | `--out-file PATH` is an explicit FILE path (legacy `-o/--output`, single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. |
-| An absolute MCP `out_file` / `output` / `out_dir` outside the output dir, or a path as MCP `profile` | MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` (v0.92.0+): pass `out_file` (or legacy `output`) relative to it; anything else returns 400 `Invalid Output` / `Invalid out_dir`. `profile` is a plain name (400 `Invalid Profile`). The CLI `--out-file` is unchanged |
+| Passing file path to `-o/--output` or `--output DIR` | `-o/--output` selects output format (`json\|table\|id`); `--out-file PATH` is an explicit FILE path (single-prompt only); use `--out DIR` (image) / `--out-dir DIR` (video) for directory output. |
+| An absolute MCP `out_file` / `out_dir` outside the output dir, or a path as MCP `profile` | MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` (v0.92.0+): pass `out_file` relative to it; anything else returns 400 `Invalid Output` / `Invalid out_dir`. `profile` is a plain name (400 `Invalid Profile`). The CLI `--out-file` is unchanged |
 | `gflow auth` bare or `gflow login` to sign in | `gflow auth login` — bare `gflow auth` only lists profiles |
 | `gflow auth refresh` (doesn't exist), or `gflow auth login` as the first move on an expired session | `gflow auth renew` renews an expired session headlessly with no sign-in; `gflow auth login` only when renew reports the session could not be renewed (revoked) |
 | `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |

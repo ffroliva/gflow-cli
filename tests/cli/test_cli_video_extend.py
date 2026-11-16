@@ -820,7 +820,7 @@ def test_the_migrated_payload_reports_the_length_by_identity(
     ``_4s``) or reports it unknown; a separate segment keeps the measured 7 s / 8 s."""
     from gflow_cli.api.transports.batchexecute import GenerationRecord
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome
-    from gflow_cli.cli_video import _migrated_extend_payload
+    from gflow_cli.cli_video_reporting import _migrated_extend_payload
 
     record = GenerationRecord(
         workflow_id="wf",

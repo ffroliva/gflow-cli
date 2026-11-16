@@ -67,7 +67,7 @@ class TestPredictableOutputFlag:
 
             res = runner.invoke(
                 main,
-                ["image", "t2i", "A blue car", "--output", str(target_file)],
+                ["image", "t2i", "A blue car", "--out-file", str(target_file)],
                 catch_exceptions=False,
             )
             assert res.exit_code == 0
@@ -106,7 +106,7 @@ class TestPredictableOutputFlag:
 
             res = runner.invoke(
                 main,
-                ["image", "t2i", "A blue car", "--count", "2", "-o", str(target_file)],
+                ["image", "t2i", "A blue car", "--count", "2", "--out-file", str(target_file)],
                 catch_exceptions=False,
             )
             assert res.exit_code == 0
@@ -141,7 +141,7 @@ class TestPredictableOutputFlag:
 
             res = runner.invoke(
                 main,
-                ["image", "t2i", "A blue car", "-o", str(nested_file)],
+                ["image", "t2i", "A blue car", "--out-file", str(nested_file)],
                 catch_exceptions=False,
             )
             assert res.exit_code == 0
@@ -184,7 +184,7 @@ class TestPredictableOutputFlag:
                     "A cat",
                     "--ref",
                     str(ref_img),
-                    "-o",
+                    "--out-file",
                     str(target_file),
                 ],
                 catch_exceptions=False,
@@ -219,7 +219,7 @@ class TestPredictableOutputFlag:
 
             res = runner.invoke(
                 main,
-                ["video", "t2v", "A flying drone", "-o", str(target_file)],
+                ["video", "t2v", "A flying drone", "--out-file", str(target_file)],
                 catch_exceptions=False,
             )
             assert res.exit_code == 0
@@ -261,7 +261,7 @@ class TestPredictableOutputFlag:
                     "Motion scene",
                     "--initial-frame",
                     str(ref_img),
-                    "-o",
+                    "--out-file",
                     str(target_file),
                 ],
                 catch_exceptions=False,

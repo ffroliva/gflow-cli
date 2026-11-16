@@ -35,9 +35,8 @@ def test_helper_refuses_only_with_cloud_storage() -> None:
 
 
 @pytest.mark.usefixtures("bucket")
-@pytest.mark.parametrize("flag", ["--out-file", "-o"])
-def test_t2v_output_with_cloud_storage_exits_11_before_submit(tmp_path: Path, flag: str) -> None:
-    """#1008, #1158: the new spelling is refused before submit exactly like the old one."""
+def test_t2v_output_with_cloud_storage_exits_11_before_submit(tmp_path: Path) -> None:
+    """#1008, #1158: --out-file is refused under cloud storage before submit."""
     from gflow_cli.cli import main
 
     with (
@@ -46,7 +45,7 @@ def test_t2v_output_with_cloud_storage_exits_11_before_submit(tmp_path: Path, fl
         patch("gflow_cli.cli_video.FlowApiClient", _no_client),
     ):
         result = CliRunner().invoke(
-            main, ["video", "t2v", "a sunset", flag, str(tmp_path / "clip.mp4")]
+            main, ["video", "t2v", "a sunset", "--out-file", str(tmp_path / "clip.mp4")]
         )
 
     assert result.exit_code == 11, result.output
@@ -98,7 +97,7 @@ async def test_mcp_video_output_with_cloud_storage_is_refused_before_queueing() 
         patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
         patch.object(tools_mod, "_run_generation_task", _never),
     ):
-        result = await tools_mod.gflow_generate_video(prompt="a dog", output="C:/out/x.mp4")
+        result = await tools_mod.gflow_generate_video(prompt="a dog", out_file="C:/out/x.mp4")
 
     assert result["status"] == "error"
     assert "GFLOW_CLI_STORAGE_URI" in result["error"]["detail"], result
@@ -107,9 +106,8 @@ async def test_mcp_video_output_with_cloud_storage_is_refused_before_queueing() 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("bucket")
-@pytest.mark.parametrize("param", ["out_file", "output"])
-async def test_mcp_video_refusal_names_the_parameter_passed(param: str) -> None:
-    """#1158: out_file is refused under cloud storage like output, naming what was passed."""
+async def test_mcp_video_refusal_names_the_parameter_passed() -> None:
+    """#1158: out_file is refused under cloud storage, naming what was passed."""
     from gflow_cli.mcp import tools as tools_mod
 
     async def _never(**_k: Any) -> dict[str, Any]:
@@ -120,10 +118,10 @@ async def test_mcp_video_refusal_names_the_parameter_passed(param: str) -> None:
         patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
         patch.object(tools_mod, "_run_generation_task", _never),
     ):
-        result = await tools_mod.gflow_generate_video(prompt="a dog", **{param: "x.mp4"})
+        result = await tools_mod.gflow_generate_video(prompt="a dog", out_file="x.mp4")
 
     assert result["status"] == "error"
-    assert result["error"]["detail"].startswith(f"{param} needs the clip"), result
+    assert result["error"]["detail"].startswith("out_file needs the clip"), result
 
 
 @pytest.mark.asyncio

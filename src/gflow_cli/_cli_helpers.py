@@ -37,11 +37,13 @@ from __future__ import annotations
 
 import copy
 import functools
+import inspect
 import json
 import re
 import sys
 import traceback
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -80,10 +82,12 @@ _console = Console()
 # `reportPrivateUsage` rule does NOT honor the PEP 484 `from X import Y as Y`
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
-    "DeprecatedAliasOption",
+    "OutputFormat",
+    "OutputFormatOption",
+    "OutputFormatType",
+    "VALID_OUTPUT_FORMATS",
+    "UpscaleLegacyShortOption",
     "_FLOW_ID_RE",
-    "_OUT_DIR_SHORT_DEPRECATION_WARNING",
-    "_OUT_FILE_DEPRECATION_WARNING",
     "_handle_gflow_error",
     "_handle_unhandled_error",
     "_make_provider_dir",
@@ -96,8 +100,8 @@ __all__ = [
     "command_tree",
     "help_json_path",
     "default_project",
-    "deprecated_alias_option",
     "out_file_option",
+    "output_format_option",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
@@ -116,64 +120,146 @@ __all__ = [
 # modules can't drift out of sync.
 _FLOW_ID_RE = re.compile(r"^[A-Za-z0-9\-]{1,128}$")
 
-_OUT_FILE_DEPRECATION_WARNING = (
-    "-o/--output PATH is deprecated and will select the output format in a future release "
-    "(-o json|table|id). Use --out-file PATH."
-)
 
-_OUT_DIR_SHORT_DEPRECATION_WARNING = (
-    "-o is deprecated as the short form of --out and will select the output format in a future "
-    "release (-o json|table|id). Use --out DIR."
-)
+class OutputFormat(StrEnum):
+    """Supported machine-readable and tabular output formats (#1158)."""
+
+    JSON = "json"
+    TABLE = "table"
+    ID = "id"
 
 
-class DeprecatedAliasOption(click.Option):
-    """Marks an option as the deprecated spelling of another (#1158); no behaviour of its own.
-
-    The Click-tree guard test finds deprecated spellings by this class.
-    """
+VALID_OUTPUT_FORMATS: frozenset[str] = frozenset({f.value for f in OutputFormat})
 
 
-def deprecated_alias_option(
-    primary_opts: Sequence[str],
-    deprecated_opts: Sequence[str],
+class OutputFormatOption(click.Option):
+    """Marks an option as selecting the output format (json|table|id) (#1158)."""
+
+
+class OutputFormatType(click.Choice[str]):
+    """ParamType converting -o/--output values to lowercase and enforcing remediation."""
+
+    name = "format"
+
+    def __init__(
+        self,
+        *,
+        allow_id: bool = True,
+        has_out_file: bool = False,
+        is_upscale_out: bool = False,
+        valid_formats: frozenset[str] | None = None,
+    ) -> None:
+        self.allow_id = allow_id
+        self.has_out_file = has_out_file
+        self.is_upscale_out = is_upscale_out
+        if valid_formats is not None:
+            self.valid_formats = valid_formats
+        elif allow_id:
+            self.valid_formats = VALID_OUTPUT_FORMATS
+        else:
+            self.valid_formats = frozenset({OutputFormat.JSON.value, OutputFormat.TABLE.value})
+        choices_list: list[str] = sorted(self.valid_formats)
+        super().__init__(choices=choices_list, case_sensitive=False)
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        if not isinstance(value, str):
+            return str(value)
+        val_lower = value.lower()
+        if val_lower in self.valid_formats:
+            return val_lower
+        if self.has_out_file:
+            raise click.UsageError(
+                f"--output now selects the format; use --out-file {value}", ctx=ctx
+            )
+        if self.is_upscale_out:
+            raise click.UsageError(f"use --out {value}", ctx=ctx)
+        choices = ", ".join(repr(f) for f in sorted(self.valid_formats))
+        raise click.UsageError(
+            f"Invalid value for '-o' / '--output': '{value}' is not one of {choices}.", ctx=ctx
+        )
+
+
+def _resolve_chosen_format(kwargs: dict[str, Any], dest: str, default: str) -> str:
+    json_flag: bool = kwargs.pop("json_alias", False)
+    fmt: str | None = kwargs.get(dest)
+    if json_flag:
+        if fmt is not None and fmt != "json":
+            raise click.UsageError("Cannot combine --json with -o/--output")
+        return "json"
+    return default if fmt is None else fmt
+
+
+def _sync_format_args(
+    kwargs: dict[str, Any],
+    chosen_fmt: str,
     dest: str,
-    *,
-    type: click.ParamType[Any] | type[object],
-    help: str,
-    warning_line: str,
-) -> Callable[[Any], Any]:
-    """Add ``primary_opts`` and its deprecated spelling ``deprecated_opts``, both feeding ``dest``.
+    takes_dest: bool,
+    takes_as_json: bool,
+) -> None:
+    if takes_dest:
+        kwargs[dest] = chosen_fmt
+    elif dest in kwargs:
+        kwargs.pop(dest)
 
-    The two options get separate slots and the callback wrapper merges them, so the
-    result does not depend on Click's parameter-processing order (Click < 8.5 let the
-    unused option overwrite the used one with None). The wrapper must sit outside any
-    error guard so the conflict reaches Click as a usage error (exit 2).
-    """
-    alias = f"{dest}_deprecated"
-    old_spelling = "/".join(deprecated_opts)
-    conflict = f"Use {primary_opts[0]} only; {old_spelling} is its deprecated spelling."
+    if takes_as_json and "as_json" not in kwargs:
+        kwargs["as_json"] = chosen_fmt == "json"
+
+    current_ctx = click.get_current_context(silent=True)
+    if current_ctx is not None:
+        current_ctx.params[dest] = chosen_fmt
+        current_ctx.params["as_json"] = chosen_fmt == "json"
+
+
+def output_format_option(
+    dest: str = "output_format",
+    *,
+    default: str = "table",
+    allow_id: bool = True,
+    has_out_file: bool = False,
+    is_upscale_out: bool = False,
+    help: str | None = None,
+) -> Callable[[Any], Any]:
+    """Decorator adding ``-o/--output json|table|id`` and ``--json`` alias (#1158)."""
+    if help is None:
+        help = "Output format (json|table|id)." if allow_id else "Output format (json|table)."
+    fmt_type = OutputFormatType(
+        allow_id=allow_id,
+        has_out_file=has_out_file,
+        is_upscale_out=is_upscale_out,
+    )
 
     def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        sig = inspect.signature(f)
+        takes_dest = dest in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        takes_as_json = "as_json" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+
         @functools.wraps(f)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            old = kwargs.pop(alias)
-            if old is not None:
-                if kwargs.get(dest) is not None:
-                    raise click.UsageError(conflict)
-                click.echo(warning_line, err=True)
-                kwargs[dest] = old
+            chosen_fmt = _resolve_chosen_format(kwargs, dest, default)
+            _sync_format_args(kwargs, chosen_fmt, dest, takes_dest, takes_as_json)
             return f(*args, **kwargs)
 
-        with_alias = click.option(
-            *deprecated_opts,
-            alias,
-            type=type,
-            default=None,
-            help=f"Deprecated: use {primary_opts[0]}.",
-            cls=DeprecatedAliasOption,
+        with_json = click.option(
+            "--json",
+            "json_alias",
+            is_flag=True,
+            default=False,
+            help="Machine-readable JSON (alias for -o json).",
         )(wrapper)
-        return click.option(*primary_opts, dest, type=type, default=None, help=help)(with_alias)
+        with_format = click.option(
+            "-o",
+            "--output",
+            dest,
+            type=fmt_type,
+            default=None,
+            help=help,
+            cls=OutputFormatOption,
+        )(with_json)
+        return with_format
 
     return decorator
 
@@ -183,20 +269,23 @@ def out_file_option(
     *,
     help: str,
 ) -> Callable[[Any], Any]:
-    """Decorator adding ``--out-file PATH`` and keeping deprecated ``-o/--output PATH`` (#1158).
-
-    Writes to ``dest`` (e.g. ``output_file`` or ``output``). Warns on stderr when
-    the deprecated spelling is used, and raises ``click.UsageError`` (exit 2)
-    naming ``--out-file`` if both are provided.
-    """
-    return deprecated_alias_option(
-        primary_opts=("--out-file",),
-        deprecated_opts=("-o", "--output"),
-        dest=dest,
+    """Decorator adding ``--out-file PATH`` (#1158)."""
+    return click.option(
+        "--out-file",
+        dest,
         type=click.Path(dir_okay=False, path_type=Path),
+        default=None,
         help=help,
-        warning_line=_OUT_FILE_DEPRECATION_WARNING,
     )
+
+
+class UpscaleLegacyShortOption(click.Option):
+    """Rejects legacy `-o DIR` on upscale with remediation (#1158)."""
+
+    def process_value(self, ctx: click.Context, value: Any) -> Any:
+        if value is not None:
+            raise click.UsageError(f"use --out {value}", ctx=ctx)
+        return None
 
 
 def upscale_out_dir_option(
@@ -204,19 +293,27 @@ def upscale_out_dir_option(
     *,
     help: str = "Output directory (defaults to the configured gflow output dir).",
 ) -> Callable[[Any], Any]:
-    """Decorator adding ``--out DIR`` and keeping deprecated short form ``-o DIR`` (#1158).
+    """Decorator adding ``--out DIR`` and rejecting deprecated short form ``-o DIR`` (#1158)."""
 
-    Reuses ``deprecated_alias_option``. Warns on stderr when ``-o`` is used,
-    and raises ``click.UsageError`` (exit 2) naming ``--out`` if both are provided.
-    """
-    return deprecated_alias_option(
-        primary_opts=("--out",),
-        deprecated_opts=("-o",),
-        dest=dest,
-        type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-        help=help,
-        warning_line=_OUT_DIR_SHORT_DEPRECATION_WARNING,
-    )
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        with_legacy = click.option(
+            "-o",
+            f"{dest}_deprecated",
+            type=click.UNPROCESSED,
+            default=None,
+            expose_value=False,
+            hidden=True,
+            cls=UpscaleLegacyShortOption,
+        )(f)
+        return click.option(
+            "--out",
+            dest,
+            type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+            default=None,
+            help=help,
+        )(with_legacy)
+
+    return decorator
 
 
 def _validate_project_id(
@@ -569,38 +666,35 @@ def safe_path_text(path: Path) -> str:
         return str(path)
 
 
-def _handle_gflow_error(exc: GFlowError, *, cli_command: str) -> int:
+def _handle_gflow_error(exc: GFlowError, *, cli_command: str, stderr: bool = False) -> int:
     """Print user-facing message + remediation, emit ``error_raised`` event,
     return exit code.
     """
     emit_error_event(_logger, exc, cli_command=cli_command)
-    # `detail` and `remediation_hint` are arbitrary text, so they must be escaped
-    # before being interpolated into a markup string: Rich reads `[...]` as a
-    # style tag and SILENTLY DROPS it when it is not one. That turned every
-    # "install gflow-cli[chain]" hint into "install gflow-cli" — advice that
-    # reinstalls what the user already has (#813). Colour tags stay outside.
-    _console.print(f"[red]{escape(exc.title)}:[/red] {escape(exc.detail or '')}")
+    console = Console(stderr=True) if stderr else _console
+    console.print(f"[red]{escape(exc.title)}:[/red] {escape(exc.detail or '')}")
     if exc.remediation_hint:
-        _console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
-    _print_incident_ref(exc.incident_ref)
+        console.print(f"[yellow]-> {escape(exc.remediation_hint)}[/yellow]")
+    _print_incident_ref(exc.incident_ref, console=console)
     return exit_code_for(exc)
 
 
-def _print_incident_ref(ref: Any) -> None:
+def _print_incident_ref(ref: Any, console: Console | None = None) -> None:
     """One incident sentence for both error paths (S04/S21); the report line
     keys on the ref's artifact tuple — the same source of truth as --json."""
     if ref is None or getattr(ref, "path", None) is None:
         return
-    _console.print(
+    c = console or _console
+    c.print(
         f"Incident bundle: {ref.path} — review before sharing; sensitive "
         "artifacts may contain account or media data.",
         markup=False,
     )
     if "report.md" in getattr(ref, "artifacts", ()):
-        _console.print(f"Pre-filled bug report: {ref.path / 'report.md'}", markup=False)
+        c.print(f"Pre-filled bug report: {ref.path / 'report.md'}", markup=False)
 
 
-def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
+def _handle_unhandled_error(exc: BaseException, *, cli_command: str, stderr: bool = False) -> int:
     """Catch-all for non-:class:`GFlowError`. Privacy-safe by default: the
     console shows only a generic message (the structured telemetry event is
     always SHA-256-hashed regardless of this setting — see
@@ -609,22 +703,20 @@ def _handle_unhandled_error(exc: BaseException, *, cli_command: str) -> int:
     the output may contain tokens/cookies). Always returns exit code 1.
     """
     emit_unhandled_event(_logger, exc, cli_command=cli_command)
+    console = Console(stderr=True) if stderr else _console
     if get_settings().debug_traceback:
-        _console.print(
+        console.print(
             "[yellow]GFLOW_CLI_DEBUG_TRACEBACK is set — the output below may "
             "contain tokens/cookies. Do not share it publicly.[/yellow]"
         )
-        _console.print("".join(traceback.format_exception(exc)), markup=False)
+        console.print("".join(traceback.format_exception(exc)), markup=False)
     else:
-        _console.print(
+        console.print(
             "[red]Unexpected error.[/red] Re-run with GFLOW_CLI_DEBUG_TRACEBACK=1 "
             "to see the real error. If this persists, file a bug at "
             "https://github.com/ffroliva/gflow-cli/issues.",
         )
-    # Unexpected exceptions ALSO get incident bundles (should_capture returns
-    # True for them) — surface the path or the evidence is written and never
-    # found before retention ages it out.
-    _print_incident_ref(getattr(exc, "incident_ref", None))
+    _print_incident_ref(getattr(exc, "incident_ref", None), console=console)
     return 1
 
 
@@ -705,9 +797,7 @@ def bridge_params(
     refused: dict[str, click.Option] = {}
     seen = {p.name for p in params}
     for param in (p for mode in modes for p in mode.params):
-        if isinstance(param, click.Option) and (
-            isinstance(param, DeprecatedAliasOption) or param.name in exclude
-        ):
+        if isinstance(param, click.Option) and param.name in exclude:
             refused.setdefault(param.name or "", param)
         elif not isinstance(param, click.Argument) and param.name not in seen:
             seen.add(param.name)
@@ -758,6 +848,7 @@ def run_with_handlers(
     *,
     cli_command: str,
     as_json: bool = False,
+    output_format: str = "table",
 ) -> None:
     """Wrap an :func:`asyncio.run` call in the GFlowError + unhandled handlers.
 
@@ -789,6 +880,7 @@ def run_with_handlers(
     # session) run many commands. Without this, a finished `video extend`
     # leaves its resume id behind and an unrelated Ctrl+C later prints it.
     clear_interrupt_context()
+    is_id = output_format == OutputFormat.ID.value
     try:
         asyncio.run(coro_factory())
     except GFlowError as e:
@@ -796,7 +888,7 @@ def run_with_handlers(
             emit_error_event(_logger, e, cli_command=cli_command)
             json_output.emit(json_output.error_payload(e))
             sys.exit(exit_code_for(e))
-        sys.exit(_handle_gflow_error(e, cli_command=cli_command))
+        sys.exit(_handle_gflow_error(e, cli_command=cli_command, stderr=is_id))
     except (KeyboardInterrupt, click.Abort):
         _report_interrupt()
         sys.exit(130)
@@ -819,7 +911,7 @@ def run_with_handlers(
                 )
             )
             sys.exit(1)
-        sys.exit(_handle_unhandled_error(e, cli_command=cli_command))
+        sys.exit(_handle_unhandled_error(e, cli_command=cli_command, stderr=is_id))
     finally:
         # Same reasoning as `clear_interrupt_context()` above, applied to the binding
         # this function makes itself: a long-lived process runs many commands through

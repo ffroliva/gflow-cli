@@ -501,7 +501,7 @@ You want to feed `gflow-cli`'s output into `ffmpeg`, a CMS, or another automatio
 
 ### 11.1 Explicit output path with `--out-file`
 
-Pass `--out-file` to land the generated file directly at a custom destination (legacy `-o` / `--output` also supported):
+Pass `--out-file` to land the generated file directly at a custom destination:
 
 ```bash
 # Save directly to a specific file (auto-creates parent directories)

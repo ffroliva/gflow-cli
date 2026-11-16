@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.101.0] — 2026-11-16
+
+### Breaking Changes
+
+- **Universal `-o/--output [json|table|id]` format selector across all commands ([#1158](https://github.com/ffroliva/gflow-cli/issues/1158)).**
+  - `-o/--output` now exclusively selects the output format (`json`, `table`, or `id`, case-insensitive), aligning with standard CLI conventions (`kubectl`, `gh`, `az`, `gcloud`). `--json` is retained as an alias for `-o json`.
+  - `--out-file PATH` is strictly enforced for explicit destination paths across all generation and export commands (`image t2i`, `image i2i`, `scene create`, `video t2v`, `video i2v`, `video r2v`, `video chain`, `video extend`, `data errors export`). Passing non-format values to `-o/--output` fails with exit code 2 and loud remediation (`use --out-file <path>`).
+  - For `video upscale`, `--out DIR` is enforced; legacy `-o` is rejected with exit code 2 and remediation (`use --out <dir>`).
+  - Kubectl-style `-o id` emits bare identifier strings separated by newlines to stdout (no table borders, headers, or decorative prefixes), with errors directed to stderr.
+  - MCP parity: removed deprecated `output` parameter from `gflow_generate_image` and `gflow_generate_video` (`out_file` is the sole destination parameter).
+
 ## [0.100.1] — 2026-11-16
 
 ### Fixed
@@ -7213,7 +7224,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.101.0...HEAD
+[0.101.0]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...v0.101.0
 [0.100.1]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...v0.100.1
 [0.100.0]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
