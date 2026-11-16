@@ -71,3 +71,48 @@ async def test_e2e_duration_binds_in_a_vietnamese_pane(e2e_profile_dir: Path) ->
             assert f"{seconds} giây" in checked, checked
     finally:
         await transport.teardown()
+
+
+@pytest.mark.asyncio
+async def test_e2e_count_binds_in_a_german_pane(e2e_profile_dir: Path) -> None:
+    """#1312: $0 proof that count radios bind in a German-translated pane (1-mal, 2-mal)."""
+    project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
+    if not project:
+        pytest.skip("GFLOW_CLI_E2E_PROJECT must name an existing Flow project id")
+    composer = MigratedComposer()
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        page = transport._page  # noqa: SLF001
+        assert page is not None
+        await page.set_extra_http_headers({"Accept-Language": "de"})
+        await composer.ensure_editor(page, project, timeout_s=45.0)
+        de_url = f"{page.url.split('?')[0]}?hl=de"
+
+        async def fresh_editor() -> None:
+            await page.goto(de_url, wait_until="domcontentloaded")
+            await composer.ensure_editor(page, project, timeout_s=45.0)
+
+        # 2 then 1: proves changing the count radio, and leaves the project on 1
+        for count in (2, 1):
+            await fresh_editor()
+            assert await page.evaluate("document.documentElement.lang") == "de"
+            request = GenerateVideoRequest(
+                prompt="unused - nothing is submitted",
+                mode=Mode.T2V,
+                aspect=Aspect.LANDSCAPE,
+                model=VideoModel.VEO_3_1_LITE,
+                count=count,
+            )
+            await composer.apply_video_settings(page, request)
+
+            await fresh_editor()
+            pane = await composer._open_pane(page)  # noqa: SLF001
+            checked = [
+                text.strip()
+                for text in await pane.locator(f"{RADIO}[aria-checked='true']").all_text_contents()
+            ]
+            await composer._close_pane(page)  # noqa: SLF001
+            assert f"{count}-mal" in checked, checked
+    finally:
+        await transport.teardown()

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.100.1] — 2026-11-16
+
+### Fixed
+
+- **Locale-invariant count selector for settings pane on flow.google.com ([#1312](https://github.com/ffroliva/gflow-cli/issues/1312), [#1315](https://github.com/ffroliva/gflow-cli/pull/1315)).**
+  On non-English accounts (such as German `hl=de`), Google Flow translates count toggle button labels to `1-mal`, `2-mal`, `3-mal`, `4-mal` (or in other locales `1 vez`, `1 fois`, bare `1`, `1x`). `_select` previously used `_exact("x1")`, which matched 0 radios and aborted with `UiSelectorDriftError` (exit 23). `_count` now anchors on the numeric count token while refusing adjacent duration (`4s`, `10s`), resolution (`4K`, `480p`), and aspect (`16:9`) sibling radios.
+
+
 ## [0.100.0] — 2026-11-15
 
 ### Added
@@ -7205,7 +7213,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...HEAD
+[0.100.1]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...v0.100.1
 [0.100.0]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...v0.100.0
 [0.99.0]: https://github.com/ffroliva/gflow-cli/compare/v0.98.0...v0.99.0
 [0.98.0]: https://github.com/ffroliva/gflow-cli/compare/v0.97.0...v0.98.0
