@@ -11,7 +11,9 @@ from gflow_cli.errors import UiSelectorDriftError
 
 
 @pytest.mark.asyncio
-async def test_select_video_duration_matches_button_and_tab() -> None:
+async def test_select_video_duration_matches_button_and_tab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     page = MagicMock()
     page.wait_for_timeout = AsyncMock()
     # Mock probe_selector_cascade to return a dummy element
@@ -28,17 +30,17 @@ async def test_select_video_duration_matches_button_and_tab() -> None:
         )
         return mock_element
 
-    original_probe = VideoGenerationMixin._probe_selector_cascade
-    VideoGenerationMixin._probe_selector_cascade = mock_probe_cascade  # type: ignore[assignment]
-    try:
-        await VideoGenerationMixin._select_video_duration(page, 6, out_dir=None)
-        mock_element.click.assert_awaited_once()
-    finally:
-        VideoGenerationMixin._probe_selector_cascade = original_probe  # type: ignore[assignment]
+    monkeypatch.setattr(
+        VideoGenerationMixin, "_probe_selector_cascade", staticmethod(mock_probe_cascade)
+    )
+    await VideoGenerationMixin._select_video_duration(page, 6, out_dir=None)
+    mock_element.click.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_select_video_duration_fails_closed_when_missing() -> None:
+async def test_select_video_duration_fails_closed_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     page = MagicMock()
 
     async def mock_probe_cascade(
@@ -46,11 +48,9 @@ async def test_select_video_duration_fails_closed_when_missing() -> None:
     ) -> None:
         return None
 
-    original_probe = VideoGenerationMixin._probe_selector_cascade
-    VideoGenerationMixin._probe_selector_cascade = mock_probe_cascade  # type: ignore[assignment]
-    try:
-        with pytest.raises(UiSelectorDriftError) as exc_info:
-            await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
-        assert "duration_tab" in str(exc_info.value)
-    finally:
-        VideoGenerationMixin._probe_selector_cascade = original_probe  # type: ignore[assignment]
+    monkeypatch.setattr(
+        VideoGenerationMixin, "_probe_selector_cascade", staticmethod(mock_probe_cascade)
+    )
+    with pytest.raises(UiSelectorDriftError) as exc_info:
+        await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+    assert "duration_tab" in str(exc_info.value)

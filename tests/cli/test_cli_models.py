@@ -175,6 +175,20 @@ def test_group_json_flag_reaches_show() -> None:
     assert json.loads(result.output)["name"] == "omni_flash"
 
 
+def test_models_list_id() -> None:
+    result = _invoke("list", "-o", "id")
+    assert result.exit_code == 0, result.output
+    lines = [line.strip() for line in result.output.splitlines() if line.strip()]
+    assert "omni_flash" in lines
+    assert "NARWHAL" in lines
+
+
+def test_models_show_id() -> None:
+    result = _invoke("show", "omni-flash", "-o", "id")
+    assert result.exit_code == 0, result.output
+    assert result.output.strip() == "omni_flash"
+
+
 def test_models_show_table_names_the_model() -> None:
     result = _invoke("show", "omni-flash")
 

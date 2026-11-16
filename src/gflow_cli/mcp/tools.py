@@ -52,7 +52,7 @@ from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
-from gflow_cli.mcp.out_file import DeprecatedOutputParam, OutFileParam
+from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
 from gflow_cli.mcp.tasks_extension import detach
@@ -710,24 +710,18 @@ def _confined_output_file(output: str) -> str | dict[str, Any]:
 
 
 def _resolve_out_file(
-    out_file: str | None, output: str | None, *, local_only: bool = False
+    out_file: str | None, *, local_only: bool = False
 ) -> str | None | dict[str, Any]:
-    """The confined file path from ``out_file`` or its deprecated twin ``output`` (#1158).
+    """The confined file path from ``out_file`` (#1158).
 
-    Refuses both at once, refuses a local file under cloud storage when ``local_only``
-    (naming the parameter the caller passed), and returns a 400 envelope or the path.
+    Refuses a local file under cloud storage when ``local_only``,
+    and returns a 400 envelope or the path.
     """
-    if out_file is not None and output is not None:
-        return _bad_param(
-            "Conflicting Output Options",
-            "Cannot specify both 'out_file' and 'output'. Use 'out_file' ('output' is deprecated).",
-        )
-    name, path = ("out_file", out_file) if out_file is not None else ("output", output)
-    if path is None:
+    if out_file is None:
         return None
     if local_only:
-        refuse_cloud_storage_for_local_file(get_settings().storage_uri, name)
-    return _confined_output_file(path)
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, "out_file")
+    return _confined_output_file(out_file)
 
 
 def _resolve_ref_local_path(
@@ -1005,8 +999,7 @@ def _build_video_media_inputs(
     description=(
         "Generate an image using Google Flow's image models. "
         "Produces 1-4 images from a text prompt. "
-        "out_file, if given, must resolve inside the configured output directory "
-        "(output is deprecated: use out_file). "
+        "out_file, if given, must resolve inside the configured output directory. "
         "Models: nano2 (Nano Banana 2.1, fast; 'nano2.1' also accepted), "
         "nano2-lite (Nano Banana 2 Lite), "
         "nano-pro (Nano Banana Pro), image4 (Imagen 4, no longer in Flow's menu). "
@@ -1043,7 +1036,6 @@ async def gflow_generate_image(
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
     out_file: OutFileParam = None,
-    output: DeprecatedOutputParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
@@ -1094,8 +1086,6 @@ async def gflow_generate_image(
             Overrides GFLOW_CLI_UI_MODE.
         out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
-        output: Deprecated: use out_file (removed in a future release). Optional file to write,
-            inside the configured output dir.
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
 
@@ -1109,7 +1099,7 @@ async def gflow_generate_image(
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
-    if isinstance(resolved := _resolve_out_file(out_file, output), dict):
+    if isinstance(resolved := _resolve_out_file(out_file), dict):
         return resolved
     output = resolved
 
@@ -1279,8 +1269,7 @@ def _build_video_payload(
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
-        "out_file, if given, must resolve inside the configured output directory "
-        "(output is deprecated: use out_file). "
+        "out_file, if given, must resolve inside the configured output directory. "
         "Returns the local file path to the generated video."
     ),
 )
@@ -1304,7 +1293,6 @@ async def gflow_generate_video(  # NOSONAR
     project_name: str | None = None,
     ui_mode: str | None = None,
     out_file: OutFileParam = None,
-    output: DeprecatedOutputParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
@@ -1395,8 +1383,6 @@ async def gflow_generate_video(  # NOSONAR
             'classic'.
         out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
-        output: Deprecated: use out_file (removed in a future release). Optional file to write,
-            inside the configured output dir.
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
         **kwargs: Additional optional keyword arguments such as ``project_name``.
@@ -1412,7 +1398,7 @@ async def gflow_generate_video(  # NOSONAR
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
     # #1008: a video moved to a local file cannot live in a cloud bucket.
-    if isinstance(resolved := _resolve_out_file(out_file, output, local_only=True), dict):
+    if isinstance(resolved := _resolve_out_file(out_file, local_only=True), dict):
         return resolved
     output = resolved
 

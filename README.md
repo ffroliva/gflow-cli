@@ -78,7 +78,7 @@ gflow character create --project <id> --name "Aria" --face-prompt "..." --body-p
 
 Outputs land under `$GFLOW_CLI_OUTPUT_DIR`, or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
 
-To save one result at an exact path, pass `--out-file PATH` (for example `gflow image t2i "..." --out-file hero.png`). The old path form, `-o/--output PATH`, still works but prints a deprecation warning: in a later release `-o/--output` selects the output format (`json|table|id`). See [USAGE](docs/USAGE.md#gflow-image-t2i).
+To save one result at an exact path, pass `--out-file PATH` (for example `gflow image t2i "..." --out-file hero.png`). Use `-o/--output` to select the output format (`json|table|id`). Non-format arguments to `-o` fail fast with exit 2 reminding you to use `--out-file`. See [USAGE](docs/USAGE.md#gflow-image-t2i).
 
 Scripts that branch on exit codes can opt in to the stable core now (0 ok, 1 error, 2 usage, 3 auth, 130 interrupted) by setting `GFLOW_CLI_EXIT_CODES=2`. It becomes the default in a later release. See [ERRORS: the stable core](docs/ERRORS.md#exit-codes-the-stable-core-opt-in-in-this-release).
 

@@ -395,7 +395,7 @@ gflow data errors prune --older-than 90d
   deletion is always a deliberate age choice; on `export` it is optional
   (default: all failures).
 - `--profile NAME` scopes either command to one profile.
-- `export` writes JSONL to `--out-file FILE` (or legacy `-o/--output`), or to stdout when omitted —
+- `export` writes JSONL to `--out-file FILE`, or to stdout when omitted —
   reusing the same serialization as `data list errors --json`.
 - Deletion errors map to **exit 16** (`DataStoreError`), consistent with the
   rest of `gflow data`.

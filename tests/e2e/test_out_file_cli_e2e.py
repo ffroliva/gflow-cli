@@ -13,8 +13,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from gflow_cli._cli_helpers import _OUT_FILE_DEPRECATION_WARNING
-
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -48,7 +46,7 @@ def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
 
 
 def test_e2e_out_file_new_flag(e2e_env: dict[str, str], tmp_path: Path) -> None:
-    """gflow image t2i with --out-file writes the image and emits no deprecation warning."""
+    """gflow image t2i with --out-file writes the image."""
     target = tmp_path / "a.png"
     proc = _run_gflow(
         ["image", "t2i", "a red cube on a white table", "--out-file", str(target)],
@@ -56,19 +54,20 @@ def test_e2e_out_file_new_flag(e2e_env: dict[str, str], tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, f"gflow image t2i failed: {proc.stderr}"
     _saved(target)
-    assert _OUT_FILE_DEPRECATION_WARNING not in proc.stderr
 
 
-def test_e2e_out_file_deprecated_flag(e2e_env: dict[str, str], tmp_path: Path) -> None:
-    """gflow image t2i with -o writes the image and emits the deprecation warning once."""
+def test_e2e_dash_o_path_is_rejected_with_remediation(
+    e2e_env: dict[str, str], tmp_path: Path
+) -> None:
+    """#1158: gflow image t2i with -o <path> exits 2 with remediation before generating."""
     target = tmp_path / "b.png"
     proc = _run_gflow(
         ["image", "t2i", "a blue sphere on a white table", "-o", str(target)],
         e2e_env,
     )
-    assert proc.returncode == 0, f"gflow image t2i failed: {proc.stderr}"
-    _saved(target)
-    assert proc.stderr.count(_OUT_FILE_DEPRECATION_WARNING) == 1
+    assert proc.returncode == 2, f"expected exit 2, got {proc.returncode}: {proc.stderr}"
+    assert "use --out-file" in proc.stderr
+    assert not target.exists()
 
 
 def test_e2e_out_file_is_refused_under_cloud_storage(

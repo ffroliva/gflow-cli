@@ -254,6 +254,8 @@ def test_mapped_tools_are_registered(mcp_server: Any) -> None:
 _CLI_ONLY_PARAMS: frozenset[str] = frozenset(
     {
         "as_json",  # MCP always returns structured data
+        "json_alias",  # CLI --json alias for -o json (#1158)
+        "output_format",  # MCP always returns structured data (#1158)
         "out",
         "out_dir",
         "read_stdin",
@@ -275,7 +277,6 @@ _PARAM_ALIASES: dict[str, str] = {
     "enable_mode": "enabled",  # CLI --enable-mode / tool `enabled`: same switch
     "disabled": "enabled",
     "output_file": "out_file",  # --out-file PATH (#1158)
-    "output_file_deprecated": "output",  # deprecated -o/--output PATH, removed in N+1
     "out_dir_deprecated": "out_dir",  # video upscale: deprecated -o DIR for --out DIR
 }
 

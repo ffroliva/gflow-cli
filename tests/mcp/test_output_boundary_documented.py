@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_PATH_PARAMS = ("output", "out_dir")
+_PATH_PARAMS = ("output", "out_file", "out_dir")
 
 
 def test_every_tool_taking_a_write_path_names_the_output_dir_limit(mcp_server: Any) -> None:

@@ -12,6 +12,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    output_format_option,
     run_with_handlers,
     spends_credits,
 )
@@ -122,7 +123,7 @@ def character() -> None:
     "locale, resolved live from Flow (#580) — a hardcoded default sends non-en "
     "accounts to the wrong route and Flow bounces them back mid-prompt.",
 )
-@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+@output_format_option()
 def create(
     project_id: str,
     name: str,
@@ -134,6 +135,7 @@ def create(
     format_prompt: bool,
     profile: str | None,
     locale: str | None,
+    output_format: str,
     as_json: bool,
 ) -> None:
     """Create a new Character entity in a project.
@@ -160,11 +162,13 @@ def create(
             model=model,
             format_prompt=format_prompt,
             locale=locale,
+            output_format=output_format,
             as_json=as_json,
             settings=settings,
         ),
         cli_command="character create",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -182,7 +186,8 @@ async def _run_create(
     model: str,
     format_prompt: bool,
     locale: str | None,
-    as_json: bool,
+    output_format: str = "table",
+    as_json: bool = False,
     settings: object,
 ) -> None:
     face = CharacterImageRequest(
@@ -218,7 +223,7 @@ async def _run_create(
         finally:
             recorder.close()
 
-    if as_json:
+    if output_format == "json":
         json_output.emit(
             {
                 "status": "ok",
@@ -233,6 +238,8 @@ async def _run_create(
                 },
             }
         )
+    elif output_format == "id":
+        click.echo(result.entity_id)
     else:
         console.print(f"[bold green]Character created:[/bold green] {result.entity_id}")
         for wf_id in result.workflow_ids:
@@ -252,9 +259,9 @@ async def _run_create(
 @spends_credits(False)
 @character.command("list")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
-@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+@output_format_option()
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-def list_cmd(project_id: str, as_json: bool, profile: str | None) -> None:
+def list_cmd(project_id: str, output_format: str, as_json: bool, profile: str | None) -> None:
     """List all Character entities in a project."""
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
@@ -264,18 +271,30 @@ def list_cmd(project_id: str, as_json: bool, profile: str | None) -> None:
             profile_dir=pdir,
             headless=settings.headless,
             project_id=project_id,
+            output_format=output_format,
             as_json=as_json,
         ),
         cli_command="character list",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
-async def _run_list(*, profile_dir: Path, headless: bool, project_id: str, as_json: bool) -> None:
+async def _run_list(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    project_id: str,
+    output_format: str = "table",
+    as_json: bool = False,
+) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         chars = await client.list_characters(project_id)
-    if as_json:
+    if output_format == "json":
         json_output.emit({"status": "ok", "characters": [_char_to_dict(c) for c in chars]})
+    elif output_format == "id":
+        for c in chars:
+            click.echo(c.entity_id)
     else:
         if not chars:
             console.print("[dim]No characters found.[/dim]")
@@ -294,12 +313,13 @@ async def _run_list(*, profile_dir: Path, headless: bool, project_id: str, as_js
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--id", "entity_id", default=None, help="Character entity id.")
 @click.option("--name", "name", default=None, help="Character display name (exact match).")
-@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+@output_format_option()
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def show(
     project_id: str,
     entity_id: str | None,
     name: str | None,
+    output_format: str,
     as_json: bool,
     profile: str | None,
 ) -> None:
@@ -322,10 +342,12 @@ def show(
             project_id=project_id,
             entity_id=entity_id,
             name=name,
+            output_format=output_format,
             as_json=as_json,
         ),
         cli_command="character show",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -336,12 +358,15 @@ async def _run_show(
     project_id: str,
     entity_id: str | None,
     name: str | None,
-    as_json: bool,
+    output_format: str = "table",
+    as_json: bool = False,
 ) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         char = await client.get_character(project_id, entity_id=entity_id, name=name)
-    if as_json:
+    if output_format == "json":
         json_output.emit({"status": "ok", "character": _char_to_dict(char)})
+    elif output_format == "id":
+        click.echo(char.entity_id)
     else:
         _render_character_detail(char)
 
@@ -357,13 +382,14 @@ async def _run_show(
 @click.option("--id", "entity_id", default=None, help="Character entity id.")
 @click.option("--name", "name", default=None, help="Character display name (exact match).")
 @click.option("--yes", "-y", "assume_yes", is_flag=True, default=False, help="Skip confirmation.")
-@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
+@output_format_option()
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def rm(
     project_id: str,
     entity_id: str | None,
     name: str | None,
     assume_yes: bool,
+    output_format: str,
     as_json: bool,
     profile: str | None,
 ) -> None:
@@ -388,10 +414,12 @@ def rm(
             entity_id=entity_id,
             name=name,
             assume_yes=assume_yes,
+            output_format=output_format,
             as_json=as_json,
         ),
         cli_command="character rm",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -403,17 +431,18 @@ async def _run_rm(
     entity_id: str | None,
     name: str | None,
     assume_yes: bool,
-    as_json: bool,
+    output_format: str = "table",
+    as_json: bool = False,
 ) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
         char = await client.get_character(project_id, entity_id=entity_id, name=name)
-        if not assume_yes and not as_json:
+        if not assume_yes and not as_json and output_format != "id":
             click.confirm(
                 f"Delete character {char.display_name!r} ({char.entity_id})?",
                 abort=True,
             )
         await client.delete_characters(project_id, [char.entity_id])
-    if as_json:
+    if output_format == "json":
         json_output.emit(
             {
                 "status": "ok",
@@ -423,6 +452,8 @@ async def _run_rm(
                 },
             }
         )
+    elif output_format == "id":
+        click.echo(char.entity_id)
     else:
         click.echo(f"Deleted character {char.display_name!r} ({char.entity_id}).")
 
@@ -434,10 +465,10 @@ async def _run_rm(
 
 @spends_credits(False)
 @character.command("voices")
-@click.option("--json", "as_json", is_flag=True, default=False, help="Emit JSON output.")
-def voices(as_json: bool) -> None:
+@output_format_option()
+def voices(output_format: str, as_json: bool) -> None:
     """List preset voices available for Character TTS."""
-    if as_json:
+    if output_format == "json":
         json_output.emit(
             {
                 "status": "ok",
@@ -447,6 +478,9 @@ def voices(as_json: bool) -> None:
                 ],
             }
         )
+    elif output_format == "id":
+        for v in VOICES:
+            click.echo(v.name)
     else:
         width = max(len(v.name) for v in VOICES)
         for v in VOICES:

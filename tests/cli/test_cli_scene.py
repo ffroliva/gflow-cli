@@ -198,7 +198,7 @@ def test_show_help_lists_option_descriptions():
 def test_create_help_documents_output_render():
     res = CliRunner().invoke(main, ["scene", "create", "--help"])
     assert res.exit_code == 0
-    assert "--output" in res.output and "extended" in res.output
+    assert "--out-file" in res.output and "extended" in res.output
     assert "--force" in res.output
 
 
@@ -206,7 +206,7 @@ def test_create_output_overwrite_guard(tmp_path):
     existing = tmp_path / "extended.mp4"
     existing.write_bytes(b"old")
     res = CliRunner().invoke(
-        main, ["scene", "create", "--project", "p-1", "wf-1", "--output", str(existing)]
+        main, ["scene", "create", "--project", "p-1", "wf-1", "--out-file", str(existing)]
     )
     # overwrite guard fires BEFORE any network work -> Click usage error, exit 2
     assert res.exit_code == 2

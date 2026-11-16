@@ -48,16 +48,58 @@ def _uv() -> str:
 
 @pytest.fixture(scope="module")
 def wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    out = tmp_path_factory.mktemp("wheel")
-    subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [_uv(), "build", "--wheel", "--out-dir", str(out)],
-        cwd=_REPO,
-        check=True,
-        capture_output=True,
-    )
-    built = sorted(out.glob("*.whl"))
-    assert built, "uv build produced no wheel"
-    return built[0]
+    import os
+    import time
+
+    basetemp = tmp_path_factory.getbasetemp()
+    shared_dir = (basetemp.parent if "popen-gw" in basetemp.name else basetemp) / "shared_wheel"
+    shared_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = shared_dir / "build.lock"
+
+    start = time.monotonic()
+    got_lock = False
+    while not got_lock:
+        try:
+            fd = os.open(lock_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            got_lock = True
+        except FileExistsError:
+            built = sorted(shared_dir.glob("*.whl"))
+            if built:
+                return built[0]
+            if time.monotonic() - start > 60:
+                raise TimeoutError("Timed out waiting for wheel to build") from None
+            time.sleep(0.5)
+
+    try:
+        built = sorted(shared_dir.glob("*.whl"))
+        if built:
+            return built[0]
+        build_env = os.environ.copy()
+        build_env["UV_LINK_MODE"] = "copy"
+        try:
+            subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [_uv(), "build", "--wheel", "--out-dir", str(shared_dir)],
+                cwd=_REPO,
+                check=True,
+                capture_output=True,
+                text=True,
+                env=build_env,
+            )
+        except subprocess.CalledProcessError as err:
+            raise RuntimeError(
+                f"uv build failed (code={err.returncode}):\n"
+                f"STDOUT: {err.stdout}\nSTDERR: {err.stderr}"
+            ) from err
+        built = sorted(shared_dir.glob("*.whl"))
+        assert built, "uv build produced no wheel"
+        return built[0]
+    finally:
+        if lock_file.exists():
+            try:
+                lock_file.unlink()
+            except OSError:
+                pass
 
 
 def test_the_wheel_carries_the_pages_and_only_the_pages(wheel: Path) -> None:
@@ -87,7 +129,7 @@ def test_docs_works_from_an_installed_wheel_with_no_checkout(wheel: Path, tmp_pa
     subprocess.run([_uv(), "venv", str(venv)], check=True, capture_output=True)  # noqa: S603
     python = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
     subprocess.run(  # noqa: S603 - fixed argv, no shell
-        [_uv(), "pip", "install", "--python", str(python), str(wheel)],
+        [_uv(), "pip", "install", "--link-mode", "copy", "--python", str(python), str(wheel)],
         check=True,
         capture_output=True,
     )

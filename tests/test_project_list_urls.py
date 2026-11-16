@@ -61,6 +61,17 @@ def _list_json(runner: CliRunner) -> dict:
     return json.loads(res.output)
 
 
+def test_project_list_id(home: Path) -> None:
+    runner = CliRunner()
+    res = runner.invoke(main, ["project", "list", "-o", "id"])
+    assert res.exit_code == 0, res.output
+    assert res.stdout.strip() == PID
+
+    res_show = runner.invoke(main, ["project", "show", PID, "-o", "id"])
+    assert res_show.exit_code == 0, res_show.output
+    assert res_show.stdout.strip() == PID
+
+
 def test_cached_locale_produces_an_account_correct_url(home: Path) -> None:
     profile_store.write_account_locale(_pdir(home), "pt")
 

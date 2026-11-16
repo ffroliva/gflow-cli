@@ -10,10 +10,13 @@ import structlog
 from rich.console import Console
 from rich.markup import escape
 
+from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
+    OutputFormat,
     _make_provider_dir,
     _resolve_profile,
     out_file_option,
+    output_format_option,
     run_with_handlers,
     spends_credits,
 )
@@ -76,6 +79,7 @@ def scene() -> None:
     "(server-side, credit-free; takes up to ~3 min). Without it, only the "
     "Flow scene is composed (no local file).",
 )
+@output_format_option(has_out_file=True)
 @click.option("--force", is_flag=True, default=False, help="Overwrite --out-file if it exists.")
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 def create(
@@ -84,6 +88,8 @@ def create(
     output: Path | None,
     force: bool,
     profile: str | None,
+    as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """Compose a new scene from CLIP_REFS (each: workflowId[:start-end]).
 
@@ -107,6 +113,7 @@ def create(
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_create(
             profile_name=profile_name,
@@ -115,8 +122,12 @@ def create(
             project_id=project_id,
             refs=refs,
             output=output,
+            as_json=as_json,
+            output_format=output_format,
         ),
         cli_command="scene create",
+        as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -125,19 +136,31 @@ def create(
 @click.option("--scene", "scene_id", required=True, help="Scene id to read back.")
 @click.option("--project", "project_id", required=True, help="Flow project id.")
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-def show(scene_id: str, project_id: str, profile: str | None) -> None:
+@output_format_option(help="Output format (json|table|id).")
+def show(
+    scene_id: str,
+    project_id: str,
+    profile: str | None,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """Read back a scene's clip order and trims."""
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
     settings = get_settings()
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_show(
             profile_dir=pdir,
             headless=settings.headless,
             scene_id=scene_id,
             project_id=project_id,
+            as_json=as_json,
+            output_format=output_format,
         ),
         cli_command="scene show",
+        as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -190,14 +213,19 @@ async def _run_create(
     project_id: str,
     refs: list[ClipRef],
     output: Path | None = None,
+    as_json: bool = False,
+    output_format: str = "table",
 ) -> None:
     recorder = OperationRecorder.open(get_settings())
+    is_json = as_json or output_format == OutputFormat.JSON.value
+    quiet_output = is_json or output_format == OutputFormat.ID.value
     try:
         async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
             source_ids = [r.workflow_id for r in refs]
             scene_obj = await client.create_scene(project_id=project_id, workflow_ids=source_ids)
             scene_obj = await _apply_trims(client, scene_obj, project_id, refs)
-            _render(scene_obj)
+            if not quiet_output:
+                _render(scene_obj)
             # Persist the compose FIRST (non-blocking) so a render failure below
             # is recoverable: the clips' media ids + trims are in the catalog and
             # the extended video can be re-rendered without re-composing.
@@ -216,16 +244,22 @@ async def _run_create(
                     error=str(exc),
                     scene_id=scene_obj.scene_id,
                 )
-                console.print(
-                    f"[yellow]Scene created but not recorded locally:[/yellow] {escape(str(exc))}"
-                )
+                if not quiet_output:
+                    console.print(
+                        "[yellow]Scene created but not recorded locally:[/yellow] "
+                        f"{escape(str(exc))}"
+                    )
+            target: Path | None = None
             if output is not None:
                 # Server-side concat into ONE extended .mp4 (credit-free, no ffmpeg).
                 # If this raises, the compose above is already persisted.
                 inputs = list(scene_obj.to_concat_inputs())
-                with console.status("[bold]Rendering extended video…[/bold] (up to ~3 min)"):
+                if quiet_output:
                     target = await client.concatenate_scene(inputs, out_path=output)
-                console.print(f"[bold green]Wrote extended video:[/bold green] {target}")
+                else:
+                    with console.status("[bold]Rendering extended video…[/bold] (up to ~3 min)"):
+                        target = await client.concatenate_scene(inputs, out_path=output)
+                    console.print(f"[bold green]Wrote extended video:[/bold green] {target}")
                 if scene_row_id is not None:
                     try:
                         recorder.record_scene_output(
@@ -237,10 +271,52 @@ async def _run_create(
                             error=str(exc),
                             scene_id=scene_obj.scene_id,
                         )
+            if output_format == OutputFormat.ID.value:
+                click.echo(scene_obj.scene_id)
+                return
+            if is_json:
+                json_output.emit(
+                    {
+                        "status": "ok",
+                        "scene_id": scene_obj.scene_id,
+                        "project_id": project_id,
+                        "output": str(target) if target is not None else None,
+                    }
+                )
     finally:
         recorder.close()
 
 
-async def _run_show(*, profile_dir: Path, headless: bool, scene_id: str, project_id: str) -> None:
+async def _run_show(
+    *,
+    profile_dir: Path,
+    headless: bool,
+    scene_id: str,
+    project_id: str,
+    as_json: bool = False,
+    output_format: str = "table",
+) -> None:
     async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
-        _render(await client.get_scene_workflows(scene_id, project_id=project_id))
+        scene_obj = await client.get_scene_workflows(scene_id, project_id=project_id)
+        if output_format == OutputFormat.ID.value:
+            click.echo(scene_id)
+            return
+        if as_json or output_format == OutputFormat.JSON.value:
+            json_output.emit(
+                {
+                    "status": "ok",
+                    "scene_id": scene_obj.scene_id,
+                    "workflows": [
+                        {
+                            "workflow_id": w.workflow_id,
+                            "position": w.metadata.position,
+                            "start_time": w.metadata.start_time,
+                            "end_time": w.metadata.end_time,
+                            "total_duration": w.metadata.total_duration,
+                        }
+                        for w in scene_obj.workflows
+                    ],
+                }
+            )
+            return
+        _render(scene_obj)

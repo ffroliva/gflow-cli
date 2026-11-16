@@ -20,7 +20,12 @@ from rich.console import Console
 from rich.table import Table
 
 from gflow_cli import docs_catalog, json_output
-from gflow_cli._cli_helpers import run_with_handlers, spends_credits
+from gflow_cli._cli_helpers import (
+    OutputFormat,
+    output_format_option,
+    run_with_handlers,
+    spends_credits,
+)
 from gflow_cli.docs_catalog import MAX_HITS
 from gflow_cli.errors import ConfigurationError
 
@@ -66,8 +71,13 @@ def _forgive_console_encoding() -> None:
     metavar="TERM",
     help="Find the lines mentioning TERM across every page, most relevant first.",
 )
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON.")
-def docs(topic: str | None, term: str | None, as_json: bool) -> None:
+@output_format_option(help="Output format (json|table|id).")
+def docs(
+    topic: str | None,
+    term: str | None,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """Browse gflow's own documentation.
 
     \b
@@ -77,10 +87,20 @@ def docs(topic: str | None, term: str | None, as_json: bool) -> None:
 
     Entirely offline and read-only: the pages ship inside the package.
     """
-    run_with_handlers(lambda: _run(topic, term, as_json), cli_command="docs", as_json=as_json)
+    is_json = as_json or output_format == OutputFormat.JSON.value
+    run_with_handlers(
+        lambda: _run(topic, term, is_json, output_format),
+        cli_command="docs",
+        as_json=is_json,
+    )
 
 
-async def _run(topic: str | None, term: str | None, as_json: bool) -> None:
+async def _run(
+    topic: str | None,
+    term: str | None,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     _forgive_console_encoding()
     # `is not None`, not truthiness, on BOTH sides: `--search ""` is a passed flag, and
     # testing it for truth let `gflow docs usage --search ""` through the guard and then
@@ -94,16 +114,20 @@ async def _run(topic: str | None, term: str | None, as_json: bool) -> None:
             remediation_hint="Drop one of the two and re-run.",
         )
     if term is not None:
-        _emit_search(term, as_json=as_json)
+        _emit_search(term, as_json=as_json, output_format=output_format)
         return
     if topic is not None:
-        _emit_page(topic, as_json=as_json)
+        _emit_page(topic, as_json=as_json, output_format=output_format)
         return
-    _emit_topics(as_json=as_json)
+    _emit_topics(as_json=as_json, output_format=output_format)
 
 
-def _emit_topics(*, as_json: bool) -> None:
+def _emit_topics(*, as_json: bool, output_format: str = "table") -> None:
     found = docs_catalog.topics()
+    if output_format == OutputFormat.ID.value:
+        for entry in found:
+            click.echo(entry.slug)
+        return
     if as_json:
         json_output.emit(
             {
@@ -133,10 +157,13 @@ def _emit_topics(*, as_json: bool) -> None:
     )
 
 
-def _emit_page(topic: str, *, as_json: bool) -> None:
+def _emit_page(topic: str, *, as_json: bool, output_format: str = "table") -> None:
     entry = docs_catalog.resolve(topic)
     body = docs_catalog.read(entry)
-    if as_json:
+    if output_format == OutputFormat.ID.value:
+        click.echo(entry.slug)
+        return
+    if as_json or output_format == OutputFormat.JSON.value:
         json_output.emit(
             {
                 "topic": entry.slug,
@@ -151,10 +178,17 @@ def _emit_page(topic: str, *, as_json: bool) -> None:
     click.echo(body)
 
 
-def _emit_search(term: str, *, as_json: bool) -> None:
+def _emit_search(term: str, *, as_json: bool, output_format: str = "table") -> None:
     hits = docs_catalog.search(term)
     shown, held_back = hits[:MAX_HITS], max(0, len(hits) - MAX_HITS)
-    if as_json:
+    if output_format == OutputFormat.ID.value:
+        seen: set[str] = set()
+        for m in shown:
+            if m.topic not in seen:
+                seen.add(m.topic)
+                click.echo(m.topic)
+        return
+    if as_json or output_format == OutputFormat.JSON.value:
         json_output.emit(
             {
                 "term": term,
