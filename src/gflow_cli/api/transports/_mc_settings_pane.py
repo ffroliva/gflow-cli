@@ -29,6 +29,7 @@ from gflow_cli.api.transports._mc_common import (
     VIDEO_MODEL_MENU_LABELS,
     VIDEO_MODEL_MENU_MATCHERS,
     VISIBLE_OVERLAY,
+    _count,
     _duration,
     _exact,
     _ligature,
@@ -374,7 +375,11 @@ class SettingsPaneMixin(EditorGateMixin):
         matches = (
             radios.filter(has=_ligature(page, lig))
             if lig
-            else radios.filter(has_text=_duration(wanted) if axis == "duration" else _exact(wanted))
+            else radios.filter(
+                has_text=_duration(wanted)
+                if axis == "duration"
+                else (_count(wanted) if axis == "count" else _exact(wanted))
+            )
         )
         target = matches.first
         if not await target.count():

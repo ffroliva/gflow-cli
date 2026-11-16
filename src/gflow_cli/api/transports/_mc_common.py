@@ -662,6 +662,23 @@ def _duration(label: str) -> re.Pattern[str]:
     return re.compile(r"^\s*" + re.escape(number) + r"(?!\d)(?!\s*[pPkKxX]\b)\D*$")
 
 
+def _count(label: str) -> re.Pattern[str]:
+    """A count radio by its number — ``x1`` matches ``1-mal``, ``1x``, ``1 vez``, ``1`` (#1312).
+
+    Like ``_duration`` (#963), the unit or prefix (e.g. ``x``, ``-mal``) is translated or
+    locale-dependent, while the number (1, 2, 3, 4) is the invariant token. Siblings in the
+    pane share leading digits on other controls: multi-digit numbers or digits immediately
+    adjacent to the target digit are refused so e.g. ``10s`` is not mistaken for count ``1``.
+    """
+    number = label.strip().removeprefix("x").removesuffix("x").strip()
+    return re.compile(
+        r"^\s*(?:x\s*)?"
+        + re.escape(number)
+        + r"(?!\d)(?!\s*[:/])(?!\s*(?:[pPkK]|s\b|Sek|giây|seg))\s*(?:x|[-a-zA-Z\s]+)?$",
+        re.IGNORECASE,
+    )
+
+
 def _unique_display_name(image_path: Path) -> str:
     """The name Flow will list an upload under — the file's own, plus a random tag.
 

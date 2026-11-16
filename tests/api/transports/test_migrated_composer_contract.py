@@ -125,6 +125,7 @@ MODULE_NAMES = (
     "_I2V_FIRST_LAST_TOKEN",
     "_OPTION_TITLES_JS",
     "_OPTION_TOKENS_JS",
+    "_count",
     "_duration",
     "_first_uuid",
     "_guard_image_submit",
