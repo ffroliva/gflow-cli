@@ -900,6 +900,61 @@ async def test_duration_is_matched_on_its_number_not_the_english_unit(unit: str)
     assert not page.dom.groups["resolution"][0].checked  # the 4K decoy was not clicked
 
 
+@pytest.mark.parametrize(
+    ("raw_label", "target_count"),
+    [
+        ("1-mal", 1),
+        ("2-mal", 2),
+        ("3-mal", 3),
+        ("4-mal", 4),
+        ("1x", 1),
+        ("2x", 2),
+        ("1 vez", 1),
+        ("2 veces", 2),
+        ("1 fois", 1),
+        ("1", 1),
+        ("2", 2),
+    ],
+)
+async def test_count_is_matched_on_its_number_not_the_english_prefix(
+    raw_label: str, target_count: int
+) -> None:
+    """#1312: non-English panes render `1-mal` (German) or `1 vez`, so `_exact('x1')` never
+    matched and every generation run stopped with UiSelectorDriftError (exit 23).
+    The count number (1, 2, 3, 4) is the locale-invariant token; sibling resolution radios
+    (4K, 480p) or duration radios (4s, 10s) must not be mistaken for it.
+    """
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.groups["resolution"] = [Radio("", "4K"), Radio("", "480p", checked=True)]
+    page.dom.groups["duration"] = [Radio("", "4s"), Radio("", "8s", checked=True), Radio("", "10s")]
+    page.dom.groups["count"] = [
+        Radio("", raw_label, checked=(target_count != 1)),
+        Radio("", "other", checked=(target_count == 1)),
+    ]
+    # In video settings:
+    await MigratedComposer().apply_video_settings(page, _t2v(count=target_count))
+    assert page.dom.groups["count"][0].checked
+    assert not page.dom.groups["resolution"][0].checked  # 4K decoy not clicked
+    assert not page.dom.groups["duration"][0].checked  # 4s decoy not clicked
+
+    # In image settings:
+    page2 = FakePage()
+    page2.dom.models = ["🍌 Nano Banana 2", "🍌 Nano Banana 2 Lite", "🍌 Nano Banana Pro"]
+    page2.dom.model_label = "🍌 Nano Banana 2 Lite"
+    page2.dom.groups["resolution"] = [Radio("", "4K"), Radio("", "480p", checked=True)]
+    page2.dom.groups["count"] = [
+        Radio("", raw_label, checked=(target_count != 1)),
+        Radio("", "other", checked=(target_count == 1)),
+    ]
+    await MigratedComposer().apply_image_settings(
+        page2,
+        GenerateImageRequest(prompt="test", count=target_count),
+    )
+    assert page2.dom.groups["count"][0].checked
+
+
 async def test_apply_video_settings_selects_resolution() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
