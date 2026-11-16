@@ -4,6 +4,16 @@
 
 ## Current release
 
+**v0.100.1 — alpha.** Patch release fixing `UiSelectorDriftError` (exit 23) in the migrated host settings pane on non-English accounts (e.g. German `hl=de`).
+
+**Fixed.**
+- **Locale-invariant count selector for settings pane on flow.google.com ([#1312](https://github.com/ffroliva/gflow-cli/issues/1312), [#1315](https://github.com/ffroliva/gflow-cli/pull/1315)).**
+  On German (`1-mal`) and other localized accounts (`1 vez`, `1 fois`, bare `1`), count toggle button matching anchors on the invariant numeric count token rather than English prefix `x1`.
+
+Full ledger: [LIVE_VERIFICATION_v0.100.1](LIVE_VERIFICATION_v0.100.1.md).
+
+<details><summary>v0.100.0 — one verb to generate, machine-readable command tree, local cancel</summary>
+
 **v0.100.0 — alpha.** One verb to generate, a machine-readable command tree, a local cancel,
 and a `gflow update` that no longer breaks a Windows pip install. No CLI flag or exit code changes;
 a script that reads the queue table must also match the new `cancelled` / `abandoned` states.
@@ -28,6 +38,8 @@ queued job locally and says plainly when Flow may still charge an already-submit
 reCAPTCHA tokens, the XSRF value or private image links (#987 slice 1).
 
 Full ledger: [LIVE_VERIFICATION_v0.100.0](LIVE_VERIFICATION_v0.100.0.md).
+
+</details>
 
 <details><summary>v0.99.0 — --out-file, opt-in stable exit codes</summary>
 
