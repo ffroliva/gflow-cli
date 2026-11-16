@@ -4,6 +4,17 @@
 
 ## Current release
 
+**v0.101.0 — alpha.** Breaking output flag migration aligning `-o/--output` with standard CLI format selectors (`kubectl`, `gh`, `az`, `gcloud`) and strictly enforcing `--out-file PATH` for media/export file destinations across all commands (#1158).
+
+**Breaking Changes.**
+- **Universal `-o/--output [json|table|id]` (#1158).** `-o/--output` now exclusively selects the output format (`json`, `table`, or `id`). `--json` is retained as an alias for `-o json`. Under `-o id`, commands emit newline-separated bare identifiers on stdout with error messages routed to stderr.
+- **Strict `--out-file PATH` enforcement (#1158).** Explicit file output paths must be passed via `--out-file PATH`. Passing a file path to `-o/--output` exits with code 2 and loud remediation (`use --out-file <path>`). `video upscale` enforces `--out DIR` (rejecting `-o` with remediation `use --out <dir>`).
+- **MCP Surface Clean-up.** Removed deprecated `output` argument from `gflow_generate_image` and `gflow_generate_video` (`out_file` is the sole destination parameter).
+
+Full ledger: [LIVE_VERIFICATION_v0.101.0](LIVE_VERIFICATION_v0.101.0.md).
+
+<details><summary>v0.100.1 — locale-invariant count selector</summary>
+
 **v0.100.1 — alpha.** Patch release fixing `UiSelectorDriftError` (exit 23) in the migrated host settings pane on non-English accounts (e.g. German `hl=de`).
 
 **Fixed.**
@@ -11,6 +22,8 @@
   On German (`1-mal`) and other localized accounts (`1 vez`, `1 fois`, bare `1`), count toggle button matching anchors on the invariant numeric count token rather than English prefix `x1`.
 
 Full ledger: [LIVE_VERIFICATION_v0.100.1](LIVE_VERIFICATION_v0.100.1.md).
+
+</details>
 
 <details><summary>v0.100.0 — one verb to generate, machine-readable command tree, local cancel</summary>
 
@@ -932,6 +945,8 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Universal `-o/--output [json\|table\|id]` format selector across all commands, `--out-file PATH` enforced for file paths, MCP `output` removed (#1158) | ✅ done (v0.101.0) |
+| Locale-invariant count selector for settings pane on flow.google.com under non-English account locales (#1312) | ✅ done (v0.100.1) |
 | `image`/`video generate` (#1193), `--help --json` (#1203), `gflow cancel` (#1198), Windows pip `gflow update` kept working (#1298), character list/show on flow.google.com and secret redaction (#987 slices 1-2), chain `--out-file` and `--resume-from` (#1293, #1300), `gflow update` reports one result (#1163), extend catalog fix (#1184), telemetry command naming (#1209) | ✅ done (v0.100.0) |
 | `--out-file PATH` with `-o/--output PATH` deprecated (#1158), opt-in stable exit-code core `GFLOW_CLI_EXIT_CODES=2` (#1202) | ✅ done (v0.99.0) |
 | Errors carry `charged` / `next_action` (#1201), billed requests and image submits sent once (#1260, #1274, #1275), `gflow capabilities` + `capabilities://self` (#1197), `gflow models list/show` (#1196), caption heal on flow.google.com (#546), language-independent classic selectors (#1273) | ✅ done (v0.98.0) |
