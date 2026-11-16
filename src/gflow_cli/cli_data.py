@@ -251,10 +251,18 @@ def _emit(
                 if val is not None:
                     click.echo(val)
         return
-    if as_json or output_format == OutputFormat.JSON.value or not sys.stdout.isatty():
+    ctx = click.get_current_context(silent=True)
+    explicit_table = (
+        ctx is not None
+        and ctx.get_parameter_source("output_format") == click.core.ParameterSource.COMMANDLINE
+        and output_format == OutputFormat.TABLE.value
+    )
+    if as_json or output_format == OutputFormat.JSON.value:
         _emit_jsonl(rows)
-    else:
+    elif explicit_table or sys.stdout.isatty():
         table_fn(rows)
+    else:
+        _emit_jsonl(rows)
 
 
 def _guard(fn: Any) -> Any:
@@ -394,6 +402,7 @@ def download(
         ),
         cli_command="data download",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -833,8 +842,15 @@ def errors_group() -> None:
     help=f"Only export failures older than this. {_OLDER_THAN_HELP} Default: all.",
 )
 @out_file_option("output", help="Write JSONL to this file. Default: stdout.")
+@output_format_option(has_out_file=True, allow_id=False)
 @_guard
-def errors_export_cmd(profile: str | None, older_than: str | None, output: Path | None) -> None:
+def errors_export_cmd(
+    profile: str | None,
+    older_than: str | None,
+    output: Path | None,
+    as_json: bool = False,
+    output_format: str = "json",
+) -> None:
     """Export failed operations as JSONL — archive history before pruning (#345).
 
     Unbounded (no --limit): dumps every failure newest-first. Pair with

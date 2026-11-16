@@ -50,7 +50,12 @@ def cancel(task_id: str, as_json: bool, output_format: str = "table") -> None:
         # The queue write blocks on SQLite's lock (BEGIN IMMEDIATE), so it runs off the loop.
         _report(task_id, await asyncio.to_thread(_abort, task_id), is_json, output_format)
 
-    run_with_handlers(_run, cli_command="cancel", as_json=is_json)
+    run_with_handlers(
+        _run,
+        cli_command="cancel",
+        as_json=is_json,
+        output_format=output_format,
+    )
 
 
 def _abort(task_id: str) -> AbortOutcome | None:
@@ -62,12 +67,17 @@ def _report(task_id: str, outcome: AbortOutcome | None, as_json: bool, output_fo
     if outcome is None:
         raise TaskNotFoundError(detail=f"No queued job with id {task_id!r}.")
     if outcome.state == "abandoned":
-        _abandoned(task_id, outcome.previous, as_json)
+        _abandoned(task_id, outcome.previous, as_json, output_format)
     else:
         _settled(task_id, outcome.state, outcome.previous, as_json, output_format)
 
 
-def _abandoned(task_id: str, previous: str, as_json: bool) -> None:
+def _abandoned(
+    task_id: str,
+    previous: str,
+    as_json: bool,
+    output_format: str = OutputFormat.TABLE.value,
+) -> None:
     exc = ServerCancelUnavailableError(
         detail=f"A gflow worker had already submitted job {task_id} to Flow.",
         operation_id=task_id,
@@ -85,8 +95,9 @@ def _abandoned(task_id: str, previous: str, as_json: bool) -> None:
             }
         )
     else:
-        _console.print(f"[yellow]Marked {escape(task_id)} abandoned.[/yellow]")
-        _console.print(
+        c = Console(stderr=True) if output_format == OutputFormat.ID.value else _console
+        c.print(f"[yellow]Marked {escape(task_id)} abandoned.[/yellow]")
+        c.print(
             "A gflow worker had already submitted it, and Flow cannot be told to stop it: "
             "it may keep running and may still be charged. A worker still running it keeps "
             "polling so it can record the result; check the Flow project.",

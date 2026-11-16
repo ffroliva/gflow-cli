@@ -127,6 +127,7 @@ def create(
         ),
         cli_command="scene create",
         as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -159,6 +160,7 @@ def show(
         ),
         cli_command="scene show",
         as_json=is_json,
+        output_format=output_format,
     )
 
 

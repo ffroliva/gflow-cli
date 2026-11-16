@@ -168,6 +168,7 @@ def create(
         ),
         cli_command="character create",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -275,6 +276,7 @@ def list_cmd(project_id: str, output_format: str, as_json: bool, profile: str | 
         ),
         cli_command="character list",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -345,6 +347,7 @@ def show(
         ),
         cli_command="character show",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -416,6 +419,7 @@ def rm(
         ),
         cli_command="character rm",
         as_json=as_json,
+        output_format=output_format,
     )
 
 

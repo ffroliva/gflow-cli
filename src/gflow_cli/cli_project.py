@@ -204,7 +204,12 @@ def create_subcommand(
                 f"(title: {project_title})"
             )
 
-    run_with_handlers(_act, cli_command="project create", as_json=as_json)
+    run_with_handlers(
+        _act,
+        cli_command="project create",
+        as_json=as_json,
+        output_format=output_format,
+    )
 
 
 async def _run_rename_project(
@@ -252,4 +257,9 @@ def rename_subcommand(
                 f"to '[bold]{new_title}[/bold]'"
             )
 
-    run_with_handlers(_act, cli_command="project rename", as_json=as_json)
+    run_with_handlers(
+        _act,
+        cli_command="project rename",
+        as_json=as_json,
+        output_format=output_format,
+    )

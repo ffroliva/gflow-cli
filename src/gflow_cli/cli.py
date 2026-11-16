@@ -21,6 +21,7 @@ from rich.table import Table
 from gflow_cli import __version__, json_output, profile_store, telemetry, telemetry_upload
 from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import (
+    OutputFormat,
     command_tree,
     help_json_path,
     output_format_option,
@@ -571,7 +572,7 @@ def auth_renew(profile: str | None, renew_all: bool, output_format: str, as_json
         if not (s["exists"] and s["cookies_present"]):
             row["result"] = FlowSessionOutcome.NO_SESSION.value
             continue
-        if not as_json:
+        if not (as_json or output_format == OutputFormat.ID.value):
             console.print(f"[dim]Renewing {escape(name)}...[/dim]")
         try:
             renewal = asyncio.run(renew.renew_profile(auth_mod.profile_dir(name)))

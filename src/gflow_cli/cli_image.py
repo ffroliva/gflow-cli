@@ -921,6 +921,7 @@ def t2i(  # NOSONAR
             ),
             cli_command="image t2i",
             as_json=as_json or output_format == OutputFormat.JSON.value,
+            output_format=output_format,
         )
 
         return
@@ -1767,6 +1768,7 @@ def i2i(  # NOSONAR
         ),
         cli_command="image i2i",
         as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -1848,11 +1850,11 @@ async def _run_i2i(
                 path="image",
                 project_id=project.project_id,
                 tool_specs=tool_specs,
-                quiet=as_json,
+                quiet=quiet_output,
             )
 
             n_refs = len(req.refs) + len(req.ref_paths)
-            if not as_json:
+            if not quiet_output:
                 console.print(
                     f"  Generating {count} image(s) with {n_refs} ref(s) "
                     f"({req.model.value}, {req.aspect.value})...",

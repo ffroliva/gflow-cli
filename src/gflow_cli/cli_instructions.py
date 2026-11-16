@@ -345,6 +345,7 @@ def list_cards(
         ),
         cli_command="instructions list",
         as_json=as_json,
+        output_format=output_format,
     )
 
 

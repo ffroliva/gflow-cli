@@ -102,6 +102,7 @@ def user(profile: str | None, refresh: bool, output_format: str, as_json: bool) 
         lambda: _show_one(selected, output_format, as_json, refresh),
         cli_command="credits user",
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -116,4 +117,5 @@ def list_command(refresh: bool, output_format: str, as_json: bool) -> None:
         lambda: _show_all(output_format, as_json, refresh),
         cli_command="credits list",
         as_json=as_json,
+        output_format=output_format,
     )

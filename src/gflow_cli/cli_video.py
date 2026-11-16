@@ -1013,7 +1013,11 @@ async def _run_chain(
         console.print("[dim]--dry-run: no video operations submitted, no clips generated.[/dim]")
         return
 
-    if not as_json:
+    quiet_output = as_json or output_format in (
+        OutputFormat.JSON.value,
+        OutputFormat.ID.value,
+    )
+    if not quiet_output:
         _print_chain_plan(
             links=links,
             model=resolved_model,
@@ -1069,7 +1073,7 @@ async def _run_chain(
                     seed_offset=seed_offset,
                     jitter=jitter,
                     chain_id=chain_id,
-                    as_json=as_json,
+                    as_json=quiet_output,
                     relocate=chain_clip_relocator(output_file),
                     start_index=skipped,
                     seed_clip=seed_clip,
@@ -1212,6 +1216,7 @@ def t2v(
         ),
         cli_command="video t2v",
         as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -1451,6 +1456,7 @@ def i2v(  # NOSONAR
         ),
         cli_command="video i2v",
         as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -1611,6 +1617,7 @@ def r2v(
         ),
         cli_command="video r2v",
         as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -1762,6 +1769,7 @@ def chain(
         ),
         cli_command="video chain",
         as_json=is_json,
+        output_format=output_format,
     )
 
 
@@ -1875,6 +1883,10 @@ async def _extend_migrated_session(  # noqa: PLR0913
     forms that would need them before this runs).
     """
     out_path = output_file or extend_output_path(get_settings().output_dir, media_id=media_id)
+    quiet_output = as_json or output_format in (
+        OutputFormat.JSON.value,
+        OutputFormat.ID.value,
+    )
     async with FlowApiClient(profile_dir=profile_dir) as client:
         outcome, target = await client.extend_video_migrated(
             media_id=media_id,
@@ -1888,7 +1900,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
                 project_id=project_id,
                 source_media_id=media_id,
                 aspect=aspect,
-                as_json=as_json,
+                as_json=quiet_output,
                 recorder=recorder,
             ),
         )
@@ -1986,7 +1998,11 @@ async def _extend_session(  # noqa: PLR0913
                 f"balance is {balance}. Nothing was submitted."
             )
             raise ConfigurationError(msg)
-        if not as_json:
+        quiet_output = as_json or output_format in (
+            OutputFormat.JSON.value,
+            OutputFormat.ID.value,
+        )
+        if not quiet_output:
             have = "unknown" if balance is None else str(balance)
             console.print(
                 f"  model       : {model_key} ({total_cost} credits total, balance {have})"
@@ -2007,7 +2023,7 @@ async def _extend_session(  # noqa: PLR0913
                 tail = clips[-1]
                 if tail.media_id:
                     source_media = tail.media_id
-                if not as_json:
+                if not quiet_output:
                     console.print(
                         f"  resuming    : scene has {len(clips)} clip(s), "
                         f"continuing from {source_media}"
@@ -2048,7 +2064,7 @@ async def _extend_session(  # noqa: PLR0913
                 resume_id=target_scene,
                 segments_done=submitted_count,
             )
-            if not as_json:
+            if not quiet_output:
                 console.print(f"  submitted   : {started.media_id} ({started.model_key})")
             # Persist at SUBMIT: Flow bills on acceptance, so a row written only
             # after the ~2 min poll would leave an interrupted run's paid media
@@ -2101,7 +2117,7 @@ async def _extend_session(  # noqa: PLR0913
                 # raises on a missing media_id instead of silently dropping a paid
                 # segment. cli_scene.py uses it for the identical job.
                 inputs = list(scene_state.to_concat_inputs())
-                if not as_json:
+                if not quiet_output:
                     console.print(f"  rendering   : {len(inputs)} clips -> {output_file}")
                 await client.concatenate_scene(inputs, out_path=output_file)
             except (GFlowError, ValueError) as exc:
@@ -2267,7 +2283,12 @@ def extend(  # noqa: PLR0913
         async def _refuse() -> None:
             raise refusal
 
-        run_with_handlers(_refuse, cli_command=_EXTEND_COMMAND, as_json=is_json)
+        run_with_handlers(
+            _refuse,
+            cli_command=_EXTEND_COMMAND,
+            as_json=is_json,
+            output_format=output_format,
+        )
         return
     # The cost gate runs before a client exists, so --dry-run cannot spend and
     # cannot even open a browser. Machine-readable output must not carry the
@@ -2306,6 +2327,7 @@ def extend(  # noqa: PLR0913
         ),
         cli_command=_EXTEND_COMMAND,
         as_json=is_json,
+        output_format=output_format,
     )
 
 

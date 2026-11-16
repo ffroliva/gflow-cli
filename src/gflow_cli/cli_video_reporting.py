@@ -48,10 +48,16 @@ def _emit_video_result(
 ) -> None:
     """Emit video generation result according to format (id, json, or human table)."""
     if output_format == OutputFormat.ID.value:
+        if not result.status.succeeded:
+            reasons = (
+                ", ".join(result.status.failure_reasons)
+                or result.status.error_message
+                or "unknown reason"
+            )
+            Console(stderr=True).print(f"[red]Video generation failed:[/red] {reasons}")
+            raise SystemExit(1)
         if result.status.media_id:
             click.echo(result.status.media_id)
-        if not result.status.succeeded:
-            raise SystemExit(1)
         return
 
     if is_json or output_format == OutputFormat.JSON.value:
@@ -148,6 +154,15 @@ def _emit_extend_json_payload(
     json_output.emit(payload)
 
 
+def _emit_extend_id_result(result: Any) -> None:
+    if result.aborted or result.error is not None:
+        if result.error is not None:
+            raise result.error
+        raise SystemExit(1)
+    if result.completed_media_ids:
+        click.echo(result.completed_media_ids[-1])
+
+
 def _emit_extend_session_result(  # noqa: PLR0913
     result: Any,
     rendered: str | None,
@@ -165,11 +180,7 @@ def _emit_extend_session_result(  # noqa: PLR0913
 ) -> None:
     """Emit extend session outcome and exit cleanly or raise mapped error."""
     if output_format == OutputFormat.ID.value:
-        last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
-        if last_media:
-            click.echo(last_media)
-        if result.aborted or result.error is not None:
-            raise SystemExit(1)
+        _emit_extend_id_result(result)
         return
 
     payload: dict[str, Any] = {
@@ -280,9 +291,9 @@ def _report_migrated_extend(  # noqa: PLR0913
     ok = target is not None
     rendered = str(target) if target is not None else None
     if output_format == OutputFormat.ID.value:
-        click.echo(record.media_id)
         if not ok:
-            raise SystemExit(1)
+            raise FlowApiError("Extend failed to render")
+        click.echo(record.media_id)
         return
     if as_json or output_format == OutputFormat.JSON.value:
         json_output.emit(

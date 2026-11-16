@@ -265,7 +265,7 @@ def test_cli_runner_data_errors_export(tmp_path: Path, monkeypatch: pytest.Monke
 
     res_old = runner.invoke(main, ["data", "errors", "export", "-o", str(file_old)])
     assert res_old.exit_code == 2, res_old.output
-    assert "no such option" in res_old.output.lower()
+    assert "--out-file" in res_old.output.lower()
 
 
 def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
