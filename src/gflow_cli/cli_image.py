@@ -30,12 +30,14 @@ from rich.table import Table
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _FLOW_ID_RE,
+    OutputFormat,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
     default_project,
     out_file_option,
+    output_format_option,
     run_with_handlers,
     safe_path_text,
     slugify_project_name,
@@ -805,12 +807,7 @@ _ui_mode_option = click.option(
     ),
 )
 @_project_and_entity_options(single_prompt=True)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of a Rich table.",
-)
+@output_format_option(has_out_file=True)
 @click.option(
     "--instruction",
     "-i",
@@ -840,6 +837,7 @@ def t2i(  # NOSONAR
     reference_entity_names: tuple[str, ...],
     as_json: bool,
     instructions: tuple[str, ...],
+    output_format: str = "table",
 ) -> None:
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
@@ -862,7 +860,7 @@ def t2i(  # NOSONAR
         msg = "--reference-entity is single-prompt only; remove the extra prompts."
         raise click.UsageError(msg)
 
-    if is_multi_prompt and as_json:
+    if is_multi_prompt and (as_json or output_format != OutputFormat.TABLE.value):
         # --json is single-prompt only — the batch summary shape is rich-table
         # specific and a worker shells out one prompt at a time anyway.
         msg = "--json is single-prompt only; remove the extra prompts."
@@ -918,10 +916,11 @@ def t2i(  # NOSONAR
                 project_id=project_id,
                 project_name=project_name,
                 as_json=as_json,
+                output_format=output_format,
                 tool_specs=tool_specs,
             ),
             cli_command="image t2i",
-            as_json=as_json,
+            as_json=as_json or output_format == OutputFormat.JSON.value,
         )
 
         return
@@ -1295,12 +1294,15 @@ async def _run_t2i(
     project_id: str | None = None,
     project_name: str | None = None,
     as_json: bool = False,
+    output_format: str = "table",
     tool_specs: tuple[str, ...] = (),
 ) -> None:
     settings = get_settings()
     recorder = OperationRecorder.open(settings)
     project: ProjectInfo | None = None
     undownloaded: list[str] = []
+    is_json = as_json or output_format == OutputFormat.JSON.value
+    quiet_output = is_json or output_format == OutputFormat.ID.value
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
@@ -1310,7 +1312,7 @@ async def _run_t2i(
         ) as client:
             effective_title = project_name or slugify_project_name(req.prompt, prefix="gflow-t2i")
             project, project_created = await _resolve_project(
-                client, project_id=project_id, title=effective_title, as_json=as_json
+                client, project_id=project_id, title=effective_title, as_json=quiet_output
             )
 
             # Resolve @-mentions and expand --tool specs (shared helper).
@@ -1322,10 +1324,10 @@ async def _run_t2i(
                 path="image",
                 project_id=project.project_id,
                 tool_specs=tool_specs,
-                quiet=as_json,
+                quiet=quiet_output,
             )
 
-            if not as_json:
+            if not quiet_output:
                 console.print(
                     f"  Generating {count} image(s) ({req.model.value}, {req.aspect.value})...",
                 )
@@ -1346,7 +1348,10 @@ async def _run_t2i(
                 undownloaded=undownloaded,
             )
 
-            if as_json:
+            if output_format == OutputFormat.ID.value:
+                for img in images:
+                    click.echo(img.media_name)
+            elif is_json:
                 json_output.emit(
                     json_output.image_result(
                         command="image t2i",
@@ -1672,12 +1677,7 @@ class _I2IParams:
     ),
 )
 @_project_and_entity_options(single_prompt=False)
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of a Rich table.",
-)
+@output_format_option(has_out_file=True)
 @out_file_option(help="Explicit output file path for the generated asset.")
 @click.option(
     "--instruction",
@@ -1705,6 +1705,7 @@ def i2i(  # NOSONAR
     as_json: bool,
     instructions: tuple[str, ...],
     ui_mode: str | None,
+    output_format: str = "table",
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
     if ui_mode == UiMode.CLASSIC.value and instructions:
@@ -1746,6 +1747,7 @@ def i2i(  # NOSONAR
         ),
         ui_mode=UiMode(ui_mode) if ui_mode else None,
     )
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_i2i(
             profile_name=profile_name,
@@ -1760,10 +1762,11 @@ def i2i(  # NOSONAR
             project_id=project_id,
             project_name=project_name,
             as_json=as_json,
+            output_format=output_format,
             tool_specs=tool_specs,
         ),
         cli_command="image i2i",
-        as_json=as_json,
+        as_json=is_json,
     )
 
 
@@ -1781,6 +1784,7 @@ async def _run_i2i(
     project_id: str | None = None,
     project_name: str | None = None,
     as_json: bool = False,
+    output_format: str = "table",
     tool_specs: tuple[str, ...] = (),
 ) -> None:
     settings = get_settings()
@@ -1788,6 +1792,8 @@ async def _run_i2i(
     req: GenerateImageRequest | None = None
     project: ProjectInfo | None = None
     undownloaded: list[str] = []
+    is_json = as_json or output_format == OutputFormat.JSON.value
+    quiet_output = is_json or output_format == OutputFormat.ID.value
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
@@ -1799,7 +1805,7 @@ async def _run_i2i(
                 params.prompt, prefix="gflow-i2i"
             )
             project, project_created = await _resolve_project(
-                client, project_id=project_id, title=effective_title, as_json=as_json
+                client, project_id=project_id, title=effective_title, as_json=quiet_output
             )
 
             # Local-file refs are attached through the editor's media dialog by the
@@ -1889,7 +1895,10 @@ async def _run_i2i(
                 generate=_generate,
             )
 
-            if as_json:
+            if output_format == OutputFormat.ID.value:
+                for img in images:
+                    click.echo(img.media_name)
+            elif is_json:
                 json_output.emit(
                     json_output.image_result(
                         command="image i2i",

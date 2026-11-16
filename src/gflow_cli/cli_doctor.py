@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import click
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import spends_credits
+from gflow_cli._cli_helpers import OutputFormat, output_format_option, spends_credits
 from gflow_cli.cli_data import _db_path, _guard
 from gflow_cli.config import get_settings
 
@@ -68,15 +68,10 @@ def _render_text(report: DoctorReport) -> None:
 
 @spends_credits(False)
 @click.command()
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON report (experimental; shape may change).",
-)
+@output_format_option(allow_id=False, help="Output format (json|table; json is experimental).")
 @click.pass_context
 @_guard
-def doctor(ctx: click.Context, as_json: bool) -> None:
+def doctor(ctx: click.Context, as_json: bool, output_format: str = "table") -> None:
     """Run read-only health checks over the catalog, database, and environment.
 
     Diagnoses, never heals: nothing is migrated, repaired, or written. Unless
@@ -85,7 +80,7 @@ def doctor(ctx: click.Context, as_json: bool) -> None:
     Exit code 0 when clean, 33 when any warn/fail finding is reported.
     """
     report = run_all(_db_path(), get_settings())
-    if as_json:
+    if as_json or output_format == OutputFormat.JSON.value:
         json_output.emit(json_output.doctor_payload(report))
     else:
         _render_text(report)

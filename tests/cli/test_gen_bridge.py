@@ -393,10 +393,9 @@ def test_gen_out_file_reaches_the_modes_output_file(
     "argv", [["image", "generate", "a cat"], ["video", "generate", "a sunset"]]
 )
 def test_gen_has_no_deprecated_output_path_spelling(argv: list[str], flag: str) -> None:
-    # A new verb starts on --out-file; -o is about to mean the output format (#1158).
+    # -o/--output now selects the output format (#1158); passing a path triggers remediation.
     out = _usage_error([*argv, flag, "x.png"])
-    assert f"No such option '{flag}'" in out
-    assert "deprecated" not in out
+    assert "--output now selects the format; use --out-file x.png" in out
 
 
 # ------------------------------------------------------------- --json carries the mode

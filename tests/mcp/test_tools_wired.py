@@ -266,7 +266,7 @@ class TestGenerateImageWired:
         ):
             result = await gflow_generate_image(
                 prompt="custom output test",
-                output=str(custom_output),
+                out_file=str(custom_output),
             )
 
         assert result["status"] == "completed"
@@ -396,7 +396,7 @@ class TestGenerateVideoWired:
         ):
             result = await gflow_generate_video(
                 prompt="custom video test",
-                output=str(custom_output),
+                out_file=str(custom_output),
             )
 
         assert result["status"] == "completed"
@@ -872,7 +872,7 @@ class TestProjectParam:
         from gflow_cli.mcp import tools as tools_mod
 
         with patch.object(tools_mod, "_run_generation_task") as run:
-            result = await tools_mod.gflow_generate_video(prompt="a dog", output=str(tmp_path))
+            result = await tools_mod.gflow_generate_video(prompt="a dog", out_file=str(tmp_path))
         assert result["status"] == "error"
         assert result["error"]["title"] == "Invalid Output"
         run.assert_not_called()

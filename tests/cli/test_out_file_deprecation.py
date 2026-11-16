@@ -1,4 +1,4 @@
-"""Tests for #1158: --out-file flag, -o/--output deprecation, and video upscale -o deprecation."""
+"""Tests for #1158: --out-file flag, -o/--output selector, and video upscale -o remediation."""
 
 from __future__ import annotations
 
@@ -12,17 +12,14 @@ import pytest
 from click.testing import CliRunner as _CliRunner
 
 from gflow_cli._cli_helpers import (
-    _OUT_DIR_SHORT_DEPRECATION_WARNING,
-    _OUT_FILE_DEPRECATION_WARNING,
-    DeprecatedAliasOption,
+    OutputFormatOption,
+    UpscaleLegacyShortOption,
     out_file_option,
 )
 from gflow_cli.cli import main
 from tests.cli.test_cli_data_errors_retention import _seed_failed_op
 from tests.cli.test_cli_image import _make_generated_image, _make_t2i_client
 from tests.mcp._cli_tree import cli_leaves
-
-_EXPECTED_DEPRECATION_WARNING = _OUT_FILE_DEPRECATION_WARNING
 
 
 def CliRunner() -> _CliRunner:  # noqa: N802 - drop-in for click.testing.CliRunner
@@ -32,7 +29,6 @@ def CliRunner() -> _CliRunner:  # noqa: N802 - drop-in for click.testing.CliRunn
     return _CliRunner()
 
 
-_EXPECTED_UPSCALE_DEPRECATION_WARNING = _OUT_DIR_SHORT_DEPRECATION_WARNING
 _MEDIA_ID = "3a56bb5e-92a2-44f4-9992-3c6a9bf0cd14"
 
 _NINE_COMMANDS = (
@@ -78,34 +74,20 @@ def test_out_file_decorator_direct() -> None:
     res_new = runner.invoke(dummy_cmd, ["--out-file", "foo.png"])
     assert res_new.exit_code == 0
     assert res_new.stdout == "dest=foo.png\n"
-    assert res_new.stderr == ""
 
-    # 2. Old flag -o
+    # 2. Old flag -o is rejected
     res_old_short = runner.invoke(dummy_cmd, ["-o", "bar.png"])
-    assert res_old_short.exit_code == 0
-    assert res_old_short.stdout == "dest=bar.png\n"
-    assert res_old_short.stderr == f"{_EXPECTED_DEPRECATION_WARNING}\n"
+    assert res_old_short.exit_code == 2
 
-    # 3. Old flag --output
+    # 3. Old flag --output is rejected
     res_old_long = runner.invoke(dummy_cmd, ["--output", "baz.png"])
-    assert res_old_long.exit_code == 0
-    assert res_old_long.stdout == "dest=baz.png\n"
-    assert res_old_long.stderr == f"{_EXPECTED_DEPRECATION_WARNING}\n"
+    assert res_old_long.exit_code == 2
 
-    # 4. Both flags
-    res_both1 = runner.invoke(dummy_cmd, ["--out-file", "foo.png", "-o", "bar.png"])
-    assert res_both1.exit_code == 2
-    assert "--out-file" in res_both1.stderr
-
-    res_both2 = runner.invoke(dummy_cmd, ["-o", "bar.png", "--out-file", "foo.png"])
-    assert res_both2.exit_code == 2
-    assert "--out-file" in res_both2.stderr
-
-    # 5. Help text
+    # 4. Help text
     res_help = runner.invoke(dummy_cmd, ["--help"])
     assert res_help.exit_code == 0
     assert "--out-file" in res_help.output
-    assert "Deprecated: use --out-file." in res_help.output
+    assert "Deprecated" not in res_help.output
 
 
 @pytest.mark.parametrize("cmd_path", _NINE_COMMANDS)
@@ -115,16 +97,18 @@ def test_nine_commands_have_out_file_option(cmd_path: tuple[str, ...]) -> None:
         opt for param in cmd.params if isinstance(param, click.Option) for opt in param.opts
     }
     assert "--out-file" in opt_names, f"{' '.join(cmd_path)} missing --out-file"
-    assert "-o" in opt_names, f"{' '.join(cmd_path)} missing -o"
-    assert "--output" in opt_names, f"{' '.join(cmd_path)} missing --output"
+    out_file_param = next(
+        p for p in cmd.params if isinstance(p, click.Option) and "--out-file" in p.opts
+    )
+    assert isinstance(out_file_param.type, click.Path)
 
 
 def test_click_tree_guard() -> None:
     """Click-tree guard: walk every leaf of gflow_cli.cli.main.
 
-    Exactly the nine commands, plus the --out-file-only bridge verbs, have --out-file.
-    Any option anywhere spelled -o or --output that takes a path must be the
-    deprecated one from task 1/2 (a DeprecatedAliasOption).
+    Exactly the nine commands, plus the --out-file bridge verbs, have --out-file.
+    Any option anywhere spelled -o or --output must NOT be a Path.
+    Every -o/--output is an OutputFormatOption (except video upscale legacy -o guard).
     """
     commands: dict[str, click.Command] = {}
 
@@ -149,41 +133,49 @@ def test_click_tree_guard() -> None:
     }
     assert commands_with_out_file == expected_nine | _OUT_FILE_ONLY
 
-    # A verb added after #1158 never had -o PATH, so it gets no deprecated spelling either.
-    for path in _OUT_FILE_ONLY:
-        opts = {o for p in commands[path].params if isinstance(p, click.Option) for o in p.opts}
-        assert not opts & {"-o", "--output"}, f"{path} must take --out-file only"
-
-    # Check that any -o or --output option taking a Path is marked as deprecated alias
+    # Check that NO -o or --output option takes a Path anywhere
     for path, cmd in commands.items():
         for param in cmd.params:
             if isinstance(param, click.Option):
                 if any(opt in ("-o", "--output") for opt in param.opts):
-                    if isinstance(param.type, click.Path):
-                        assert isinstance(param, DeprecatedAliasOption), (
-                            f"{path} option {param.opts} is a path-typed -o/--output but not "
-                            "a deprecated alias (use out_file_option)"
-                        )
+                    assert not isinstance(param.type, click.Path), (
+                        f"{path} option {param.opts} is an invalid path-typed -o/--output"
+                    )
+                    assert isinstance(param, (OutputFormatOption, UpscaleLegacyShortOption)), (
+                        f"{path} option {param.opts} is not an OutputFormatOption"
+                    )
 
 
 @pytest.mark.parametrize(
-    ("argv", "count", "exit_code", "warned", "written"),
+    ("argv", "count", "exit_code", "remediation", "written"),
     [
-        (["--out-file", "new.png"], 1, 0, False, ["new.png"]),
-        (["-o", "old.png"], 1, 0, True, ["old.png"]),
-        (["--out-file", "new.png", "-o", "old.png"], 1, 2, False, []),
+        (["--out-file", "new.png"], 1, 0, None, ["new.png"]),
+        (["-o", "old.png"], 1, 2, "--output now selects the format; use --out-file", []),
+        (["--output", "old.png"], 1, 2, "--output now selects the format; use --out-file", []),
+        (["--out-file", "new.png", "-o", "json"], 1, 0, None, ["new.png"]),
         (
             ["-n", "4", "--out-file", "multi.png"],
             4,
             0,
-            False,
+            None,
             [f"multi_{i}.png" for i in range(1, 5)],
         ),
     ],
-    ids=["new-flag", "deprecated-flag", "both-refused", "multi-image-naming"],
+    ids=[
+        "new-flag",
+        "legacy-short-flag-rejected",
+        "legacy-long-flag-rejected",
+        "out-file-with-json-format",
+        "multi-image-naming",
+    ],
 )
-def test_cli_runner_image_t2i(  # one invocation per case: sharpit counts queries per test
-    tmp_path: Path, argv: list[str], count: int, exit_code: int, warned: bool, written: list[str]
+def test_cli_runner_image_t2i(
+    tmp_path: Path,
+    argv: list[str],
+    count: int,
+    exit_code: int,
+    remediation: str | None,
+    written: list[str],
 ) -> None:
     media = str(uuid.uuid4())
     images = [_make_generated_image(media_name=f"{media}_{i}") for i in range(count)]
@@ -198,9 +190,8 @@ def test_cli_runner_image_t2i(  # one invocation per case: sharpit counts querie
         result = CliRunner().invoke(main, ["image", "t2i", "a dog", *args])
 
     assert result.exit_code == exit_code, result.output
-    assert (result.stderr.strip() == _EXPECTED_DEPRECATION_WARNING) is warned, result.stderr
-    if exit_code == 2:
-        assert "--out-file" in result.stderr
+    if remediation:
+        assert remediation in result.output
         client.generate_image.assert_not_called()
     for name in written:
         assert (tmp_path / name).exists(), name
@@ -222,21 +213,11 @@ def test_cli_runner_video_t2v(tmp_path: Path) -> None:
         )
         assert res_new.exit_code == 0, res_new.output
         assert mock_run.await_args.kwargs["output_file"] == file_new
-        assert _EXPECTED_DEPRECATION_WARNING not in res_new.stderr
 
         mock_run.reset_mock()
         res_old = runner.invoke(main, ["video", "t2v", "a flying eagle", "-o", str(file_old)])
-        assert res_old.exit_code == 0, res_old.output
-        assert mock_run.await_args.kwargs["output_file"] == file_old
-        assert res_old.stderr.strip() == _EXPECTED_DEPRECATION_WARNING
-
-        mock_run.reset_mock()
-        res_both = runner.invoke(
-            main,
-            ["video", "t2v", "a swimming fish", "--out-file", str(file_new), "-o", str(file_old)],
-        )
-        assert res_both.exit_code == 2
-        assert "--out-file" in res_both.stderr
+        assert res_old.exit_code == 2, res_old.output
+        assert "--output now selects the format; use --out-file" in res_old.output
         mock_run.assert_not_called()
 
 
@@ -257,34 +238,14 @@ def test_cli_runner_scene_create(tmp_path: Path) -> None:
         )
         assert res_new.exit_code == 0, res_new.output
         assert mock_run_create.await_args.kwargs["output"] == file_new
-        assert _EXPECTED_DEPRECATION_WARNING not in res_new.stderr
 
         mock_run_create.reset_mock()
         res_old = runner.invoke(
             main,
             ["scene", "create", "--project", "proj-1", "wf-1", "-o", str(file_old)],
         )
-        assert res_old.exit_code == 0, res_old.output
-        assert mock_run_create.await_args.kwargs["output"] == file_old
-        assert res_old.stderr.strip() == _EXPECTED_DEPRECATION_WARNING
-
-        mock_run_create.reset_mock()
-        res_both = runner.invoke(
-            main,
-            [
-                "scene",
-                "create",
-                "--project",
-                "proj-1",
-                "wf-1",
-                "--out-file",
-                str(file_new),
-                "-o",
-                str(file_old),
-            ],
-        )
-        assert res_both.exit_code == 2
-        assert "--out-file" in res_both.stderr
+        assert res_old.exit_code == 2, res_old.output
+        assert "--output now selects the format; use --out-file" in res_old.output
         mock_run_create.assert_not_called()
 
 
@@ -301,20 +262,10 @@ def test_cli_runner_data_errors_export(tmp_path: Path, monkeypatch: pytest.Monke
     assert res_new.exit_code == 0, res_new.output
     assert file_new.exists()
     assert len(file_new.read_text(encoding="utf-8").strip().splitlines()) >= 1
-    assert _EXPECTED_DEPRECATION_WARNING not in res_new.stderr
 
     res_old = runner.invoke(main, ["data", "errors", "export", "-o", str(file_old)])
-    assert res_old.exit_code == 0, res_old.output
-    assert file_old.exists()
-    assert len(file_old.read_text(encoding="utf-8").strip().splitlines()) >= 1
-    assert res_old.stderr.strip() == _EXPECTED_DEPRECATION_WARNING
-
-    res_both = runner.invoke(
-        main,
-        ["data", "errors", "export", "--out-file", str(file_new), "-o", str(file_old)],
-    )
-    assert res_both.exit_code == 2
-    assert "--out-file" in res_both.stderr
+    assert res_old.exit_code == 2, res_old.output
+    assert "no such option" in res_old.output.lower()
 
 
 def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
@@ -324,20 +275,21 @@ def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
     dir1.mkdir()
     dir2.mkdir()
 
+    # Legacy -o flag alone -> exit 2 before any work
+    res_old = runner.invoke(
+        main, ["video", "upscale", _MEDIA_ID, "-o", str(dir2), "--project", "PROJ1"]
+    )
+    assert res_old.exit_code == 2
+    assert "use --out" in res_old.output
+
     # Both flags -> exit 2 before any work
     res_both = runner.invoke(
         main, ["video", "upscale", _MEDIA_ID, "--out", str(dir1), "-o", str(dir2)]
     )
     assert res_both.exit_code == 2
-    assert "--out" in res_both.stderr
+    assert "use --out" in res_both.output
 
-    res_both_rev = runner.invoke(
-        main, ["video", "upscale", _MEDIA_ID, "-o", str(dir2), "--out", str(dir1)]
-    )
-    assert res_both_rev.exit_code == 2
-    assert "--out" in res_both_rev.stderr
-
-    # New flag alone -> no deprecation warning
+    # New flag alone -> no error
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -353,16 +305,5 @@ def test_video_upscale_out_deprecation(tmp_path: Path) -> None:
             main, ["video", "upscale", _MEDIA_ID, "--out", str(dir1), "--project", "PROJ1"]
         )
         assert res_new.exit_code == 0, res_new.output
-        assert _EXPECTED_UPSCALE_DEPRECATION_WARNING not in res_new.stderr
-
-        res_old = runner.invoke(
-            main, ["video", "upscale", _MEDIA_ID, "-o", str(dir2), "--project", "PROJ1"]
-        )
-        assert res_old.exit_code == 0, res_old.output
-        assert res_old.stderr.strip() == _EXPECTED_UPSCALE_DEPRECATION_WARNING
         out_path = mock_client.upsample_video.await_args.kwargs["out_path"]
-        assert out_path.is_relative_to(dir2), out_path  # -o DIR reached out_dir
-
-
-# `video chain --out-file` / `-o` (#1293) is pinned by tests/cli/test_cli_video_chain_out_file.py,
-# which runs the real run_chain so the written files can be checked.
+        assert out_path.is_relative_to(dir1), out_path

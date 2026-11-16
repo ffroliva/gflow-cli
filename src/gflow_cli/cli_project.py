@@ -14,6 +14,7 @@ from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
+    output_format_option,
     run_with_handlers,
     spends_credits,
 )
@@ -44,8 +45,8 @@ def project() -> None:
 @click.option(
     "--limit", default=50, show_default=True, type=int, help="Maximum projects to return."
 )
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
+@output_format_option()
+def list_subcommand(profile: str | None, limit: int, output_format: str, as_json: bool) -> None:
     """List Flow projects recorded in the local catalog."""
     db_path = _db_path()
     resolved_profile = _resolve_profile(profile) if profile else None
@@ -55,7 +56,7 @@ def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
         limit=limit,
         offset=0,
     )
-    if as_json:
+    if output_format == "json":
         json_output.emit(
             {
                 "status": "ok",
@@ -79,6 +80,9 @@ def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
                 "total": len(rows),
             }
         )
+    elif output_format == "id":
+        for r in rows:
+            click.echo(r.project_id)
     else:
         _emit_projects_table(rows)
 
@@ -87,15 +91,17 @@ def list_subcommand(profile: str | None, limit: int, as_json: bool) -> None:
 @project.command("show")
 @click.argument("project_id", callback=_validate_project_id)
 @click.option("--profile", default=None, help="Profile name.")
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None:
+@output_format_option()
+def show_subcommand(
+    project_id: str, profile: str | None, output_format: str, as_json: bool
+) -> None:
     """Show details of a recorded project by project ID."""
     db_path = _db_path()
     resolved_profile = _resolve_profile(profile) if profile else None
     repo = DataRepository(DataStore.open(db_path))
     record = repo.get_project(resolved_profile, project_id)
     if record is None:
-        if as_json:
+        if output_format == "json":
             json_output.emit(
                 {
                     "status": "error",
@@ -107,13 +113,16 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
                 }
             )
             raise SystemExit(1)
+        elif output_format == "id":
+            click.echo(f"Project not found: {project_id}", err=True)
+            raise SystemExit(1)
         console.print(f"[yellow]Project not found:[/yellow] {project_id}")
         raise SystemExit(1)
 
     url = routes.project_editor_url_or_none(
         account_locale_for(record.profile_name), record.flow_project_id
     )
-    if as_json:
+    if output_format == "json":
         json_output.emit(
             {
                 "status": "ok",
@@ -128,6 +137,8 @@ def show_subcommand(project_id: str, profile: str | None, as_json: bool) -> None
                 },
             }
         )
+    elif output_format == "id":
+        click.echo(record.flow_project_id)
     else:
         console.print(f"[bold]Project ID:[/bold] {record.flow_project_id}")
         console.print(f"[bold]Title:[/bold] {record.title or '<unnamed>'}")
@@ -166,15 +177,17 @@ async def _run_create_project(
 @project.command("create")
 @click.option("--name", "--title", "--project-name", "title", default=None, help="Project title.")
 @click.option("--profile", default=None, help="Profile name.")
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def create_subcommand(title: str | None, profile: str | None, as_json: bool) -> None:
+@output_format_option()
+def create_subcommand(
+    title: str | None, profile: str | None, output_format: str, as_json: bool
+) -> None:
     """Create a fresh Flow project with dual-side title synchronization."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
 
     async def _act() -> None:
         project_id, project_title = await _run_create_project(profile_name, provider_dir, title)
-        if as_json:
+        if output_format == "json":
             json_output.emit(
                 {
                     "status": "ok",
@@ -183,6 +196,8 @@ def create_subcommand(title: str | None, profile: str | None, as_json: bool) -> 
                     "profile": profile_name,
                 }
             )
+        elif output_format == "id":
+            click.echo(project_id)
         else:
             console.print(
                 f"[green]Project created:[/green] [bold]{project_id}[/bold] "
@@ -210,15 +225,17 @@ async def _run_rename_project(
 @click.argument("project_id", callback=_validate_project_id)
 @click.argument("new_title")
 @click.option("--profile", default=None, help="Profile name.")
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def rename_subcommand(project_id: str, new_title: str, profile: str | None, as_json: bool) -> None:
+@output_format_option()
+def rename_subcommand(
+    project_id: str, new_title: str, profile: str | None, output_format: str, as_json: bool
+) -> None:
     """Rename a Flow project with dual-side title synchronization."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
 
     async def _act() -> None:
         await _run_rename_project(profile_name, provider_dir, project_id, new_title)
-        if as_json:
+        if output_format == "json":
             json_output.emit(
                 {
                     "status": "ok",
@@ -227,6 +244,8 @@ def rename_subcommand(project_id: str, new_title: str, profile: str | None, as_j
                     "profile": profile_name,
                 }
             )
+        elif output_format == "id":
+            click.echo(project_id)
         else:
             console.print(
                 f"[green]Renamed project[/green] [bold]{project_id}[/bold] "

@@ -12,6 +12,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    output_format_option,
     run_with_handlers,
     spends_credits,
 )
@@ -49,18 +50,23 @@ def _render_many(payload: dict[str, Any]) -> None:
     console.print(f"[bold]Total credits:[/bold] {payload['total_credits']}")
 
 
-async def _show_one(profile: str | None, as_json: bool, refresh: bool) -> None:
+async def _show_one(profile: str | None, output_format: str, as_json: bool, refresh: bool) -> None:
     payload = await inspect_profile(profile, refresh=refresh)
-    if as_json:
+    if output_format == "json":
         json_output.emit(payload)
+    elif output_format == "id":
+        click.echo(payload.get("email") or payload.get("profile") or "")
     else:
         _render_one(payload)
 
 
-async def _show_all(as_json: bool, refresh: bool) -> None:
+async def _show_all(output_format: str, as_json: bool, refresh: bool) -> None:
     payload = await inspect_all_profiles(refresh=refresh)
-    if as_json:
+    if output_format == "json":
         json_output.emit(payload)
+    elif output_format == "id":
+        for item in payload["profiles"]:
+            click.echo(item["profile"])
     else:
         _render_many(payload)
 
@@ -86,24 +92,28 @@ def credits() -> None:
 @credits.command("user")
 @click.option("--profile", default=None, help="Profile name.")
 @click.option("--refresh", is_flag=True, help=_REFRESH_HELP)
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def user(profile: str | None, refresh: bool, as_json: bool) -> None:
+@output_format_option()
+def user(profile: str | None, refresh: bool, output_format: str, as_json: bool) -> None:
     """Show the credit balance for one profile."""
 
     selected = _resolve_profile(profile)
     _make_provider_dir(selected)
     run_with_handlers(
-        lambda: _show_one(selected, as_json, refresh), cli_command="credits user", as_json=as_json
+        lambda: _show_one(selected, output_format, as_json, refresh),
+        cli_command="credits user",
+        as_json=as_json,
     )
 
 
 @spends_credits(False)
 @credits.command("list")
 @click.option("--refresh", is_flag=True, help=_REFRESH_HELP)
-@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON output.")
-def list_command(refresh: bool, as_json: bool) -> None:
+@output_format_option()
+def list_command(refresh: bool, output_format: str, as_json: bool) -> None:
     """Show credit balances for all saved profiles."""
 
     run_with_handlers(
-        lambda: _show_all(as_json, refresh), cli_command="credits list", as_json=as_json
+        lambda: _show_all(output_format, as_json, refresh),
+        cli_command="credits list",
+        as_json=as_json,
     )

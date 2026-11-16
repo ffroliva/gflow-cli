@@ -88,7 +88,7 @@ def test_data_errors_export_cli_to_file(tmp_path: Path, monkeypatch: pytest.Monk
     _seed_failed_op(db)
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db))
     out = tmp_path / "errors.jsonl"
-    result = CliRunner().invoke(main, ["data", "errors", "export", "-o", str(out)])
+    result = CliRunner().invoke(main, ["data", "errors", "export", "--out-file", str(out)])
     assert result.exit_code == 0, result.output
     lines = out.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1

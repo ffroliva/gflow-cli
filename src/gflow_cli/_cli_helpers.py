@@ -37,11 +37,13 @@ from __future__ import annotations
 
 import copy
 import functools
+import inspect
 import json
 import re
 import sys
 import traceback
 from collections.abc import Callable, Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -81,6 +83,11 @@ _console = Console()
 # re-export idiom for underscore names, so __all__ is the practical fix.
 __all__ = [
     "DeprecatedAliasOption",
+    "OutputFormat",
+    "OutputFormatOption",
+    "OutputFormatType",
+    "VALID_OUTPUT_FORMATS",
+    "UpscaleLegacyShortOption",
     "_FLOW_ID_RE",
     "_OUT_DIR_SHORT_DEPRECATION_WARNING",
     "_OUT_FILE_DEPRECATION_WARNING",
@@ -98,6 +105,7 @@ __all__ = [
     "default_project",
     "deprecated_alias_option",
     "out_file_option",
+    "output_format_option",
     "run_with_handlers",
     "safe_path_text",
     "slugify_project_name",
@@ -178,25 +186,169 @@ def deprecated_alias_option(
     return decorator
 
 
+class OutputFormat(StrEnum):
+    """Supported machine-readable and tabular output formats (#1158)."""
+
+    JSON = "json"
+    TABLE = "table"
+    ID = "id"
+
+
+VALID_OUTPUT_FORMATS: frozenset[str] = frozenset({f.value for f in OutputFormat})
+
+
+class OutputFormatOption(click.Option):
+    """Marks an option as selecting the output format (json|table|id) (#1158)."""
+
+
+class OutputFormatType(click.ParamType[str]):
+    """ParamType converting -o/--output values to lowercase and enforcing remediation."""
+
+    name = "format"
+
+    def __init__(
+        self,
+        *,
+        allow_id: bool = True,
+        has_out_file: bool = False,
+        is_upscale_out: bool = False,
+        valid_formats: frozenset[str] | None = None,
+    ) -> None:
+        self.allow_id = allow_id
+        self.has_out_file = has_out_file
+        self.is_upscale_out = is_upscale_out
+        if valid_formats is not None:
+            self.valid_formats = valid_formats
+        elif allow_id:
+            self.valid_formats = VALID_OUTPUT_FORMATS
+        else:
+            self.valid_formats = frozenset({OutputFormat.JSON.value, OutputFormat.TABLE.value})
+
+    def convert(self, value: Any, param: click.Parameter | None, ctx: click.Context | None) -> str:
+        if not isinstance(value, str):
+            return str(value)
+        val_lower = value.lower()
+        if val_lower in self.valid_formats:
+            return val_lower
+        if self.has_out_file:
+            raise click.UsageError(
+                f"--output now selects the format; use --out-file {value}", ctx=ctx
+            )
+        if self.is_upscale_out:
+            raise click.UsageError(f"use --out {value}", ctx=ctx)
+        choices = ", ".join(repr(f) for f in sorted(self.valid_formats))
+        raise click.UsageError(
+            f"Invalid value for '-o' / '--output': '{value}' is not one of {choices}.", ctx=ctx
+        )
+
+
+def _resolve_chosen_format(kwargs: dict[str, Any], dest: str, default: str) -> str:
+    json_flag: bool = kwargs.pop("json_alias", False)
+    fmt: str | None = kwargs.get(dest)
+    if json_flag:
+        if fmt is not None and fmt != "json":
+            raise click.UsageError("Cannot combine --json with -o/--output")
+        return "json"
+    return default if fmt is None else fmt
+
+
+def _sync_format_args(
+    kwargs: dict[str, Any],
+    chosen_fmt: str,
+    dest: str,
+    takes_dest: bool,
+    takes_as_json: bool,
+) -> None:
+    if takes_dest:
+        kwargs[dest] = chosen_fmt
+    elif dest in kwargs:
+        kwargs.pop(dest)
+
+    if takes_as_json and "as_json" not in kwargs:
+        kwargs["as_json"] = chosen_fmt == "json"
+
+    current_ctx = click.get_current_context(silent=True)
+    if current_ctx is not None:
+        current_ctx.params[dest] = chosen_fmt
+        current_ctx.params["as_json"] = chosen_fmt == "json"
+
+
+def output_format_option(
+    dest: str = "output_format",
+    *,
+    default: str = "table",
+    allow_id: bool = True,
+    has_out_file: bool = False,
+    is_upscale_out: bool = False,
+    help: str | None = None,
+) -> Callable[[Any], Any]:
+    """Decorator adding ``-o/--output json|table|id`` and ``--json`` alias (#1158)."""
+    if help is None:
+        help = "Output format (json|table|id)." if allow_id else "Output format (json|table)."
+    fmt_type = OutputFormatType(
+        allow_id=allow_id,
+        has_out_file=has_out_file,
+        is_upscale_out=is_upscale_out,
+    )
+
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        sig = inspect.signature(f)
+        takes_dest = dest in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        takes_as_json = "as_json" in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+
+        @functools.wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            chosen_fmt = _resolve_chosen_format(kwargs, dest, default)
+            _sync_format_args(kwargs, chosen_fmt, dest, takes_dest, takes_as_json)
+            return f(*args, **kwargs)
+
+        with_json = click.option(
+            "--json",
+            "json_alias",
+            is_flag=True,
+            default=False,
+            help="Machine-readable JSON (alias for -o json).",
+        )(wrapper)
+        with_format = click.option(
+            "-o",
+            "--output",
+            dest,
+            type=fmt_type,
+            default=None,
+            help=help,
+            cls=OutputFormatOption,
+        )(with_json)
+        return with_format
+
+    return decorator
+
+
 def out_file_option(
     dest: str = "output_file",
     *,
     help: str,
 ) -> Callable[[Any], Any]:
-    """Decorator adding ``--out-file PATH`` and keeping deprecated ``-o/--output PATH`` (#1158).
-
-    Writes to ``dest`` (e.g. ``output_file`` or ``output``). Warns on stderr when
-    the deprecated spelling is used, and raises ``click.UsageError`` (exit 2)
-    naming ``--out-file`` if both are provided.
-    """
-    return deprecated_alias_option(
-        primary_opts=("--out-file",),
-        deprecated_opts=("-o", "--output"),
-        dest=dest,
+    """Decorator adding ``--out-file PATH`` (#1158)."""
+    return click.option(
+        "--out-file",
+        dest,
         type=click.Path(dir_okay=False, path_type=Path),
+        default=None,
         help=help,
-        warning_line=_OUT_FILE_DEPRECATION_WARNING,
     )
+
+
+class UpscaleLegacyShortOption(click.Option):
+    """Rejects legacy `-o DIR` on upscale with remediation (#1158)."""
+
+    def process_value(self, ctx: click.Context, value: Any) -> Any:
+        if value is not None:
+            raise click.UsageError(f"use --out {value}", ctx=ctx)
+        return None
 
 
 def upscale_out_dir_option(
@@ -204,19 +356,27 @@ def upscale_out_dir_option(
     *,
     help: str = "Output directory (defaults to the configured gflow output dir).",
 ) -> Callable[[Any], Any]:
-    """Decorator adding ``--out DIR`` and keeping deprecated short form ``-o DIR`` (#1158).
+    """Decorator adding ``--out DIR`` and rejecting deprecated short form ``-o DIR`` (#1158)."""
 
-    Reuses ``deprecated_alias_option``. Warns on stderr when ``-o`` is used,
-    and raises ``click.UsageError`` (exit 2) naming ``--out`` if both are provided.
-    """
-    return deprecated_alias_option(
-        primary_opts=("--out",),
-        deprecated_opts=("-o",),
-        dest=dest,
-        type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
-        help=help,
-        warning_line=_OUT_DIR_SHORT_DEPRECATION_WARNING,
-    )
+    def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        with_legacy = click.option(
+            "-o",
+            f"{dest}_deprecated",
+            type=click.UNPROCESSED,
+            default=None,
+            expose_value=False,
+            hidden=True,
+            cls=UpscaleLegacyShortOption,
+        )(f)
+        return click.option(
+            "--out",
+            dest,
+            type=click.Path(path_type=Path, file_okay=False, dir_okay=True),
+            default=None,
+            help=help,
+        )(with_legacy)
+
+    return decorator
 
 
 def _validate_project_id(

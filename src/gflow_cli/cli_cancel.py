@@ -17,7 +17,12 @@ from rich.console import Console
 from rich.markup import escape
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import run_with_handlers, spends_credits
+from gflow_cli._cli_helpers import (
+    OutputFormat,
+    output_format_option,
+    run_with_handlers,
+    spends_credits,
+)
 from gflow_cli.config import get_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import ServerCancelUnavailableError, TaskNotFoundError
@@ -29,8 +34,8 @@ _console = Console()
 @spends_credits(False)
 @click.command("cancel")
 @click.argument("task_id")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable JSON result.")
-def cancel(task_id: str, as_json: bool) -> None:
+@output_format_option(help="Output format (json|table|id).")
+def cancel(task_id: str, as_json: bool, output_format: str = "table") -> None:
     """Abort a queued job by id. Flow cannot cancel a generation once it has it.
 
     \b
@@ -39,12 +44,13 @@ def cancel(task_id: str, as_json: bool) -> None:
                  generation may keep running and may still be charged; exit 22
     finished  -> left as it is, state echoed, exit 0
     """
+    is_json = as_json or output_format == OutputFormat.JSON.value
 
     async def _run() -> None:
         # The queue write blocks on SQLite's lock (BEGIN IMMEDIATE), so it runs off the loop.
-        _report(task_id, await asyncio.to_thread(_abort, task_id), as_json)
+        _report(task_id, await asyncio.to_thread(_abort, task_id), is_json, output_format)
 
-    run_with_handlers(_run, cli_command="cancel", as_json=as_json)
+    run_with_handlers(_run, cli_command="cancel", as_json=is_json)
 
 
 def _abort(task_id: str) -> AbortOutcome | None:
@@ -52,13 +58,13 @@ def _abort(task_id: str) -> AbortOutcome | None:
         return abort_task(QueueRepository(store), task_id)
 
 
-def _report(task_id: str, outcome: AbortOutcome | None, as_json: bool) -> None:
+def _report(task_id: str, outcome: AbortOutcome | None, as_json: bool, output_format: str) -> None:
     if outcome is None:
         raise TaskNotFoundError(detail=f"No queued job with id {task_id!r}.")
     if outcome.state == "abandoned":
         _abandoned(task_id, outcome.previous, as_json)
     else:
-        _settled(task_id, outcome.state, outcome.previous, as_json)
+        _settled(task_id, outcome.state, outcome.previous, as_json, output_format)
 
 
 def _abandoned(task_id: str, previous: str, as_json: bool) -> None:
@@ -89,8 +95,11 @@ def _abandoned(task_id: str, previous: str, as_json: bool) -> None:
     sys.exit(json_output.exit_code_for(exc))
 
 
-def _settled(task_id: str, state: str, previous: str, as_json: bool) -> None:
+def _settled(task_id: str, state: str, previous: str, as_json: bool, output_format: str) -> None:
     """Cancelled now (nothing reached Flow), or already settled and left untouched."""
+    if output_format == OutputFormat.ID.value:
+        click.echo(task_id)
+        return
     cancelled_now = state == "cancelled" and previous != "cancelled"
     if as_json:
         doc = {"status": "ok", "task_id": task_id, "state": state, "previous_state": previous}

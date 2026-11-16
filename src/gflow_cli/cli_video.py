@@ -16,12 +16,14 @@ from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
+    OutputFormat,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
     default_project,
     out_file_option,
+    output_format_option,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -41,6 +43,16 @@ from gflow_cli.api.video import (
     reference_cap_for,
     validate_duration_for_model,
 )
+from gflow_cli.cli_video_reporting import (
+    _chain_json,
+    _emit_chain_result,
+    _emit_extend_session_result,
+    _emit_video_result,
+    _free_rerender_hint,
+    _print_chain_plan,
+    _print_extend_plan,
+    _report_migrated_extend,
+)
 from gflow_cli.config import UiMode, get_settings
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
@@ -49,7 +61,6 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
     ConfigurationError,
     DataStoreError,
-    FlowApiError,
     GFlowError,
     SceneConcatError,
 )
@@ -157,12 +168,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
             out_file_option(
                 help="Explicit output file path for the generated asset.",
             ),
-            click.option(
-                "--json",
-                "as_json",
-                is_flag=True,
-                help="Emit a machine-readable JSON result instead of Rich output.",
-            ),
+            output_format_option(has_out_file=True),
         )
     ):
         f = opt(f)
@@ -254,6 +260,7 @@ async def _generate_and_report(
     output_file: Path | None = None,
     command: str = "video",
     as_json: bool = False,
+    output_format: str = "table",
     project_id: str | None = None,
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
@@ -271,9 +278,11 @@ async def _generate_and_report(
     from gflow_cli.api.video import VideoStarted
 
     settings = get_settings()
+    is_json = as_json or output_format == OutputFormat.JSON.value
+    quiet_output = is_json or output_format == OutputFormat.ID.value
     if output_file is not None:
         refuse_cloud_storage_for_local_file(settings.storage_uri, "--out-file")
-    if not as_json:
+    if not quiet_output:
         console.print("[dim]Generating video — this takes ~2 minutes…[/dim]")
     recorder = OperationRecorder.open(settings)
     started_media_ids: list[str] = []
@@ -292,7 +301,7 @@ async def _generate_and_report(
                 path="video",
                 project_id=project_id,
                 tool_specs=tool_specs,
-                quiet=as_json,
+                quiet=quiet_output,
             )
 
             def on_started(started: VideoStarted) -> None:
@@ -372,22 +381,14 @@ async def _generate_and_report(
     finally:
         recorder.close()
 
-    if as_json:
-        json_output.emit(json_output.video_result(command=command, request=request, result=result))
-        if not result.status.succeeded:
-            raise SystemExit(1)
-        return
-
-    if not result.status.succeeded:
-        reasons = (
-            ", ".join(result.status.failure_reasons)
-            or result.status.error_message
-            or "unknown reason"
-        )
-        console.print(f"[red]Video generation failed:[/red] {reasons}")
-        raise SystemExit(1)
-
-    console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
+    _emit_video_result(
+        command=command,
+        request=request,
+        result=result,
+        output_format=output_format,
+        is_json=is_json,
+        console=console,
+    )
 
 
 async def _run_t2v(
@@ -403,6 +404,7 @@ async def _run_t2v(
     resolution: str | None = None,
     count: int = 1,
     as_json: bool = False,
+    output_format: str = "table",
     reference_entities: tuple[str, ...] = (),
     reference_entity_names: tuple[str, ...] = (),
     original_prompt: str | None = None,
@@ -438,6 +440,7 @@ async def _run_t2v(
         output_file=output_file,
         command="video t2v",
         as_json=as_json,
+        output_format=output_format,
         project_id=project_id,
         project_name=effective_title,
         tool_specs=tool_specs,
@@ -528,6 +531,7 @@ async def _run_i2v(
     output_file: Path | None = None,
     count: int = 1,
     as_json: bool = False,
+    output_format: str = "table",
     project_id: str | None = None,
 ) -> None:
     from gflow_cli.api.video import (
@@ -586,6 +590,7 @@ async def _run_i2v(
         output_file=output_file,
         command="video i2v",
         as_json=as_json,
+        output_format=output_format,
         project_id=project_id,
         project_name=effective_title,
     )
@@ -605,6 +610,7 @@ async def _run_r2v(
     count: int = 1,
     output_file: Path | None = None,
     as_json: bool = False,
+    output_format: str = "table",
     reference_entities: tuple[str, ...] = (),
     reference_entity_names: tuple[str, ...] = (),
     original_prompt: str | None = None,
@@ -639,6 +645,7 @@ async def _run_r2v(
         output_file=output_file,
         command="video r2v",
         as_json=as_json,
+        output_format=output_format,
         project_id=project_id,
         project_name=effective_title,
         tool_specs=tool_specs,
@@ -673,36 +680,6 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
         )
         raise ModelModeIncompatibilityError(detail=msg)
     return resolved
-
-
-def _print_chain_plan(
-    *,
-    links: Any,
-    model: VideoModel,
-    aspect: str,
-    skipped: int,
-    chain_id: str,
-) -> None:
-    """Render the resolved plan (used by --dry-run and the pre-spend summary)."""
-
-    typed_links: list[ChainLinkSpec] = list(links)
-    remaining = len(typed_links) - skipped
-    operation_noun = "operation" if remaining == 1 else "operations"
-    console.print(f"[bold]Chain plan[/bold] ([dim]{chain_id}[/dim])")
-    console.print(
-        f"  {len(typed_links)} link(s), aspect {aspect}, model {model.value}"
-        + (f" — {skipped} already completed, {remaining} to generate" if skipped else "")
-    )
-    console.print(f"  [yellow]{remaining} pending video {operation_noun}[/yellow]")
-    console.print(
-        "  Video operations may consume credits. Current cost varies by model, duration, "
-        "account tier, and Flow policy; check Google Flow before submitting."
-    )
-    for idx, spec in enumerate(typed_links):
-        mode = "t2v" if idx == 0 else "i2v"
-        link_model = spec.model.value if spec.model is not None else model.value
-        status = " [dim](done)[/dim]" if idx < skipped else ""
-        console.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
 
 
 def _resolve_chain_resume(
@@ -952,6 +929,7 @@ async def _run_chain(
     yes: bool,
     dry_run: bool,
     as_json: bool,
+    output_format: str = "table",
     tool_specs: tuple[str, ...] = (),
 ) -> None:
     """Drive a sequential last-frame I2V chain from a JSONL manifest.
@@ -1101,67 +1079,14 @@ async def _run_chain(
         recorder.close()
         catalog_recorder.close()
 
-    if as_json:
-        json_output.emit(
-            _chain_json(
-                chain_id=chain_id,
-                results=results,
-                partial=partial,
-                completed_paths=[r.local_path for r in results],
-            )
-        )
-        return
-
-    console.print(f"[bold green]Chain complete:[/bold green] {len(results)} link(s)")
-    for r in results:
-        console.print(f"  [{r.index}] {r.local_path}")
-    console.print(f"[dim]Stitch into one file with `gflow scene` (chain_id {chain_id}).[/dim]")
-
-
-def _free_rerender_hint(project_id: str, profile: str, clips: list[str], *, resumed: bool) -> str:
-    """The `gflow scene create` command that renders this extend run without credits."""
-    refs = " ".join(clips) if clips else "<clip-workflow-id> ..."
-    command = (
-        f"gflow scene create --project {project_id} --profile {profile} {refs} --out-file <path>"
+    _emit_chain_result(
+        results=results,
+        chain_id=chain_id,
+        partial=partial,
+        output_format=output_format,
+        as_json=as_json,
+        console=console,
     )
-    if resumed:
-        return (
-            f"{command}. This run resumed a scene: put its earlier clips before these, in "
-            "the order and with the trims `gflow scene show` lists."
-        )
-    return command
-
-
-def _chain_json(
-    *,
-    chain_id: str,
-    results: list[Any],
-    partial: bool,
-    completed_paths: list[Path],
-    error: GFlowError | None = None,
-) -> dict[str, Any]:
-    """Machine-readable chain result payload."""
-    members = (
-        {"charged": error.charged, "next_action": error.resolved_next_action()}
-        if error is not None
-        else {}
-    )
-    return {
-        **members,
-        "status": "fail" if partial else "ok",
-        "command": "video chain",
-        "chain_id": chain_id,
-        "partial": partial,
-        "links": [
-            {
-                "index": r.index,
-                "media_id": r.media_id,
-                "local_path": str(r.local_path),
-            }
-            for r in results
-        ],
-        "completed_paths": [str(p) for p in completed_paths],
-    }
 
 
 @click.group()
@@ -1253,6 +1178,7 @@ def t2v(
     out_dir: Path | None,
     output_file: Path | None,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """Generate a video from PROMPT."""
     _reject_agentic_ui_mode(ui_mode)
@@ -1260,6 +1186,7 @@ def t2v(
     profile_name = _resolve_profile(profile)
     project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_t2v(
             profile_name=profile_name,
@@ -1273,6 +1200,7 @@ def t2v(
             resolution=resolution,
             count=count,
             as_json=as_json,
+            output_format=output_format,
             reference_entities=tuple(reference_entities),
             reference_entity_names=tuple(reference_entity_names),
             original_prompt=None,
@@ -1283,7 +1211,7 @@ def t2v(
             ui_mode=UiMode(ui_mode) if ui_mode else None,
         ),
         cli_command="video t2v",
-        as_json=as_json,
+        as_json=is_json,
     )
 
 
@@ -1448,6 +1376,7 @@ def i2v(  # NOSONAR
     out_dir: Path | None,
     output_file: Path | None,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """Generate a video from an initial frame + motion PROMPT."""
     _reject_agentic_ui_mode(ui_mode)
@@ -1482,8 +1411,10 @@ def i2v(  # NOSONAR
     start_local = local_files.get(start_ref_id or "")
     end_local = local_files.get(end_ref_id or "")
     provider_dir = _make_provider_dir(profile_name)
+    is_json = as_json or output_format == OutputFormat.JSON.value
+    quiet_output = is_json or output_format == OutputFormat.ID.value
     prompt_to_send, original_prompt, applied_tool = apply_tool_option(
-        resolved_prompt, tool_specs, category="video", quiet=as_json
+        resolved_prompt, tool_specs, category="video", quiet=quiet_output
     )
     i2v_params = _I2VParams(
         image=start_path,
@@ -1515,10 +1446,11 @@ def i2v(  # NOSONAR
             out_dir=out_dir,
             output_file=output_file,
             as_json=as_json,
+            output_format=output_format,
             project_id=project_id,
         ),
         cli_command="video i2v",
-        as_json=as_json,
+        as_json=is_json,
     )
 
 
@@ -1607,12 +1539,7 @@ def i2v(  # NOSONAR
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of Rich output.",
-)
+@output_format_option(has_out_file=True)
 def r2v(
     prompt: str,
     refs: tuple[str, ...],
@@ -1630,6 +1557,7 @@ def r2v(
     output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """Generate a video from reference images (--ref) + PROMPT."""
     # Reject over-cap ref counts (and the unsupported model+R2V combo) at the
@@ -1657,6 +1585,7 @@ def r2v(
     profile_name = _resolve_profile(profile)
     project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_r2v(
             profile_name=profile_name,
@@ -1671,6 +1600,7 @@ def r2v(
             out_dir=out_dir,
             output_file=output_file,
             as_json=as_json,
+            output_format=output_format,
             reference_entities=tuple(reference_entities),
             reference_entity_names=tuple(reference_entity_names),
             original_prompt=None,
@@ -1680,7 +1610,7 @@ def r2v(
             tool_specs=tool_specs,
         ),
         cli_command="video r2v",
-        as_json=as_json,
+        as_json=is_json,
     )
 
 
@@ -1784,12 +1714,7 @@ def r2v(
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory for the seed frames, and the link mp4s unless --out-file is given.",
 )
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of Rich output.",
-)
+@output_format_option(has_out_file=True)
 def chain(
     manifest: str,
     model: str | None,
@@ -1805,6 +1730,7 @@ def chain(
     output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """Render the chain MANIFEST (one continuous last-frame I2V sequence)."""
     # Before the cost prompt and the browser: the clips' folder must be creatable.
@@ -1814,6 +1740,7 @@ def chain(
         raise click.BadParameter(msg, param_hint="'--out-file'")
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_chain(
             profile_name=profile_name,
@@ -1830,10 +1757,11 @@ def chain(
             yes=yes,
             dry_run=dry_run,
             as_json=as_json,
+            output_format=output_format,
             tool_specs=tool_specs,
         ),
         cli_command="video chain",
-        as_json=as_json,
+        as_json=is_json,
     )
 
 
@@ -1852,41 +1780,6 @@ _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
 
 
-def _print_extend_plan(
-    *, media_id: str, prompt: str, aspect: str, segments: int, migrated: bool = False
-) -> None:
-    """Show what will be submitted BEFORE a client exists.
-
-    Deliberately printed without opening a browser: `--dry-run` must be instant
-    and must not be able to spend. The exact credit cost is tier-dependent and
-    comes from the (free) capability listing once the run starts; the balance
-    check that uses it aborts before the first submit.
-    """
-    console.print("[bold]Extend plan[/bold]")
-    console.print(f"  source clip : {media_id}")
-    console.print(f"  prompt      : {prompt}")
-    console.print(f"  aspect      : {aspect}")
-    if migrated:
-        # No extend price is readable before submitting here; the length depends on the key.
-        console.print(
-            "  cost        : spends credits — flow.google.com does not report the price "
-            "before submitting; compare `gflow credits user` before and after"
-        )
-        console.print("  length      : set by the key; measured 2026-11-08, the Omni key grows")
-        console.print("                the source clip in place by ~4s (Veo: a separate ~7s clip)")
-        return
-    # Report CONTENT seconds, not billed seconds. This is the last screen before
-    # the confirm prompt, so quoting Flow's advertised 8s here would contradict
-    # --help, USAGE and KNOWN_ISSUES on the one line a user cannot skip.
-    footage = segments * _EXTEND_CONTENT_SECONDS
-    billed = segments * _EXTEND_SEGMENT_SECONDS
-    console.print(
-        f"  segments    : {segments} x ~{_EXTEND_CONTENT_SECONDS}s = ~{footage}s of new "
-        f"footage (Flow bills {billed}s)"
-    )
-    console.print("  cost        : spends credits — exact amount is shown before submitting")
-
-
 async def _run_extend(  # noqa: PLR0913
     *,
     profile_name: str,
@@ -1901,6 +1794,7 @@ async def _run_extend(  # noqa: PLR0913
     scene_id: str | None,
     seed: int | None,
     as_json: bool,
+    output_format: str = "table",
     migrated: bool = False,
 ) -> None:
     """Submit N chained extends, then optionally render them to one file."""
@@ -1935,6 +1829,7 @@ async def _run_extend(  # noqa: PLR0913
                 output_file=output_file,
                 project_id=project_id,
                 as_json=as_json,
+                output_format=output_format,
                 recorder=recorder,
             )
             return
@@ -1951,6 +1846,7 @@ async def _run_extend(  # noqa: PLR0913
             scene_id=scene_id,
             seed=seed,
             as_json=as_json,
+            output_format=output_format,
             recorder=recorder,
         )
     finally:
@@ -1970,6 +1866,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
     output_file: Path | None,
     project_id: str,
     as_json: bool,
+    output_format: str = "table",
     recorder: OperationRecorder | None,
 ) -> None:
     """One segment on flow.google.com: Flow's own extend UI, downloaded to a file.
@@ -2010,6 +1907,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
         project_id=project_id,
         aspect=aspect,
         as_json=as_json,
+        output_format=output_format,
     )
 
 
@@ -2044,98 +1942,6 @@ def _migrated_extend_on_started(  # noqa: PLR0913
     return _on_started
 
 
-def _migrated_extend_payload(
-    outcome: migrated_extend.ExtendOutcome,
-    rendered: str | None,
-    *,
-    profile_name: str,
-    media_id: str,
-    project_id: str,
-    aspect: str | None,
-) -> dict[str, Any]:
-    """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
-    record = outcome.record
-    ok = rendered is not None
-    added, billed = _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS  # a separate Veo segment
-    if record.media_id == media_id:  # #1184: grown in place; billed is the token, not measured
-        added = billed = migrated_extend.extend_key_seconds(outcome.model_key)
-    return {
-        "status": "ok" if ok else "fail",
-        "command": _EXTEND_COMMAND,
-        "media_id": record.media_id,
-        "generation_status": (
-            "MEDIA_GENERATION_STATUS_COMPLETED" if ok else "MEDIA_GENERATION_STATUS_FAILED"
-        ),
-        "succeeded": ok,
-        "local_path": rendered,
-        "output": rendered,
-        "failure_reasons": [],
-        "error_message": None if ok else f"Flow reported status {record.status}",
-        "scene_id": outcome.scene_id,
-        "project_id": project_id,
-        "model": outcome.model_key,
-        "segments_requested": 1,
-        "segments_completed": 1 if ok else 0,
-        "media_ids": [record.media_id],
-        "credits_spent": None,
-        "seconds_added": added if ok else 0,
-        "seconds_billed": billed,
-        "aborted": not ok,
-        "profile": profile_name,
-        "host": "flow.google.com",
-        # #1201: the extension was submitted; on failure its outcome needs settling.
-        **({} if ok else {"charged": "maybe", "next_action": "reconcile"}),
-        "request": {
-            "model": outcome.model_key,
-            "mode": "extend",
-            "aspect": outcome.aspect or aspect,
-            "duration": added,
-            "count": 1,
-            "seed": None,
-        },
-    }
-
-
-def _report_migrated_extend(  # noqa: PLR0913
-    outcome: migrated_extend.ExtendOutcome,
-    target: Path | None,
-    *,
-    profile_name: str,
-    media_id: str,
-    project_id: str,
-    aspect: str | None,
-    as_json: bool,
-) -> None:
-    """Emit the migrated extend's result, then raise if Flow did not complete it."""
-    record = outcome.record
-    ok = target is not None
-    rendered = str(target) if target is not None else None
-    if as_json:
-        json_output.emit(
-            _migrated_extend_payload(
-                outcome,
-                rendered,
-                profile_name=profile_name,
-                media_id=media_id,
-                project_id=project_id,
-                aspect=aspect,
-            )
-        )
-    else:
-        state = "[bold green]Extended[/bold green]" if ok else "[red]Failed[/red]"
-        console.print(f"{state} — {record.media_id}, scene {outcome.scene_id or 'unknown'}")
-        if rendered:
-            console.print(f"  wrote: {rendered}")
-    if not ok:
-        err = FlowApiError(
-            f"extend of {media_id} ended with Flow status {record.status}; it may have been billed",
-            route="batchexecute:fZytfe",
-        )
-        if as_json:
-            raise SystemExit(json_output.exit_code_for(err))
-        raise err
-
-
 async def _extend_session(  # noqa: PLR0913
     *,
     profile_name: str,
@@ -2150,6 +1956,7 @@ async def _extend_session(  # noqa: PLR0913
     scene_id: str | None,
     seed: int | None,
     as_json: bool,
+    output_format: str = "table",
     recorder: OperationRecorder | None,
 ) -> None:
     """The browser-bound half of `_run_extend`, split out so the caller can own
@@ -2313,90 +2120,21 @@ async def _extend_session(  # noqa: PLR0913
                 raise billed from exc
             rendered = str(output_file)
 
-        payload: dict[str, Any] = {
-            "scene_id": target_scene,
-            "project_id": project_id,
-            "model": model_key,
-            "segments_requested": segments,
-            "segments_completed": len(result.completed_media_ids),
-            "media_ids": result.completed_media_ids,
-            "credits_spent": result.credits_spent,
-            "seconds_added": len(result.completed_media_ids) * _EXTEND_CONTENT_SECONDS,
-            "seconds_billed": len(result.completed_media_ids) * _EXTEND_SEGMENT_SECONDS,
-            "output": rendered,
-            "aborted": result.aborted,
-            "profile": profile_name,
-        }
-        if as_json:
-            # Emit the video_result wire shape so downstream parsers (the reels
-            # provider client) read extend exactly like t2v/i2v: status +
-            # succeeded + media_id + local_path + request.mode. Extend-specific
-            # fields ride alongside.
-            last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
-            # #1201: a failed run read by status alone would hide billed segments.
-            outcome: dict[str, str] = {}
-            if result.aborted or result.error is not None:
-                # Credits spent means a segment was accepted and billed, finished or not.
-                billed = bool(result.completed_media_ids) or result.credits_spent > 0
-                outcome = {"charged": "yes" if billed else "maybe", "next_action": "reconcile"}
-                operation_id = getattr(result.error, "operation_id", "")
-                if operation_id:
-                    outcome["operation_id"] = operation_id
-            payload.update(
-                {
-                    "status": "ok" if not result.aborted and result.error is None else "fail",
-                    "command": _EXTEND_COMMAND,
-                    "media_id": last_media,
-                    "generation_status": (
-                        "MEDIA_GENERATION_STATUS_COMPLETED"
-                        if not result.aborted and result.error is None
-                        else "MEDIA_GENERATION_STATUS_FAILED"
-                    ),
-                    "succeeded": not result.aborted and result.error is None,
-                    "local_path": rendered,
-                    **outcome,
-                    "failure_reasons": [],
-                    "error_message": str(result.error) if result.error is not None else None,
-                    "request": {
-                        "model": model_key,
-                        "mode": "extend",
-                        "aspect": aspect,
-                        "duration": segments * _EXTEND_CONTENT_SECONDS,
-                        "count": segments,
-                        "seed": seed,
-                    },
-                }
-            )
-            json_output.emit(payload)
-        else:
-            state = (
-                "[yellow]Partial[/yellow]"
-                if result.aborted
-                else "[bold green]Extended[/bold green]"
-            )
-            console.print(
-                f"{state} — {len(result.completed_media_ids)}/{segments} segment(s), "
-                f"{result.credits_spent} credits, scene {target_scene}"
-            )
-            if rendered:
-                console.print(f"  wrote: {rendered}")
-            elif result.completed_media_ids:
-                console.print(f"  render one file: {rerender}")
-
-        # A chain that abandoned paid work must not exit 0 and look complete.
-        if result.error is not None:
-            if as_json:
-                # The payload above is already on stdout. Re-raising would let
-                # run_with_handlers print a SECOND JSON document, and
-                # `json.loads(stdout)` would fail with "Extra data" — the same
-                # trap its own `except SystemExit` branch documents.
-                code = (
-                    json_output.exit_code_for(result.error)
-                    if isinstance(result.error, GFlowError)
-                    else 1
-                )
-                raise SystemExit(code)
-            raise result.error
+        _emit_extend_session_result(
+            result=result,
+            rendered=rendered,
+            profile_name=profile_name,
+            project_id=project_id,
+            model_key=model_key,
+            aspect=aspect,
+            segments=segments,
+            seed=seed,
+            target_scene=target_scene,
+            rerender=rerender,
+            output_format=output_format,
+            as_json=as_json,
+            console=console,
+        )
 
 
 @spends_credits(True)
@@ -2487,7 +2225,7 @@ async def _extend_session(  # noqa: PLR0913
 @click.option("--yes", is_flag=True, help="Skip the cost confirmation.")
 @click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
 @click.option("--profile", default=None, help="Auth profile to use.")
-@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
     media_id: str,
     prompts: tuple[str, ...],
@@ -2503,6 +2241,7 @@ def extend(  # noqa: PLR0913
     dry_run: bool,
     profile: str | None,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """Continue MEDIA_ID, one PROMPT per 8-second segment."""
     # --resume-from and --scene are the same knob wearing two names; resume is
@@ -2522,17 +2261,18 @@ def extend(  # noqa: PLR0913
         migrated_route(None, get_settings().flow_host, prefer_migrated=refusal is None)
         == "migrated"
     )
+    is_json = as_json or output_format == OutputFormat.JSON.value
     if migrated and refusal is not None:
 
         async def _refuse() -> None:
             raise refusal
 
-        run_with_handlers(_refuse, cli_command=_EXTEND_COMMAND, as_json=as_json)
+        run_with_handlers(_refuse, cli_command=_EXTEND_COMMAND, as_json=is_json)
         return
     # The cost gate runs before a client exists, so --dry-run cannot spend and
     # cannot even open a browser. Machine-readable output must not carry the
     # human plan preamble — it would corrupt the JSON document on stdout.
-    if not as_json:
+    if not is_json and output_format != OutputFormat.ID.value:
         _print_extend_plan(
             media_id=media_id,
             prompt=prompts[0],
@@ -2561,10 +2301,11 @@ def extend(  # noqa: PLR0913
             scene_id=scene_id,
             seed=seed,
             as_json=as_json,
+            output_format=output_format,
             migrated=migrated,
         ),
         cli_command=_EXTEND_COMMAND,
-        as_json=as_json,
+        as_json=is_json,
     )
 
 

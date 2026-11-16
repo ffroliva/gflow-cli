@@ -67,7 +67,7 @@ async def _call(tool: str, output: str) -> tuple[dict[str, Any], AsyncMock]:
         patch.object(tools_mod, "_run_generation_task", run),
         patch.object(tools_mod, "_resolve_and_validate_profile", return_value="default"),
     ):
-        result = await getattr(tools_mod, tool)(prompt="a dog", output=output)
+        result = await getattr(tools_mod, tool)(prompt="a dog", out_file=output)
     return result, run
 
 
@@ -134,16 +134,6 @@ async def test_tool_refuses_the_output_dir_itself_before_it_exists(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", _TOOLS)
-async def test_tool_queues_a_relative_output_resolved_inside(output_dir: Path, tool: str) -> None:
-    _, run = await _call(tool, "sub/x.bin")
-    run.assert_called_once()
-    assert run.call_args.kwargs["payload"]["output_file"] == str(
-        (output_dir / "sub" / "x.bin").resolve()
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("tool", _TOOLS)
 async def test_tool_queues_a_relative_out_file_resolved_inside(output_dir: Path, tool: str) -> None:
     _, run = await _call_out_file(tool, "sub/custom.png")
     run.assert_called_once()
@@ -154,21 +144,9 @@ async def test_tool_queues_a_relative_out_file_resolved_inside(output_dir: Path,
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tool", _TOOLS)
-async def test_tool_refuses_both_out_file_and_output(tool: str) -> None:
-    run = AsyncMock(return_value={"status": "completed"})
-    with (
-        patch.object(tools_mod, "_run_generation_task", run),
-        patch.object(tools_mod, "_resolve_and_validate_profile", return_value="default"),
-    ):
-        result = await getattr(tools_mod, tool)(
-            prompt="a dog", out_file="custom.png", output="legacy.png"
-        )
+async def test_tool_rejects_retired_output_parameter(tool: str) -> None:
+    result = await getattr(tools_mod, tool)(prompt="a dog", output="legacy.png")
     assert result["status"] == "error"
-    assert result["error"]["status"] == 400
-    assert result["error"]["title"] == "Conflicting Output Options"
-    assert "out_file" in result["error"]["detail"]
-    assert "output" in result["error"]["detail"]
-    run.assert_not_called()
 
 
 @pytest.mark.asyncio

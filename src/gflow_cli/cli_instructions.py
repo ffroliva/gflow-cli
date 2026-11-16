@@ -26,9 +26,11 @@ from rich.table import Table
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
+    OutputFormat,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
+    output_format_option,
     run_with_handlers,
     spends_credits,
 )
@@ -322,17 +324,13 @@ async def _run_add(
     help="List a project's Agent-Mode brief cards (reads the live server brief).",
 )
 @_common_options
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit a machine-readable JSON result instead of a Rich table.",
-)
+@output_format_option(help="Output format (json|table|id).")
 def list_cards(
     project_id: str,
     profile: str | None,
     transport: str | None,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     """List the instruction cards on the project's brief."""
     provider_dir, headless = _prepare(profile)
@@ -343,6 +341,7 @@ def list_cards(
             transport=transport,
             project_id=project_id,
             as_json=as_json,
+            output_format=output_format,
         ),
         cli_command="instructions list",
         as_json=as_json,
@@ -356,12 +355,17 @@ async def _run_list(
     transport: str | None,
     project_id: str,
     as_json: bool,
+    output_format: str = "table",
 ) -> None:
     async with FlowApiClient(
         profile_dir=profile_dir, headless=headless, transport=transport
     ) as client:
         brief = await client.get_agent_info(project_id)
-    if as_json:
+    if output_format == OutputFormat.ID.value:
+        for c in brief.cards:
+            click.echo(c.id)
+        return
+    if as_json or output_format == OutputFormat.JSON.value:
         json_output.emit(_brief_payload(project_id, brief))
     else:
         _render_brief_table(project_id, brief)

@@ -607,9 +607,10 @@ def test_cli_data_stats_help_json_option_text() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["data", "stats", "--help"])
     assert result.exit_code == 0
-    assert "Emit one JSON object instead of tables." in result.output
-    assert "Emit JSONL instead of a Rich table." not in result.output
+    assert "-o, --output" in result.output
+    assert "--json" in result.output
 
     list_result = runner.invoke(main, ["data", "list", "projects", "--help"])
     assert list_result.exit_code == 0
-    assert "Emit JSONL instead of a Rich table." in list_result.output
+    assert "-o, --output" in list_result.output
+    assert "--json" in list_result.output

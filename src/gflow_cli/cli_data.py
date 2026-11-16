@@ -20,7 +20,9 @@ from rich.text import Text
 
 from gflow_cli import json_output, profile_store
 from gflow_cli._cli_helpers import (
+    OutputFormat,
     out_file_option,
+    output_format_option,
     run_with_handlers,
     safe_path_text,
     spends_credits,
@@ -235,12 +237,21 @@ def _emit(
     as_json: bool,
     table_fn: Any,
     empty_msg: str,
+    output_format: str = OutputFormat.TABLE.value,
+    id_attr: str | None = None,
 ) -> None:
     if not rows:
-        if not as_json and sys.stdout.isatty():
+        if not as_json and output_format != OutputFormat.ID.value and sys.stdout.isatty():
             click.echo(empty_msg)
         return
-    if as_json or not sys.stdout.isatty():
+    if output_format == OutputFormat.ID.value:
+        if id_attr is not None:
+            for r in rows:
+                val = getattr(r, id_attr, None)
+                if val is not None:
+                    click.echo(val)
+        return
+    if as_json or output_format == OutputFormat.JSON.value or not sys.stdout.isatty():
         _emit_jsonl(rows)
     else:
         table_fn(rows)
@@ -276,12 +287,7 @@ _OFFSET_OPT = click.option(
     show_default=True,
     help="Number of rows to skip (pagination).",
 )
-_JSON_OPT = click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit JSONL instead of a Rich table.",
-)
+_FORMAT_OPT = output_format_option(help="Output format (json|table|id).")
 
 
 @click.group()
@@ -356,8 +362,14 @@ async def _run_media(*, profile: str | None, media_id: str) -> None:
     default=None,
     help="Scope the lookup to a specific profile. Default: search all profiles.",
 )
-@click.option("--json", "as_json", is_flag=True, help="Emit a JSON summary instead of text.")
-def download(media_id: str, out_dir: Path | None, profile: str | None, as_json: bool) -> None:
+@output_format_option(help="Output format (json|table|id).")
+def download(
+    media_id: str,
+    out_dir: Path | None,
+    profile: str | None,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """Fetch an already-generated video from Flow by its media ID.
 
     For a generation that finished and was billed but whose download failed, which leaves
@@ -373,17 +385,31 @@ def download(media_id: str, out_dir: Path | None, profile: str | None, as_json: 
     immediately with exit 11 rather than opening a browser. See issue #877.
     """
     run_with_handlers(
-        lambda: _run_download(media_id=media_id, out_dir=out_dir, profile=profile, as_json=as_json),
+        lambda: _run_download(
+            media_id=media_id,
+            out_dir=out_dir,
+            profile=profile,
+            as_json=as_json,
+            output_format=output_format,
+        ),
         cli_command="data download",
         as_json=as_json,
     )
 
 
 async def _run_download(
-    *, media_id: str, out_dir: Path | None, profile: str | None, as_json: bool
+    *,
+    media_id: str,
+    out_dir: Path | None,
+    profile: str | None,
+    as_json: bool,
+    output_format: str = "table",
 ) -> None:
     result = await download_media(media_id=media_id, profile=profile, out_dir=out_dir)
-    if as_json:
+    if output_format == OutputFormat.ID.value:
+        click.echo(result.media_id)
+        return
+    if as_json or output_format == OutputFormat.JSON.value:
         click.echo(
             json.dumps(
                 {
@@ -423,12 +449,25 @@ def list_group() -> None:
 @_PROFILE_OPT
 @_LIMIT_OPT
 @_OFFSET_OPT
-@_JSON_OPT
+@_FORMAT_OPT
 @_guard
-def list_projects_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
+def list_projects_cmd(
+    profile: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """List projects newest-first."""
     rows = list_projects(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
-    _emit(rows, as_json, _emit_projects_table, "No projects recorded.")
+    _emit(
+        rows,
+        as_json,
+        _emit_projects_table,
+        "No projects recorded.",
+        output_format=output_format,
+        id_attr="project_id",
+    )
 
 
 _ALL_COPIES_OPT = click.option(
@@ -444,7 +483,7 @@ _ALL_COPIES_OPT = click.option(
 @_PROFILE_OPT
 @_LIMIT_OPT
 @_OFFSET_OPT
-@_JSON_OPT
+@_FORMAT_OPT
 @_ALL_COPIES_OPT
 @_guard
 def list_images_cmd(
@@ -453,6 +492,7 @@ def list_images_cmd(
     offset: int,
     as_json: bool,
     all_copies: bool,
+    output_format: str = "table",
 ) -> None:
     """List images newest-first.
 
@@ -466,7 +506,14 @@ def list_images_cmd(
         offset=offset,
         all_copies=all_copies,
     )
-    _emit(rows, as_json, _emit_images_table, "No images recorded.")
+    _emit(
+        rows,
+        as_json,
+        _emit_images_table,
+        "No images recorded.",
+        output_format=output_format,
+        id_attr="media_id",
+    )
 
 
 @spends_credits(False)
@@ -474,7 +521,7 @@ def list_images_cmd(
 @_PROFILE_OPT
 @_LIMIT_OPT
 @_OFFSET_OPT
-@_JSON_OPT
+@_FORMAT_OPT
 @_ALL_COPIES_OPT
 @_guard
 def list_videos_cmd(
@@ -483,6 +530,7 @@ def list_videos_cmd(
     offset: int,
     as_json: bool,
     all_copies: bool,
+    output_format: str = "table",
 ) -> None:
     """List videos newest-first.
 
@@ -496,7 +544,14 @@ def list_videos_cmd(
         offset=offset,
         all_copies=all_copies,
     )
-    _emit(rows, as_json, _emit_videos_table, "No videos recorded.")
+    _emit(
+        rows,
+        as_json,
+        _emit_videos_table,
+        "No videos recorded.",
+        output_format=output_format,
+        id_attr="media_id",
+    )
 
 
 @spends_credits(False)
@@ -504,9 +559,15 @@ def list_videos_cmd(
 @_PROFILE_OPT
 @_LIMIT_OPT
 @_OFFSET_OPT
-@_JSON_OPT
+@_FORMAT_OPT
 @_guard
-def list_errors_cmd(profile: str | None, limit: int, offset: int, as_json: bool) -> None:
+def list_errors_cmd(
+    profile: str | None,
+    limit: int,
+    offset: int,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """List failed generation operations newest-first (#341).
 
     Shows when each failure happened, which command/mode/model it hit, and the
@@ -514,19 +575,38 @@ def list_errors_cmd(profile: str | None, limit: int, offset: int, as_json: bool)
     detail — the dataset for WAF-cadence and reliability analysis.
     """
     rows = list_errors(db_path=_db_path(), profile=profile, limit=limit, offset=offset)
-    _emit(rows, as_json, _emit_errors_table, "No failed operations recorded.")
+    _emit(
+        rows,
+        as_json,
+        _emit_errors_table,
+        "No failed operations recorded.",
+        output_format=output_format,
+        id_attr="error_type",
+    )
 
 
 @spends_credits(False)
 @list_group.command(name="profiles")
 @_LIMIT_OPT
 @_OFFSET_OPT
-@_JSON_OPT
+@_FORMAT_OPT
 @_guard
-def list_profiles_cmd(limit: int, offset: int, as_json: bool) -> None:
+def list_profiles_cmd(
+    limit: int,
+    offset: int,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
     """List catalog-known profiles (not auth-known)."""
     rows = list_profiles(db_path=_db_path(), limit=limit, offset=offset)
-    _emit(rows, as_json, _emit_profiles_table, "No profiles recorded.")
+    _emit(
+        rows,
+        as_json,
+        _emit_profiles_table,
+        "No profiles recorded.",
+        output_format=output_format,
+        id_attr="profile_name",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -649,17 +729,12 @@ def _emit_stats(payload: dict[str, Any], as_json: bool) -> None:
     show_default=True,
     help="Number of weeks to summarize (1..53).",
 )
-@click.option(
-    "--json",
-    "as_json",
-    is_flag=True,
-    help="Emit one JSON object instead of tables.",
-)
+@output_format_option(allow_id=False, help="Output format (json|table).")
 @_guard
-def stats_cmd(weeks: int, as_json: bool) -> None:
+def stats_cmd(weeks: int, as_json: bool, output_format: str = "table") -> None:
     """Summarize local usage from counters and catalog (#1164)."""
     payload = collect_usage_stats(weeks=weeks)
-    _emit_stats(payload, as_json)
+    _emit_stats(payload, as_json or output_format == OutputFormat.JSON.value)
 
 
 # ---------------------------------------------------------------------------
@@ -1024,7 +1099,7 @@ async def _run_data_sync(
         "Without it, sync WRITES by default."
     ),
 )
-@click.option("--json", "as_json", is_flag=True, help="Emit a JSON summary instead of text.")
+@output_format_option(allow_id=False, help="Output format (json|table).")
 @click.option("--profile", default=None, help="Profile whose catalog rows to sync.")
 def sync_cmd(
     names: bool,
@@ -1036,6 +1111,7 @@ def sync_cmd(
     dry_run: bool,
     as_json: bool,
     profile: str | None,
+    output_format: str = "table",
 ) -> None:
     """Reconcile nameless catalog rows against remote Flow project listings.
 
@@ -1047,6 +1123,7 @@ def sync_cmd(
     Exits 34 when some projects fail (re-run continues where it left off).
     """
     del names, sweep_all  # required scope flag / explicit-default marker only
+    is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_data_sync(
             profile=profile,
@@ -1055,8 +1132,8 @@ def sync_cmd(
             since=since,
             max_projects=max_projects,
             dry_run=dry_run,
-            as_json=as_json,
+            as_json=is_json,
         ),
         cli_command="data sync",
-        as_json=as_json,
+        as_json=is_json,
     )

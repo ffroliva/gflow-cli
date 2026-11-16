@@ -254,6 +254,8 @@ def test_mapped_tools_are_registered(mcp_server: Any) -> None:
 _CLI_ONLY_PARAMS: frozenset[str] = frozenset(
     {
         "as_json",  # MCP always returns structured data
+        "json_alias",  # CLI --json alias for -o json (#1158)
+        "output_format",  # MCP always returns structured data (#1158)
         "out",
         "out_dir",
         "read_stdin",
