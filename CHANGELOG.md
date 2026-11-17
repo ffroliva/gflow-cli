@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.101.1] — 2026-11-17
+
 ### Fixed
 
 - **`GFLOW_CLI_BROWSER_ENGINE=patchright` no longer fails every flow.google.com generation with exit 23 "0 option groups rendered" ([#1319](https://github.com/ffroliva/gflow-cli/issues/1319)).** The `patchright` extra's pin moves from `1.61.2` to `1.64.4`. In 1.61.2, `locator.last` and `locator.nth(-1)` counted `0` whenever exactly one element matched, so the settings pane, the library picker and every other `.last` locator resolved to nothing while Flow's UI was unchanged. A real-engine regression test (`tests/api/test_engine_locator_contract.py`) now drives each installed engine against system Chrome, because the fake pages in the unit suite cannot observe a driver regression. The default `playwright` engine was not affected. Workaround on older releases: `GFLOW_CLI_BROWSER_ENGINE=playwright`.
+  - **Upgrading must re-install the extra.** `gflow update` and a plain `pip install -U gflow-cli` do not upgrade an extra, so patchright can stay at 1.61.2. Upgrade with `pip install -U 'gflow-cli[patchright]'`, or `uv tool install 'gflow-cli[patchright]' --force` for a uv tool install, or `pip install patchright==1.64.4` if patchright was installed on its own. Then check that `pip show patchright` reports `1.64.4`.
 
 ## [0.101.0] — 2026-11-16
 
@@ -7228,7 +7231,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.101.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.101.1...HEAD
+[0.101.1]: https://github.com/ffroliva/gflow-cli/compare/v0.101.0...v0.101.1
 [0.101.0]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...v0.101.0
 [0.100.1]: https://github.com/ffroliva/gflow-cli/compare/v0.100.0...v0.100.1
 [0.100.0]: https://github.com/ffroliva/gflow-cli/compare/v0.99.0...v0.100.0
