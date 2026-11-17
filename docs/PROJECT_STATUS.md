@@ -4,6 +4,16 @@
 
 ## Current release
 
+**v0.101.1 — alpha.** Patch release fixing exit 23 "0 option groups rendered" on every flow.google.com generation under `GFLOW_CLI_BROWSER_ENGINE=patchright` (#1319).
+
+**Fixed.**
+- **patchright `.last` locators (#1319).** The `patchright` extra moves from `1.61.2` to an exact `1.64.4`. In 1.61.2, `locator.last` and `locator.nth(-1)` counted `0` for a single match, so the migrated composer's settings pane and library picker resolved to nothing. A real-engine regression test and a dedicated `engine-contract` CI job now cover both browser engines. The default `playwright` engine was not affected.
+- **Upgrade note.** An upgrade must re-install the extra (`pip install -U 'gflow-cli[patchright]'`); `gflow update` alone leaves patchright at its installed version.
+
+Full ledger: [LIVE_VERIFICATION_v0.101.1](LIVE_VERIFICATION_v0.101.1.md).
+
+<details><summary>v0.101.0 — universal output format selector</summary>
+
 **v0.101.0 — alpha.** Breaking output flag migration aligning `-o/--output` with standard CLI format selectors (`kubectl`, `gh`, `az`, `gcloud`) and strictly enforcing `--out-file PATH` for media/export file destinations across all commands (#1158).
 
 **Breaking Changes.**
@@ -12,6 +22,8 @@
 - **MCP Surface Clean-up.** Removed deprecated `output` argument from `gflow_generate_image` and `gflow_generate_video` (`out_file` is the sole destination parameter).
 
 Full ledger: [LIVE_VERIFICATION_v0.101.0](LIVE_VERIFICATION_v0.101.0.md).
+
+</details>
 
 <details><summary>v0.100.1 — locale-invariant count selector</summary>
 
@@ -945,6 +957,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `patchright` extra pinned to 1.64.4 so `.last` locators resolve under the patchright engine, with a real-engine CI contract (#1319) | ✅ done (v0.101.1) |
 | Universal `-o/--output [json\|table\|id]` format selector across all commands, `--out-file PATH` enforced for file paths, MCP `output` removed (#1158) | ✅ done (v0.101.0) |
 | Locale-invariant count selector for settings pane on flow.google.com under non-English account locales (#1312) | ✅ done (v0.100.1) |
 | `image`/`video generate` (#1193), `--help --json` (#1203), `gflow cancel` (#1198), Windows pip `gflow update` kept working (#1298), character list/show on flow.google.com and secret redaction (#987 slices 1-2), chain `--out-file` and `--resume-from` (#1293, #1300), `gflow update` reports one result (#1163), extend catalog fix (#1184), telemetry command naming (#1209) | ✅ done (v0.100.0) |

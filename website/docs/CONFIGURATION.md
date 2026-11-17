@@ -490,7 +490,8 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **Values:** `playwright` | `patchright`
 **Default:** `playwright`
 **What `patchright` is:** an opt-in, drop-in patched Playwright (Chromium) that runs page evaluations in an isolated execution context to avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. It is **not** a headless unlock — Google still detects headless Chromium regardless of engine.
-**Install:** `pip install 'gflow-cli[patchright]'` (or `pip install patchright`). Selecting `patchright` without it installed fails fast with exit code 24 and a pip remediation hint. When using system Chrome (the gflow default, `channel=chrome`) you do **not** need `patchright install chromium`.
+**Install:** `pip install 'gflow-cli[patchright]'` (or `pip install patchright==1.64.4`). Selecting `patchright` without it installed fails fast with exit code 24 and a pip remediation hint. When using system Chrome (the gflow default, `channel=chrome`) you do **not** need `patchright install chromium`.
+**Version:** use patchright `1.64.4` (the extra's pin). patchright `1.61.2` resolves `locator.last` to nothing, which makes every flow.google.com generation fail with exit 23 "0 option groups rendered" (#1319). Upgrading gflow does not upgrade an extra: re-install it with `pip install -U 'gflow-cli[patchright]'` and check `pip show patchright`.
 **Reverting:** unset the variable (or set `playwright`) — the default path is byte-identical to a build without this feature, with no profile migration.
 **Security note:** the `patchright` extra ships a *patched Chromium driver* that handles your live Google session cookies; it is exact-pinned and treated as a security-review-required dependency. See [SECURITY.md § Dependencies](SECURITY.md).
 
