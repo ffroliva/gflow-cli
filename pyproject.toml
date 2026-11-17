@@ -153,7 +153,7 @@ chain = [
 # treated as a security-review-required bump (NOT a dependabot auto-merge) —
 # see SECURITY.md. Not a headless unlock.
 patchright = [
-    "patchright==1.61.2",
+    "patchright==1.64.4",
 ]
 
 [project.scripts]
@@ -245,7 +245,7 @@ asyncio_mode = "auto"
 # fixtures.  Without this, pytest falls back to `tempfile.gettempdir()` which
 # can be CWD on some Windows shells (e.g. msys2 sets TMPDIR=$PWD), leaving
 # stray pytest-of-*/ directories in the repo root.
-addopts = "--basetemp=tmp/pytest -m 'not e2e and not live and not smoke and not containers'"
+addopts = "--basetemp=tmp/pytest -m 'not e2e and not live and not smoke and not containers and not engine_contract'"
 # A test past 60 s dumps every thread's stack (it still passes): one driver test once
 # stalled 262 s with every wait bounded at 8 s, and left no trace of where.
 faulthandler_timeout = 60
@@ -273,6 +273,7 @@ markers = [
     "sharpit(allow_n_plus_one=False, allow_swallowed=False): per-test sharpit gate settings; inert without --sharpit",
     "smoke: golden-path live test (image gen — ZERO credits); opt-in via GFLOW_CLI_E2E_PROFILE",
     "needs_network: may reach the package index (builds, installs); exempt from the no-outbound-network test guard",
+    "engine_contract: drives each installed browser engine against system Chrome (#1319); opt-in via -m engine_contract, run by the engine-contract CI job",
 ]
 
 [dependency-groups]

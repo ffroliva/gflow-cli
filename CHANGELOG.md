@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GFLOW_CLI_BROWSER_ENGINE=patchright` no longer fails every flow.google.com generation with exit 23 "0 option groups rendered" ([#1319](https://github.com/ffroliva/gflow-cli/issues/1319)).** The `patchright` extra's pin moves from `1.61.2` to `1.64.4`. In 1.61.2, `locator.last` and `locator.nth(-1)` counted `0` whenever exactly one element matched, so the settings pane, the library picker and every other `.last` locator resolved to nothing while Flow's UI was unchanged. A real-engine regression test (`tests/api/test_engine_locator_contract.py`) now drives each installed engine against system Chrome, because the fake pages in the unit suite cannot observe a driver regression. The default `playwright` engine was not affected. Workaround on older releases: `GFLOW_CLI_BROWSER_ENGINE=playwright`.
+
 ## [0.101.0] — 2026-11-16
 
 ### Breaking Changes
