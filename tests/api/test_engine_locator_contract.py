@@ -7,27 +7,34 @@ matched, so every migrated-host generation on that engine failed with exit 23
 ("0 option groups rendered") while Flow's UI was unchanged.
 
 Fake pages cannot see a driver regression, so this test drives each installed
-engine against a real browser (system Chrome) on a local page. An engine that is
-not installed, or a host without Chrome, skips rather than fails.
+engine against a real browser (system Chrome) on a local page. It starts a real
+browser (~2-4 s per engine), so it is marked ``engine_contract`` and excluded from
+the default run; the ``engine-contract`` CI job installs the patchright extra, runs
+it, and requires both cases to EXECUTE, so a skip there fails the build.
 """
 
 from __future__ import annotations
 
-import asyncio
 import importlib
-from typing import Any
 
 import pytest
+
+pytestmark = pytest.mark.engine_contract
 
 _ENGINES = ("playwright", "patchright")
 
 
-async def _counts(module: Any) -> dict[str, int]:
+@pytest.mark.parametrize("engine", _ENGINES)
+async def test_last_and_nth_minus_one_count_a_single_match(engine: str) -> None:
+    try:
+        module = importlib.import_module(f"{engine}.async_api")
+    except ImportError:
+        pytest.skip(f"{engine} is not installed")
     async with module.async_playwright() as p:
         try:
             browser = await p.chromium.launch(channel="chrome", headless=True)
-        except Exception as e:  # no system Chrome on this host
-            pytest.skip(f"system Chrome unavailable: {type(e).__name__}")
+        except Exception as e:  # deliberately broad: no Chrome here. CI's count floor
+            pytest.skip(f"system Chrome unavailable: {type(e).__name__}")  # catches a skip
         try:
             page = await browser.new_page()
             # The composer's shape: two overlays, one holding the option group.
@@ -36,7 +43,7 @@ async def _counts(module: Any) -> dict[str, int]:
             )
             filtered = page.locator(".pane").filter(has=page.locator("[role=radiogroup]"))
             single = page.locator("[role=radiogroup]")
-            return {
+            counts = {
                 "filter.last": await filtered.last.count(),
                 "filter.nth(-1)": await filtered.nth(-1).count(),
                 "filter.last >> descendant": await filtered.last.locator(
@@ -47,13 +54,4 @@ async def _counts(module: Any) -> dict[str, int]:
             }
         finally:
             await browser.close()
-
-
-@pytest.mark.parametrize("engine", _ENGINES)
-def test_last_and_nth_minus_one_count_a_single_match(engine: str) -> None:
-    try:
-        module = importlib.import_module(f"{engine}.async_api")
-    except ImportError:
-        pytest.skip(f"{engine} is not installed")
-    counts = asyncio.run(_counts(module))
     assert counts == dict.fromkeys(counts, 1), f"{engine}: {counts}"
