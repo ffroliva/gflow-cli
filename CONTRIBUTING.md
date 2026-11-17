@@ -150,7 +150,17 @@ async def test_full_t2i_roundtrip(): ...
 @pytest.mark.e2e
 @pytest.mark.e2e_video         # Cost sub-marker: spends ~1 Veo credit (most expensive).
 async def test_full_i2v_roundtrip(): ...
+
+@pytest.mark.engine_contract   # Real browser engine vs system Chrome, no Flow account.
+async def test_last_and_nth_minus_one_count_a_single_match(): ...
 ```
+
+`engine_contract` tests drive each installed browser engine (`playwright`, and
+`patchright` when the extra is installed) against system Chrome on a local page. They
+catch a driver regression that the unit suite's fake pages cannot see (#1319). They are
+excluded from the default run; run them with `uv sync --extra dev --extra patchright`,
+then `uv run pytest -m engine_contract`. The `engine-contract` CI job does exactly that
+and fails if either engine case skips.
 
 **E2E is required, not optional.** CI cannot run these — they need a live authenticated
 profile — so the e2e layer is the one gate that only a human, or an agent with credentials,
