@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Under `GFLOW_CLI_BROWSER_ENGINE=patchright`, Chrome closes promptly again ([#1324](https://github.com/ffroliva/gflow-cli/issues/1324)).** patchright 1.64.4 (the v0.101.1 pin) ends its disabled-feature list with `.filter((feature) => feature && feature !== "MediaRouter")` instead of `.filter(Boolean)`. gflow's parse of that list stopped matching, so the merged `--disable-features` switch carrying `CloudSyncedFolderChecker` (#1140) was left out, and every patchright run waited out the 30 s close timeout before a force close (`browser_teardown.context_close_error`). The parse now reads that filter and drops the names it excludes, so `MediaRouter` stays enabled as patchright intends. The default `playwright` engine was not affected.
+- **Sign-in, renewal, verification and the experimental transports now read Playwright's own feature list (#1324).** These paths always launch through Playwright, but they read the configured engine's list. With patchright configured, the list they passed would have re-enabled `RenderDocument`, `BoundaryEventDispatchTracksNodeRemoval` and `MediaRouter` under Playwright, because Chrome honours only the last `--disable-features` switch. Each launch site now names the engine that launches it.
+- **The `engine-contract` CI job now also pins the patchright bundle parse**, requires all three engine contracts to execute, and has a 15-minute timeout.
+- **Every `patchright` install hint now names the extra** (`pip install 'gflow-cli[patchright]'`), so it installs the pinned version instead of whatever is latest.
+
 ## [0.101.1] — 2026-11-17
 
 ### Fixed
