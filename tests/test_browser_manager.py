@@ -528,6 +528,32 @@ class TestDisableFeaturesArgs:
         bundle.write_text(text, encoding="utf-8")
         assert self._with_bundle(monkeypatch, bundle) == ()
 
+    def test_patchright_filter_exclusions_are_honoured(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """patchright 1.64 ends the list with ``.filter((feature) => feature && feature
+        !== "MediaRouter")`` (#1324): the parse must read it and drop the names it
+        excludes, or MediaRouter goes back on the reCAPTCHA-scored path."""
+        bundle = tmp_path / "coreBundle.js"
+        text = _BUNDLE_SHAPE.replace('"Translate"', '"Translate",\n      "MediaRouter"').replace(
+            "].filter(Boolean);",
+            '].filter((feature) => feature && feature !== "MediaRouter");',
+        )
+        bundle.write_text(text, encoding="utf-8")
+        assert self._with_bundle(monkeypatch, bundle) == (
+            "--disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,HttpsUpgrades,"
+            "Translate,CloudSyncedFolderChecker",
+        )
+
+    def test_an_unknown_filter_leaves_the_switch_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A filter whose effect we cannot read must not be guessed at."""
+        bundle = tmp_path / "coreBundle.js"
+        text = _BUNDLE_SHAPE.replace("].filter(Boolean);", "].filter(isWanted);")
+        bundle.write_text(text, encoding="utf-8")
+        assert self._with_bundle(monkeypatch, bundle) == ()
+
     def test_missing_bundle_leaves_the_switch_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -597,6 +623,22 @@ class TestDisableFeaturesArgs:
         (switch,) = disable_features_args()
         features = switch.removeprefix("--disable-features=").split(",")
         assert {"HttpsUpgrades", "Translate", "MediaRouter"} <= set(features)
+        assert features[-1] == "CloudSyncedFolderChecker"
+
+    @pytest.mark.engine_contract
+    def test_installed_patchright_list_still_parses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The same pin for the patchright driver (#1324): a bump that reshapes its list
+        dropped the switch silently in v0.101.1. Runs in the engine-contract CI job."""
+        pytest.importorskip("patchright")
+        import gflow_cli.api._engine as engine_mod
+        from gflow_cli.browser_manager import disable_features_args
+        from gflow_cli.config import BrowserEngine
+
+        monkeypatch.setattr(engine_mod, "active_engine", lambda: BrowserEngine.PATCHRIGHT)
+        (switch,) = disable_features_args()
+        features = switch.removeprefix("--disable-features=").split(",")
+        assert {"HttpsUpgrades", "Translate"} <= set(features)
+        assert "MediaRouter" not in features  # patchright keeps it enabled for stealth
         assert features[-1] == "CloudSyncedFolderChecker"
 
     def test_every_launch_call_carries_the_merged_switch(self) -> None:

@@ -232,8 +232,14 @@ def window_position_args(position: str) -> list[str]:
 #: close timeout.
 _EXTRA_DISABLED_FEATURES = ("CloudSyncedFolderChecker",)
 
-# Where Playwright 1.61 builds its switch; the pin test fails loudly if this moves.
-_PW_LIST_RE = re.compile(r"disabledFeatures = \[(.*?)\]\.filter\(Boolean\)", re.DOTALL)
+# Where Playwright 1.61 builds its switch; the pin tests fail loudly if this moves.
+# patchright 1.64 ends the list with `.filter((feature) => feature && feature !== "X")`
+# to keep X enabled (#1324); those exclusions are applied, any other filter is unreadable.
+_PW_LIST_RE = re.compile(
+    r"disabledFeatures = \[(.*?)\]\.filter\((Boolean|\(feature\) => feature"
+    r'(?: && feature !== "[^"]+")*)\)',
+    re.DOTALL,
+)
 _PW_SWITCH_USE = '"--disable-features=" + disabledFeatures.join(",")'
 
 #: Successful reads only, per bundle: a failed read is retried on the next launch, so
@@ -278,7 +284,8 @@ def disable_features_args() -> tuple[str, ...]:
         js = ""
     match = _PW_LIST_RE.search(js)
     body = re.sub(r"//[^\n]*", "", match.group(1)) if match else ""
-    features = re.findall(r'"([^"]+)"', body)
+    excluded: set[str] = set(re.findall(r'feature !== "([^"]+)"', match.group(2) if match else ""))
+    features = [f for f in re.findall(r'"([^"]+)"', body) if f not in excluded]
     # Anything but quoted names and commas (e.g. a platform conditional) is unreadable.
     if not features or _PW_SWITCH_USE not in js or re.sub(r'"[^"]*"|[\s,]', "", body):
         log.warning("browser_manager.playwright_disabled_features_unreadable")
