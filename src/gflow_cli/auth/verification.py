@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from gflow_cli.config import get_settings
+from gflow_cli.config import BrowserEngine, get_settings
 from gflow_cli.errors import SecurityError
 from gflow_cli.profile_lease import ProfileLease
 
@@ -320,7 +320,10 @@ async def verify_flow_session(
                     user_data_dir=str(profile_dir),
                     channel=channel,
                     headless=True,
-                    args=["--password-store=basic", *disable_features_args()],
+                    args=[
+                        "--password-store=basic",
+                        *disable_features_args(BrowserEngine.PLAYWRIGHT),
+                    ],
                     **browser_proxy_kwargs(get_settings().browser_proxy),
                 )
                 try:
@@ -549,7 +552,7 @@ async def _verify_migrated_host_fallback(
                     "--password-store=basic",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
-                    *disable_features_args(),
+                    *disable_features_args(BrowserEngine.PLAYWRIGHT),
                 ],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )

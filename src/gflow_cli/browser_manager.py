@@ -45,8 +45,8 @@ chrome_strategy_requested(profile_dir) -> bool
     True if the profile's ``.gflow_browser_strategy`` marker requests
     system Chrome (independent of whether Chrome is actually available).
 
-disable_features_args() -> tuple[str, ...]
-    One ``--disable-features`` switch merging the active engine's list with
+disable_features_args(engine=None) -> tuple[str, ...]
+    One ``--disable-features`` switch merging the launching engine's list with
     gflow's (#1140); empty when that list cannot be read.
 
 ensure_profile_engine_compatible(profile_dir, channel) -> None
@@ -66,7 +66,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -75,6 +75,9 @@ from gflow_cli.errors import (
     ProfileEngineDowngradeError,
     ProfileLockedError,
 )
+
+if TYPE_CHECKING:
+    from gflow_cli.config import BrowserEngine
 
 log = structlog.get_logger(__name__)
 
@@ -235,10 +238,10 @@ _EXTRA_DISABLED_FEATURES = ("CloudSyncedFolderChecker",)
 # Where Playwright 1.61 builds its switch; the pin tests fail loudly if this moves.
 # patchright 1.64 ends the list with `.filter((feature) => feature && feature !== "X")`
 # to keep X enabled (#1324); those exclusions are applied, any other filter is unreadable.
+# `[^\]]*` keeps the match inside the first list, so an unknown filter fails there.
 _PW_LIST_RE = re.compile(
-    r"disabledFeatures = \[(.*?)\]\.filter\((Boolean|\(feature\) => feature"
-    r'(?: && feature !== "[^"]+")*)\)',
-    re.DOTALL,
+    r"disabledFeatures = \[(?P<body>[^\]]*)\]\.filter\("
+    r'(?P<filter>Boolean|\((?P<arg>\w+)\) => (?P=arg)(?: && (?P=arg) !== "[^"]+")*)\)'
 )
 _PW_SWITCH_USE = '"--disable-features=" + disabledFeatures.join(",")'
 
@@ -247,33 +250,35 @@ _PW_SWITCH_USE = '"--disable-features=" + disabledFeatures.join(",")'
 _DISABLE_FEATURES_CACHE: dict[Path, tuple[str, ...]] = {}
 
 
-def _engine_package_dir() -> Path:
-    """The ACTIVE engine's package dir: ``patchright`` when selected, else ``playwright``."""
+def _engine_package_dir(engine: BrowserEngine | None = None) -> Path:
+    """The package dir of ``engine``, or of the configured engine when ``None``."""
     import importlib
 
     from gflow_cli.api._engine import active_engine
     from gflow_cli.config import BrowserEngine
 
-    name = "patchright" if active_engine() == BrowserEngine.PATCHRIGHT else "playwright"
+    engine = engine or active_engine()
+    name = "patchright" if engine == BrowserEngine.PATCHRIGHT else "playwright"
     return Path(str(importlib.import_module(name).__file__)).parent
 
 
-def _engine_bundle() -> Path:
-    return _engine_package_dir() / "driver" / "package" / "lib" / "coreBundle.js"
+def _engine_bundle(engine: BrowserEngine | None = None) -> Path:
+    return _engine_package_dir(engine) / "driver" / "package" / "lib" / "coreBundle.js"
 
 
-def disable_features_args() -> tuple[str, ...]:
+def disable_features_args(engine: BrowserEngine | None = None) -> tuple[str, ...]:
     """ONE ``--disable-features`` switch: the driver's own list plus gflow's (#1140).
 
     Chrome honours only the last such switch, so a second one would silently
     re-enable the driver's (measured: HttpsUpgrades came back). The list is read from
-    the active engine's driver bundle (patchright keeps a different one); if it cannot
-    be read as plain string literals, the switch is left out, which keeps the old
-    (slow-close) behaviour rather than a wrong feature set. Shared by every
-    Playwright launch site, headed or headless.
+    the bundle of the driver that LAUNCHES: pass ``engine`` when that is not the
+    configured engine (the auth and experimental sites always launch plain Playwright,
+    and patchright's list re-enables features Playwright needs off, #1324). If the list
+    cannot be read as plain string literals, the switch is left out, which keeps the old
+    (slow-close) behaviour rather than a wrong feature set.
     """
     try:
-        bundle = _engine_bundle()
+        bundle = _engine_bundle(engine)
     except ImportError:  # the engine is not installed; its launch fails on its own
         return ()
     if (cached := _DISABLE_FEATURES_CACHE.get(bundle)) is not None:
@@ -283,13 +288,19 @@ def disable_features_args() -> tuple[str, ...]:
     except (OSError, ValueError):  # ValueError covers a truncated, non-UTF-8 bundle
         js = ""
     match = _PW_LIST_RE.search(js)
-    body = re.sub(r"//[^\n]*", "", match.group(1)) if match else ""
-    excluded: set[str] = set(re.findall(r'feature !== "([^"]+)"', match.group(2) if match else ""))
-    features = [f for f in re.findall(r'"([^"]+)"', body) if f not in excluded]
+    body = re.sub(r"//[^\n]*", "", match["body"]) if match else ""
+    listed = re.findall(r'"([^"]+)"', body)
     # Anything but quoted names and commas (e.g. a platform conditional) is unreadable.
-    if not features or _PW_SWITCH_USE not in js or re.sub(r'"[^"]*"|[\s,]', "", body):
+    if (
+        match is None
+        or not listed
+        or _PW_SWITCH_USE not in js
+        or re.sub(r'"[^"]*"|[\s,]', "", body)
+    ):
         log.warning("browser_manager.playwright_disabled_features_unreadable")
         return ()
+    excluded = set(re.findall(r'!== "([^"]+)"', match["filter"]))
+    features = [f for f in listed if f not in excluded]
     result = ("--disable-features=" + ",".join([*features, *_EXTRA_DISABLED_FEATURES]),)
     _DISABLE_FEATURES_CACHE[bundle] = result
     return result

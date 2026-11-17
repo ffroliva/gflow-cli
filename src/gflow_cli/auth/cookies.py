@@ -15,7 +15,7 @@ from gflow_cli.browser_manager import (
     disable_features_args,
     profile_in_use_error,
 )
-from gflow_cli.config import get_settings
+from gflow_cli.config import BrowserEngine, get_settings
 from gflow_cli.errors import SecurityError
 from gflow_cli.paths import get_cookies_path
 from gflow_cli.profile_lease import ProfileLease
@@ -181,7 +181,7 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
                 user_data_dir=str(profile_dir),
                 channel=channel,
                 headless=True,
-                args=["--password-store=basic", *disable_features_args()],
+                args=["--password-store=basic", *disable_features_args(BrowserEngine.PLAYWRIGHT)],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )
         except Exception as exc:

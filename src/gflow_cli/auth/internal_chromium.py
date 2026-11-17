@@ -12,7 +12,7 @@ from gflow_cli.browser_manager import (
     disable_features_args,
     profile_in_use_error,
 )
-from gflow_cli.config import get_settings
+from gflow_cli.config import BrowserEngine, get_settings
 from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthLoginTimeoutError,
@@ -131,7 +131,7 @@ def login_launch_kwargs(
             # Load-bearing beyond auth: keeps the profile off the macOS
             # keychain, which api/client.py also depends on (#222).
             "--password-store=basic",
-            *disable_features_args(),
+            *disable_features_args(BrowserEngine.PLAYWRIGHT),
         ],
         **browser_proxy_kwargs(proxy),
     }

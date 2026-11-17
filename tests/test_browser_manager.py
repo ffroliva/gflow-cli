@@ -497,7 +497,7 @@ class TestDisableFeaturesArgs:
     def _with_bundle(self, monkeypatch: pytest.MonkeyPatch, path: Path) -> tuple[str, ...]:
         import gflow_cli.browser_manager as bm
 
-        monkeypatch.setattr(bm, "_engine_bundle", lambda: path)
+        monkeypatch.setattr(bm, "_engine_bundle", lambda *_: path)
         return bm.disable_features_args()
 
     def test_one_switch_keeps_playwrights_features_and_adds_ours(
@@ -533,7 +533,7 @@ class TestDisableFeaturesArgs:
     ) -> None:
         """patchright 1.64 ends the list with ``.filter((feature) => feature && feature
         !== "MediaRouter")`` (#1324): the parse must read it and drop the names it
-        excludes, or MediaRouter goes back on the reCAPTCHA-scored path."""
+        excludes, or patchright's own exclusion is overridden."""
         bundle = tmp_path / "coreBundle.js"
         text = _BUNDLE_SHAPE.replace('"Translate"', '"Translate",\n      "MediaRouter"').replace(
             "].filter(Boolean);",
@@ -545,14 +545,75 @@ class TestDisableFeaturesArgs:
             "Translate,CloudSyncedFolderChecker",
         )
 
+    @pytest.mark.parametrize(
+        ("filter_expr", "expected"),
+        [
+            ("(feature) => feature", "HttpsUpgrades,Translate"),
+            ('(f) => f && f !== "Translate"', "HttpsUpgrades"),
+            ('(feature) => feature && feature !== "Translate" && feature !== "HttpsUpgrades"', ""),
+        ],
+    )
+    def test_every_readable_filter_shape_is_applied(
+        self, filter_expr: str, expected: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No exclusion, a renamed parameter, several exclusions; a filter that empties
+        the driver's list still passes gflow's own feature."""
+        bundle = tmp_path / "coreBundle.js"
+        text = _BUNDLE_SHAPE.replace('"AvoidUnnecessaryBeforeUnloadCheckSync",', "").replace(
+            "].filter(Boolean);", f"].filter({filter_expr});"
+        )
+        bundle.write_text(text, encoding="utf-8")
+        features = ",".join(filter(None, [expected, "CloudSyncedFolderChecker"]))
+        assert self._with_bundle(monkeypatch, bundle) == (f"--disable-features={features}",)
+
     def test_an_unknown_filter_leaves_the_switch_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A filter whose effect we cannot read must not be guessed at."""
+        """A filter whose effect we cannot read must not be guessed at, and a later
+        ``.filter(Boolean)`` list elsewhere in the bundle must not be read instead."""
         bundle = tmp_path / "coreBundle.js"
         text = _BUNDLE_SHAPE.replace("].filter(Boolean);", "].filter(isWanted);")
+        text += '\n    other = ["Unrelated"].filter(Boolean);\n'
         bundle.write_text(text, encoding="utf-8")
         assert self._with_bundle(monkeypatch, bundle) == ()
+
+    def test_an_explicit_engine_reads_that_engines_bundle(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auth and experimental sites launch plain Playwright even when patchright is
+        configured; patchright's list would re-enable features Playwright needs off."""
+        import gflow_cli.browser_manager as bm
+        from gflow_cli.config import BrowserEngine
+
+        bundles = {}
+        for engine in BrowserEngine:
+            bundles[engine] = tmp_path / f"{engine.value}.js"
+            listed = f'"{engine.value.title()}Only"'
+            old = _BUNDLE_SHAPE[_BUNDLE_SHAPE.index("[") + 1 : _BUNDLE_SHAPE.index("].filter")]
+            bundles[engine].write_text(_BUNDLE_SHAPE.replace(old, listed), encoding="utf-8")
+        monkeypatch.setattr(
+            bm, "_engine_bundle", lambda e=None: bundles[e or BrowserEngine.PATCHRIGHT]
+        )
+        assert bm.disable_features_args(BrowserEngine.PLAYWRIGHT) == (
+            "--disable-features=PlaywrightOnly,CloudSyncedFolderChecker",
+        )
+        assert bm.disable_features_args() == (
+            "--disable-features=PatchrightOnly,CloudSyncedFolderChecker",
+        )
+
+    def test_plain_playwright_launch_sites_name_their_engine(self) -> None:
+        """Only the two engine-routed launchers may use the configured engine's list;
+        every other call site launches plain Playwright and must say so (#1324)."""
+        import gflow_cli
+
+        root = Path(gflow_cli.__file__).parent
+        routed = {root / "api" / "client.py", root / "api" / "transports" / "ui_automation.py"}
+        offenders = [
+            str(path.relative_to(root))
+            for path in root.rglob("*.py")
+            if path not in routed and "disable_features_args()" in path.read_text("utf-8")
+        ]
+        assert offenders == []
 
     def test_missing_bundle_leaves_the_switch_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

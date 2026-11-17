@@ -302,7 +302,7 @@ class BrowserEngine(StrEnum):
     PLAYWRIGHT is the default and the only engine the standard install ships.
     PATCHRIGHT is an opt-in, drop-in patched Playwright (Chromium) that avoids
     the ``Runtime.enable`` CDP leak for stronger reCAPTCHA-Enterprise evasion on
-    the headed path; it must be installed separately (``pip install patchright``)
+    the headed path; it must be installed separately (``pip install 'gflow-cli[patchright]'``)
     and is NOT a headless unlock.
     """
 
@@ -639,7 +639,7 @@ class Settings(BaseSettings):
             "Patchright is an OPT-IN, drop-in patched Playwright (Chromium) that "
             "avoids the Runtime.enable CDP leak for stronger reCAPTCHA-Enterprise "
             "evasion on the HEADED path. It must be installed separately "
-            "(`pip install patchright`) and is NOT a headless unlock — the default "
+            "(`pip install 'gflow-cli[patchright]'`) and is NOT a headless unlock — the default "
             "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )
