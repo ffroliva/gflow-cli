@@ -296,7 +296,7 @@ Controls:
 
 - **Optional-only** — never in the base `dependencies`; the default install pulls
   neither the package nor its driver.
-- **Exact-pinned** (`patchright==1.61.2`) so a release cannot silently move the
+- **Exact-pinned** (`patchright==1.64.4`) so a release cannot silently move the
   browser binary underneath you.
 - **Security-review-required on bump** — a Patchright version change is treated
   like a browser-binary change, NOT a routine dependabot auto-merge. The exact

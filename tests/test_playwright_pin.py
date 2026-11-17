@@ -100,7 +100,7 @@ def test_dependabot_ignores_playwright_minor_bumps() -> None:
 
 
 def test_dependabot_ignores_driver_engine_bumps() -> None:
-    """`patchright==1.61.2` is exact-pinned, and an exact pin gates nothing.
+    """`patchright==1.64.4` is exact-pinned, and an exact pin gates nothing.
 
     An `==` pin is just one more constraint for the `uv` ecosystem to rewrite —
     the same move it made on playwright's upper bound in PR #465. patchright
