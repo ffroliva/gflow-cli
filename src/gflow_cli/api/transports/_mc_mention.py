@@ -335,11 +335,22 @@ class MentionMixin(UploadFrameMixin):
             titles = [str(t) for t in await page.evaluate(_OPTION_TITLES_JS, PICKER_OPTION)]
             if titles or attempt == FRAME_SEARCH_ATTEMPTS:
                 break
-            # The search had not settled: close the picker and ask again. Escape removes the
-            # `@name` query; Backspace does not close the picker, whose overlay then blocks
-            # the next click on the composer (#1333, measured live).
+            # The search had not settled: clear the typed `@name` and ask again. Backspace
+            # alone leaves the picker's overlay open over the composer, where it blocks the
+            # next click (#1333, measured live), so Escape then closes it. Backspace goes
+            # first: the text is removed whether or not a picker opened to own it.
             log.info("migrated.mention_miss", name_chars=len(name), attempt=attempt, offered=0)
+            for _ in range(len(name) + 1):
+                await page.keyboard.press("Backspace")
             await page.keyboard.press("Escape")
+            if len(await self.read_chips(page)) < len(before):
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: clearing the failed {name!r} query removed an "
+                        "already-attached reference, so this run is abandoned rather than "
+                        "submitted"
+                    ),
+                )
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         exact = [i for i, t in enumerate(titles) if t.strip().casefold() == name.casefold()]
         # Titles are asset names, often prompt-like captions: report counts, not text,
@@ -361,13 +372,12 @@ class MentionMixin(UploadFrameMixin):
                 ),
                 # The class default speaks of media captions, which is not this miss.
                 remediation_hint=(
-                    "Nothing was submitted. Check the name against "
-                    "`gflow character list --project <id>`; the picker must offer an option "
-                    "titled exactly that name, and an `@mention` in a prompt reads the name "
-                    "as its first word"
+                    "Nothing was submitted. The project has no character by that name: check "
+                    "it with `gflow character list --project <id>` (MCP: "
+                    "gflow_character_list)"
                     if not exact
-                    else "Nothing was submitted. Rename the colliding asset in Flow so only "
-                    "the character carries that name"
+                    else "Nothing was submitted. Rename the colliding asset in Flow, or give "
+                    "the character a unique one-word name"
                 ),
             )
         index = exact[0]

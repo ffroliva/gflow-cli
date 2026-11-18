@@ -123,8 +123,11 @@ Other video modes still refuse characters (exit 36), and a video `@Name` exits 2
   writes the fresh name back to the catalog (CLI, `store` history mode). `gflow run` and the
   MCP tools heal the run the same way. Reach: the assets the empty picker lists.
 - **What to do on a refusal.**
-  - **Exit 32:** no option, or several, carry the exact name. Rename the colliding asset in
-    Flow, or give the character a unique one-word name.
+  - **Exit 32, no option carries the name:** the project has no character by that name
+    (#1333). Check the name with `gflow character list --project <id>` (MCP:
+    `gflow_character_list`). Nothing was submitted.
+  - **Exit 32, several options carry the name:** rename the colliding asset in Flow, or
+    give the character a unique one-word name.
   - **Exit 36 on `--reference-entity <id>`:** the picker finds characters by name, so pair
     the id with `--reference-entity-name <Name>`.
   - **Exit 29 on a page served labs:** the character was resolved by name, without an id,
