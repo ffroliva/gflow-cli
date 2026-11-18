@@ -33,11 +33,39 @@ def _private_installer_caches(tmp_path_factory: pytest.TempPathFactory) -> Itera
         yield
 
 
+_PROBE_DIST = "gflow-e2e-extra-probe"
+#: The `e2e-probe` extra pins the probe at this version in LOW and HIGH (#1322). Local
+#: version labels cannot be uploaded to PyPI, so no index copy can stand in for a wheel.
+_PROBE_PINS = {"0.0.1": "1.0+e2e", "9999.0.0": "2.0+e2e"}
+
+
+def _build_probe_wheels(wheels_dir: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Two empty wheels of `_PROBE_DIST`, one per pinned version."""
+    for ver in _PROBE_PINS.values():
+        src = tmp_path_factory.mktemp(f"probe_{ver.replace('.', '_').replace('+', '_')}")
+        (src / "pyproject.toml").write_text(
+            f'[project]\nname = "{_PROBE_DIST}"\nversion = "{ver}"\n'
+            '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+            "[tool.hatch.build.targets.wheel]\nbypass-selection = true\n",
+            encoding="utf-8",
+        )
+        res = subprocess.run(
+            ["uv", "build", "--wheel", "--out-dir", str(wheels_dir), str(src)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert res.returncode == 0, f"probe build failed for {ver}:\n{res.stderr}"
+
+
 @pytest.fixture(scope="session")
 def update_wheels(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path, Path]:
-    """Build LOW (0.0.1) and HIGH (9999.0.0) wheels from the current working tree."""
+    """Build LOW (0.0.1) and HIGH (9999.0.0) wheels from the current working tree.
+
+    Each carries an `e2e-probe` extra whose pin moves between them (`_PROBE_PINS`)."""
     worktree_root = Path(__file__).resolve().parent.parent.parent
     wheels_dir = tmp_path_factory.mktemp("update_wheels")
+    _build_probe_wheels(wheels_dir, tmp_path_factory)
 
     for ver in ("0.0.1", "9999.0.0"):
         src_tmp = tmp_path_factory.mktemp(f"src_{ver.replace('.', '_')}")
@@ -52,6 +80,11 @@ def update_wheels(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path,
         pyproj_content = pyproj.read_text(encoding="utf-8")
         pyproj_content = re.sub(
             r'version\s*=\s*"[^"]+"', f'version = "{ver}"', pyproj_content, count=1
+        )
+        pyproj_content = pyproj_content.replace(
+            "[project.optional-dependencies]\n",
+            f'[project.optional-dependencies]\ne2e-probe = ["{_PROBE_DIST}=={_PROBE_PINS[ver]}"]\n',
+            1,
         )
         pyproj.write_text(pyproj_content, encoding="utf-8", newline="\n")
 
@@ -79,8 +112,10 @@ def update_wheels(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path,
     return wheels_dir, low_candidates[0], high_candidates[0]
 
 
-def _make_pip_venv(venv_dir: Path, wheels_dir: Path) -> tuple[Path, Path]:
-    """Create a clean venv with pip and install LOW 0.0.1 from wheels_dir."""
+def _make_pip_venv(
+    venv_dir: Path, wheels_dir: Path, spec: str = "gflow-cli==0.0.1"
+) -> tuple[Path, Path]:
+    """Create a clean venv with pip and install LOW 0.0.1 (`spec`) from wheels_dir."""
     # Use Python's stdlib venv (py -3.13 or sys._base_executable)
     # to match the Windows pip install environment from the spike
     venv_cmd = ["py", "-3.13", "-m", "venv", str(venv_dir)]
@@ -119,7 +154,7 @@ def _make_pip_venv(venv_dir: Path, wheels_dir: Path) -> tuple[Path, Path]:
             "install",
             "--find-links",
             wheels_dir.as_uri(),
-            "gflow-cli==0.0.1",
+            spec,
         ],
         capture_output=True,
         text=True,
@@ -200,6 +235,42 @@ def test_pip_venv_update_keeps_a_working_install(
     scripts_dir = gflow_exe.parent
     old_files = list(scripts_dir.glob("*.gflow-update-*.old"))
     assert old_files == [], f"Unexpected .old files remain: {old_files}"
+
+
+def test_pip_update_moves_an_installed_extras_pin(
+    tmp_path: Path, update_wheels: tuple[Path, Path, Path]
+) -> None:
+    """#1322: an extra installed with LOW is upgraded to HIGH's pin, not left behind."""
+    wheels_dir, _, _ = update_wheels
+    python_exe, gflow_exe = _make_pip_venv(
+        tmp_path / "venv_x", wheels_dir, "gflow-cli[e2e-probe]==0.0.1"
+    )
+    env = {
+        **os.environ,
+        "PIP_NO_INDEX": "1",
+        "PIP_FIND_LINKS": wheels_dir.as_uri(),
+        "GFLOW_CLI_HOME": str(tmp_path / "home_x"),
+        "GFLOW_CLI_UPDATE_CHECK": "0",
+        "GFLOW_CLI_TELEMETRY": "0",
+        "PYTHONUTF8": "1",
+    }
+    up_res = subprocess.run(
+        [str(gflow_exe), "update"], capture_output=True, text=True, env=env, check=False
+    )
+    assert up_res.returncode == 0, f"gflow update failed:\n{up_res.stdout}\n{up_res.stderr}"
+    probe = subprocess.run(
+        [
+            str(python_exe),
+            "-I",
+            "-c",
+            "import importlib.metadata as m;"
+            f"print(m.version('gflow-cli'), m.version('{_PROBE_DIST}'))",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.stdout.split() == ["9999.0.0", "2.0+e2e"], probe.stderr
 
 
 def _wait_until_mcp_answers(child: subprocess.Popen[str], timeout: float = 120) -> None:

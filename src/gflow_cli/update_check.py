@@ -199,6 +199,8 @@ def maybe_notify_update() -> UpdateNotice | None:
 class Installer:
     name: str  # "uv" | "pipx" | "pip"
     command: tuple[str, ...]
+    # Chosen before the manager runs: a failed run can leave the extras uninstalled.
+    spec: str = "gflow-cli"
 
 
 @dataclass(frozen=True)
@@ -228,6 +230,46 @@ def _is_user_install() -> bool:
     return here == Path(site.getusersitepackages()).resolve()
 
 
+_EXTRA_MARKER = re.compile(r"""extra\s*==\s*["']([^"']+)["']""")
+_REQ_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _installed_extras() -> tuple[str, ...]:
+    """The gflow-cli extras whose every requirement is installed.
+
+    pip upgrades only what it is asked for, so `gflow-cli` without its extras leaves an
+    extra's own pin where it was (#1322)."""
+    try:
+        requires = distribution("gflow-cli").requires or []
+    except PackageNotFoundError:
+        return ()
+    by_extra: dict[str, list[str]] = {}
+    for req in requires:
+        spec, _, marker = req.partition(";")
+        extra, name = _EXTRA_MARKER.search(marker), _REQ_NAME.match(spec.strip())
+        if extra and name:
+            by_extra.setdefault(extra[1], []).append(name[0])
+
+    def present(name: str) -> bool:
+        try:
+            distribution(name)
+        except PackageNotFoundError:
+            return False
+        return True
+
+    # `dev` is the contributor toolchain, never a user extra: requesting it would pin the
+    # user's own ruff/pytest to ours.
+    return tuple(
+        sorted(e for e, names in by_extra.items() if e != "dev" and all(map(present, names)))
+    )
+
+
+def _package_spec() -> str:
+    """``gflow-cli`` with its installed extras, e.g. ``gflow-cli[patchright]``."""
+    extras = _installed_extras()
+    return f"gflow-cli[{','.join(extras)}]" if extras else "gflow-cli"
+
+
 def installer() -> Installer | None:
     """Which package manager owns this install, and the command that upgrades
     it. None for anything that is not an index install (editable, local path,
@@ -240,15 +282,21 @@ def installer() -> Installer | None:
     if not _installed_from_index():
         return None
     prefix = Path(sys.prefix)
+    spec = _package_spec()
     if (prefix / "uv-receipt.toml").is_file():
-        return Installer("uv", ("uv", "tool", "upgrade", "gflow-cli"))
+        return Installer("uv", ("uv", "tool", "upgrade", "gflow-cli"), spec)
     if (prefix / "pipx_metadata.json").is_file():
-        return Installer("pipx", ("pipx", "upgrade", "gflow-cli"))
+        return Installer("pipx", ("pipx", "upgrade", "gflow-cli"), spec)
     pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade"]
     if _is_user_install():
         pip_cmd.append("--user")
-    pip_cmd.append("gflow-cli")
-    return Installer("pip", tuple(pip_cmd))
+    pip_cmd.append(spec)
+    return Installer("pip", tuple(pip_cmd), spec)
+
+
+def shown_command(command: tuple[str, ...]) -> str:
+    """The command as a user can paste it: a ``[extras]`` spec quoted against shell globbing."""
+    return " ".join(f'"{arg}"' if "[" in arg else arg for arg in command)
 
 
 def _show_output(stdout: str | None, stderr: str | None) -> None:
@@ -345,13 +393,12 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     A plain ``upgrade`` does not: it reads the metadata, finds it current and
     exits 0 having changed nothing — measured in #848, where only a forced
     reinstall completed."""
-    pin = f"gflow-cli=={version}" if version else "gflow-cli"
-    # From the command, not the metadata: after a failed pip run the metadata is gone.
+    pin = f"{inst.spec}=={version}" if version else inst.spec
     user_flag = "--user " if "--user" in inst.command else ""
     repair = {
         "uv": f'uv tool install "{pin}" --force --reinstall',
-        "pipx": f"pipx install --force {pin}",
-    }.get(inst.name, f"{sys.executable} -m pip install --force-reinstall {user_flag}{pin}")
+        "pipx": f'pipx install --force "{pin}"',
+    }.get(inst.name, f'{sys.executable} -m pip install --force-reinstall {user_flag}"{pin}"')
     return (
         "Close every running gflow process (including any `gflow serve` / MCP server), "
         f"then run `{repair}`."
@@ -373,7 +420,7 @@ def _require_runnable(inst: Installer, shown: str) -> None:
         raise ConfigurationError(
             "This venv has no `pip` module, so gflow cannot upgrade itself here",
             remediation_hint=(
-                f"Run `uv pip install --upgrade gflow-cli --python {sys.executable}` "
+                f'Run `uv pip install --upgrade "{inst.spec}" --python {sys.executable}` '
                 "(or reinstall the way you installed it)."
             ),
         )
@@ -558,7 +605,7 @@ def run_update(
     if check or available is False:
         return report
 
-    shown = " ".join(inst.command)
+    shown = shown_command(inst.command)
     _require_runnable(inst, shown)
     playwright_before = _version_in_venv("playwright")
     if status_callback is not None:
