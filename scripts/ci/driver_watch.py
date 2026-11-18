@@ -27,6 +27,7 @@ from pathlib import Path
 
 DRIVERS = ("playwright", "patchright")
 LABEL = "driver-watch"
+TITLE_PREFIX = "Driver release available: "
 _PYPI = "https://pypi.org/pypi/{}/json"
 _CLAUSE = re.compile(r"^\s*(==|!=|>=|<=|>|<)\s*([0-9][0-9.]*)\s*$")
 _OPS: dict[str, Callable[[tuple[int, ...], tuple[int, ...]], bool]] = {
@@ -47,7 +48,7 @@ class Bump:
 
     @property
     def title(self) -> str:
-        return f"Driver release available: {self.package} {self.latest} (pinned {self.pin})"
+        return f"{TITLE_PREFIX}{self.package} {self.latest} (pinned {self.pin})"
 
 
 def _version(text: str) -> tuple[int, ...]:
@@ -107,7 +108,7 @@ def plan(found: list[Bump], issues: list[dict[str, object]]) -> list[Action]:
     not reopened; the job's own close (completed) is not a decline."""
 
     def is_open(issue: dict[str, object]) -> bool:
-        return str(issue.get("state", "OPEN")).upper() == "OPEN"
+        return str(issue["state"]).upper() == "OPEN"
 
     def declined(issue: dict[str, object]) -> bool:
         return str(issue.get("stateReason", "")).upper() == "NOT_PLANNED"
@@ -115,7 +116,7 @@ def plan(found: list[Bump], issues: list[dict[str, object]]) -> list[Action]:
     actions: list[Action] = []
     wanted = {bump.package for bump in found}
     for bump in found:
-        prefix = f"Driver release available: {bump.package} "
+        prefix = f"{TITLE_PREFIX}{bump.package} "
         mine = [i for i in issues if str(i["title"]).startswith(prefix)]
         current = next((i for i in mine if is_open(i)), None)
         if any(i["title"] == bump.title and declined(i) for i in mine):
@@ -125,7 +126,10 @@ def plan(found: list[Bump], issues: list[dict[str, object]]) -> list[Action]:
         elif current["title"] != bump.title:
             actions.append(("edit", bump, int(str(current["number"]))))
     for issue in issues:
-        package = str(issue["title"]).removeprefix("Driver release available: ").split(" ")[0]
+        title = str(issue["title"])
+        if not title.startswith(TITLE_PREFIX):
+            continue  # a hand-filed issue with the label is not the job's to close
+        package = title.removeprefix(TITLE_PREFIX).split(" ")[0]
         if is_open(issue) and package in DRIVERS and package not in wanted:
             actions.append(("close", None, int(str(issue["number"]))))
     return actions
@@ -137,7 +141,8 @@ def body(bump: Bump) -> str:
         f"`{bump.package}{bump.pin}`, which does not admit it.\n\n"
         "Dependabot ignores driver updates by design: a driver bump has broken generation "
         "before (#1319, #1324). To take this release:\n\n"
-        "1. Raise the pin in `pyproject.toml` and run `uv lock`.\n"
+        "1. Raise the pin in `pyproject.toml` and run `uv lock` (for playwright, also "
+        "`SUPPORTED_PLAYWRIGHT_RANGE` in `src/gflow_cli/api/transports/_video_common.py`).\n"
         "2. Let the `engine-contract` CI job run against the new driver.\n"
         "3. Live-verify one generation on the engine that uses it.\n\n"
         "This issue is opened and updated by the scheduled `driver-watch` job "
@@ -237,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
                 "-",
                 stdin=body(bump),
             )
+            # A title or body edit notifies nobody; a comment reaches the watchers.
+            _gh("issue", "comment", str(number), "--body", f"Newer release: {bump.title}")
     return 0
 
 

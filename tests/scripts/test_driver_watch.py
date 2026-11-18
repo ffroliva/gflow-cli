@@ -54,10 +54,14 @@ def test_only_releases_outside_the_pin_are_bumps() -> None:
 
 def test_one_issue_per_package_created_then_updated_never_duplicated() -> None:
     newer = dw.Bump("patchright", "==1.64.4", "1.66.0")
-    stale = {"number": 7, "title": "Driver release available: patchright 1.65.0 (pinned ==1.64.4)"}
+    stale = {
+        "number": 7,
+        "title": "Driver release available: patchright 1.65.0 (pinned ==1.64.4)",
+        "state": "OPEN",
+    }
     assert dw.plan([newer], []) == [("create", newer, 0)]
     assert dw.plan([newer], [stale]) == [("edit", newer, 7)]
-    assert dw.plan([newer], [{"number": 8, "title": newer.title}]) == []  # already current
+    assert dw.plan([newer], [{"number": 8, "title": newer.title, "state": "OPEN"}]) == []
 
 
 def test_the_issue_body_names_the_gates_and_never_auto_merges() -> None:
@@ -154,3 +158,25 @@ def test_a_release_the_job_closed_itself_is_announced_again() -> None:
     bump = dw.Bump("patchright", "==1.64.4", "1.65.0")
     self_closed = {"number": 9, "title": bump.title, "state": "CLOSED", "stateReason": "COMPLETED"}
     assert dw.plan([bump], [self_closed]) == [("create", bump, 0)]
+
+
+def test_an_issue_without_the_job_title_is_never_closed() -> None:
+    """Review: a hand-filed issue carrying the label is not the job's to close."""
+    filed = {"number": 3, "title": "patchright 1.64.4 hangs on close", "state": "OPEN"}
+    assert dw.plan([], [filed]) == []
+
+
+def test_main_comments_when_it_retitles_an_issue_for_a_newer_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Review: GitHub notifies nobody of a title or body edit; a comment does."""
+    stale = {
+        "number": 5,
+        "title": "Driver release available: playwright 1.65.0 (pinned >=1.61,<1.62)",
+        "state": "OPEN",
+    }
+    calls = _run_main(monkeypatch, tmp_path, [stale])
+    verbs = [c[0][:2] for c in calls]
+    assert ("issue", "edit") in verbs
+    comment = next(c for c in calls if c[0][:2] == ("issue", "comment"))
+    assert comment[0][2] == "5" and "playwright 1.65.2" in " ".join(comment[0])
