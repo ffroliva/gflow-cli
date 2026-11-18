@@ -91,7 +91,10 @@ class FlowWorker:
         try:
             await self.process_task(task)
         finally:
-            telemetry.flush_run_facts("mcp")
+            try:  # telemetry must never replace a job's outcome, billed or not
+                await asyncio.to_thread(telemetry.flush_run_facts, "mcp")
+            except Exception:  # noqa: BLE001
+                pass
             telemetry.end_run(run)
 
     async def process_task(self, task: QueueTask) -> None:

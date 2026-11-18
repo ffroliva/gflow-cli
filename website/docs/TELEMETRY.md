@@ -34,7 +34,7 @@ counts.
 | `mcp_clients` | Known names from MCP `clientInfo`; unknown names become `other`. |
 | `crashes` | Counts of code-only crash fingerprints by surface. A fingerprint contains exception class names, up to three gflow-cli function names, and a third-party package marker where relevant. |
 | `engines` | Counts of commands and queued jobs that launched a browser, by engine: `playwright`, `patchright`, or `other`. A command that launches no browser is not counted. |
-| `hosts` | For the same runs, the Flow site that served them, as observed from the page address: `labs` (labs.google), `flow` (flow.google.com), or `unknown` when the run never reached Flow. It records which site served a run and says nothing about what that site supports. |
+| `hosts` | For the same runs, the Flow site that served them, as observed from the page address when a generation is routed: `labs` (labs.google), `flow` (flow.google.com), or `unknown` when the run routed no generation (for example a credits, project or character read, or a run that failed first). It records which site served a run and says nothing about what that site supports. |
 | `tools` | Counts by packaged prompt-tool name and whether it expanded or left the prompt unchanged. Custom tools, including tools that shadow a packaged name, are counted only as `custom`. |
 
 ## What is never sent

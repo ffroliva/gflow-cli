@@ -482,13 +482,11 @@ def note_host(kind: str | None) -> None:
 def _take_run_facts() -> list[tuple[str, str]]:
     """The noted facts as counter keys, cleared so the next run starts empty."""
     facts = _facts()
-    keys = (
-        [("engine", facts["engine"]), ("host", facts.get("host", "unknown"))]
-        if "engine" in facts
-        else []
-    )
+    noted = dict(facts)  # snapshot, then clear: a concurrent clear cannot raise here
     facts.clear()  # a host noted without a launch must not carry into a later run
-    return keys
+    if "engine" not in noted:
+        return []
+    return [("engine", noted["engine"]), ("host", noted.get("host", "unknown"))]
 
 
 def flush_run_facts(surface: Literal["cli", "mcp"]) -> None:
@@ -506,13 +504,16 @@ def record(
 ) -> None:
     """Count one command invocation. Silent on every failure (lossy under contention)."""
     try:
+        # Taken before the off-gate: a run made while telemetry is off must not be counted
+        # after it is turned on (#1326).
+        run_facts = _take_run_facts()
         if killed() or opted_out():
             return
         home = _resolve_home()
         home.mkdir(parents=True, exist_ok=True)
         now = datetime.now(UTC)
         week = iso_week(now)
-        keys = [("command", command), *_take_run_facts()]
+        keys = [("command", command), *run_facts]
         keys += [("flag", f"{command} {f}") for f in flags]
         keys += [("exit", f"{command} {outcome}"), ("duration", f"{command} {_bucket(duration_s)}")]
         with closing(_connect(home)) as con, con:

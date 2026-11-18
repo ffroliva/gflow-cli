@@ -25,8 +25,11 @@ def _tele_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Path]
     monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
     monkeypatch.chdir(tmp_path)
     telemetry.killed.cache_clear()
+    # Another test in this worker may have launched an engine (#1326 facts are per process).
+    telemetry._PROCESS_FACTS.clear()  # pyright: ignore[reportPrivateUsage]
     yield home
     telemetry.killed.cache_clear()
+    telemetry._PROCESS_FACTS.clear()  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
@@ -411,3 +414,16 @@ def test_a_host_noted_without_a_launch_does_not_carry_into_a_later_run(tmp_home:
     telemetry.note_engine("playwright")  # a later run that never routed
     telemetry.record("cli", "video t2v", [], "23", 5.0)
     assert _report()["hosts"] == {"unknown": 1}
+
+
+def test_a_run_made_while_telemetry_was_off_is_not_counted_later(
+    tmp_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_TELEMETRY", "0")
+    telemetry.killed.cache_clear()
+    telemetry.note_engine("patchright")
+    telemetry.record("cli", "image t2i", [], "0", 3.0)  # off: dropped, facts consumed
+    monkeypatch.delenv("GFLOW_CLI_TELEMETRY")
+    telemetry.killed.cache_clear()
+    telemetry.record("cli", "docs", [], "0", 0.1)
+    assert "engines" not in _report()

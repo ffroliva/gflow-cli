@@ -217,8 +217,6 @@ def send(week: str) -> None:
             response.close()
 
         now = datetime.now(UTC)
-        # A 400 or 413 drops the week like a success; log every answer, or it is invisible.
-        telemetry._debug("telemetry_upload_answer", status=str(status))  # pyright: ignore[reportPrivateUsage]
         if status in (204, 400, 413):
             home = _resolve_home()
             with closing(telemetry._connect(home)) as con, con:  # pyright: ignore[reportPrivateUsage]
