@@ -335,10 +335,11 @@ class MentionMixin(UploadFrameMixin):
             titles = [str(t) for t in await page.evaluate(_OPTION_TITLES_JS, PICKER_OPTION)]
             if titles or attempt == FRAME_SEARCH_ATTEMPTS:
                 break
-            # The search had not settled: clear the typed `@name` and ask again.
+            # The search had not settled: close the picker and ask again. Escape removes the
+            # `@name` query; Backspace does not close the picker, whose overlay then blocks
+            # the next click on the composer (#1333, measured live).
             log.info("migrated.mention_miss", name_chars=len(name), attempt=attempt, offered=0)
-            for _ in range(len(name) + 1):
-                await page.keyboard.press("Backspace")
+            await page.keyboard.press("Escape")
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         exact = [i for i, t in enumerate(titles) if t.strip().casefold() == name.casefold()]
         # Titles are asset names, often prompt-like captions: report counts, not text,
@@ -356,9 +357,17 @@ class MentionMixin(UploadFrameMixin):
             raise ReferenceNotFoundError(
                 detail=(
                     f"migrated host: asked for character {name!r} but {why}; the picker "
-                    f"offered {offered}. Refusing before submit — rename the colliding "
-                    "asset in Flow, or give the character a one-word name that is its full "
-                    "name"
+                    f"offered {offered}. Refusing before submit"
+                ),
+                # The class default speaks of media captions, which is not this miss.
+                remediation_hint=(
+                    "Nothing was submitted. Check the name against "
+                    "`gflow character list --project <id>`; the picker must offer an option "
+                    "titled exactly that name, and an `@mention` in a prompt reads the name "
+                    "as its first word"
+                    if not exact
+                    else "Nothing was submitted. Rename the colliding asset in Flow so only "
+                    "the character carries that name"
                 ),
             )
         index = exact[0]

@@ -14,7 +14,7 @@
     "_is_agent_only_composer": "staticmethod (page: 'Page', trigger: 'Any') -> 'bool' sha=16010daab4935a1a",
     "_mention_by_name": "function (self, page: 'Page', name: 'str', *, expect_chips: 'int') -> 'None' sha=27a203db9321f3dc",
     "_mention_by_token": "function (self, page: 'Page', query: 'str', token: 'str', media_id: 'str', *, expect_chips: 'int') -> 'None' sha=c4ab152ce23d6710",
-    "_mention_character": "function (self, page: 'Page', name: 'str', *, expect_chips: 'int') -> 'None' sha=0619c71c49b16716",
+    "_mention_character": "function (self, page: 'Page', name: 'str', *, expect_chips: 'int') -> 'None' sha=1e64313904cdbce3",
     "_open_frame_picker": "staticmethod (page: 'Page', chip_label: 'str' = 'Start') -> 'Any' sha=bc8881a29affdfba",
     "_open_pane": "function (self, page: 'Page') -> 'Any' sha=ab2a70273a3fafdd",
     "_pick_frame_by_name": "function (self, page: 'Page', name: 'str', media_id: 'str', *, chip_label: 'str' = 'Start', expect_bound_chips: 'int' = 1) -> 'None' sha=5ee8cbd449c8286f",
