@@ -199,6 +199,8 @@ def maybe_notify_update() -> UpdateNotice | None:
 class Installer:
     name: str  # "uv" | "pipx" | "pip"
     command: tuple[str, ...]
+    # Chosen before the manager runs: a failed run can leave the extras uninstalled.
+    spec: str = "gflow-cli"
 
 
 @dataclass(frozen=True)
@@ -280,15 +282,16 @@ def installer() -> Installer | None:
     if not _installed_from_index():
         return None
     prefix = Path(sys.prefix)
+    spec = _package_spec()
     if (prefix / "uv-receipt.toml").is_file():
-        return Installer("uv", ("uv", "tool", "upgrade", "gflow-cli"))
+        return Installer("uv", ("uv", "tool", "upgrade", "gflow-cli"), spec)
     if (prefix / "pipx_metadata.json").is_file():
-        return Installer("pipx", ("pipx", "upgrade", "gflow-cli"))
+        return Installer("pipx", ("pipx", "upgrade", "gflow-cli"), spec)
     pip_cmd = [sys.executable, "-m", "pip", "install", "--upgrade"]
     if _is_user_install():
         pip_cmd.append("--user")
-    pip_cmd.append(_package_spec())
-    return Installer("pip", tuple(pip_cmd))
+    pip_cmd.append(spec)
+    return Installer("pip", tuple(pip_cmd), spec)
 
 
 def shown_command(command: tuple[str, ...]) -> str:
@@ -390,9 +393,7 @@ def _reinstall_hint(inst: Installer, version: str | None) -> str:
     A plain ``upgrade`` does not: it reads the metadata, finds it current and
     exits 0 having changed nothing — measured in #848, where only a forced
     reinstall completed."""
-    # pip: the spec chosen before it ran; after a failed run the extras' metadata may be gone.
-    spec = inst.command[-1] if inst.name == "pip" else _package_spec()
-    pin = f"{spec}=={version}" if version else spec
+    pin = f"{inst.spec}=={version}" if version else inst.spec
     user_flag = "--user " if "--user" in inst.command else ""
     repair = {
         "uv": f'uv tool install "{pin}" --force --reinstall',
@@ -419,7 +420,7 @@ def _require_runnable(inst: Installer, shown: str) -> None:
         raise ConfigurationError(
             "This venv has no `pip` module, so gflow cannot upgrade itself here",
             remediation_hint=(
-                f'Run `uv pip install --upgrade "{_package_spec()}" --python {sys.executable}` '
+                f'Run `uv pip install --upgrade "{inst.spec}" --python {sys.executable}` '
                 "(or reinstall the way you installed it)."
             ),
         )

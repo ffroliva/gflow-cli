@@ -1040,7 +1040,9 @@ class TestReinstallHint:
         self, name: str, expected: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(uc, "_installed_extras", lambda: ("patchright",))
-        assert expected in uc._reinstall_hint(uc.Installer(name, ("x",)), "9.9.9")
+        inst = uc.Installer(name, ("x",), "gflow-cli[patchright]")
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ())  # a failed run dropped them
+        assert expected in uc._reinstall_hint(inst, "9.9.9")
 
     @pytest.mark.parametrize(
         ("name", "expected"),

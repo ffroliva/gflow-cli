@@ -2030,6 +2030,11 @@ are removed on subsequent runs, including `gflow update --check`.
 > <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
 > ```
 >
+> Name any extras you installed in the spec (for example `"gflow-cli[patchright]"`), or
+> pip upgrades gflow-cli alone and the extra's pin stays behind. The same applies when you
+> already run the latest release with an outdated extra: `gflow update` finds nothing newer
+> and changes nothing, so run `pip install --upgrade "gflow-cli[patchright]"` once by hand.
+>
 > User-site install (`--user` — use the interpreter that owns the install, where `3.12` is the Python version gflow was installed under; `gflow --version` does not show it, but `py -0p` lists the interpreters):
 > ```powershell
 > py -3.12 -m pip install --user --upgrade gflow-cli
