@@ -1135,7 +1135,7 @@ reach for it before spending anything.
 > PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
 > source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
 > price because that host does not report one before submitting — compare
-> `gflow credits user` before and after. To go further, extend the same clip again. "Cost and safety" and "What it produces" below
+> `gflow credits user` before and after. To go further, extend the same clip again (a second extend of the same clip is currently refused before billing, [#1346](https://github.com/ffroliva/gflow-cli/issues/1346)). "Cost and safety" and "What it produces" below
 > describe the labs.google arm.
 
 Continue an existing clip (on labs.google by another 8 seconds), then optionally render

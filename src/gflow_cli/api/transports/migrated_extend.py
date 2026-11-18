@@ -360,10 +360,9 @@ async def _refuse_if_disabled(page: Page, item: Any) -> None:
             "extend cannot start — nothing was submitted (host=migrated)"
         ),
         remediation_hint=(
-            "Flow shows a Google AI plan upgrade link beside the disabled item; the account "
-            "measured also held few credits (12), so the plan or the balance may gate it. "
-            "Check `gflow credits user`, then upgrade the plan or top up, or extend from an "
-            "account where Flow enables Extend."
+            "Flow shows a Google AI plan upgrade link beside the disabled item; the plan or "
+            "the balance may gate it. Check `gflow credits user`, then upgrade the plan or "
+            "top up, or extend from an account where Flow enables Extend."
         ),
     )
 
