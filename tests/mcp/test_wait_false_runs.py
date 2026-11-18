@@ -442,11 +442,14 @@ async def test_a_wait_false_job_counts_its_own_browser_facts(
 
     client.generate_image = launches_patchright
     taken: list[list[tuple[str, str]]] = []
-    monkeypatch.setattr(
-        telemetry,
-        "flush_run_facts",
-        lambda _surface: taken.append(telemetry._take_run_facts()),  # pyright: ignore[reportPrivateUsage]
-    )
+
+    def take(*_a: Any, **_k: Any) -> None:
+        taken.append(telemetry._take_run_facts())  # pyright: ignore[reportPrivateUsage]
+
+    # Both counting paths run: the tool call's own record() and the job's flush.
+    monkeypatch.setattr(telemetry, "killed", lambda: False)
+    monkeypatch.setattr(telemetry, "record", take)
+    monkeypatch.setattr(telemetry, "flush_run_facts", take)
 
     reply = await tools.gflow_generate_image(prompt="a lighthouse", wait=False)
     await _finish(reply["task_id"])

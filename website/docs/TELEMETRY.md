@@ -10,7 +10,7 @@ Counters are kept in `<GFLOW_CLI_HOME>/telemetry.db`, separately from the catalo
 grouped by ISO week and retained for 53 weeks. gflow counts command and flag names, outcomes, coarse
 duration buckets, command transitions, crash fingerprints made from exception and code names, and
 generation details read from the local catalog. It also records the storage service category and MCP
-client category, and, for runs that launched a browser, the engine and the Flow site that served them. Prompts, argument values and other free-form text are not used as counter keys.
+client category, and, for runs that selected a browser engine, the engine and the Flow site that served them. Prompts, argument values and other free-form text are not used as counter keys.
 
 `gflow telemetry show` prints the current week's report as JSON, including its random per-week
 `report_id`; this is the report sent by the uploader. `gflow data stats` shows your own local usage
@@ -33,7 +33,7 @@ counts.
 | `models`, `modes`, `aspects`, `outcomes` | Generation values read from the local catalog; unknown enum values become `other`. |
 | `mcp_clients` | Known names from MCP `clientInfo`; unknown names become `other`. |
 | `crashes` | Counts of code-only crash fingerprints by surface. A fingerprint contains exception class names, up to three gflow-cli function names, and a third-party package marker where relevant. |
-| `engines` | Counts of commands and queued jobs that launched a browser, by engine: `playwright`, `patchright`, or `other`. A command that launches no browser is not counted. |
+| `engines` | Counts of generation, project and catalog commands and queued jobs that selected a browser engine, by engine: `playwright`, `patchright`, or `other`. A run is counted when the engine is selected, so a launch that then fails (a missing patchright install, a locked profile) still counts, which is what sizes an engine-specific failure. `gflow auth` commands and runs that launch no browser are not counted. |
 | `hosts` | For the same runs, the Flow site that served them, as observed from the page address when a generation is routed: `labs` (labs.google), `flow` (flow.google.com), or `unknown` when the run routed no generation (for example a credits, project or character read, or a run that failed first). It records which site served a run and says nothing about what that site supports. |
 | `tools` | Counts by packaged prompt-tool name and whether it expanded or left the prompt unchanged. Custom tools, including tools that shadow a packaged name, are counted only as `custom`. |
 

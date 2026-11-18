@@ -27,7 +27,7 @@ endpoint is the `gflow-telemetry-endpoint` Worker with its D1 database.
 
 | # | Scenario | Dim | Severity | Expected |
 |---|---|---|---|---|
-| S1 | New client uploads to the endpoint before the endpoint is deployed | D9 | Critical | Prevented by order: the endpoint deploys first. The client logs a 400 at debug |
+| S1 | New client uploads to the endpoint before the endpoint is deployed | D9 | Critical | Prevented by order: the endpoint deploys first (deployed 2026-11-18). A 400 is treated as sent and is not logged, because the detached upload has no log sink; redeploying the endpoint from a branch without the new key kinds would drop browser weeks silently |
 | S2 | Old client (no new keys) uploads to the new endpoint | D9 | Critical | 204, totals as before |
 | S3 | Report carries `engines: {"chromium": 1}` or a raw hostname in `hosts` | D11 | High | 400, nothing stored |
 | S4 | Command never launches a browser (`gflow docs`, `telemetry show`) | D7 | High | Neither map counts it |
