@@ -55,6 +55,7 @@ uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 # later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
 # Windows pip install at 0.99.0 or older? Upgrade once by hand first (#1298):
 #   close every gflow process, then <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
+#   (keep your extras in the spec, e.g. "gflow-cli[patchright]", or their pins stay behind)
 #   (a --user install: py -3.X -m pip install --user --upgrade gflow-cli; see https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md#gflow-update)
 
 # 2 · Authenticate (one-time, opens a real Chrome window)
