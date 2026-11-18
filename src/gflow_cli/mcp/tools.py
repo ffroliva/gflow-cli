@@ -67,7 +67,7 @@ from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
-from gflow_cli.worker.daemon import FlowWorker
+from gflow_cli.worker.daemon import FlowWorker, run_counted
 from gflow_cli.worker.queue import QueueRepository, mark_interrupted
 
 log = structlog.get_logger()
@@ -471,7 +471,7 @@ async def _execute_claimed(profile: str, task_id: str, db_path: Path) -> None:
         try:
             claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
             if claimed is not None:
-                await worker.process_task(claimed)  # the tool wrapper scopes and records it
+                await worker.process_task(claimed)  # scoped by the wrapper or _run_detached
         finally:
             worker.close()
 
@@ -483,8 +483,8 @@ async def _run_detached(profile: str, task_id: str, db_path: Path) -> None:
     one that escapes ``process_task``; ``detach`` settles a cancelled job.
     """
     log.info("mcp.task.detached_started", task_id=task_id, profile=profile)
-    try:
-        await _execute_claimed(profile, task_id, db_path)
+    try:  # the tool call has returned, so this job counts its own browser facts (#1326)
+        await run_counted(_execute_claimed(profile, task_id, db_path))
     except Exception as exc:
         # The error class only: a payload or exception locals can carry prompts.
         log.error("mcp.task.detached_failed", task_id=task_id, error_class=type(exc).__name__)

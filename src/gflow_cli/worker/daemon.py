@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -41,6 +41,20 @@ from gflow_cli.worker import codec
 from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 logger = structlog.get_logger()
+
+
+async def run_counted(job: Awaitable[None]) -> None:
+    """Run one queued job in its own telemetry scope, then count the browser facts it
+    observed, even when it fails (#1326)."""
+    run = telemetry.begin_run()
+    try:
+        await job
+    finally:
+        try:  # telemetry must never replace a job's outcome, billed or not
+            await asyncio.to_thread(telemetry.flush_run_facts, "mcp")
+        except Exception:  # noqa: BLE001
+            pass
+        telemetry.end_run(run)
 
 
 class FlowWorker:
@@ -85,17 +99,8 @@ class FlowWorker:
                 await asyncio.sleep(5)
 
     async def run_task(self, task: QueueTask) -> None:
-        """Run one claimed task in its own telemetry scope, then count the browser facts
-        it observed, even when it fails (#1326)."""
-        run = telemetry.begin_run()
-        try:
-            await self.process_task(task)
-        finally:
-            try:  # telemetry must never replace a job's outcome, billed or not
-                await asyncio.to_thread(telemetry.flush_run_facts, "mcp")
-            except Exception:  # noqa: BLE001
-                pass
-            telemetry.end_run(run)
+        """Run one claimed task and count the browser facts it observed (#1326)."""
+        await run_counted(self.process_task(task))
 
     async def process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.

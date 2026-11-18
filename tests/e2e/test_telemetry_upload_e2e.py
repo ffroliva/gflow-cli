@@ -52,6 +52,8 @@ ALLOWED_D1_FIELDS = {
     "mcp_clients",
     "crashes",
     "tools",
+    "engines",
+    "hosts",
     "country",
     "reports",
     "x:os_exit",
@@ -449,6 +451,12 @@ with sqlite3.connect(home / 'telemetry.db') as con:
         "INSERT INTO counters (week, surface, kind, key, n) VALUES (?, 'cli', 'exit', ?, 1)",
         (week, '{marker} 0')
     )
+    # #1326: a browser run's facts, so the live post carries both new maps.
+    for kind, key in (('engine', 'patchright'), ('host', 'flow')):
+        con.execute(
+            "INSERT INTO counters (week, surface, kind, key, n) VALUES (?, 'cli', ?, ?, 1)",
+            (week, kind, key)
+        )
 
 print(week)
 """
@@ -694,6 +702,10 @@ def test_one_real_post_lands_in_d1_from_a_command_that_exits_at_once(
             f"Missing marker command key cli|{marker}: {totals_rows}"
         )
         assert report_row and report_row[0].get("n") == 1, f"Missing reports/all: {totals_rows}"
+        # #1326: the deployed endpoint stores both new maps.
+        assert {("engines", "patchright"), ("hosts", "flow")} <= {
+            (r.get("field"), r.get("key")) for r in totals_rows
+        }, f"Missing engines/hosts rows: {totals_rows}"
 
         # Assert every field is in the allow-list
         fields = {r["field"] for r in totals_rows}
