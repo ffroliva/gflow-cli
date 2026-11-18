@@ -63,7 +63,7 @@ def menu_token_pattern(token: str) -> re.Pattern[str]:
 
 
 #: Any whole scale token (``270p``, ``2K``): what tells "Flow lists other scales" from drift.
-_SCALE = re.compile(r"(?<![0-9A-Za-z])\d+[pk](?![0-9A-Za-z])", re.IGNORECASE)
+_SCALE = re.compile(r"(?<![0-9A-Za-z])[0-9]+[pk](?![0-9A-Za-z])", re.IGNORECASE)
 
 
 async def find_download_menu_item(

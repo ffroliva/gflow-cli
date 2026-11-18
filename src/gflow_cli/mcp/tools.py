@@ -1883,7 +1883,8 @@ async def gflow_upscale_image(
     description=(
         "Upscale or export a platform-generated Flow video to 1080p Full HD (or 270p GIF). "
         "media_id is the UUID of the video to upscale. "
-        "scale is '1080p' (Full HD), '720p' (original), or '270p' (animated GIF). "
+        "scale is '1080p' (Full HD), '720p' (original, or Flow's upscale of a smaller original), "
+        "or '270p' (animated GIF). "
         "project is optional (resolved from the local catalog when omitted). "
         "out_dir is the output directory (defaults to configured videos directory; "
         "must resolve inside the configured output directory). "
@@ -1910,7 +1911,7 @@ async def gflow_upscale_video(
 
     Args:
         media_id: The Flow media ID (UUID) of the generated video.
-        scale: Target quality: '1080p' (enhanced), '720p' (original), or '270p' (GIF).
+        scale: Target quality: '1080p' (enhanced), '720p' (original or upscaled), or '270p' (GIF).
         project: Project UUID that owns the media. Resolved from local catalog when omitted.
         out_dir: Output directory, inside the configured output dir (the default).
         profile: Profile name (overrides default).
