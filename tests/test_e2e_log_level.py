@@ -19,8 +19,11 @@ from pathlib import Path
 _E2E = Path(__file__).parent / "e2e"
 _SPLITS_STDERR = re.compile(r"stderr\.splitlines\(\)")
 _READS_EVENT = re.compile(r"\.get\(\"event\"|\[\"event\"\]")
-# An assignment of INFO (a dict entry, a subscript or a setenv), not a mere mention.
-_SETS_INFO = re.compile(r"\"GFLOW_CLI_LOG_LEVEL\"(?:\]\s*=|\s*[:,])\s*\"INFO\"")
+# An assignment of INFO (a dict entry, a subscript or a setenv) on a line that is not a
+# comment, so neither a mention nor a commented-out assignment counts.
+_SETS_INFO = re.compile(
+    r"^(?![ \t]*#).*\"GFLOW_CLI_LOG_LEVEL\"(?:\]\s*=|\s*[:,])\s*\"INFO\"", re.MULTILINE
+)
 # A module whose child runs through another module's runner; that runner must set INFO.
 _VIA_RUNNER = {"test_earlier_run_ref_in_place_bdd.py": "test_image_uuid_ref_e2e.py"}
 
@@ -62,5 +65,9 @@ def test_only_an_info_assignment_counts() -> None:
         'monkeypatch.setenv("GFLOW_CLI_LOG_LEVEL", "INFO")',
     ):
         assert _SETS_INFO.search(sets), sets
-    for not_set in ("# GFLOW_CLI_LOG_LEVEL is INFO here", 'env["GFLOW_CLI_LOG_LEVEL"] = "WARNING"'):
+    for not_set in (
+        "# GFLOW_CLI_LOG_LEVEL is INFO here",
+        'env["GFLOW_CLI_LOG_LEVEL"] = "WARNING"',
+        '    # env["GFLOW_CLI_LOG_LEVEL"] = "INFO"',
+    ):
         assert not _SETS_INFO.search(not_set), not_set
