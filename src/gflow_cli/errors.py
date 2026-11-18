@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast, get_args
@@ -243,18 +241,19 @@ class GFlowError(Exception):
         return out
 
 
-@contextmanager
-def nothing_submitted() -> Iterator[None]:
+class nothing_submitted:  # noqa: N801 - used as a lowercase `with` statement
     """Mark every gflow error raised inside as ``charged="no"``: no request has left yet.
 
     Wrap only code that runs before the generation submit. A class default of ``maybe``
     would otherwise answer for every pre-submit raise site, telling the caller to
-    reconcile a charge that cannot exist (#1320)."""
-    try:
-        yield
-    except GFlowError as exc:
-        exc.charged = "no"
-        raise
+    reconcile a charge that cannot exist (#1320). The exception always propagates."""
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, _type: object, exc: BaseException | None, _tb: object) -> None:
+        if isinstance(exc, GFlowError):
+            exc.charged = "no"
 
 
 class FlowApiError(GFlowError):
