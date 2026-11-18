@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1247,3 +1248,66 @@ async def test_a_failed_submit_gate_never_submits(temp_db: DataStore) -> None:
     assert plain is not None and plain.status == "failed" and plain.error is not None
     assert (plain.error["charged"], plain.error["next_action"]) == ("no", "retry")
     assert "prune" not in plain.error["remediation_hint"]  # not DataStoreError's default
+
+
+async def _run_t2i_failing(
+    temp_db: DataStore, task_id: str, exc: Exception, *, after_submit: bool
+) -> Any:
+    """Run one t2i task that raises ``exc`` before or after its submit checkpoint (#1347)."""
+    from gflow_cli.api.dto import GenerationCheckpoint
+
+    repo = QueueRepository(temp_db)
+    repo.enqueue_task(task_id, "default", "t2i", {"prompt": "p", "aspect": "1:1", "count": 1})
+    task = repo.claim_task(task_id, "worker")
+    assert task is not None
+
+    async def generate(*, project_id: str, req: object, on_checkpoint):  # type: ignore[no-untyped-def]
+        if after_submit:
+            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+        raise exc
+
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="T")
+    fake_client.generate_image.side_effect = generate
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+    worker.close()
+    row = repo.get_task(task_id)
+    assert row is not None and row.error is not None
+    return row
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_error_after_the_submit_is_indeterminate_not_failed(
+    temp_db: DataStore,
+) -> None:
+    """#1347: the cancellation path already never reports a submitted task as failed; an
+    unexpected exception after the submit must not either, or a caller may pay twice."""
+    row = await _run_t2i_failing(temp_db, "post", RuntimeError("poll blew up"), after_submit=True)
+    assert row.status == "indeterminate"
+    assert (row.error["charged"], row.error["next_action"], row.error["retryable"]) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_error_before_the_submit_stays_failed(temp_db: DataStore) -> None:
+    row = await _run_t2i_failing(
+        temp_db, "pre1347", RuntimeError("setup blew up"), after_submit=False
+    )
+    assert row.status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_an_error_proven_unsent_after_the_click_stays_failed(temp_db: DataStore) -> None:
+    """A guard abort reads charged no: proven unbilled, so the checkpoint does not override it."""
+    from gflow_cli.errors import WireFormatError
+
+    unsent = WireFormatError(detail="aborted in the browser")
+    unsent.charged = "no"
+    row = await _run_t2i_failing(temp_db, "abort1347", unsent, after_submit=True)
+    assert row.status == "failed"
+    assert row.error["charged"] == "no"
