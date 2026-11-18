@@ -406,9 +406,12 @@ def migrated_route(url: object, flow_host: str, *, prefer_migrated: bool = False
     not a legacy one. See
     docs/superpowers/spikes/2026-09-14-two-domain-protocol-survey.md.
     """
+    from gflow_cli import telemetry  # noqa: PLC0415 - transports stay import-free of telemetry
+
+    kind = flow_host_kind(url)
+    telemetry.note_host(kind)  # #1326: the host Flow served this run, as observed
     if flow_host == "flow.google.com":
         return "migrated"
-    kind = flow_host_kind(url)
     if kind == "migrated":
         return "blocked" if flow_host == "labs.google" else "migrated"
     return "migrated" if prefer_migrated and flow_host == "auto" else "labs"
