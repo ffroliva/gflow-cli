@@ -168,6 +168,7 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     NAVIGATION_GRACE_S,
+    SubmitWatch,
     _as_list_any,
     _write_outcome_unknown,
 )
@@ -323,6 +324,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:
@@ -397,7 +399,9 @@ async def run_video(
         )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     composer = MigratedComposer()
-    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
+    with nothing_submitted():
+        surface = await composer.ensure_editor_for(page, pid, needs_classic=needs_classic)
+    if surface == "agent_only":
         return await agent.run_agent_video(
             page,
             request,
@@ -409,44 +413,47 @@ async def run_video(
         )
     if unported is not None:
         raise refuse()
-    await composer.apply_video_settings(page, request)
-    media_id: str | None = None
-    end_media_id: str | None = None
-    reference_ids: tuple[str, ...] = ()
-    entity_ids: tuple[str, ...] = ()
-    frame = request.start_image
-    if request.mode is Mode.I2V and frame is not None:
-        media_id = await composer.attach_start_frame(page, pid, frame)
-    if request.mode is Mode.I2V and request.end_image is not None:
-        end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
-    if request.mode is Mode.R2V and request.reference_images:
-        reference_ids = await composer.attach_references(page, pid, request.reference_images)
-    if request.reference_entities:
-        # #723: characters attach through the SAME `@` picker as media, so they go on
-        # after any uploads (whose file chooser steals keyboard focus) and must not clear
-        # mentions those uploads already placed.
-        entity_ids = await composer.attach_character_entities(
-            page,
-            entity_ids=tuple(request.reference_entities),
-            names=tuple(request.reference_entity_names),
-            clear=not reference_ids,
-        )
-    # The prompt is appended whenever mentions are already in the document: clicking the
-    # composer would move the caret away from where the last one left it.
-    has_mentions = bool(request.reference_entities) or request.mode is Mode.R2V
-    await composer.send_prompt(page, request.prompt, append=has_mentions)
-    if request.mode is Mode.R2V:
-        attached = await composer.read_chips(page)
-        n_images, n_chars = len(request.reference_images), len(request.reference_entities)
-        if len(attached) != n_images + n_chars:
-            raise ReferenceNotFoundError(
-                detail=(
-                    f"migrated host: {n_images} image reference(s) + {n_chars} character(s) "
-                    f"= {n_images + n_chars} chip(s) requested but {len(attached)} on the "
-                    f"prompt at submit time — refusing to spend credits on a run that would "
-                    f"ignore them"
-                ),
+    # Everything up to the submit click spends nothing (#1320); a stray Enter while a
+    # mention picker closes could submit, so the watch withholds the claim if one left.
+    with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
+        await composer.apply_video_settings(page, request)
+        media_id: str | None = None
+        end_media_id: str | None = None
+        reference_ids: tuple[str, ...] = ()
+        entity_ids: tuple[str, ...] = ()
+        frame = request.start_image
+        if request.mode is Mode.I2V and frame is not None:
+            media_id = await composer.attach_start_frame(page, pid, frame)
+        if request.mode is Mode.I2V and request.end_image is not None:
+            end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
+        if request.mode is Mode.R2V and request.reference_images:
+            reference_ids = await composer.attach_references(page, pid, request.reference_images)
+        if request.reference_entities:
+            # #723: characters attach through the SAME `@` picker as media, so they go on
+            # after any uploads (whose file chooser steals keyboard focus) and must not clear
+            # mentions those uploads already placed.
+            entity_ids = await composer.attach_character_entities(
+                page,
+                entity_ids=tuple(request.reference_entities),
+                names=tuple(request.reference_entity_names),
+                clear=not reference_ids,
             )
+        # The prompt is appended whenever mentions are already in the document: clicking the
+        # composer would move the caret away from where the last one left it.
+        has_mentions = bool(request.reference_entities) or request.mode is Mode.R2V
+        await composer.send_prompt(page, request.prompt, append=has_mentions)
+        if request.mode is Mode.R2V:
+            attached = await composer.read_chips(page)
+            n_images, n_chars = len(request.reference_images), len(request.reference_entities)
+            if len(attached) != n_images + n_chars:
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: {n_images} image reference(s) + {n_chars} character(s) "
+                        f"= {n_images + n_chars} chip(s) requested but {len(attached)} on the "
+                        f"prompt at submit time — refusing to spend credits on a run that would "
+                        f"ignore them"
+                    ),
+                )
     record = await composer.submit_and_observe(
         page,
         poll_timeout_s=poll_timeout_s,
@@ -523,41 +530,47 @@ async def run_images(
             )
         )
     composer = MigratedComposer()
-    if await composer.ensure_editor_for(page, pid, needs_classic=needs_classic) == "agent_only":
+    with nothing_submitted():
+        surface = await composer.ensure_editor_for(page, pid, needs_classic=needs_classic)
+    if surface == "agent_only":
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
         raise refuse()
-    reference_ids: tuple[str, ...] = ()
-    if request.refs:
-        # Images already in this project (a manifest's `batch:N`, #913): referenced in
-        # place, never re-uploaded. Finding them may reload, so settings are applied there.
-        reference_ids = await composer.reference_existing(
-            page, pid, request, name_resolver=name_resolver
-        )
-    else:
-        await composer.apply_image_settings(page, request)
-    if request.ref_paths:
-        reference_ids = await composer.attach_references(page, pid, request.ref_paths)
-        chips = await composer.read_chips(page)
-        if len(chips) != len(reference_ids):
-            raise ReferenceNotFoundError(
-                detail=(
-                    f"migrated host: {len(reference_ids)} image reference(s) uploaded but "
-                    f"{len(chips)} mention chip(s) were bound before submit"
-                )
+    # Everything up to the submit click spends nothing (#1320); see run_video on the watch.
+    with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
+        reference_ids: tuple[str, ...] = ()
+        if request.refs:
+            # Images already in this project (a manifest's `batch:N`, #913): referenced in
+            # place, never re-uploaded. Finding them may reload, so settings are applied there.
+            reference_ids = await composer.reference_existing(
+                page, pid, request, name_resolver=name_resolver
             )
-    entity_ids: tuple[str, ...] = ()
-    if request.reference_entity_names:
-        # #723: characters go through the same `@` picker, after any uploads (whose file
-        # chooser steals focus) and without clearing the mentions those placed. Each
-        # chip is verified to be an ENTITY before anything is submitted.
-        entity_ids = await composer.attach_character_entities(
-            page,
-            entity_ids=tuple(request.reference_entities),
-            names=tuple(request.reference_entity_names),
-            clear=not reference_ids,
+        else:
+            await composer.apply_image_settings(page, request)
+        if request.ref_paths:
+            reference_ids = await composer.attach_references(page, pid, request.ref_paths)
+            chips = await composer.read_chips(page)
+            if len(chips) != len(reference_ids):
+                raise ReferenceNotFoundError(
+                    detail=(
+                        f"migrated host: {len(reference_ids)} image reference(s) uploaded but "
+                        f"{len(chips)} mention chip(s) were bound before submit"
+                    )
+                )
+        entity_ids: tuple[str, ...] = ()
+        if request.reference_entity_names:
+            # #723: characters go through the same `@` picker, after any uploads (whose file
+            # chooser steals focus) and without clearing the mentions those placed. Each
+            # chip is verified to be an ENTITY before anything is submitted.
+            entity_ids = await composer.attach_character_entities(
+                page,
+                entity_ids=tuple(request.reference_entities),
+                names=tuple(request.reference_entity_names),
+                clear=not reference_ids,
+            )
+        await composer.send_prompt(
+            page, request.prompt, append=bool(reference_ids) or bool(entity_ids)
         )
-    await composer.send_prompt(page, request.prompt, append=bool(reference_ids) or bool(entity_ids))
     # The submit guard holds the body to EXACTLY these references: a lost character, or
     # any reference that is not on this list, aborts the run before Flow generates it.
     return await composer.submit_images_and_observe(

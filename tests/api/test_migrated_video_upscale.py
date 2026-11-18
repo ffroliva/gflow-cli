@@ -162,8 +162,9 @@ async def test_migrated_video_upscale_disabled_raises_unavailable() -> None:
 async def test_migrated_video_upscale_missing_menu_item_raises_drift() -> None:
     page = fake_page([FakeItem("270p"), FakeItem("720p"), FakeItem("11080p")])
 
-    with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found"):
+    with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found") as exc_info:
         await _run(page)
+    assert exc_info.value.charged == "no"  # #1320: before the billed menu click
 
 
 async def test_migrated_video_upscale_missing_download_button_raises_drift() -> None:

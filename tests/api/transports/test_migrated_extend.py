@@ -384,10 +384,11 @@ async def test_a_silent_listing_is_a_timeout_before_any_click(
 ) -> None:
     monkeypatch.setattr(mx, "LISTING_BUDGET_S", 0.01)
     page = _Page(_zzl0ze(), answer=False)
-    with pytest.raises(TransportTimeoutError, match="Zzl0ze"):
+    with pytest.raises(TransportTimeoutError, match="Zzl0ze") as info:
         await _run(page)
     assert driver["clicks"] == []
     assert page.listeners["response"] == []
+    assert info.value.charged == "no"  # #1320: the source read precedes any submit
 
 
 @pytest.mark.asyncio
@@ -546,3 +547,21 @@ async def test_a_missing_anchor_is_selector_drift_exit_23(monkeypatch: pytest.Mo
     with pytest.raises(UiSelectorDriftError, match="add-clip") as info:
         await mx._anchor(page, mx.ADD_CLIP_BUTTON, named="timeline add-clip button")  # type: ignore[arg-type]
     assert exit_code_for(info.value) == 23
+
+
+@pytest.mark.asyncio
+async def test_a_missing_extend_anchor_before_the_submit_reports_nothing_charged(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1320: the add-clip/Extend/prompt anchors come before any request Flow could bill."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    async def missing(_page: Any, _selector: str, *, named: str) -> Any:
+        raise UiSelectorDriftError(detail=f"{named} missing")
+
+    monkeypatch.setattr(mx, "_anchor", missing)
+    page = _Page([[[_image_record()]]], then=_zzl0ze())
+    with pytest.raises(UiSelectorDriftError) as info:
+        await _run(page)
+    assert info.value.charged == "no"
+    assert driver["observe"] is None

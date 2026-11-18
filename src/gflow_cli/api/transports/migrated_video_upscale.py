@@ -29,6 +29,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UpscaleUnavailableError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -263,17 +264,18 @@ async def upscale_video_migrated(
         Raw video (MP4 or GIF) bytes.
     """
     scale_norm = _normalize_scale(scale)
-    log.info(
-        "migrated_video_upscale.navigate",
-        project_id=project_id,
-        media_id=media_id,
-        scale=scale_norm,
-    )
-    await _open_download_menu(page, project_id=project_id, media_id=media_id)
+    with nothing_submitted():  # #1320: the menu click below is the first send
+        log.info(
+            "migrated_video_upscale.navigate",
+            project_id=project_id,
+            media_id=media_id,
+            scale=scale_norm,
+        )
+        await _open_download_menu(page, project_id=project_id, media_id=media_id)
 
-    btn_target = await find_download_menu_item(page, scale_norm, route="video_upscale")
-    if await is_menu_item_disabled(btn_target):
-        raise _unavailable_error(scale_norm)
+        btn_target = await find_download_menu_item(page, scale_norm, route="video_upscale")
+        if await is_menu_item_disabled(btn_target):
+            raise _unavailable_error(scale_norm)
 
     failed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
     on_response = _export_refusal_listener(failed)
