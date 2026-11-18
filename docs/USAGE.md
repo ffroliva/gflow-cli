@@ -1944,7 +1944,13 @@ The installer is read off the install itself, never guessed from `PATH`:
 |---|---|---|
 | `uv-receipt.toml` | `uv tool` | `uv tool upgrade gflow-cli` |
 | `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
-| neither | plain venv or user install | `<that interpreter> -m pip install --upgrade gflow-cli` (adds `--user` for a user-site install) |
+| neither | plain venv or user install | `<that interpreter> -m pip install --upgrade "gflow-cli[<extras>]"` (adds `--user` for a user-site install) |
+
+**Extras are kept.** pip upgrades only what it is asked for, so on a pip install `gflow update`
+requests every extra whose requirements are all installed (for example `gflow-cli[patchright]`),
+and the extra's own pin moves with the release (#1322). `uv tool upgrade` and `pipx upgrade`
+already reinstall the extras recorded at install time. The repair commands gflow prints carry
+the same extras.
 
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs

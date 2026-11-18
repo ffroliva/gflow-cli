@@ -21,7 +21,7 @@ from gflow_cli._cli_helpers import (
 
 # Bound in THIS module's namespace so tests can monkeypatch
 # ``gflow_cli.cli_update.run_update`` and never spawn a package manager.
-from gflow_cli.update_check import UpdateReport, run_update
+from gflow_cli.update_check import UpdateReport, run_update, shown_command
 
 
 @spends_credits(False)
@@ -87,7 +87,7 @@ async def _run(check: bool, as_json: bool, *, stream_output: bool) -> None:
 
 def _render(report: UpdateReport) -> list[str]:
     latest = report.latest or "unknown (PyPI unreachable)"
-    shown = " ".join(report.command)
+    shown = shown_command(report.command)
     if report.upgraded:
         return [
             f"Updated to {latest}. Restart any running `gflow serve` / MCP server.",
