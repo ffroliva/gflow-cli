@@ -12,8 +12,8 @@ against a live page and keep every ``fZytfe`` from reaching Flow:
   production route guard (exit 36);
 * on an account where Flow renders the Extend menu item disabled (declare it with
   ``GFLOW_CLI_E2E_EXTEND_DISABLED=1``), the run ends in a typed refusal before any click
-  on that item instead of a 30 s click timeout (#1334). The two tests that need an
-  enabled item skip on such a profile.
+  on that item instead of a 30 s click timeout (#1334). The tests that need an enabled
+  item skip on such a profile.
 
 Belt and braces: a context-level route aborts ``fZytfe`` for the whole test, so even a
 fall-through in the driver cannot bill.
@@ -226,9 +226,9 @@ async def test_e2e_a_disabled_extend_item_is_a_typed_refusal_not_a_timeout(
     transport, page = await _live_page(e2e_profile_dir)
 
     def on_request(request: Any) -> None:
-        rpcid = migrated_composer.url_rpcid(str(request.url))
-        if rpcid in (mx.SCENE_CREATE_RPC, mx.EXTEND_SUBMIT_RPC):
-            sent.append(rpcid)
+        body = migrated_composer.request_body(request)
+        rpcids = mx.batch_rpcids(mx.url_rpcids(str(request.url)), body)
+        sent.extend(r for r in rpcids if r in (mx.SCENE_CREATE_RPC, mx.EXTEND_SUBMIT_RPC))
 
     page.on("request", on_request)
     try:
@@ -267,6 +267,7 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     """SPENDS VEO CREDITS. One segment, end to end, through the client entry the CLI uses."""
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
         pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    _need_enabled_extend()
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.transports.migrated_extend import extend_key_seconds
     from gflow_cli.api.transports.migrated_recover import read_clip

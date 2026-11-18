@@ -88,9 +88,10 @@ async def _main(a: argparse.Namespace) -> int:
     report: dict[str, Any] = {"profile": a.profile, "aborted": []}
 
     async def on_batch(route: Any) -> None:
-        url = route.request.url
-        if any(r in url or r in (route.request.post_data or "") for r in ALWAYS_ABORT):
-            report["aborted"].append([r for r in ALWAYS_ABORT if r in url])
+        seen = route.request.url + (route.request.post_data or "")
+        hit = [r for r in ALWAYS_ABORT if r in seen]
+        if hit:
+            report["aborted"].append(hit)
             await route.abort()
             return
         await route.continue_()

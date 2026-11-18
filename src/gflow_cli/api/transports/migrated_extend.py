@@ -85,6 +85,8 @@ EXTEND_SUBMIT = "flow-edit-video-prompt-box flow-generate-icon-button button"
 #: The editor load's own ``Zzl0ze`` answered within the first seconds on every spike run.
 LISTING_BUDGET_S = 30.0
 ANCHOR_TIMEOUT_S = 15.0
+#: How long a disabled Extend item may take to enable before the run is refused (#1334).
+DISABLED_GRACE_S = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,22 +337,33 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
     return locator
 
 
-def _extend_disabled() -> ExtendUnavailableError:
-    """Exit 35 for an Extend item Flow renders disabled (#1334).
+async def _refuse_if_disabled(page: Page, item: Any) -> None:
+    """Exit 37 or 35, before any click, when Flow keeps the Extend item disabled (#1334).
 
     Measured 2026-11-18 on an account holding 12 credits: ``disabled="true"``, a link to
-    Google's AI plans page beside it, and no credits warning, while a funded account's item
-    was enabled. A plan gate, as far as the page says; the error names the item it saw.
+    Google's AI plans beside it and no credits warning, while a funded account's item was
+    enabled. The page names no cause, so the error names the item and both remedies. A
+    short grace period keeps an item that is enabled a moment late from being refused.
     """
-    return ExtendUnavailableError(
+    deadline = asyncio.get_running_loop().time() + DISABLED_GRACE_S
+    while await is_menu_item_disabled(item):
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
+    else:
+        return
+    await page.keyboard.press("Escape")  # leave no open menu on a pooled page
+    await _raise_if_out_of_credits(page)
+    raise ExtendUnavailableError(
         detail=(
             "migrated host: Flow shows the Extend menu item disabled on this account, so "
             "extend cannot start — nothing was submitted (host=migrated)"
         ),
         remediation_hint=(
-            "Flow offers a Google AI plan upgrade beside the disabled item. Upgrade the plan, "
-            "or extend from an account where Flow enables Extend; `gflow credits user` shows "
-            "the balance. Retrying on this account does not help."
+            "Flow shows a Google AI plan upgrade link beside the disabled item; the account "
+            "measured also held few credits (12), so the plan or the balance may gate it. "
+            "Check `gflow credits user`, then upgrade the plan or top up, or extend from an "
+            "account where Flow enables Extend."
         ),
     )
 
@@ -562,9 +575,7 @@ async def run_extend(  # noqa: PLR0913
         log.info("migrated_extend.source", media_id=media_id, workflow_id=workflow_id)
         await (await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")).click()
         extend = await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")
-        if await is_menu_item_disabled(extend):  # a click would wait out 30 s (#1334)
-            await _raise_if_out_of_credits(page)
-            raise _extend_disabled()
+        await _refuse_if_disabled(page, extend)  # a click would wait out 30 s (#1334)
         await extend.click()
         await (await _anchor(page, EXTEND_PROMPT, named="extend prompt box")).click()
         await page.keyboard.insert_text(prompt)

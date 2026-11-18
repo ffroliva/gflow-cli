@@ -39,6 +39,7 @@ The item is visible, so `_anchor` (which waits for `visible`) returns it, and th
 waits for an enabled state that never comes: `migrated_extend.run_extend` clicked
 `EXTEND_MENU_ITEM` without reading `disabled`. The fix reads the state with the existing
 `is_menu_item_disabled` (the same check the upscale menus use for their plan-gated items),
-runs the credits check first (exit 37 if Flow shows the warning), and otherwise raises
-`ExtendUnavailableError` (exit 35, `charged: no`) naming the disabled item and the upgrade
-offer. Whether a higher balance on account A's plan enables the item is not measured.
+allows it up to 3 s to become enabled (both accounts were read only after the page had
+settled), closes the menu, runs the credits check (exit 37 if Flow shows the warning; not
+observed on either account), and otherwise raises `ExtendUnavailableError` (exit 35,
+`charged: no`) naming the disabled item and both possible remedies. Whether a higher balance on account A's plan enables the item is not measured.

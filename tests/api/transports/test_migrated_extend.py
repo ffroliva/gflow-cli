@@ -239,6 +239,9 @@ class _Keyboard:
     async def insert_text(self, text: str) -> None:
         self.typed.append(text)
 
+    async def press(self, key: str) -> None:
+        self.typed.append(f"<{key}>")
+
 
 class _Page:
     """Just enough Page for ``run_extend``: listeners, goto, route, keyboard."""
@@ -290,14 +293,18 @@ class _Visibility:
 
 
 class _Locator:
-    def __init__(self, clicks: list[str], name: str, *, disabled: bool = False) -> None:
-        self._clicks, self._name, self._disabled = clicks, name, disabled
+    def __init__(self, clicks: list[str], name: str, *, disabled_reads: int = 0) -> None:
+        self._clicks, self._name, self._disabled_reads = clicks, name, disabled_reads
 
     async def click(self) -> None:
         self._clicks.append(self._name)
 
     async def is_disabled(self) -> bool:
-        return self._disabled
+        """Disabled for the first ``disabled_reads`` reads (-1: always)."""
+        if self._disabled_reads == 0:
+            return False
+        self._disabled_reads -= self._disabled_reads > 0
+        return True
 
     async def get_attribute(self, _name: str) -> str | None:
         return None
@@ -318,10 +325,10 @@ def _done_record() -> GenerationRecord:
 @pytest.fixture
 def driver(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Anchors become recorded clicks; the observer and the download are stubbed."""
-    seen: dict[str, Any] = {"clicks": [], "observe": None, "workflow": NEW_WF, "disabled": set()}
+    seen: dict[str, Any] = {"clicks": [], "observe": None, "workflow": NEW_WF, "disabled": {}}
 
     async def anchor(_page: Any, selector: str, *, named: str) -> _Locator:
-        return _Locator(seen["clicks"], selector, disabled=selector in seen["disabled"])
+        return _Locator(seen["clicks"], selector, disabled_reads=seen["disabled"].get(selector, 0))
 
     async def observe(_self: Any, page: Any, **kwargs: Any) -> GenerationRecord:
         seen["observe"] = kwargs
@@ -586,29 +593,45 @@ async def test_a_missing_extend_anchor_before_the_submit_reports_nothing_charged
 
 
 @pytest.mark.asyncio
-async def test_a_disabled_extend_item_is_exit_35_before_any_click(driver: dict[str, Any]) -> None:
+async def test_a_disabled_extend_item_is_exit_35_before_any_click(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """#1334: Flow renders the Extend item disabled on some accounts; clicking it waited
     out Playwright's 30 s and surfaced an unexpected timeout."""
     from gflow_cli.errors import ExtendUnavailableError
 
-    driver["disabled"].add(mx.EXTEND_MENU_ITEM)
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = -1
+    monkeypatch.setattr(mx, "DISABLED_GRACE_S", 0.0)
+    page = _Page(_zzl0ze())
     with pytest.raises(ExtendUnavailableError, match="Extend menu item") as info:
-        await _run(_Page(_zzl0ze()))
+        await _run(page)
     assert exit_code_for(info.value) == 35
     assert info.value.charged == "no"
     assert driver["clicks"] == [mx.ADD_CLIP_BUTTON] and driver["observe"] is None
+    assert page.keyboard.typed == ["<Escape>"]  # the menu is closed, the prompt never typed
+
+
+@pytest.mark.asyncio
+async def test_an_extend_item_enabled_within_the_grace_period_is_clicked(
+    driver: dict[str, Any],
+) -> None:
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = 1  # disabled on the first read only
+    await _run(_Page(_zzl0ze()))
+    assert driver["clicks"] == [mx.ADD_CLIP_BUTTON, mx.EXTEND_MENU_ITEM, mx.EXTEND_PROMPT]
 
 
 @pytest.mark.asyncio
 async def test_a_disabled_extend_item_beside_the_credits_warning_is_exit_37(
-    driver: dict[str, Any],
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gflow_cli.api.transports._mc_common import CREDITS_WARNING
     from gflow_cli.errors import InsufficientCreditsError
 
-    driver["disabled"].add(mx.EXTEND_MENU_ITEM)
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = -1
+    monkeypatch.setattr(mx, "DISABLED_GRACE_S", 0.0)
     page = _Page(_zzl0ze())
     page.visible.add(CREDITS_WARNING)
     with pytest.raises(InsufficientCreditsError) as info:
         await _run(page)
     assert exit_code_for(info.value) == 37 and info.value.charged == "no"
+    assert driver["clicks"] == [mx.ADD_CLIP_BUTTON] and driver["observe"] is None
