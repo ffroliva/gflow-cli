@@ -15,7 +15,7 @@ same members, and the worker queue persists the same members for a queued task.
 | `status` | no | The literal HTTP status of the failed call, when there was one |
 | `remediation_hint` | no | What a person should do, in prose |
 | `route` | no | Sanitized route name (never a full URL) |
-| `class` | CLI `--json` | The concrete error class name |
+| `class` | CLI `--json`, worker | The concrete error class name (the worker's `errors/unknown` gives the qualified name, such as `playwright._impl._errors.TimeoutError`) |
 | `exit_code` | CLI `--json`, worker | The process exit code (table below) |
 | `retryable` | yes | `true` when the identical request may simply be run again |
 | `charged` | yes | Whether Flow may have billed this operation: `no`, `maybe` or `yes` |
@@ -207,7 +207,7 @@ members. They have no exit code of their own.
 
 | `type` | Built by | Exit | `charged` | `next_action` |
 |---|---|---|---|---|
-| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure | — | `maybe` | `none` |
+| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure (the message is never shared; the worker's `detail` is its SHA-256 and `class` names the exception class) | — | `maybe` | `none` |
 | `https://gflow-cli.dev/errors/bad-parameter` | MCP, a tool argument it refuses | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/no-profile` | MCP, no profile, or its directory is missing | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |

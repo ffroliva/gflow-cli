@@ -968,14 +968,15 @@ async def test_a_bare_timeout_reaches_an_mcp_caller_as_a_hash(temp_db: DataStore
     """The control, and the reason #776 was unactionable over MCP.
 
     A non-``GFlowError`` takes `daemon.py`'s `else` branch, which ships a SHA-256 of the
-    message and nothing else — not the locator, not even the exception class. An agent
-    receiving this cannot tell a covered button from a dead network.
+    message, never the message (it can carry tokens). #1343: it also names the qualified
+    exception class, which is safe to share and tells a Playwright timeout from a builtin one.
     """
     error = await _fail_t2v_with(temp_db, TimeoutError("Timeout 5000ms exceeded"), "task-776-bare")
     assert error["exit_code"] == 1
     assert error["exit_code_legacy"] == 1  # #1202
     assert error["detail"].startswith("sha256:")
     assert "settings-trigger" not in error["detail"]
+    assert error["class"] == "builtins.TimeoutError"  # #1343
     # #1201: the untyped branch carries the same members, and proves nothing about billing.
     assert (error["charged"], error["next_action"]) == ("maybe", "none")
 
