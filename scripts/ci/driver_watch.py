@@ -103,10 +103,14 @@ Action = tuple[str, Bump | None, int]
 
 def plan(found: list[Bump], issues: list[dict[str, object]]) -> list[Action]:
     """One issue per package: ``create``, ``edit`` the open one, or ``close`` it once the pin
-    admits the latest release. A release whose issue a maintainer closed is not reopened."""
+    admits the latest release. A release whose issue a maintainer closed as not planned is
+    not reopened; the job's own close (completed) is not a decline."""
 
     def is_open(issue: dict[str, object]) -> bool:
         return str(issue.get("state", "OPEN")).upper() == "OPEN"
+
+    def declined(issue: dict[str, object]) -> bool:
+        return str(issue.get("stateReason", "")).upper() == "NOT_PLANNED"
 
     actions: list[Action] = []
     wanted = {bump.package for bump in found}
@@ -114,8 +118,8 @@ def plan(found: list[Bump], issues: list[dict[str, object]]) -> list[Action]:
         prefix = f"Driver release available: {bump.package} "
         mine = [i for i in issues if str(i["title"]).startswith(prefix)]
         current = next((i for i in mine if is_open(i)), None)
-        if any(i["title"] == bump.title and not is_open(i) for i in mine):
-            continue  # declined for this exact release
+        if any(i["title"] == bump.title and declined(i) for i in mine):
+            continue  # a maintainer declined this exact release
         if current is None:
             actions.append(("create", bump, 0))
         elif current["title"] != bump.title:
@@ -181,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
             "--limit",
             "500",
             "--json",
-            "number,title,state",
+            "number,title,state,stateReason",
         )
     )
     actions = plan(found, issues)
@@ -192,7 +196,13 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if action == "close":
             _gh(
-                "issue", "close", str(number), "--comment", "The pin now admits the latest release."
+                "issue",
+                "close",
+                str(number),
+                "--reason",
+                "completed",
+                "--comment",
+                "The pin now admits the latest release.",
             )
         elif bump is not None and action == "create":
             _gh(

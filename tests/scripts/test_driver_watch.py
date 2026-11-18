@@ -76,7 +76,7 @@ def test_an_issue_whose_pin_now_admits_the_release_is_closed() -> None:
 
 def test_a_release_a_maintainer_closed_is_not_reopened() -> None:
     bump = dw.Bump("patchright", "==1.64.4", "1.65.0")
-    declined = {"number": 9, "title": bump.title, "state": "CLOSED"}
+    declined = {"number": 9, "title": bump.title, "state": "CLOSED", "stateReason": "NOT_PLANNED"}
     assert dw.plan([bump], [declined]) == []
 
 
@@ -147,3 +147,16 @@ def test_main_closes_an_issue_whose_pin_now_admits_the_release(
 def test_main_dry_run_only_lists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     calls = _run_main(monkeypatch, tmp_path, [], "--dry-run")
     assert [c[0][:2] for c in calls] == [("issue", "list")]
+
+
+def test_a_release_the_job_closed_itself_is_announced_again() -> None:
+    """A pin raised, then reverted (#1319): the job's own close is not a maintainer decline."""
+    bump = dw.Bump("patchright", "==1.64.4", "1.65.0")
+    self_closed = {"number": 9, "title": bump.title, "state": "CLOSED", "stateReason": "COMPLETED"}
+    assert dw.plan([bump], [self_closed]) == [("create", bump, 0)]
+
+
+def test_a_release_closed_as_not_planned_stays_declined() -> None:
+    bump = dw.Bump("patchright", "==1.64.4", "1.65.0")
+    declined = {"number": 9, "title": bump.title, "state": "CLOSED", "stateReason": "NOT_PLANNED"}
+    assert dw.plan([bump], [declined]) == []

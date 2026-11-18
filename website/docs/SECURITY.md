@@ -309,7 +309,9 @@ Controls:
   releases, the weekly `driver-watch` job (`.github/workflows/deps-watch.yml`,
   `scripts/ci/driver_watch.py`) compares the playwright and patchright pins with
   PyPI and opens or updates one `driver-watch` issue per package when a release
-  falls outside its pin. It never opens a PR or changes a pin.
+  falls outside its pin, and closes it (as completed) once the pin admits the
+  release. To decline a release, close its issue as **not planned**; the job does not
+  reopen it. It never opens a PR or changes a pin.
 - Default engine is `playwright` (Microsoft, security-reviewed); patchright is an
   experiment you opt into per the trade-off above.
 
