@@ -64,6 +64,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +76,68 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import VideoStartedCallback
 
 log = structlog.get_logger(__name__)
+
+
+async def _aborted_by_check(
+    route: Any,
+    request_check: Callable[[str, str], GFlowError | None] | None,
+    rpcid: str | None,
+    body: str,
+    route_error: asyncio.Future[GFlowError],
+) -> bool:
+    """Abort a request ``request_check`` refuses, in the browser, and record it unsent.
+
+    The guard judges here, before the request leaves (#1320): the request listener only
+    records the same verdict as a backstop, because ending the wait from that event
+    would unroute this guard before it runs."""
+    verdict = request_check(rpcid, body) if request_check and rpcid else None
+    if verdict is None:
+        return False
+    await route.abort()
+    log.warning("migrated.request_refused_before_send", rpc=rpcid)
+    if not route_error.done():
+        verdict.charged, verdict.next_action, verdict.retryable = "no", "retry", True
+        route_error.set_result(verdict)
+    return True
+
+
+def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
+    """A submit the route guard aborted in the browser: Flow received and billed nothing."""
+    refused = WireFormatError(
+        detail=problem, route=f"batchexecute:{rpcid}", remediation_hint=ABORTED_BEFORE_SEND
+    )
+    refused.charged, refused.next_action, refused.retryable = "no", "retry", True  # #1320
+    return refused
+
+
+def _image_request_listener(
+    route_error: asyncio.Future[WireFormatError],
+    *,
+    guarded: bool,
+    problem_of: Callable[[Any], str | None],
+) -> tuple[Callable[[Any], None], list[WireFormatError]]:
+    """The image submit's request listener, and the problems it saw on a guarded run.
+
+    A guarded run's verdict belongs to the route guard, which the request event precedes:
+    setting ``route_error`` here would end the wait and unroute the guard before it
+    aborts, letting the submit out (#1320). So on a guarded run the listener only records
+    the problem, the backstop for a submit no guard saw, raised once the run settles."""
+    unguarded: list[WireFormatError] = []
+
+    def on_request(raw_request: Any) -> None:
+        url = str(getattr(raw_request, "url", ""))
+        if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+            return
+        problem = problem_of(raw_request)
+        if problem is None:
+            return
+        sent = WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
+        if guarded:
+            unguarded.append(sent)
+        else:
+            route_error.set_result(sent)
+
+    return on_request, unguarded
 
 
 class SubmitObserveMixin(MentionMixin):
@@ -142,6 +205,7 @@ class SubmitObserveMixin(MentionMixin):
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
+        unguarded_verdicts: list[GFlowError] = []
         # Body problems the observer saw; raised only if the route guard did not stop them.
         observed: list[GFlowError] = []
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
@@ -173,7 +237,10 @@ class SubmitObserveMixin(MentionMixin):
             if request_check is not None:
                 verdict = request_check(rpcid, body)
                 if verdict is not None:
-                    route_error.set_result(verdict)
+                    # The guard below judges first and aborts; ending the wait here would
+                    # unroute it before it runs (#1320). Kept as the backstop for a request
+                    # no guard saw, raised once the run settles.
+                    unguarded_verdicts.append(verdict)
                     return
             if rpcid in submit_rpcs:
                 submit_requests.append((request, rpcid))
@@ -374,6 +441,8 @@ class SubmitObserveMixin(MentionMixin):
             try:
                 body = request_body(request)
                 rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
+                if await _aborted_by_check(route, request_check, rpcid, body, route_error):
+                    return
                 problem = (
                     _submit_body_problem(
                         rpcid,
@@ -398,13 +467,7 @@ class SubmitObserveMixin(MentionMixin):
             await route.abort()
             log.warning("migrated.submit_refused_before_send", rpc=rpcid)
             if not route_error.done():
-                route_error.set_result(
-                    WireFormatError(
-                        detail=problem,
-                        route=f"batchexecute:{rpcid}",
-                        remediation_hint=ABORTED_BEFORE_SEND,
-                    )
-                )
+                route_error.set_result(_aborted_before_send(problem, str(rpcid)))
 
         # Both are ALWAYS armed, t2v included: a stale End chip makes the app submit
         # `nprQif` on a run that asked for no end frame. The route guard is where refusing
@@ -420,31 +483,18 @@ class SubmitObserveMixin(MentionMixin):
                 else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             )
             submit_named = submit_selector or "arrow_forward"
-            if not await submit.count():
-                # A credit shortfall and a moved frontend look identical here: both are
-                # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
-                # reporting a short balance as selector drift tells the user to file a
-                # frontend bug that no code change can fix.
-                await _raise_if_out_of_credits(page)
-                raise UiSelectorDriftError(
-                    detail=(
-                        f"migrated host: the submit button ({submit_named}) is missing "
-                        "after the prompt was typed (host=migrated)"
-                    ),
-                )
-            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
-            while not await submit.is_enabled():
-                if time.monotonic() >= enable_deadline:
-                    # Same question as above, on the other way of giving up on submit.
-                    await _raise_if_out_of_credits(page)
-                    raise UiSelectorDriftError(
-                        detail=(
-                            f"migrated host: the submit button ({submit_named}) stayed disabled "
-                            f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
-                            "(host=migrated)"
-                        ),
-                    )
-                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            await self._await_submit_enabled(
+                page,
+                submit,
+                missing=(
+                    f"migrated host: the submit button ({submit_named}) is missing "
+                    "after the prompt was typed (host=migrated)"
+                ),
+                disabled=(
+                    f"migrated host: the submit button ({submit_named}) stayed disabled for "
+                    f"{SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed (host=migrated)"
+                ),
+            )
             deadline = time.monotonic() + poll_timeout_s
             clicked_at = time.time()
             # The credit-spending click: a bare timeout here leaves "did it submit?"
@@ -486,6 +536,8 @@ class SubmitObserveMixin(MentionMixin):
                 # The request is inspected before its reply lands, so a wrong body is
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
+            if unguarded_verdicts:  # it left the browser unguarded: Flow may have billed it
+                raise unguarded_verdicts[0]
             if observed:
                 raise observed[0]  # the route did not stop it: sent, and Flow bills it
             if not submitted.done() and lost:
@@ -653,6 +705,26 @@ class SubmitObserveMixin(MentionMixin):
             )
             raise UiSelectorDriftError(detail=detail)
 
+    async def _await_submit_enabled(
+        self, page: Page, submit: Locator, *, disabled: str, missing: str | None = None
+    ) -> None:
+        """Wait for the submit button to be clickable; nothing has been sent yet (#1320).
+
+        A credit shortfall and a moved frontend look identical here (the button is gone
+        or never enables), so each give-up asks which one BEFORE naming a culprit:
+        reporting a short balance as selector drift sends the user to file a frontend bug
+        that no code change can fix."""
+        with nothing_submitted():
+            if missing is not None and not await submit.count():
+                await _raise_if_out_of_credits(page)
+                raise UiSelectorDriftError(detail=missing)
+            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
+            while not await submit.is_enabled():
+                if time.monotonic() >= enable_deadline:
+                    await _raise_if_out_of_credits(page)
+                    raise UiSelectorDriftError(detail=disabled)
+                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+
     async def _pre_submit_gate(self, page: Page) -> Any:
         """Prove the composer is clear and submit is present and hit-testable.
 
@@ -661,34 +733,35 @@ class SubmitObserveMixin(MentionMixin):
         downstream by the submit path itself (with the out-of-credits
         interrogation); this gate refuses missing/covered targets first.
         """
-        await self._dismiss_cookie_bar(page)
-        blockers = self._blocking_overlays(page)
-        remaining = await blockers.count()
-        if remaining:
-            detail = await self._ui_failure_detail(
-                page,
-                phase="pre_submit_overlay_gate",
-                selector=VISIBLE_OVERLAY,
-                detail=(
-                    f"migrated host: {remaining} blocking overlay(s) remain before image "
-                    "Generate (host=migrated)"
-                ),
-                error=f"{remaining} blocking overlay(s)",
-            )
-            raise UiSelectorDriftError(detail=detail)
-        submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
-        if not await submit.count():
-            await _raise_if_out_of_credits(page)
-            detail = await self._ui_failure_detail(
-                page,
-                phase="pre_submit_button_gate",
-                selector="button -> arrow_forward",
-                detail="migrated host: image submit button is missing (host=migrated)",
-                error="submit button missing",
-            )
-            raise UiSelectorDriftError(detail=detail)
-        await self._verify_submit_target(page, submit)
-        return submit
+        with nothing_submitted():  # #1320: a gate before any request leaves
+            await self._dismiss_cookie_bar(page)
+            blockers = self._blocking_overlays(page)
+            remaining = await blockers.count()
+            if remaining:
+                detail = await self._ui_failure_detail(
+                    page,
+                    phase="pre_submit_overlay_gate",
+                    selector=VISIBLE_OVERLAY,
+                    detail=(
+                        f"migrated host: {remaining} blocking overlay(s) remain before image "
+                        "Generate (host=migrated)"
+                    ),
+                    error=f"{remaining} blocking overlay(s)",
+                )
+                raise UiSelectorDriftError(detail=detail)
+            submit = page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+            if not await submit.count():
+                await _raise_if_out_of_credits(page)
+                detail = await self._ui_failure_detail(
+                    page,
+                    phase="pre_submit_button_gate",
+                    selector="button -> arrow_forward",
+                    detail="migrated host: image submit button is missing (host=migrated)",
+                    error="submit button missing",
+                )
+                raise UiSelectorDriftError(detail=detail)
+            await self._verify_submit_target(page, submit)
+            return submit
 
     async def submit_images_and_observe(
         self,
@@ -715,17 +788,14 @@ class SubmitObserveMixin(MentionMixin):
         # References and characters already exist; a late-listed upload is not output.
         baseline = None if grid is None else {*grid, *reference_ids, *entity_ids}
 
-        def on_request(raw_request: Any) -> None:
-            url = str(getattr(raw_request, "url", ""))
-            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
-                return
-            problem = _image_body_problem(
-                request_body(raw_request), reference_ids, request.model, entity_ids
-            )
-            if problem is not None:
-                route_error.set_result(
-                    WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
-                )
+        guarded = bool(reference_ids or entity_ids)
+        on_request, unguarded_problem = _image_request_listener(
+            route_error,
+            guarded=guarded,
+            problem_of=lambda raw: _image_body_problem(
+                request_body(raw), reference_ids, request.model, entity_ids
+            ),
+        )
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
@@ -812,24 +882,19 @@ class SubmitObserveMixin(MentionMixin):
                 body_media=None if found is None else len(found[0]),
                 body_characters=None if found is None else len(found[1]),
             )
-            if problem is not None and not route_error.done():
-                route_error.set_result(
-                    WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
-                )
+            if problem is None:
+                return
+            if not route_error.done():
+                route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
 
         page.on("request", on_request)
         page.on("response", on_response)
         try:
-            if reference_ids or entity_ids:
+            if guarded:
                 await page.route(is_image_submit, guard)
-            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
-            while not await submit.is_enabled():
-                if time.monotonic() >= enable_deadline:
-                    await _raise_if_out_of_credits(page)
-                    raise UiSelectorDriftError(
-                        detail="migrated host: image submit stayed disabled (host=migrated)"
-                    )
-                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            await self._await_submit_enabled(
+                page, submit, disabled="migrated host: image submit stayed disabled (host=migrated)"
+            )
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
                 {result, route_error, body_lost},
@@ -838,6 +903,8 @@ class SubmitObserveMixin(MentionMixin):
             )
             if route_error.done():
                 raise route_error.result()
+            if unguarded_problem:  # it left the browser: Flow may have billed it
+                raise unguarded_problem[0]
             if body_lost.done():
                 return await _recover_images(page, request, baseline)
             if result not in done:
@@ -855,7 +922,7 @@ class SubmitObserveMixin(MentionMixin):
                 result.exception()
             page.remove_listener("request", on_request)
             page.remove_listener("response", on_response)
-            if reference_ids or entity_ids:
+            if guarded:
                 try:
                     await page.unroute(is_image_submit, guard)
                 except Exception as exc:  # noqa: BLE001 - must not mask the real outcome

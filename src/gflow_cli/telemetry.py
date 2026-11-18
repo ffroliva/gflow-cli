@@ -18,6 +18,7 @@ import time
 import traceback
 from collections.abc import Iterable, Sequence
 from contextlib import closing
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -52,21 +53,22 @@ DB_FILE = "telemetry.db"
 OFF_FILE = "telemetry.off"
 CONSENT_FILE = "telemetry.consent"
 SCHEMA = 1
-NOTICE_VERSION = 2
+NOTICE_VERSION = 3
 NOTICE_TEXT = (
     "gflow sends weekly usage totals to improve it, and we share overall figures publicly and "
     "with\n"
-    "sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, "
-    "prompts,\n"
-    "paths or account details. Each report is added to totals and discarded.\n"
+    "sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, and\n"
+    "your country as a total. No ID, prompts, paths or account details. Each report is added to\n"
+    "totals and discarded.\n"
     "Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0\n"
     "See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
 )
 NOTICE_TEXT_CONSENT = (
     "gflow can send weekly usage totals to help improve it; overall figures are shared publicly "
     "and "
-    "with sponsors. Commands, flag names, models, error codes, and your country as a total. No ID, "
-    "prompts, paths or account details. Each report is added to totals and discarded.\n"
+    "with sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, "
+    "and your country as a total. No ID, prompts, paths or account details. Each report is "
+    "added to totals and discarded.\n"
     "In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry "
     "off)\n"
     "See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
@@ -297,13 +299,27 @@ def set_consent() -> None:
     path = _resolve_home() / CONSENT_FILE
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+        # The notice version rides along: consent to an older notice is not consent (#1326).
+        path.write_text(f"{datetime.now(UTC).isoformat()}\n{NOTICE_VERSION}", encoding="utf-8")
     except OSError as exc:
         from gflow_cli.errors import ConfigurationError
 
         raise ConfigurationError(
             detail=f"Could not write telemetry preference at {path}: {exc}"
         ) from exc
+
+
+def consent_at() -> datetime | None:
+    """When upload consent was given to the CURRENT notice; None when absent, unreadable, or
+    given to an earlier notice version."""
+    try:
+        stamp, *version = (_resolve_home() / CONSENT_FILE).read_text(encoding="utf-8").split()
+        if version != [str(NOTICE_VERSION)]:
+            return None
+        at = datetime.fromisoformat(stamp)
+    except (OSError, ValueError):
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
 
 
 def _meta() -> dict[str, str]:
@@ -333,7 +349,7 @@ def upload_disabled_reason() -> str | None:
             return "server stopped uploads"
         if meta.get("notice_seen_version") != str(NOTICE_VERSION):
             return "notice not shown yet"
-        if consent_region() and not (_resolve_home() / CONSENT_FILE).exists():
+        if consent_region() and consent_at() is None:
             return "consent needed in your region: run gflow telemetry on"
         return None
     except Exception:  # noqa: BLE001 - any uncertain upload state stays off
@@ -424,6 +440,61 @@ def _connect(home: Path) -> sqlite3.Connection:
     return con
 
 
+#: What the run that launched a browser observed (#1326): its engine and the Flow host
+#: served. Stored, not counted, so a route read twice still counts once per command.
+#: A CLI process runs one command, so it uses one process-wide dict. A long-lived MCP
+#: server runs tool calls and queued jobs concurrently: each opens its own scope
+#: (`begin_run`), and the dict, being mutated rather than replaced, is shared with the
+#: tasks and threads that scope spawns.
+_PROCESS_FACTS: dict[str, str] = {}
+_RUN_FACTS: ContextVar[dict[str, str] | None] = ContextVar("gflow_run_facts", default=None)
+_ENGINES = frozenset({"playwright", "patchright"})
+_HOSTS = {"labs": "labs", "migrated": "flow"}
+
+
+def _facts() -> dict[str, str]:
+    scoped = _RUN_FACTS.get()
+    return _PROCESS_FACTS if scoped is None else scoped
+
+
+def begin_run() -> Token[dict[str, str] | None]:
+    """Give one MCP tool call or queued job its own facts; reset the token when it ends."""
+    return _RUN_FACTS.set({})
+
+
+def end_run(token: Token[dict[str, str] | None]) -> None:
+    _RUN_FACTS.reset(token)
+
+
+def note_engine(engine: str) -> None:
+    """Note the browser engine a run launched (closed enum: anything else is ``other``)."""
+    _facts()["engine"] = engine if engine in _ENGINES else "other"
+
+
+def note_host(kind: str | None) -> None:
+    """Note the Flow host a run was served, as ``flow_host_kind`` classifies ``page.url``.
+
+    An unclassifiable URL keeps any earlier observation; none at all reads ``unknown``."""
+    if kind in _HOSTS:
+        _facts()["host"] = _HOSTS[kind]
+
+
+def _take_run_facts() -> list[tuple[str, str]]:
+    """The noted facts as counter keys, cleared so the next run starts empty."""
+    facts = _facts()
+    noted = dict(facts)  # snapshot, then clear: a concurrent clear cannot raise here
+    facts.clear()  # a host noted without a launch must not carry into a later run
+    if "engine" not in noted:
+        return []
+    return [("engine", noted["engine"]), ("host", noted.get("host", "unknown"))]
+
+
+def flush_run_facts(surface: Literal["cli", "mcp"]) -> None:
+    """Count a job's noted facts where no ``record()`` follows (the queued-job worker)."""
+    for kind, key in _take_run_facts():
+        record_counter(surface, kind, key)
+
+
 def record(
     surface: Literal["cli", "mcp"],
     command: str,
@@ -433,13 +504,16 @@ def record(
 ) -> None:
     """Count one command invocation. Silent on every failure (lossy under contention)."""
     try:
+        # Taken before the off-gate: a run made while telemetry is off must not be counted
+        # after it is turned on (#1326).
+        run_facts = _take_run_facts()
         if killed() or opted_out():
             return
         home = _resolve_home()
         home.mkdir(parents=True, exist_ok=True)
         now = datetime.now(UTC)
         week = iso_week(now)
-        keys = [("command", command)]
+        keys = [("command", command), *run_facts]
         keys += [("flag", f"{command} {f}") for f in flags]
         keys += [("exit", f"{command} {outcome}"), ("duration", f"{command} {_bucket(duration_s)}")]
         with closing(_connect(home)) as con, con:
@@ -857,6 +931,8 @@ def _report_counter_targets() -> dict[str, Any]:
         "transitions": {},
         "crashes": {},
         "mcp_clients": {},
+        "engines": {},
+        "hosts": {},
         "tools": tools,
         "nested": {"flag": flags, "exit": exits, "duration": durations, "tool": tools},
     }
@@ -903,8 +979,8 @@ def _add_scalar_counter(
     elif kind == "crash":
         values = targets["crashes"].setdefault(surface, {})
         values[key] = values.get(key, 0) + count
-    elif kind == "client":
-        values = targets["mcp_clients"]
+    elif kind in ("client", "engine", "host"):
+        values = targets[{"client": "mcp_clients", "engine": "engines", "host": "hosts"}[kind]]
         values[key] = values.get(key, 0) + count
 
 
@@ -1028,4 +1104,6 @@ def build_report(week: str) -> dict[str, object]:
         "mcp_clients": counters["mcp_clients"],
         "crashes": counters["crashes"],
         "tools": counters["tools"],
+        # Sent only when non-empty: an endpoint older than #1326 rejects the keys.
+        **{k: counters[k] for k in ("engines", "hosts") if counters[k]},
     }

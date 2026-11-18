@@ -82,6 +82,8 @@ updates:
       # "NOT a routine dependabot auto-merge". That was prose with nothing
       # enforcing it; this is the enforcement. ALL update-types, patch included:
       # any version change moves the browser binary underneath the user.
+      # Ignoring these updates also silences them: the `driver-watch` job in
+      # deps-watch.yml opens one issue per driver release the pins refuse.
       - dependency-name: "patchright"
         update-types:
           - "version-update:semver-major"

@@ -103,6 +103,44 @@ def test_source_record_maps_media_to_workflow_and_kind() -> None:
     assert clip == mx.SourceClip(workflow_id=WF, kind="video")
 
 
+# #1346, measured 2026-11-18: a clip extended twice is listed as three workflow records
+# with the same media id (the original, then one per extend), in no particular order, and
+# the media's own entry names the newest as its current workflow (slot 3, item 4). The
+# page's next fZytfe continues that one.
+ROOT_WF, MID_WF = WF, "22222222-3333-4444-8555-666666666666"
+HEAD_WF = "33333333-4444-4555-8666-777777777777"
+
+
+def _media_entry(current: str, media: str = MEDIA) -> list[Any]:
+    return [media, None, None, ["title", [1794949969, 0], None, None, current, "E9", [1], PID]]
+
+
+def _extended_zzl0ze(current: str = HEAD_WF) -> list[Any]:
+    records = [_video_record(MID_WF), _video_record(ROOT_WF), _video_record(HEAD_WF)]
+    return [None, [_media_entry(current)], [_image_record(), *records]]
+
+
+def test_an_extended_clip_maps_to_the_workflow_its_media_entry_names() -> None:
+    clip = mx.source_record(_extended_zzl0ze(), MEDIA)
+    assert clip == mx.SourceClip(workflow_id=HEAD_WF, kind="video")
+
+
+def test_another_clips_entry_listed_first_is_not_read_as_this_clips() -> None:
+    listing = _extended_zzl0ze()
+    listing[1].insert(0, _media_entry(IMAGE_WF, media=IMAGE))
+    assert mx.source_record(listing, MEDIA) == mx.SourceClip(workflow_id=HEAD_WF, kind="video")
+
+
+def test_a_current_workflow_of_another_clip_is_not_taken() -> None:
+    # The entry's pointer must name one of THIS media's records; otherwise the first stands.
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        clip = mx.source_record(_extended_zzl0ze(current=IMAGE_WF), MEDIA)
+    assert clip == mx.SourceClip(workflow_id=MID_WF, kind="video")
+    assert [e["event"] for e in logs] == ["migrated_extend.current_workflow_unresolved"]
+
+
 def test_source_record_reads_an_image_as_an_image() -> None:
     clip = mx.source_record(_zzl0ze(), IMAGE)
     assert clip is not None
@@ -239,6 +277,9 @@ class _Keyboard:
     async def insert_text(self, text: str) -> None:
         self.typed.append(text)
 
+    async def press(self, key: str) -> None:
+        self.typed.append(f"<{key}>")
+
 
 class _Page:
     """Just enough Page for ``run_extend``: listeners, goto, route, keyboard."""
@@ -254,6 +295,7 @@ class _Page:
         self.routes: list[Any] = []
         self.unrouted = 0
         self.keyboard = _Keyboard()
+        self.visible: set[str] = set()
 
     def on(self, event: str, fn: Any) -> None:
         self.listeners.setdefault(event, []).append(fn)
@@ -276,13 +318,34 @@ class _Page:
         self.routes.remove(handler)
         self.unrouted += 1
 
+    def locator(self, selector: str) -> _Visibility:
+        return _Visibility(selector in self.visible)
+
+
+class _Visibility:
+    def __init__(self, visible: bool) -> None:
+        self.first, self._visible = self, visible
+
+    async def is_visible(self) -> bool:
+        return self._visible
+
 
 class _Locator:
-    def __init__(self, clicks: list[str], name: str) -> None:
-        self._clicks, self._name = clicks, name
+    def __init__(self, clicks: list[str], name: str, *, disabled_reads: int = 0) -> None:
+        self._clicks, self._name, self._disabled_reads = clicks, name, disabled_reads
 
     async def click(self) -> None:
         self._clicks.append(self._name)
+
+    async def is_disabled(self) -> bool:
+        """Disabled for the first ``disabled_reads`` reads (-1: always)."""
+        if self._disabled_reads == 0:
+            return False
+        self._disabled_reads -= self._disabled_reads > 0
+        return True
+
+    async def get_attribute(self, _name: str) -> str | None:
+        return None
 
 
 def _done_record() -> GenerationRecord:
@@ -300,10 +363,10 @@ def _done_record() -> GenerationRecord:
 @pytest.fixture
 def driver(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Anchors become recorded clicks; the observer and the download are stubbed."""
-    seen: dict[str, Any] = {"clicks": [], "observe": None, "workflow": NEW_WF}
+    seen: dict[str, Any] = {"clicks": [], "observe": None, "workflow": NEW_WF, "disabled": {}}
 
     async def anchor(_page: Any, selector: str, *, named: str) -> _Locator:
-        return _Locator(seen["clicks"], selector)
+        return _Locator(seen["clicks"], selector, disabled_reads=seen["disabled"].get(selector, 0))
 
     async def observe(_self: Any, page: Any, **kwargs: Any) -> GenerationRecord:
         seen["observe"] = kwargs
@@ -384,10 +447,11 @@ async def test_a_silent_listing_is_a_timeout_before_any_click(
 ) -> None:
     monkeypatch.setattr(mx, "LISTING_BUDGET_S", 0.01)
     page = _Page(_zzl0ze(), answer=False)
-    with pytest.raises(TransportTimeoutError, match="Zzl0ze"):
+    with pytest.raises(TransportTimeoutError, match="Zzl0ze") as info:
         await _run(page)
     assert driver["clicks"] == []
     assert page.listeners["response"] == []
+    assert info.value.charged == "no"  # #1320: the source read precedes any submit
 
 
 @pytest.mark.asyncio
@@ -482,7 +546,9 @@ def _fzytfe_inner(wf: str = WF) -> Any:
     return json.loads(json.loads(_fzytfe(wf=wf)[len("f.req=") :].split("&at=")[0])[0][0][1])
 
 
-async def _guard_calls(monkeypatch: pytest.MonkeyPatch, *requests: Any) -> list[str]:
+async def _guard_calls(
+    monkeypatch: pytest.MonkeyPatch, *requests: Any, listing: Any = None
+) -> list[str]:
     calls: list[str] = []
 
     async def observe(_self: Any, page: Any, **_kwargs: Any) -> GenerationRecord:
@@ -493,8 +559,18 @@ async def _guard_calls(monkeypatch: pytest.MonkeyPatch, *requests: Any) -> list[
         return _done_record()
 
     monkeypatch.setattr(mx.MigratedComposer, "submit_and_observe", observe)
-    await _run(_Page(_zzl0ze()))
+    await _run(_Page(_zzl0ze() if listing is None else listing))
     return calls
+
+
+@pytest.mark.asyncio
+async def test_an_extended_clip_releases_only_the_extend_of_its_current_workflow(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1346: the next extend continues the newest workflow; any other is still aborted."""
+    requests = (_Request("fZytfe", _fzytfe(wf=wf)) for wf in (OTHER_WF, ROOT_WF, MID_WF, HEAD_WF))
+    calls = await _guard_calls(monkeypatch, *requests, listing=_extended_zzl0ze())
+    assert calls == ["abort", "abort", "abort", "fallback"]
 
 
 @pytest.mark.asyncio
@@ -546,3 +622,66 @@ async def test_a_missing_anchor_is_selector_drift_exit_23(monkeypatch: pytest.Mo
     with pytest.raises(UiSelectorDriftError, match="add-clip") as info:
         await mx._anchor(page, mx.ADD_CLIP_BUTTON, named="timeline add-clip button")  # type: ignore[arg-type]
     assert exit_code_for(info.value) == 23
+
+
+@pytest.mark.asyncio
+async def test_a_missing_extend_anchor_before_the_submit_reports_nothing_charged(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1320: the add-clip/Extend/prompt anchors come before any request Flow could bill."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    async def missing(_page: Any, _selector: str, *, named: str) -> Any:
+        raise UiSelectorDriftError(detail=f"{named} missing")
+
+    monkeypatch.setattr(mx, "_anchor", missing)
+    page = _Page([[[_image_record()]]], then=_zzl0ze())
+    with pytest.raises(UiSelectorDriftError) as info:
+        await _run(page)
+    assert info.value.charged == "no"
+    assert driver["observe"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_extend_item_is_exit_35_before_any_click(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1334: Flow renders the Extend item disabled on some accounts; clicking it waited
+    out Playwright's 30 s and surfaced an unexpected timeout."""
+    from gflow_cli.errors import ExtendUnavailableError
+
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = -1
+    monkeypatch.setattr(mx, "DISABLED_GRACE_S", 0.0)
+    page = _Page(_zzl0ze())
+    with pytest.raises(ExtendUnavailableError, match="Extend menu item") as info:
+        await _run(page)
+    assert exit_code_for(info.value) == 35
+    assert info.value.charged == "no"
+    assert driver["clicks"] == [mx.ADD_CLIP_BUTTON] and driver["observe"] is None
+    assert page.keyboard.typed == ["<Escape>"]  # the menu is closed, the prompt never typed
+
+
+@pytest.mark.asyncio
+async def test_an_extend_item_enabled_within_the_grace_period_is_clicked(
+    driver: dict[str, Any],
+) -> None:
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = 1  # disabled on the first read only
+    await _run(_Page(_zzl0ze()))
+    assert driver["clicks"] == [mx.ADD_CLIP_BUTTON, mx.EXTEND_MENU_ITEM, mx.EXTEND_PROMPT]
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_extend_item_beside_the_credits_warning_is_exit_37(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports._mc_common import CREDITS_WARNING
+    from gflow_cli.errors import InsufficientCreditsError
+
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = -1
+    monkeypatch.setattr(mx, "DISABLED_GRACE_S", 0.0)
+    page = _Page(_zzl0ze())
+    page.visible.add(CREDITS_WARNING)
+    with pytest.raises(InsufficientCreditsError) as info:
+        await _run(page)
+    assert exit_code_for(info.value) == 37 and info.value.charged == "no"
+    assert driver["clicks"] == [mx.ADD_CLIP_BUTTON] and driver["observe"] is None

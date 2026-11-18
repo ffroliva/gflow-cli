@@ -557,6 +557,7 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
     project_id = _require_project()
     env = _character_env(e2e_env)
     env["GFLOW_CLI_LOG_FORMAT"] = "json"  # make the transport events assertable
+    env["GFLOW_CLI_LOG_LEVEL"] = "INFO"  # they are INFO; the CLI defaults to WARNING (#1332)
     profile = env["GFLOW_CLI_PROFILE"]
     locale = os.environ.get(_LOCALE_ENV, _DEFAULT_LOCALE)
     face = os.environ.get(_FACE_ENV, _DEFAULT_FACE_PROMPT)

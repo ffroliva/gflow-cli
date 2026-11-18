@@ -24,6 +24,7 @@ from gflow_cli.errors import (
     UiSelectorDriftError,
     UpscaleUnavailableError,
     WireFormatError,
+    nothing_submitted,
 )
 from gflow_cli.paths import extension_from_magic
 
@@ -37,6 +38,7 @@ log = structlog.get_logger(__name__)
 UPSCALE_RPCID = "SPrCad"
 _DEFAULT_TIMEOUT_S = 90.0
 _MENU_TIMEOUT_MS = 5_000
+_ITEM_SETTLE_MS = 1_500
 
 # The download button in the image / video detail view (icon ligature, not a label).
 DOWNLOAD_BUTTON_SELECTOR = (
@@ -61,7 +63,15 @@ def menu_token_pattern(token: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![0-9A-Za-z]){re.escape(token)}(?![0-9A-Za-z])", re.IGNORECASE)
 
 
-async def find_download_menu_item(page: Page, token: str, *, route: str) -> Locator:
+#: A whole scale token (``270p``, ``2K``): what tells "Flow lists other scales" from drift.
+#: Matched against the words of a label, so no lookaround is needed for token boundaries.
+_SCALE = re.compile(r"\d+[pk]", re.IGNORECASE | re.ASCII)
+_WORD_SPLIT = re.compile(r"[^\da-z]+", re.IGNORECASE | re.ASCII)
+
+
+async def find_download_menu_item(
+    page: Page, token: str, *, route: str, accepted: tuple[str, ...]
+) -> Locator:
     """The open download menu's item for resolution ``token``, picked by that token.
 
     Measured 2026-10-07 (scripts/dev/spike_upscale_menu_anchors.py, en) against the
@@ -70,8 +80,15 @@ async def find_download_menu_item(page: Page, token: str, *, route: str) -> Loca
     ORDER differs between the two (video 270p/720p/1080p vs 720p/1080p/270p) and the
     WORDS are translated ("2K (Aprimorada)", "Tamanho original"), but the resolution
     token itself is identical in en and pt. So the token is the only stable anchor —
-    it is a format name, not a translated label. A missing item is selector drift
-    (exit 23); a present-but-disabled one is the caller's tier gate (exit 22).
+    it is a format name, not a translated label. A present-but-disabled item is the
+    caller's tier gate (exit 22).
+
+    Flow decides the offered scales per media (#1338, measured 2026-11-18): a Veo 3.1
+    Lite clip lists only 270p and 720p, an Omni 1.2 Flash clip 270p, 360p and 720p. So
+    a token missing from a menu whose other items carry scale tokens is Flow not
+    offering it (exit 22, naming what it does offer and which of those ``accepted``
+    holds); a menu with no scale token at all, or one whose text does carry ``token``,
+    means the anchor itself missed (exit 23).
     """
     items = page.locator('[role="menuitem"]')
     try:
@@ -82,12 +99,34 @@ async def find_download_menu_item(page: Page, token: str, *, route: str) -> Loca
             route=route,
         ) from exc
     match = items.filter(has_text=menu_token_pattern(token))
-    if await match.count() == 0:
-        raise UiSelectorDriftError(
-            detail=f"migrated upscale: menu item for {token} was not found on {page.url}",
+    try:
+        # A grace period before "not offered" (exit 22, do not retry) is concluded.
+        await match.first.wait_for(state="visible", timeout=_ITEM_SETTLE_MS)
+        return match.first
+    except PlaywrightTimeoutError:
+        pass
+    texts = await items.all_inner_texts()
+    offered = [w for t in texts for w in _WORD_SPLIT.split(t) if _SCALE.fullmatch(w)]
+    if offered and token.lower() not in {o.lower() for o in offered}:
+        usable = [o for o in offered if o.lower() in {a.lower() for a in accepted}]
+        raise UpscaleUnavailableError(
+            detail=(
+                f"Flow does not offer {token} for this media: its download menu on "
+                f"{page.url} lists {', '.join(offered)}."
+            ),
             route=route,
+            remediation_hint=(
+                f"Flow decides which scales it offers for each item. Of those listed, "
+                f"gflow can export: {', '.join(usable)}."
+                if usable
+                else "Flow decides which scales it offers for each item, and none of the "
+                "listed ones is a scale gflow can export here."
+            ),
         )
-    return match.first
+    raise UiSelectorDriftError(
+        detail=f"migrated upscale: menu item for {token} was not found on {page.url}",
+        route=route,
+    )
 
 
 async def is_menu_item_disabled(item: Locator) -> bool:
@@ -320,22 +359,25 @@ async def upscale_image_migrated(
     Returns:
         Raw decoded JPEG/PNG bytes.
     """
-    log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
-    await open_tile_download_menu(
-        page,
-        project_id=project_id,
-        media_id=media_id,
-        tile_selector=f'img[data-media-id="{media_id}"]',
-        tile_timeout_ms=30_000,
-        kind="image",
-        prefix="migrated upscale",
-        route="image_upscale",
-    )
+    with nothing_submitted():  # #1320: the menu click below is the first send
+        log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
+        await open_tile_download_menu(
+            page,
+            project_id=project_id,
+            media_id=media_id,
+            tile_selector=f'img[data-media-id="{media_id}"]',
+            tile_timeout_ms=30_000,
+            kind="image",
+            prefix="migrated upscale",
+            route="image_upscale",
+        )
 
-    scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
-    btn_target = await find_download_menu_item(page, scale_label, route="image_upscale")
-    if await is_menu_item_disabled(btn_target):
-        raise _unavailable_error(target_resolution)
+        scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
+        btn_target = await find_download_menu_item(
+            page, scale_label, route="image_upscale", accepted=("2K", "4K")
+        )
+        if await is_menu_item_disabled(btn_target):
+            raise _unavailable_error(target_resolution)
 
     found_b64: asyncio.Future[str] = asyncio.get_running_loop().create_future()
     on_response = _sprcad_listener(found_b64)

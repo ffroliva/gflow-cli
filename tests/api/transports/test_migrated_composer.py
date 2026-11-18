@@ -1492,11 +1492,12 @@ async def test_submit_still_disabled_after_the_budget_is_selector_drift(
     monkeypatch.setattr(_mc_submit_observe, "SUBMIT_ENABLE_POLL_S", 0.01)
     page = FakePage()
     page.dom.prompt = ""  # nothing in the composer: the button never enables
-    with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+    with pytest.raises(UiSelectorDriftError, match="stayed disabled") as info:
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
     assert page.dom.submit_clicked == 0
+    assert info.value.charged == "no"  # #1320: never clicked, so nothing was sent
 
 
 async def test_a_missing_submit_with_a_credits_warning_is_not_reported_as_drift() -> None:
@@ -3542,6 +3543,24 @@ async def test_a_non_200_image_submit_is_a_wire_format_error_carrying_the_status
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert "HTTP 500" in str(info.value)
+    assert info.value.charged == "maybe"  # #1320: answered after the click
+
+
+async def test_a_guarded_image_submit_the_route_aborts_reports_nothing_charged() -> None:
+    """#1320: the request event fires before the route guard; the guard's abort, not the
+    listener, decides, so an unsent image submit reads `no` / `retry`."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = RoutingPage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_request = ("ogiZ0b", "")  # a body the guard cannot read
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert page.route_outcomes == ["abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
 
 
 async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
@@ -3786,6 +3805,37 @@ async def test_run_images_without_a_project_is_a_configuration_error() -> None:
     assert page.dom.submit_clicked == 0
 
 
+async def test_a_settings_drift_before_submit_reports_nothing_charged() -> None:
+    """#1320: the pane has no radio for the requested aspect, so nothing was submitted."""
+    from gflow_cli.api.image import Aspect, GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    page.dom.groups["aspect"] = [r for r in page.dom.groups["aspect"] if r.label != "9:16"]
+    with pytest.raises(UiSelectorDriftError) as info:
+        await run_images(
+            page, GenerateImageRequest(prompt="a blue cup", aspect=Aspect.PORTRAIT), project_id="p1"
+        )
+    assert page.dom.submit_clicked == 0
+    assert info.value.to_problem_details()["charged"] == "no"
+
+
+async def test_a_drift_after_the_submit_click_still_reports_maybe_charged() -> None:
+    """#1320's boundary: once the submit is clicked, Flow may have billed the run."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer, run_images
+
+    async def _drift_after_click(*_: Any, **__: Any) -> list[Any]:
+        raise UiSelectorDriftError(detail="result grid moved")
+
+    with (
+        patch.object(MigratedComposer, "submit_images_and_observe", _drift_after_click),
+        pytest.raises(UiSelectorDriftError) as info,
+    ):
+        await run_images(_image_page(), GenerateImageRequest(prompt="a blue cup"), project_id="p1")
+    assert info.value.charged == "maybe"
+
+
 async def test_run_images_refuses_when_a_reference_uploaded_but_never_bound(
     tmp_path: Path,
 ) -> None:
@@ -3862,11 +3912,12 @@ async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
     page = _image_page()
     page.dom.prompt = ""  # nothing in the composer: the button never enables
 
-    with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+    with pytest.raises(UiSelectorDriftError, match="stayed disabled") as info:
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert page.dom.submit_clicked == 0
+    assert info.value.charged == "no"  # #1320
 
 
 async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers() -> None:
@@ -4379,6 +4430,8 @@ async def test_a_wrong_start_end_submit_is_aborted_before_it_is_sent() -> None:
         )
     assert page.route_outcomes == ["abort"]
     assert ei.value.remediation_hint == ABORTED_BEFORE_SEND
+    # #1320: aborted in the browser, so nothing was sent or billed, and a re-run is safe.
+    assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
     assert page.routes[0][0] == BATCHEXECUTE_GLOB  # a glob, not a per-request predicate
     assert page.unrouted == page.routes
 
@@ -4441,6 +4494,7 @@ async def test_a_problem_the_route_never_saw_is_still_raised_after_send() -> Non
             expect_end_media_id=END_UP,
         )
     assert "billed nothing" not in (ei.value.remediation_hint or "")
+    assert ei.value.charged == "maybe"  # #1320: it left the browser, so Flow may have billed
 
 
 async def test_a_check_that_raises_on_a_submit_aborts_it_unsent(
@@ -4484,3 +4538,77 @@ async def test_a_failed_route_registration_leaves_no_listener_on_the_page() -> N
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
     assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+class _UnrouteSkippingPage(RoutingPage):
+    """Playwright skips a route handler removed before it runs: the request goes out."""
+
+    def _fire_submit(self) -> None:
+        assert self.scripted_request is not None
+        rpcid, body = self.scripted_request
+        url = _batch_url(rpcid) if rpcid is not None else _batch_bare_url()
+        request = FakeRequest(url, body)
+        for h in list(self._handlers["request"]):
+            asyncio.get_event_loop().create_task(_maybe_await(h(request)))
+
+        async def through_route() -> None:
+            for _ in range(5):  # let the request listeners and the waiting task run first
+                await asyncio.sleep(0)
+            route = FakeRoute()
+            if self.routes[-1] not in self.unrouted:
+                await self.routes[-1][1](route, request)
+            self.route_outcomes.append(route.outcome or "sent")
+            if route.outcome == "abort":
+                return
+            for scripted in self.scripted_responses:
+                u, text, *rest = scripted
+                response = FakeResponse(u, text, *rest)
+                response.request = request if request.url == u else None
+                self._fire_response(response)
+
+        asyncio.get_event_loop().create_task(through_route())
+
+
+async def test_the_request_listener_does_not_unroute_the_guard_before_it_aborts() -> None:
+    """#1320 review: the request event precedes the route guard; ending the wait on it
+    removed the guard before it ran, so the bad submit left the browser."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _UnrouteSkippingPage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_request = ("ogiZ0b", "")  # a body the guard cannot read
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert page.route_outcomes == ["abort"]
+    assert ei.value.charged == "no"
+
+
+async def test_a_request_check_verdict_is_aborted_by_the_guard_and_reads_unsent() -> None:
+    """#1320 review: video extend's request_check ended the wait from the request event,
+    unrouting the guard before it aborted, so a wrong submit left the browser."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(rpcid: str, _body: str) -> WireFormatError | None:
+        return (
+            WireFormatError(detail=f"{rpcid} names the wrong source") if rpcid == "fZytfe" else None
+        )
+
+    page = _UnrouteSkippingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", '[["fZytfe", "wrong source"]]')
+    page.scripted_responses = []
+    with pytest.raises(WireFormatError, match="wrong source") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")

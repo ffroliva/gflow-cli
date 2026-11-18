@@ -296,12 +296,13 @@ Notes:
 - **Credit-free** — upscaling is an image operation and spends no credits.
 - **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
   (`UpscaleUnavailableError`, detected from the disabled UI state or 403) and a hint to use `--scale 2k` or upgrade.
+  A scale the image's download menu does not list is also exit 22, naming the scales it does list (#1338).
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
 
 ## `gflow video upscale`
 
-Upscale or export a **platform-generated** video to 1080p Full HD, download the original 720p,
+Upscale or export a **platform-generated** video to 1080p Full HD, download it at 720p,
 or export as a 270p animated GIF and save it locally.
 
 ```text
@@ -312,8 +313,10 @@ Arguments:
                             `gflow data list videos`).
 
 Options:
-  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (original download),
-                            or 270p (animated GIF export). [default: 1080p]
+  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (the original
+                            download, or Flow's upscale of a smaller original), or 270p
+                            (animated GIF export). Flow lists only some scales for some
+                            models; an unlisted one exits 22. [default: 1080p]
   --project ID              Project that owns the video. Resolved from the local
                             catalog when omitted; pass it explicitly for videos
                             gflow didn't record (e.g. generated in the web UI).
@@ -330,10 +333,18 @@ gflow video upscale 00000000-0000-4000-8000-000000000002 --scale 270p
 
 Notes:
 
-- **Quality options**: 720p is the original generation download, 1080p is the enhanced Full HD export,
+- **Quality options**: 720p is the original generation download (or, for a clip with a smaller
+  original such as Omni 1.2 Flash, Flow's 720p upscale), 1080p is the enhanced Full HD export,
   and 270p exports an animated GIF. A saved MP4 is checked to really be at least the
   requested resolution, so a preview or the 720p original is refused (exit 7,
   `WireFormatError`) rather than saved as the export.
+- **Flow decides which scales a clip offers.** Measured 2026-11-18: a Veo 3.1 Fast clip's
+  download menu lists 270p, 720p, 1080p and 4K; Veo 3.1 Lite and Veo 3.1 Quality clips list
+  only 270p and 720p; an Omni 1.2 Flash clip lists 270p, 360p (its original) and 720p
+  (upscaled). Asking for a scale the menu does not list exits 22
+  (`UpscaleUnavailableError`) and names the scales Flow does list; exit 23 is kept for a menu
+  in which no scale can be read at all, or whose text carries the requested scale although
+  gflow could not pick its item.
 - **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
   refuses the command with exit 36.
 - **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
@@ -1114,7 +1125,12 @@ reach for it before spending anything.
 > (`/project/<id>/edit/<media-id>`) and drives Flow's own Extend control; the page builds
 > and signs the request itself. Before any click, Flow's project read must list
 > `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
-> is checked at the route and aborted, before Flow sees it, if it names another clip. The
+> is checked at the route and aborted, before Flow sees it, if it names another clip. When
+> Flow shows the Extend menu item disabled, gflow does not click it and exits 35, or 37
+> when Flow also shows its insufficient-credits warning; nothing is submitted
+> ([#1334](https://github.com/ffroliva/gflow-cli/issues/1334)). Measured 2026-11-18 on an
+> account holding 12 credits: the item was disabled with a link to Google's AI plans beside
+> it, and enabled on a funded account. The
 > result is downloaded to `-o` (default: `videos/<date>/<media-id>_extend.mp4` in the output
 > directory, with a random tag added when that file already exists, so a same-day re-run
 > keeps the earlier file). **Measured 2026-11-08 with
@@ -1130,7 +1146,7 @@ reach for it before spending anything.
 > PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
 > source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
 > price because that host does not report one before submitting — compare
-> `gflow credits user` before and after. To go further, extend the same clip again. "Cost and safety" and "What it produces" below
+> `gflow credits user` before and after. To go further, extend the same clip again: each extend continues the newest version of the clip ([#1346](https://github.com/ffroliva/gflow-cli/issues/1346)). "Cost and safety" and "What it produces" below
 > describe the labs.google arm.
 
 Continue an existing clip (on labs.google by another 8 seconds), then optionally render
@@ -1944,7 +1960,19 @@ The installer is read off the install itself, never guessed from `PATH`:
 |---|---|---|
 | `uv-receipt.toml` | `uv tool` | `uv tool upgrade gflow-cli` |
 | `pipx_metadata.json` | `pipx` | `pipx upgrade gflow-cli` |
-| neither | plain venv or user install | `<that interpreter> -m pip install --upgrade gflow-cli` (adds `--user` for a user-site install) |
+| neither | plain venv or user install | `<that interpreter> -m pip install --upgrade "gflow-cli[<extras>]"` (adds `--user` for a user-site install) |
+
+**Extras are kept.** pip upgrades only what it is asked for, so on a pip install `gflow update`
+requests every extra whose requirements are all installed (for example `gflow-cli[patchright]`),
+and the extra's own pin moves with the release (#1322). `uv tool upgrade` and `pipx upgrade`
+already reinstall the extras recorded at install time. The repair commands gflow prints carry
+the same extras.
+
+> [!NOTE]
+> **One-time manual upgrade for pip installs at 0.101.2 and below ([#1322](https://github.com/ffroliva/gflow-cli/issues/1322)):**
+> an install at <= 0.101.2 runs its *existing* `gflow update` code, which upgrades only
+> `gflow-cli` and leaves an extra's pin behind. Upgrade once by hand with the extras named,
+> for example `pip install -U 'gflow-cli[patchright]'`; every later `gflow update` keeps them.
 
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs
@@ -2023,6 +2051,11 @@ are removed on subsequent runs, including `gflow update --check`.
 > ```powershell
 > <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
 > ```
+>
+> Name any extras you installed in the spec (for example `"gflow-cli[patchright]"`), or
+> pip upgrades gflow-cli alone and the extra's pin stays behind. The same applies when you
+> already run the latest release with an outdated extra: `gflow update` finds nothing newer
+> and changes nothing, so run `pip install --upgrade "gflow-cli[patchright]"` once by hand.
 >
 > User-site install (`--user` — use the interpreter that owns the install, where `3.12` is the Python version gflow was installed under; `gflow --version` does not show it, but `py -0p` lists the interpreters):
 > ```powershell
@@ -2507,7 +2540,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --out-file`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link, or a `video chain --resume-from` whose last completed clip is no longer at its recorded path (refused before anything is billed, [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)) | Check the source video downloaded intact; retry the link. For a resume, put the clip back at the path named, or start a new chain |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
-| `22` | `UpscaleUnavailableError`, `ServerCancelUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled; or `gflow cancel` hit a job a gflow worker already submitted (#1198) | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
+| `22` | `UpscaleUnavailableError`, `ServerCancelUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts, or an image scale is not listed in its download menu (#1338); or requested video export quality is disabled, or not listed in the clip's download menu (#1338); or `gflow cancel` hit a job a gflow worker already submitted (#1198) | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | If the detail says the model picker is **hidden**, nothing was submitted: turn the **Agent** chip off in a browser and re-run ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). Otherwise update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation — **or**, on `flow.google.com`'s agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), the agent did something other than what was asked: a second credit confirmation, more results than requested, or an image turn that made nothing (a video turn that makes nothing ends in exit 9, `TransportTimeoutError`, instead) | On labs this is rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`. On the agent-only composer it is `retryable: false` — read `detail` (it may include the agent's last reply), rephrase the prompt, and check the project before re-running a video. See KNOWN_ISSUES |
@@ -2517,10 +2550,10 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `29` | `MentionIndexUnavailableError` | An `@mention` was present but the catalog source needed to resolve it (character entities or media assets) failed to load — distinct from an empty index, which is not an error. Also raised on a page served labs for an image character known only by name (#723), since that picker attaches by entity id | Check network connectivity (character source) or `GFLOW_CLI_DB_PATH` / filesystem permissions (media source), then retry. For the by-name character on labs, pass `--reference-entity <id>` |
 | `30` | `QueueSchemaError`    | A `gflow serve`/MCP worker-queue task payload has an unrecognized `schema_version` or fails validation against the typed request DTOs | Usually means gflow-cli was downgraded after a newer version enqueued the task, or the payload was hand-edited; re-enqueue with a compatible version |
 | `31` | `FlowAppError`        | Flow did not serve the page gflow asked for. Two shapes: its error-boundary page rendered instead of the editor (a transient client-side crash), or it redirected to `flow.google.com/about` instead of the project ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | Crash: retry shortly; if it persists, Flow itself is degraded. `/about`: run `gflow auth login --profile <name>` and finish Google's "Confirm it's you" if it asks; then open the project in a browser on that host and confirm this account can reach it. A retry is **measured** not to help — 5/5 consecutive attempts during a live occurrence landed on `/about` again ([2026-09-11](superpowers/spikes/2026-09-11-about-redirect-is-stable-for-an-account.md); the [2026-09-10 run](superpowers/spikes/2026-09-10-about-redirect-stability.md) got 0/5 only because the redirect had stopped reproducing) — so gflow does not flag it retryable. One cause is measured since: Google wanted the account to "Confirm it's you" while its cookies were healthy ([2026-09-23](https://github.com/ffroliva/gflow-cli/blob/develop/docs/superpowers/spikes/2026-09-23-about-cta-leads-to-google-reauth.md)); `gflow auth login` waits on that check ([#902](https://github.com/ffroliva/gflow-cli/issues/902)) |
-| `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches. On flow.google.com it is also raised for an image character (#723) when no picker option is titled exactly the name, several are, or the match is media; after up to ~90 s of reloads, for a catalogued same-`--project` UUID ref (#995) whose image is no longer in the project grid (deleted in Flow); and when an `@` reference attaches out of order, landing before a chip already in the prompt (#997), before anything is submitted | Reference the asset by its media UUID (if Flow deleted it, regenerate it or pass its local file), pass a local file with `--ref`, or check what exists with `gflow data list images`. For a character, rename the colliding asset in Flow, or give the character a unique one-word name. Out of order: re-run; if it repeats, report it with the reference count and window size |
+| `32` | `ReferenceNotFoundError` | A referenced media NAME is not in this project's picker. Flow indexes a short auto-caption, not the generation prompt, so a prompt used as a reference name never matches. On flow.google.com it is also raised for an image character (#723) when no picker option is titled exactly the name, several are, or the match is media; after up to ~90 s of reloads, for a catalogued same-`--project` UUID ref (#995) whose image is no longer in the project grid (deleted in Flow); and when an `@` reference attaches out of order, landing before a chip already in the prompt (#997), before anything is submitted | Reference the asset by its media UUID (if Flow deleted it, regenerate it or pass its local file), pass a local file with `--ref`, or check what exists with `gflow data list images`. For a character the picker never offers (#1333), check the name with `gflow character list --project <id>`; when several options or a media asset share the name, rename the colliding asset in Flow, or give the character a unique one-word name. Out of order: re-run; if it repeats, report it with the reference count and window size |
 | `33` | — (`gflow doctor` verdict) | Doctor found warn/fail findings — a successful diagnosis, not an error class | Review the report; see [`gflow doctor`](#gflow-doctor) |
 | `34` | `SyncPartialError`    | `gflow data sync` failed on some projects but succeeded on others — completed writes stay committed | Retryable: re-run the same command; it resumes with what is still nameless (see [`gflow data sync`](#gflow-data-sync)) |
-| `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant. **Never auto-retry**: a tier gate does not clear on its own. |
+| `35` | `ExtendUnavailableError` | No Veo extend model is orderable for this account and aspect — the extend family is tier-gated and there is no square variant — or, on flow.google.com, Flow shows the Extend menu item disabled for the account (beside a plan-upgrade link; a plan upgrade or a top-up may clear it, #1334). **Never auto-retry**: neither clears on its own. |
 | `36` | `FlowHostMigratedError` | Flow served the project from `flow.google.com` and the request could not be represented by the migrated composer, or `GFLOW_CLI_FLOW_HOST=labs.google` disabled it. Supported today: `video t2v`; local-file video i2v/r2v; `image t2i`; local-file `image i2i`; and `gflow run --config` rows referencing an earlier row (`batch:N`) or a local file; `image i2i --ref <uuid>` of an image the catalog records in the same `--project` (#995); `image upscale`; `video upscale` (served here only); and single-segment `video extend`. Images and `video r2v` may tag a character by name (`@Name` on images, or `--reference-entity` with `--reference-entity-name`, #723); a character on `video t2v`/`i2v` (#716), other image UUID references, an entity id without a name, instructions, Imagen 4 and `image batch` remain unsupported. On an agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), generation is limited to `image t2i` and `video t2v` (one 9:16 or 16:9 clip), and a request it cannot take first gets up to three free page reloads (`migrated.agent_only_reload`, #1142). Not selector drift (23) | **Not retryable** after gflow's own reloads. Use one of the supported forms, or the REST surface (`gflow project list`, `gflow data …`); follow #639 for the remaining matrix |
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Recognised by the warning's class, so it does not depend on the UI language ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |

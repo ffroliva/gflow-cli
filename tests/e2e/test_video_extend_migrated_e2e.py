@@ -5,11 +5,16 @@ against a live page and keep every ``fZytfe`` from reaching Flow:
 
 * the submit contract — any ``rqZuUc`` carries the media id (since 2026-11-08 the page
   on our account sends none before ``fZytfe``, #1180) and ``fZytfe`` slot 1 the
-  workflow id the passive ``Zzl0ze`` read maps it to (the release hook is replaced so the
+  workflow id the passive ``Zzl0ze`` read maps it to, for an extended clip the newest one
+  (#1346) (the release hook is replaced so the
   checked ``fZytfe`` is aborted instead of let through);
 * the refusal matrix on a live page — a media id that is not in the project exits 11
   before any click, and an ``--aspect`` the source does not have is aborted at the
-  production route guard (exit 36).
+  production route guard (exit 36);
+* on an account where Flow renders the Extend menu item disabled (declare it with
+  ``GFLOW_CLI_E2E_EXTEND_DISABLED=1``), the run ends in a typed refusal before any click
+  on that item instead of a 30 s click timeout (#1334). The tests that need an enabled
+  item skip on such a profile.
 
 Belt and braces: a context-level route aborts ``fZytfe`` for the whole test, so even a
 fall-through in the driver cannot bill.
@@ -18,7 +23,8 @@ fall-through in the driver cannot bill.
 a run that sends one leaves an empty "Untitled Scene" in the project. gflow has no scene
 delete; remove them from Flow's Scenes tab if wanted.
 
-The ``e2e_video`` test runs ONE real extend and spends Veo credits — opt in with
+The ``e2e_video`` tests run one real extend, then two in a row on the same clip (#1346:
+the second continues the workflow the first created), and spend Veo credits — opt in with
 ``GFLOW_CLI_E2E_RUN_VIDEO=1`` and only with the account owner's consent.
 
 Env: ``GFLOW_CLI_E2E_PROFILE`` (profile served flow.google.com), ``GFLOW_CLI_E2E_PROJECT``,
@@ -42,7 +48,9 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import reset_settings
 from gflow_cli.errors import (
     ConfigurationError,
+    ExtendUnavailableError,
     FlowHostMigratedError,
+    InsufficientCreditsError,
     TransportTimeoutError,
 )
 
@@ -63,6 +71,15 @@ def _env(name: str, default: str | None = None) -> str:
 
 def _ids() -> tuple[str, str]:
     return _env("GFLOW_CLI_E2E_PROJECT"), _env("GFLOW_CLI_E2E_EXTEND_MEDIA")
+
+
+def _extend_disabled() -> bool:
+    return os.environ.get("GFLOW_CLI_E2E_EXTEND_DISABLED") == "1"
+
+
+def _need_enabled_extend() -> None:
+    if _extend_disabled():
+        pytest.skip("Flow disables Extend on this profile (GFLOW_CLI_E2E_EXTEND_DISABLED=1)")
 
 
 async def _block_fzytfe(route: Any, request: Any) -> None:
@@ -89,6 +106,7 @@ async def _live_page(profile: Path) -> tuple[UiAutomationTransport, Any]:
 async def test_e2e_extend_submit_contract_at_zero_cost(
     e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _need_enabled_extend()
     project, media = _ids()
     monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
     reset_settings()
@@ -174,6 +192,7 @@ async def test_e2e_a_media_not_in_the_project_is_refused_before_any_click(
 async def test_e2e_a_foreign_aspect_is_aborted_by_the_production_guard(
     e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _need_enabled_extend()
     project, media = _ids()
     source = _env("GFLOW_CLI_E2E_EXTEND_ASPECT", "16:9")
     foreign = "9:16" if source == "16:9" else "16:9"
@@ -192,6 +211,42 @@ async def test_e2e_a_foreign_aspect_is_aborted_by_the_production_guard(
             )
     finally:
         await transport.teardown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_a_disabled_extend_item_is_a_typed_refusal_not_a_timeout(
+    e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1334: on a profile where Flow disables Extend, exit 35 (or 37), nothing sent."""
+    if not _extend_disabled():
+        pytest.skip("needs a profile where Flow disables Extend (GFLOW_CLI_E2E_EXTEND_DISABLED=1)")
+    project, media = _ids()
+    monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    reset_settings()
+    sent: list[str] = []
+    transport, page = await _live_page(e2e_profile_dir)
+
+    def on_request(request: Any) -> None:
+        body = migrated_composer.request_body(request)
+        rpcids = mx.batch_rpcids(mx.url_rpcids(str(request.url)), body)
+        sent.extend(r for r in rpcids if r in (mx.SCENE_CREATE_RPC, mx.EXTEND_SUBMIT_RPC))
+
+    page.on("request", on_request)
+    try:
+        with pytest.raises((ExtendUnavailableError, InsufficientCreditsError)) as info:
+            await mx.run_extend(
+                page,
+                project_id=project,
+                media_id=media,
+                prompt=_PROMPT,
+                aspect=None,
+                poll_timeout_s=_SUBMIT_WAIT_S,
+            )
+    finally:
+        await transport.teardown()
+    assert info.value.charged == "no"
+    assert sent == []
 
 
 def _mp4_seconds(data: bytes) -> float:
@@ -214,6 +269,7 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
     """SPENDS VEO CREDITS. One segment, end to end, through the client entry the CLI uses."""
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
         pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    _need_enabled_extend()
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.transports.migrated_extend import extend_key_seconds
     from gflow_cli.api.transports.migrated_recover import read_clip
@@ -256,3 +312,48 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
         )
     else:
         assert 6.5 <= seconds <= 8.5  # a separate Veo segment: Flow bills 8 s, ~7 s content
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
+async def test_e2e_a_clip_extended_once_extends_again(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPENDS VEO CREDITS (two extends). #1346: the second extend of the same clip is billed
+    and downloaded, not aborted by the route guard as a request for another workflow."""
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
+        pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    _need_enabled_extend()
+    from gflow_cli.api.client import FlowApiClient
+
+    project, media = _ids()
+    monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    reset_settings()
+    seconds: list[float] = []
+    workflows: list[str] = []
+    expected: list[str] = []  # the workflow the route guard expects, per run
+    real_require = mx.require_video_source
+
+    def spy_require(clip: Any, **kw: Any) -> str:
+        expected.append(real_require(clip, **kw))
+        return expected[-1]
+
+    monkeypatch.setattr(mx, "require_video_source", spy_require)
+    for run in (1, 2):
+        async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
+            outcome, target = await client.extend_video_migrated(
+                media_id=media,
+                project_id=project,
+                prompt=_PROMPT,
+                aspect=None,
+                out_path=tmp_path / f"extend-{run}.mp4",
+                on_started=lambda s, _a: workflows.append(s.workflow_id),
+            )
+        assert outcome.record.is_done and target is not None, run
+        if outcome.record.media_id != media:
+            pytest.skip("Flow made a separate clip, not an in-place extend (#1184): not #1346")
+        seconds.append(_mp4_seconds(Path(str(target)).read_bytes()))
+    assert len(workflows) == 2 and workflows[0] != workflows[1], workflows
+    # The second run continued the workflow the first one created, and its file is longer.
+    assert expected[1] == workflows[0], (expected, workflows)
+    assert seconds[1] > seconds[0], seconds

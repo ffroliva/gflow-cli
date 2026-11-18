@@ -290,6 +290,80 @@ def index_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return tmp_path
 
 
+_REAL_INSTALLED_EXTRAS = uc._installed_extras
+
+
+@pytest.fixture(autouse=True)
+def _no_installed_extras(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic: the venv running the suite may hold an extra (CI's engine job installs one)."""
+    monkeypatch.setattr(uc, "_installed_extras", lambda: ())
+
+
+_REQUIRES = [
+    "httpx>=0.27",
+    'pytest>=8.0.0; extra == "dev"',
+    'patchright==1.64.4; extra == "patchright"',
+    "av>=12; extra == 'chain'",
+    'pillow>=13.0.0; extra == "chain"',
+    'universal_pathlib>=0.2.5; extra == "gcs"',
+    'gcsfs>=2024.2.0; extra == "gcs"',
+]
+
+
+@pytest.fixture
+def installed_dists(monkeypatch: pytest.MonkeyPatch) -> set[str]:
+    """`distribution()` answers for gflow-cli (with `_REQUIRES`) and the names in the set."""
+    present = {"gflow-cli"}
+
+    class _Dist:
+        requires = _REQUIRES
+
+    def _dist(name: str) -> _Dist:
+        if name not in present:
+            raise uc.PackageNotFoundError(name)
+        return _Dist()
+
+    monkeypatch.setattr(uc, "distribution", _dist)
+    return present
+
+
+class TestInstalledExtras:
+    """#1322: an upgrade must request the extras that are installed, or their pins never move."""
+
+    def test_an_extra_counts_when_every_requirement_is_installed(
+        self, installed_dists: set[str]
+    ) -> None:
+        installed_dists |= {"patchright", "av", "pillow", "universal_pathlib", "pytest"}
+        # gcs lacks gcsfs, so a shared dependency alone does not claim it; dev never counts.
+        assert _REAL_INSTALLED_EXTRAS() == ("chain", "patchright")
+
+    def test_no_extras_installed(self, installed_dists: set[str]) -> None:
+        assert _REAL_INSTALLED_EXTRAS() == ()
+
+    def test_the_shown_command_quotes_an_extras_spec(self) -> None:
+        cmd = ("py", "-m", "pip", "install", "--upgrade", "gflow-cli[patchright]")
+        assert uc.shown_command(cmd).endswith('--upgrade "gflow-cli[patchright]"')
+
+    def test_pip_upgrade_and_repair_carry_the_extras(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ("chain", "patchright"))
+        inst = uc.installer()
+        assert inst is not None
+        assert inst.command[-1] == "gflow-cli[chain,patchright]"
+        assert "gflow-cli[chain,patchright]==0.101.2" in uc._reinstall_hint(inst, "0.101.2")
+
+    def test_the_pip_repair_keeps_the_extras_after_pip_removed_them(
+        self, index_install: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed pip run can leave the extras uninstalled; the hint must not drop them."""
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ("patchright",))
+        inst = uc.installer()
+        assert inst is not None
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ())  # metadata gone after the run
+        assert '"gflow-cli[patchright]==0.101.2"' in uc._reinstall_hint(inst, "0.101.2")
+
+
 class TestInstaller:
     def test_uv_tool_receipt(self, index_install: Path) -> None:
         (index_install / "uv-receipt.toml").write_text("[tool]\n", encoding="utf-8")
@@ -914,7 +988,7 @@ class TestPipWithoutPipModule:
         with pytest.raises(ConfigurationError, match="no `pip` module") as info:
             uc.run_update(check=False)
         # The remediation must not recommend the very `python -m pip` that failed.
-        assert "uv pip install --upgrade gflow-cli" in (info.value.remediation_hint or "")
+        assert 'uv pip install --upgrade "gflow-cli"' in (info.value.remediation_hint or "")
 
     def test_probe_failure_after_run_is_reported_as_unverified(
         self, uv_install: list[tuple[str, ...]], monkeypatch: pytest.MonkeyPatch
@@ -958,13 +1032,29 @@ class TestReinstallHint:
     @pytest.mark.parametrize(
         ("name", "expected"),
         [
+            ("uv", 'uv tool install "gflow-cli[patchright]==9.9.9" --force --reinstall'),
+            ("pipx", 'pipx install --force "gflow-cli[patchright]==9.9.9"'),
+        ],
+    )
+    def test_uv_and_pipx_repairs_carry_the_installed_extras(
+        self, name: str, expected: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ("patchright",))
+        inst = uc.Installer(name, ("x",), "gflow-cli[patchright]")
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ())  # a failed run dropped them
+        assert expected in uc._reinstall_hint(inst, "9.9.9")
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
             ("uv", 'uv tool install "gflow-cli==9.9.9" --force --reinstall'),
-            ("pipx", "pipx install --force gflow-cli==9.9.9"),
-            ("pip", "-m pip install --force-reinstall gflow-cli==9.9.9"),
+            ("pipx", 'pipx install --force "gflow-cli==9.9.9"'),
+            ("pip", '-m pip install --force-reinstall "gflow-cli==9.9.9"'),
         ],
     )
     def test_repair_command_per_installer(self, name: str, expected: str) -> None:
-        hint = uc._reinstall_hint(uc.Installer(name, ("x",)), "9.9.9")
+        # A pip installer's argv ends in the package spec it upgrades (see installer()).
+        hint = uc._reinstall_hint(uc.Installer(name, ("x", "gflow-cli")), "9.9.9")
         assert expected in hint
         assert "Close every running gflow process" in hint
 
@@ -1458,7 +1548,7 @@ class TestUserInstall:
 
     def test_the_repair_hint_keeps_user_once_metadata_is_gone(self) -> None:
         inst = uc.Installer("pip", ("py", "-m", "pip", "install", "-U", "--user", "gflow-cli"))
-        assert "--force-reinstall --user gflow-cli==1.0" in uc._reinstall_hint(inst, "1.0")
+        assert '--force-reinstall --user "gflow-cli==1.0"' in uc._reinstall_hint(inst, "1.0")
 
     def test_the_import_probe_keeps_the_user_site_but_not_the_cwd(
         self, user_site: Path, monkeypatch: pytest.MonkeyPatch

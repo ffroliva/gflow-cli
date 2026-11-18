@@ -71,7 +71,7 @@
     "refresh_auth": "function (self) -> 'None' sha=297acb70041a01d0",
     "setup": "function (self, profile_dir: 'Path', *, page: 'Page | None' = None) -> 'None' sha=59e74f31c06b1bc4",
     "teardown": "function (self) -> 'None' sha=a531ba2425e881cd",
-    "upload_reference": "function (self, *, project_id: 'str', path: 'Path') -> 'ImageRef | None' sha=e28e2ac58471c138",
+    "upload_reference": "function (self, *, project_id: 'str', path: 'Path') -> 'ImageRef | None' sha=8e150160e9e33232",
     "uses_page_owned_image_recaptcha": "function (self) -> 'bool' sha=bec85e8e63d14947"
   },
   "module_names": {

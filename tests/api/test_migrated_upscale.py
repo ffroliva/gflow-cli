@@ -102,8 +102,17 @@ async def test_migrated_upscale_4k_disabled_raises_unavailable() -> None:
         await _run(page, TargetResolution.RES_4K)
 
 
-async def test_migrated_upscale_missing_menu_item_raises_drift() -> None:
+async def test_migrated_upscale_scale_flow_does_not_list_is_unavailable() -> None:
     page = fake_page([FakeItem("1K"), FakeItem("2K"), FakeItem("14K")])
+
+    with pytest.raises(UpscaleUnavailableError, match="Flow does not offer 4K") as exc_info:
+        await _run(page, TargetResolution.RES_4K)
+    assert "lists 1K, 2K, 14K" in exc_info.value.detail
+    assert "gflow can export: 2K." in exc_info.value.remediation_hint
+
+
+async def test_migrated_upscale_menu_without_any_scale_token_raises_drift() -> None:
+    page = fake_page([FakeItem("Original size"), FakeItem("Enhanced")])
 
     with pytest.raises(UiSelectorDriftError, match="menu item for 4K was not found"):
         await _run(page, TargetResolution.RES_4K)
@@ -112,8 +121,9 @@ async def test_migrated_upscale_missing_menu_item_raises_drift() -> None:
 async def test_migrated_upscale_menu_never_opens_raises_drift() -> None:
     page = fake_page([])
 
-    with pytest.raises(UiSelectorDriftError, match="download menu did not open"):
+    with pytest.raises(UiSelectorDriftError, match="download menu did not open") as exc_info:
         await _run(page)
+    assert exc_info.value.charged == "no"  # #1320: before the billed menu click
 
 
 async def test_migrated_upscale_missing_tile_raises_drift() -> None:

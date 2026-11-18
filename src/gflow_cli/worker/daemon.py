@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
 import structlog
 
+from gflow_cli import telemetry
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
@@ -37,9 +38,28 @@ from gflow_cli.paths import image_output_path, numbered_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
-from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
+from gflow_cli.worker.queue import (
+    QueueRepository,
+    QueueTask,
+    classify_interrupted,
+    mark_interrupted,
+)
 
 logger = structlog.get_logger()
+
+
+async def run_counted(job: Awaitable[None]) -> None:
+    """Run one queued job in its own telemetry scope, then count the browser facts it
+    observed, even when it fails (#1326)."""
+    run = telemetry.begin_run()
+    try:
+        await job
+    finally:
+        try:  # telemetry must never replace a job's outcome, billed or not
+            await asyncio.to_thread(telemetry.flush_run_facts, "mcp")
+        except Exception:  # noqa: BLE001
+            pass
+        telemetry.end_run(run)
 
 
 class FlowWorker:
@@ -68,7 +88,7 @@ class FlowWorker:
                 # None here — same as an empty queue.
                 task = self.repo.claim_next_pending(self.profile_name, claimant)
                 if task:
-                    await self.process_task(task)
+                    await self.run_task(task)
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError:
@@ -82,6 +102,10 @@ class FlowWorker:
                     "Error in FlowWorker loop", profile_name=self.profile_name, exc_info=exc
                 )
                 await asyncio.sleep(5)
+
+    async def run_task(self, task: QueueTask) -> None:
+        """Run one claimed task and count the browser facts it observed (#1326)."""
+        await run_counted(self.process_task(task))
 
     async def process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.
@@ -522,6 +546,9 @@ class FlowWorker:
                     # Hash, never the raw message — it may carry tokens (#341,
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
+                    # #1343: the qualified class is safe to share and tells a Playwright
+                    # timeout from a builtin one, so an intermittent failure names its cause.
+                    "class": f"{type(exc).__module__}.{type(exc).__qualname__}",
                     "exit_code": 1,
                     "exit_code_legacy": 1,
                     # #1201: same members as a typed failure; nothing is proven.
@@ -556,7 +583,7 @@ class FlowWorker:
 
             self.repo.update_task_status(
                 task.task_id,
-                status="failed",
+                status=self._failure_status(task.task_id, exc, error_payload),
                 error=error_payload,
                 # #895: a generation can finish, and bill, and then lose its download.
                 # The media id is the only handle an agent has on that clip, and the
@@ -567,6 +594,25 @@ class FlowWorker:
                 # failed before any media id existed still writes NULL, as before.
                 flow_media_id=started_media_ids[0] if started_media_ids else None,
             )
+
+    def _failure_status(self, task_id: str, exc: Exception, error: dict[str, Any]) -> str:
+        """``failed`` or ``indeterminate`` for a job that raised (#1347).
+
+        A gflow error already states, from its raise site, whether anything was sent
+        (#1320), so its job stays ``failed`` with that record. An unexpected exception
+        says nothing, so the checkpoint decides, as for a cancelled job: past the submit
+        Flow may have billed it, and ``error`` then says reconcile, never retry. An
+        unreadable checkpoint is treated as past the submit."""
+        if isinstance(exc, GFlowError):
+            return "failed"
+        try:
+            status = classify_interrupted(self.repo.read_checkpoint(task_id))
+        except Exception as read_exc:  # noqa: BLE001 - a DB fault must not mask the failure
+            logger.warning("failure_checkpoint_unreadable", task_id=task_id, exc_info=read_exc)
+            status = "indeterminate"
+        if status == "indeterminate":
+            error.update(outcome_members("maybe", "reconcile"))
+        return status
 
     def _checkpoint_observer(
         self,

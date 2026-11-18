@@ -67,7 +67,7 @@ from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
-from gflow_cli.worker.daemon import FlowWorker
+from gflow_cli.worker.daemon import FlowWorker, run_counted
 from gflow_cli.worker.queue import QueueRepository, mark_interrupted
 
 log = structlog.get_logger()
@@ -225,6 +225,49 @@ def _masked_unexpected_dict(exc: Exception) -> dict[str, Any]:
     }
 
 
+async def _record_tool_use(
+    name: str,
+    outcome: str,
+    duration_s: float,
+    ctx: Context[Any, Any] | None,
+    crash: Exception | None,
+) -> None:
+    """Count one MCP tool call: invocation, client and crash. Never raises."""
+    try:
+        disabled = telemetry.killed()
+    except Exception:  # noqa: BLE001 — a kill-switch read must not fail the tool
+        disabled = False
+    # A kill-switch no-op does not need a worker-thread handoff.
+    if disabled:
+        return
+    try:
+
+        def record_and_maybe_upload() -> None:
+            telemetry.record("mcp", name, (), outcome, duration_s)
+            telemetry_upload.maybe_upload()
+
+        await asyncio.to_thread(record_and_maybe_upload)
+    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+        pass
+    try:
+        params = ctx.request_context.session.client_params if ctx is not None else None
+        client_name = params.client_info.name if params is not None else None
+    except Exception:  # noqa: BLE001 — metadata may be absent outside a request
+        client_name = None
+    if client_name is not None:
+        try:
+            await asyncio.to_thread(
+                telemetry.record_counter, "mcp", "client", client_key(client_name)
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+            pass
+    if crash is not None:
+        try:
+            await asyncio.to_thread(telemetry.record_crash, "mcp", crash)
+        except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+            pass
+
+
 def _guarded(
     fn: Callable[..., Awaitable[dict[str, Any]]],
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
@@ -243,6 +286,7 @@ def _guarded(
         started = time.monotonic()
         outcome = "1"
         crash: Exception | None = None
+        run = telemetry.begin_run()  # #1326: this call's browser facts, apart from others'
         try:
             try:
                 result = await fn(*args, **kwargs)
@@ -259,40 +303,8 @@ def _guarded(
                 outcome = outcome_of(result)
             return result
         finally:
-            try:
-                disabled = telemetry.killed()
-            except Exception:  # noqa: BLE001 — a kill-switch read must not fail the tool
-                disabled = False
-            # A kill-switch no-op does not need a worker-thread handoff.
-            if not disabled:
-                try:
-
-                    def record_and_maybe_upload() -> None:
-                        telemetry.record(
-                            "mcp", fn.__name__, (), outcome, time.monotonic() - started
-                        )
-                        telemetry_upload.maybe_upload()
-
-                    await asyncio.to_thread(record_and_maybe_upload)
-                except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
-                    pass
-                try:
-                    params = ctx.request_context.session.client_params if ctx is not None else None
-                    client_name = params.client_info.name if params is not None else None
-                except Exception:  # noqa: BLE001 — metadata may be absent outside a request
-                    client_name = None
-                if client_name is not None:
-                    try:
-                        await asyncio.to_thread(
-                            telemetry.record_counter, "mcp", "client", client_key(client_name)
-                        )
-                    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
-                        pass
-                if crash is not None:
-                    try:
-                        await asyncio.to_thread(telemetry.record_crash, "mcp", crash)
-                    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
-                        pass
+            await _record_tool_use(fn.__name__, outcome, time.monotonic() - started, ctx, crash)
+            telemetry.end_run(run)
 
     # MCP's installed SDK discovers context from annotations and injects it without
     # adding it to the public tool schema; functools.wraps preserves each tool's schema.
@@ -459,7 +471,7 @@ async def _execute_claimed(profile: str, task_id: str, db_path: Path) -> None:
         try:
             claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
             if claimed is not None:
-                await worker.process_task(claimed)
+                await worker.process_task(claimed)  # scoped by the wrapper or _run_detached
         finally:
             worker.close()
 
@@ -471,8 +483,8 @@ async def _run_detached(profile: str, task_id: str, db_path: Path) -> None:
     one that escapes ``process_task``; ``detach`` settles a cancelled job.
     """
     log.info("mcp.task.detached_started", task_id=task_id, profile=profile)
-    try:
-        await _execute_claimed(profile, task_id, db_path)
+    try:  # the tool call has returned, so this job counts its own browser facts (#1326)
+        await run_counted(_execute_claimed(profile, task_id, db_path))
     except Exception as exc:
         # The error class only: a payload or exception locals can carry prompts.
         log.error("mcp.task.detached_failed", task_id=task_id, error_class=type(exc).__name__)
@@ -1827,6 +1839,8 @@ async def gflow_download_media(
         "out_dir is the output directory (defaults to configured images directory; "
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
+        "A scale the image's download menu does not list returns UpscaleUnavailableError "
+        "(exit 22) naming the listed scales. "
         "Spends no credits: image upscale is free."
     ),
 )
@@ -1881,12 +1895,16 @@ async def gflow_upscale_image(
     description=(
         "Upscale or export a platform-generated Flow video to 1080p Full HD (or 270p GIF). "
         "media_id is the UUID of the video to upscale. "
-        "scale is '1080p' (Full HD), '720p' (original), or '270p' (animated GIF). "
+        "scale is '1080p' (Full HD), '720p' (original, or Flow's upscale of a smaller original), "
+        "or '270p' (animated GIF). "
         "project is optional (resolved from the local catalog when omitted). "
         "out_dir is the output directory (defaults to configured videos directory; "
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
         "flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). "
+        "Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p); "
+        "a scale the clip's menu does not list returns UpscaleUnavailableError (exit 22) "
+        "naming the scales it does list. "
         "Measured free (1 observation, 2026-10-07): the 1080p export spent no credits."
     ),
 )
@@ -1905,7 +1923,7 @@ async def gflow_upscale_video(
 
     Args:
         media_id: The Flow media ID (UUID) of the generated video.
-        scale: Target quality: '1080p' (enhanced), '720p' (original), or '270p' (GIF).
+        scale: Target quality: '1080p' (enhanced), '720p' (original or upscaled), or '270p' (GIF).
         project: Project UUID that owns the media. Resolved from local catalog when omitted.
         out_dir: Output directory, inside the configured output dir (the default).
         profile: Profile name (overrides default).

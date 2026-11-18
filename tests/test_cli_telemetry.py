@@ -141,6 +141,17 @@ def test_report_keys_are_exactly_the_allow_list() -> None:
     assert set(report.keys()) == ALLOWED
 
 
+def test_a_browser_run_adds_only_the_closed_engine_and_host_maps() -> None:
+    """#1326: sent only when non-empty, and only the closed enum values."""
+    telemetry.note_engine("patchright")
+    telemetry.note_host("migrated")
+    telemetry.record("cli", "image t2i", [], "0", 3.0)
+    report = telemetry.build_report(telemetry.iso_week())
+    assert set(report.keys()) == ALLOWED | {"engines", "hosts"}
+    assert set(report["engines"]) <= {"playwright", "patchright", "other"}  # type: ignore[arg-type]
+    assert set(report["hosts"]) <= {"labs", "flow", "unknown"}  # type: ignore[arg-type]
+
+
 def test_report_never_contains_seeded_secrets(
     empty_catalog_db: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

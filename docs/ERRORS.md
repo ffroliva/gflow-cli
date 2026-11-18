@@ -15,7 +15,7 @@ same members, and the worker queue persists the same members for a queued task.
 | `status` | no | The literal HTTP status of the failed call, when there was one |
 | `remediation_hint` | no | What a person should do, in prose |
 | `route` | no | Sanitized route name (never a full URL) |
-| `class` | CLI `--json` | The concrete error class name |
+| `class` | CLI `--json`, worker | The concrete error class name (the worker's `errors/unknown` gives the qualified name, such as `playwright._impl._errors.TimeoutError`) |
 | `exit_code` | CLI `--json`, worker | The process exit code (table below) |
 | `retryable` | yes | `true` when the identical request may simply be run again |
 | `charged` | yes | Whether Flow may have billed this operation: `no`, `maybe` or `yes` |
@@ -77,8 +77,10 @@ extend or upscale submit, a failed image submit on a transport that sends its ow
 reCAPTCHA token, the
 agent-only composer's refusals, and a failed
 download of a finished clip. So a `retry` that reaches you comes from a site gflow treats as before the
-submit. `maybe` still says gflow cannot prove it: a scheduler that runs paid
-generations unattended should check the project before a second paid attempt.
+submit. On flow.google.com, a site that is provably before the submit click now also
+reads `charged: no` (see the overrides below); where `maybe` remains, gflow cannot prove
+it: a scheduler that runs paid generations unattended should check the project before a
+second paid attempt.
 
 ### Raise-site overrides
 
@@ -124,6 +126,16 @@ place today:
   --out-file <path>`.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
+- On flow.google.com, a gflow error raised before the generation's submit click reads
+  `charged: no` (#1320): the settings pane, frame, reference and character attach, the
+  prompt, and a submit button that is missing or stays disabled on the classic composer
+  (missing only, on the agent-only composer), the source read and anchors of
+  `video extend` (including an Extend menu item Flow shows disabled: exit 35, #1334),
+  the tile and menu steps of `image upscale` and `video upscale` before the export click, and any failure of a reference upload (an upload is never a billed
+  generation); `next_action` keeps the class default. A raw
+  browser-driver timeout is not a gflow error and still reads `maybe`. A submit the route
+  guard aborts in the browser reads `no` / `retry`. A failure at or after the click keeps
+  the class default. The labs (`labs.google`) arm is unchanged.
 
 `operation_id` is only set where an id already exists on the error.
 
@@ -195,7 +207,7 @@ members. They have no exit code of their own.
 
 | `type` | Built by | Exit | `charged` | `next_action` |
 |---|---|---|---|---|
-| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure | — | `maybe` | `none` |
+| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure (the message is never shared; the worker's `detail` is its SHA-256 and `class` names the exception class; after the submit the worker stores the job `indeterminate` and sets `next_action: reconcile`) | — | `maybe` | `none` |
 | `https://gflow-cli.dev/errors/bad-parameter` | MCP, a tool argument it refuses | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/no-profile` | MCP, no profile, or its directory is missing | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |

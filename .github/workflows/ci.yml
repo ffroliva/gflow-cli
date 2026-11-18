@@ -305,6 +305,15 @@ jobs:
       # actual DOM, only a real CSS engine can. They skip cleanly when the browser is
       # absent, which would make them silently decorative in CI, so every 3.13 shard
       # installs it. No account, no network, no credits.
+      # The browser download varied 18-362 s per run uncached (#1335); the cache keys on
+      # uv.lock, so a Playwright bump fetches a fresh browser. `--with-deps` still installs
+      # the system libraries, which the cache does not hold.
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
       - name: Install Chromium (real-DOM fixture tests)
         run: uv run playwright install chromium --with-deps
 
@@ -437,7 +446,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # macOS runners queued past the 15-minute timeout on 4 PR runs on 2026-11-18
+        # (#1335). Pull requests run the lock on Linux (fcntl, the same POSIX branch
+        # macOS takes) and Windows (msvcrt); pushes to develop/main add macOS.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["windows-latest", "ubuntu-latest"]') || fromJSON('["windows-latest", "macos-latest", "ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

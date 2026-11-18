@@ -38,6 +38,7 @@ from gflow_cli.errors import (
     GFlowError,
     MentionIndexUnavailableError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:
@@ -142,14 +143,17 @@ class ImageGenerationMixin(CharacterGenerationMixin):
                 raise_if_migrated(page, at="reference_upload_kill_switch")
             composer = MigratedComposer()
             try:
-                if (
-                    await composer.ensure_editor_for(page, project_id, needs_classic=True)
-                    == "agent_only"
-                ):
-                    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415
+                with nothing_submitted():  # #1320: an upload is never a billed generation
+                    if (
+                        await composer.ensure_editor_for(page, project_id, needs_classic=True)
+                        == "agent_only"
+                    ):
+                        from gflow_cli.api.transports import (  # noqa: PLC0415
+                            agent_only_composer as agent,
+                        )
 
-                    raise agent.refuse_unported("image-to-image")
-                media_id, display_name = await composer.upload(page, project_id, path)
+                        raise agent.refuse_unported("image-to-image")
+                    media_id, display_name = await composer.upload(page, project_id, path)
             except Exception:
                 # Same failure discipline as image generation (#792): keep the page for
                 # the incident bundle; the next run drains the park.

@@ -37,18 +37,22 @@ from gflow_cli.api.transports.migrated_composer import (
     LISTING_RPC,
     MIGRATED_PROJECT_URL,
     MigratedComposer,
+    _raise_if_out_of_credits,  # pyright: ignore[reportPrivateUsage]
     request_body,
 )
 from gflow_cli.api.transports.migrated_recover import MIGRATED_CLIP_URL
+from gflow_cli.api.transports.migrated_upscale import is_menu_item_disabled
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.errors import (
     ConfigurationError,
+    ExtendUnavailableError,
     FlowAppError,
     FlowHostMigratedError,
     GFlowError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -81,6 +85,8 @@ EXTEND_SUBMIT = "flow-edit-video-prompt-box flow-generate-icon-button button"
 #: The editor load's own ``Zzl0ze`` answered within the first seconds on every spike run.
 LISTING_BUDGET_S = 30.0
 ANCHOR_TIMEOUT_S = 15.0
+#: How long a disabled Extend item may take to enable before the run is refused (#1334).
+DISABLED_GRACE_S = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,15 +146,34 @@ def _at(node: Any, *path: int) -> Any:
     return current
 
 
+def _current_workflow(payload: Any, media_id: str) -> str | None:
+    """The workflow the media's own entry (payload slot 1) names as current (slot 3, item 4)."""
+    entries = _at(payload, 1)
+    for entry in cast(list[Any], entries) if isinstance(entries, list) else []:
+        current = _at(entry, 3, 4)
+        if _at(entry, 0) == media_id and isinstance(current, str):
+            return current
+    return None
+
+
 def source_record(payload: Any, media_id: str) -> SourceClip | None:
     """The ``Zzl0ze`` record for ``media_id``: its workflow id (slot 0) and kind.
 
     Kind (spike round 2, B3): a video carries a media-info list at ``rec[7][0]``; an
     image carries an ``image/*`` mime at ``rec[7][1][6]``.
+
+    An extended clip has one record per extend under the same media id, in no set order;
+    its media entry names the newest, which the page's next extend continues (#1346).
     """
     rec = find_record(payload, (2, media_id))
     if rec is None:
         return None
+    current = _current_workflow(payload, media_id)
+    head = find_record(payload, (0, current)) if current else None
+    if head is not None and head[2] == media_id:
+        rec = head
+    elif current:  # the guard then expects the first-listed record, which may be stale
+        log.warning("migrated_extend.current_workflow_unresolved", media_id=media_id)
     mime = _at(rec, 7, 1, 6)
     if isinstance(mime, str) and mime.startswith("image/"):
         kind = "image"
@@ -329,6 +354,36 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
             ),
         ) from exc
     return locator
+
+
+async def _refuse_if_disabled(page: Page, item: Any) -> None:
+    """Exit 37 or 35, before any click, when Flow keeps the Extend item disabled (#1334).
+
+    Measured 2026-11-18 on an account holding 12 credits: ``disabled="true"``, a link to
+    Google's AI plans beside it and no credits warning, while a funded account's item was
+    enabled. The page names no cause, so the error names the item and both remedies. A
+    short grace period keeps an item that is enabled a moment late from being refused.
+    """
+    deadline = asyncio.get_running_loop().time() + DISABLED_GRACE_S
+    while await is_menu_item_disabled(item):
+        if asyncio.get_running_loop().time() >= deadline:
+            break
+        await asyncio.sleep(0.25)
+    else:
+        return
+    await page.keyboard.press("Escape")  # leave no open menu on a pooled page
+    await _raise_if_out_of_credits(page)
+    raise ExtendUnavailableError(
+        detail=(
+            "migrated host: Flow shows the Extend menu item disabled on this account, so "
+            "extend cannot start — nothing was submitted (host=migrated)"
+        ),
+        remediation_hint=(
+            "Flow shows a Google AI plan upgrade link beside the disabled item; the plan or "
+            "the balance may gate it. Check `gflow credits user`, then upgrade the plan or "
+            "top up, or extend from an account where Flow enables Extend."
+        ),
+    )
 
 
 def _listing_clip(text: str, media_id: str) -> tuple[bool, SourceClip | None]:
@@ -530,16 +585,18 @@ async def run_extend(  # noqa: PLR0913
     on_started: ExtendStartedCallback | None = None,
 ) -> ExtendOutcome:
     """Extend ``media_id`` by one segment through Flow's own UI; download the result."""
-    clip = await _source_clip(page, project_id=project_id, media_id=media_id)
-    workflow_id = require_video_source(clip, media_id=media_id, project_id=project_id)
-    _confirm_editor(page, project_id=project_id, media_id=media_id)
-    log.info("migrated_extend.source", media_id=media_id, workflow_id=workflow_id)
-
     composer = MigratedComposer()
-    await (await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")).click()
-    await (await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")).click()
-    await (await _anchor(page, EXTEND_PROMPT, named="extend prompt box")).click()
-    await page.keyboard.insert_text(prompt)
+    with nothing_submitted():  # #1320: the submit inside submit_and_observe is the first send
+        clip = await _source_clip(page, project_id=project_id, media_id=media_id)
+        workflow_id = require_video_source(clip, media_id=media_id, project_id=project_id)
+        _confirm_editor(page, project_id=project_id, media_id=media_id)
+        log.info("migrated_extend.source", media_id=media_id, workflow_id=workflow_id)
+        await (await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")).click()
+        extend = await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")
+        await _refuse_if_disabled(page, extend)  # a click would wait out 30 s (#1334)
+        await extend.click()
+        await (await _anchor(page, EXTEND_PROMPT, named="extend prompt box")).click()
+        await page.keyboard.insert_text(prompt)
 
     facts: dict[str, str | None] = {}
 

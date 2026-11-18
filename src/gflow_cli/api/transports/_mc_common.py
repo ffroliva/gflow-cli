@@ -1562,3 +1562,34 @@ async def rpc_reply(
             ) from e
     finally:
         page.remove_listener("response", on_response)
+
+
+class SubmitWatch:
+    """While open, notes whether any generation submit request left the page (#1320).
+
+    A pre-submit region types into the composer; a stray Enter there can submit. The
+    region's ``charged: no`` claim is withheld once this has seen a submit."""
+
+    _RPCS = frozenset((*SUBMIT_RPCS, IMAGE_SUBMIT_RPC))
+
+    def __init__(self, page: Any) -> None:
+        self._page = page
+        self._seen = False
+
+    def _on_request(self, request: Any) -> None:
+        url = str(getattr(request, "url", ""))
+        if (
+            "batchexecute" in url
+            and (url_rpcid(url) or body_rpcid(request_body(request))) in self._RPCS
+        ):
+            self._seen = True
+
+    def seen(self) -> bool:
+        return self._seen
+
+    def __enter__(self) -> SubmitWatch:
+        self._page.on("request", self._on_request)
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._page.remove_listener("request", self._on_request)
