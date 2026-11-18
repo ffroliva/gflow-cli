@@ -225,6 +225,49 @@ def _masked_unexpected_dict(exc: Exception) -> dict[str, Any]:
     }
 
 
+async def _record_tool_use(
+    name: str,
+    outcome: str,
+    duration_s: float,
+    ctx: Context[Any, Any] | None,
+    crash: Exception | None,
+) -> None:
+    """Count one MCP tool call: invocation, client and crash. Never raises."""
+    try:
+        disabled = telemetry.killed()
+    except Exception:  # noqa: BLE001 — a kill-switch read must not fail the tool
+        disabled = False
+    # A kill-switch no-op does not need a worker-thread handoff.
+    if disabled:
+        return
+    try:
+
+        def record_and_maybe_upload() -> None:
+            telemetry.record("mcp", name, (), outcome, duration_s)
+            telemetry_upload.maybe_upload()
+
+        await asyncio.to_thread(record_and_maybe_upload)
+    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+        pass
+    try:
+        params = ctx.request_context.session.client_params if ctx is not None else None
+        client_name = params.client_info.name if params is not None else None
+    except Exception:  # noqa: BLE001 — metadata may be absent outside a request
+        client_name = None
+    if client_name is not None:
+        try:
+            await asyncio.to_thread(
+                telemetry.record_counter, "mcp", "client", client_key(client_name)
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+            pass
+    if crash is not None:
+        try:
+            await asyncio.to_thread(telemetry.record_crash, "mcp", crash)
+        except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
+            pass
+
+
 def _guarded(
     fn: Callable[..., Awaitable[dict[str, Any]]],
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
@@ -243,6 +286,7 @@ def _guarded(
         started = time.monotonic()
         outcome = "1"
         crash: Exception | None = None
+        run = telemetry.begin_run()  # #1326: this call's browser facts, apart from others'
         try:
             try:
                 result = await fn(*args, **kwargs)
@@ -259,40 +303,8 @@ def _guarded(
                 outcome = outcome_of(result)
             return result
         finally:
-            try:
-                disabled = telemetry.killed()
-            except Exception:  # noqa: BLE001 — a kill-switch read must not fail the tool
-                disabled = False
-            # A kill-switch no-op does not need a worker-thread handoff.
-            if not disabled:
-                try:
-
-                    def record_and_maybe_upload() -> None:
-                        telemetry.record(
-                            "mcp", fn.__name__, (), outcome, time.monotonic() - started
-                        )
-                        telemetry_upload.maybe_upload()
-
-                    await asyncio.to_thread(record_and_maybe_upload)
-                except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
-                    pass
-                try:
-                    params = ctx.request_context.session.client_params if ctx is not None else None
-                    client_name = params.client_info.name if params is not None else None
-                except Exception:  # noqa: BLE001 — metadata may be absent outside a request
-                    client_name = None
-                if client_name is not None:
-                    try:
-                        await asyncio.to_thread(
-                            telemetry.record_counter, "mcp", "client", client_key(client_name)
-                        )
-                    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
-                        pass
-                if crash is not None:
-                    try:
-                        await asyncio.to_thread(telemetry.record_crash, "mcp", crash)
-                    except Exception:  # noqa: BLE001 — telemetry must never affect an MCP result
-                        pass
+            await _record_tool_use(fn.__name__, outcome, time.monotonic() - started, ctx, crash)
+            telemetry.end_run(run)
 
     # MCP's installed SDK discovers context from annotations and injects it without
     # adding it to the public tool schema; functools.wraps preserves each tool's schema.
@@ -459,7 +471,7 @@ async def _execute_claimed(profile: str, task_id: str, db_path: Path) -> None:
         try:
             claimed = worker.repo.claim_task(task_id, claimant=f"mcp:{profile}")
             if claimed is not None:
-                await worker.process_task(claimed)
+                await worker.process_task(claimed)  # the tool wrapper scopes and records it
         finally:
             worker.close()
 

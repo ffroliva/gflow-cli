@@ -69,7 +69,7 @@ class FlowWorker:
                 # None here — same as an empty queue.
                 task = self.repo.claim_next_pending(self.profile_name, claimant)
                 if task:
-                    await self.process_task(task)
+                    await self.run_task(task)
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError:
@@ -84,14 +84,17 @@ class FlowWorker:
                 )
                 await asyncio.sleep(5)
 
-    async def process_task(self, task: QueueTask) -> None:
-        """Run one claimed task, then count the browser facts it observed (#1326)."""
+    async def run_task(self, task: QueueTask) -> None:
+        """Run one claimed task in its own telemetry scope, then count the browser facts
+        it observed, even when it fails (#1326)."""
+        run = telemetry.begin_run()
         try:
-            await self._process_task(task)
+            await self.process_task(task)
         finally:
             telemetry.flush_run_facts("mcp")
+            telemetry.end_run(run)
 
-    async def _process_task(self, task: QueueTask) -> None:
+    async def process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.
 
         The pending -> processing transition belongs to the atomic claim

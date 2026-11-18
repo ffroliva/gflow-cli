@@ -373,5 +373,41 @@ async def test_the_worker_counts_a_job_s_facts_even_when_it_fails(tmp_home: Path
         raise RuntimeError("job failed after launch")
 
     with pytest.raises(RuntimeError):
-        await FlowWorker.process_task(SimpleNamespace(_process_task=_boom), object())  # type: ignore[arg-type]
+        await FlowWorker.run_task(SimpleNamespace(process_task=_boom), object())  # type: ignore[arg-type]
     assert _report()["engines"] == {"patchright": 1}
+
+
+async def test_concurrent_runs_keep_their_own_facts(tmp_home: Path) -> None:
+    """Review: a long-lived MCP server runs jobs and tool calls at once; one run's facts
+    must neither overwrite nor be taken by another's."""
+    import asyncio
+
+    async def job(engine: str, host: str, gate: asyncio.Event) -> None:
+        run = telemetry.begin_run()
+        try:
+            telemetry.note_engine(engine)
+            await gate.wait()  # both runs have noted before either counts
+            telemetry.note_host(host)
+            telemetry.flush_run_facts("mcp")
+        finally:
+            telemetry.end_run(run)
+
+    gate = asyncio.Event()
+    tasks = [
+        asyncio.create_task(job("playwright", "migrated", gate)),
+        asyncio.create_task(job("patchright", "labs", gate)),
+    ]
+    await asyncio.sleep(0)
+    gate.set()
+    await asyncio.gather(*tasks)
+    report = _report()
+    assert report["engines"] == {"playwright": 1, "patchright": 1}
+    assert report["hosts"] == {"flow": 1, "labs": 1}
+
+
+def test_a_host_noted_without_a_launch_does_not_carry_into_a_later_run(tmp_home: Path) -> None:
+    telemetry.note_host("labs")  # routed, but no browser launch was noted
+    telemetry.record("cli", "credits", [], "0", 1.0)
+    telemetry.note_engine("playwright")  # a later run that never routed
+    telemetry.record("cli", "video t2v", [], "23", 5.0)
+    assert _report()["hosts"] == {"unknown": 1}

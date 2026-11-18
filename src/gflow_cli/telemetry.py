@@ -18,6 +18,7 @@ import time
 import traceback
 from collections.abc import Iterable, Sequence
 from contextlib import closing
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import cache
@@ -441,14 +442,33 @@ def _connect(home: Path) -> sqlite3.Connection:
 
 #: What the run that launched a browser observed (#1326): its engine and the Flow host
 #: served. Stored, not counted, so a route read twice still counts once per command.
-_RUN_FACTS: dict[str, str] = {}
+#: A CLI process runs one command, so it uses one process-wide dict. A long-lived MCP
+#: server runs tool calls and queued jobs concurrently: each opens its own scope
+#: (`begin_run`), and the dict, being mutated rather than replaced, is shared with the
+#: tasks and threads that scope spawns.
+_PROCESS_FACTS: dict[str, str] = {}
+_RUN_FACTS: ContextVar[dict[str, str] | None] = ContextVar("gflow_run_facts", default=None)
 _ENGINES = frozenset({"playwright", "patchright"})
 _HOSTS = {"labs": "labs", "migrated": "flow"}
 
 
+def _facts() -> dict[str, str]:
+    scoped = _RUN_FACTS.get()
+    return _PROCESS_FACTS if scoped is None else scoped
+
+
+def begin_run() -> Token[dict[str, str] | None]:
+    """Give one MCP tool call or queued job its own facts; reset the token when it ends."""
+    return _RUN_FACTS.set({})
+
+
+def end_run(token: Token[dict[str, str] | None]) -> None:
+    _RUN_FACTS.reset(token)
+
+
 def note_engine(engine: str) -> None:
     """Note the browser engine a run launched (closed enum: anything else is ``other``)."""
-    _RUN_FACTS["engine"] = engine if engine in _ENGINES else "other"
+    _facts()["engine"] = engine if engine in _ENGINES else "other"
 
 
 def note_host(kind: str | None) -> None:
@@ -456,15 +476,18 @@ def note_host(kind: str | None) -> None:
 
     An unclassifiable URL keeps any earlier observation; none at all reads ``unknown``."""
     if kind in _HOSTS:
-        _RUN_FACTS["host"] = _HOSTS[kind]
+        _facts()["host"] = _HOSTS[kind]
 
 
 def _take_run_facts() -> list[tuple[str, str]]:
-    """The noted facts as counter keys, cleared so the next command starts empty."""
-    if "engine" not in _RUN_FACTS:
-        return []
-    keys = [("engine", _RUN_FACTS["engine"]), ("host", _RUN_FACTS.get("host", "unknown"))]
-    _RUN_FACTS.clear()
+    """The noted facts as counter keys, cleared so the next run starts empty."""
+    facts = _facts()
+    keys = (
+        [("engine", facts["engine"]), ("host", facts.get("host", "unknown"))]
+        if "engine" in facts
+        else []
+    )
+    facts.clear()  # a host noted without a launch must not carry into a later run
     return keys
 
 
