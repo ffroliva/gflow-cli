@@ -1032,6 +1032,19 @@ class TestReinstallHint:
     @pytest.mark.parametrize(
         ("name", "expected"),
         [
+            ("uv", 'uv tool install "gflow-cli[patchright]==9.9.9" --force --reinstall'),
+            ("pipx", 'pipx install --force "gflow-cli[patchright]==9.9.9"'),
+        ],
+    )
+    def test_uv_and_pipx_repairs_carry_the_installed_extras(
+        self, name: str, expected: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(uc, "_installed_extras", lambda: ("patchright",))
+        assert expected in uc._reinstall_hint(uc.Installer(name, ("x",)), "9.9.9")
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
             ("uv", 'uv tool install "gflow-cli==9.9.9" --force --reinstall'),
             ("pipx", 'pipx install --force "gflow-cli==9.9.9"'),
             ("pip", '-m pip install --force-reinstall "gflow-cli==9.9.9"'),
