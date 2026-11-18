@@ -35,7 +35,6 @@ from pytest_bdd import given, scenarios, then, when
 from gflow_cli.config import reset_settings
 from gflow_cli.mcp import tools as mcp_tools
 
-# `_run_gflow` runs the child with GFLOW_CLI_LOG_LEVEL=INFO, which the event steps need.
 from .test_image_uuid_ref_e2e import (
     _SELECTED_EXISTING_EVENT,
     _UPLOAD_FALLBACK_EVENT,

@@ -122,7 +122,6 @@ def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
     """
     env = dict(e2e_env)
     env["PYTHONUTF8"] = "1"  # explicit: accented names must round-trip byte-for-byte
-    env["GFLOW_CLI_LOG_LEVEL"] = "INFO"  # the prompt-format check reads INFO events (#1332)
     # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a temp
     # dir that holds no profiles, and `e2e_env` inherits it — a child process
     # would resolve "no session for profile <name>" and exit 2 before touching
@@ -558,6 +557,7 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
     project_id = _require_project()
     env = _character_env(e2e_env)
     env["GFLOW_CLI_LOG_FORMAT"] = "json"  # make the transport events assertable
+    env["GFLOW_CLI_LOG_LEVEL"] = "INFO"  # they are INFO; the CLI defaults to WARNING (#1332)
     profile = env["GFLOW_CLI_PROFILE"]
     locale = os.environ.get(_LOCALE_ENV, _DEFAULT_LOCALE)
     face = os.environ.get(_FACE_ENV, _DEFAULT_FACE_PROMPT)
