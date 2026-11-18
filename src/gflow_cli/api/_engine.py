@@ -227,5 +227,11 @@ def retryable_engine_errors() -> tuple[type[BaseException], ...]:
 
 
 def log_engine_selected(engine: BrowserEngine | str) -> None:
-    """Emit the one-shot engine-selection event (carries the name only — no secrets)."""
+    """Emit the one-shot engine-selection event (carries the name only — no secrets).
+
+    Called where a browser actually launches, so it is also where the weekly report
+    learns which engine ran (#1326)."""
+    from gflow_cli import telemetry  # noqa: PLC0415 - keep CLI startup free of the import
+
     logger.info("browser.engine_selected", engine=str(engine))
+    telemetry.note_engine(str(engine))

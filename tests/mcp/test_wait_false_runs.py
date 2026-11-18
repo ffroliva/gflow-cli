@@ -424,3 +424,36 @@ async def test_an_unknown_task_id_is_invalid_params(db: DataStore, method: str) 
     with pytest.raises(MCPError) as caught:
         await getattr(TasksExtension(data_store=db), method)(None, params)
     assert caught.value.code == INVALID_PARAMS
+
+
+async def test_a_wait_false_job_counts_its_own_browser_facts(
+    db: DataStore, wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1326: the tool call returns before the job runs, so its scope cannot count the
+    job's engine; the detached job counts its own, once."""
+    from gflow_cli import telemetry
+
+    client = wired["client"]
+    real = client.generate_image
+
+    async def launches_patchright(*args: Any, **kwargs: Any) -> Any:
+        telemetry.note_engine("patchright")
+        return await real(*args, **kwargs)
+
+    client.generate_image = launches_patchright
+    taken: list[list[tuple[str, str]]] = []
+
+    def take(*_a: Any, **_k: Any) -> None:
+        taken.append(telemetry._take_run_facts())  # pyright: ignore[reportPrivateUsage]
+
+    # Both counting paths run: the tool call's own record() and the job's flush.
+    monkeypatch.setattr(telemetry, "killed", lambda: False)
+    monkeypatch.setattr(telemetry, "record", take)
+    monkeypatch.setattr(telemetry, "flush_run_facts", take)
+
+    reply = await tools.gflow_generate_image(prompt="a lighthouse", wait=False)
+    await _finish(reply["task_id"])
+
+    assert _status(db, reply["task_id"]) == "completed"
+    # Exactly once: the job's own scope counts it, the returned tool call does not.
+    assert [t for t in taken if t] == [[("engine", "patchright"), ("host", "unknown")]]

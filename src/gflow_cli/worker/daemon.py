@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
 import structlog
 
+from gflow_cli import telemetry
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
@@ -42,6 +43,20 @@ from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 logger = structlog.get_logger()
 
 
+async def run_counted(job: Awaitable[None]) -> None:
+    """Run one queued job in its own telemetry scope, then count the browser facts it
+    observed, even when it fails (#1326)."""
+    run = telemetry.begin_run()
+    try:
+        await job
+    finally:
+        try:  # telemetry must never replace a job's outcome, billed or not
+            await asyncio.to_thread(telemetry.flush_run_facts, "mcp")
+        except Exception:  # noqa: BLE001
+            pass
+        telemetry.end_run(run)
+
+
 class FlowWorker:
     def __init__(self, profile_name: str, db_path: str):
         self.profile_name = profile_name
@@ -68,7 +83,7 @@ class FlowWorker:
                 # None here — same as an empty queue.
                 task = self.repo.claim_next_pending(self.profile_name, claimant)
                 if task:
-                    await self.process_task(task)
+                    await self.run_task(task)
                 else:
                     await asyncio.sleep(1)
             except asyncio.CancelledError:
@@ -82,6 +97,10 @@ class FlowWorker:
                     "Error in FlowWorker loop", profile_name=self.profile_name, exc_info=exc
                 )
                 await asyncio.sleep(5)
+
+    async def run_task(self, task: QueueTask) -> None:
+        """Run one claimed task and count the browser facts it observed (#1326)."""
+        await run_counted(self.process_task(task))
 
     async def process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.

@@ -183,8 +183,8 @@ def test_weeks_before_consent_are_never_eligible_after_consent(
     week = _week_id(start)
     _seed_week(_home, week, start=start, notice_at=start - timedelta(weeks=1))
     monkeypatch.setattr(telemetry, "consent_region", lambda: True)
-    (_home / telemetry.CONSENT_FILE).write_text(
-        (start + timedelta(days=3)).isoformat(), encoding="utf-8"
+    (_home / telemetry.CONSENT_FILE).write_text(  # a valid current-notice consent (#1326)
+        f"{(start + timedelta(days=3)).isoformat()}\n{telemetry.NOTICE_VERSION}", encoding="utf-8"
     )
     assert telemetry_upload.next_due_week(datetime.now(UTC)) is None
 

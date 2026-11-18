@@ -31,14 +31,10 @@ def _notice_cutoff(meta: dict[str, str]) -> datetime | None:
     if not notice:
         return None
     notice_at = datetime.fromisoformat(notice)
-    consent_value = _resolve_home() / telemetry.CONSENT_FILE
     if telemetry.consent_region():
-        try:
-            consent_at = datetime.fromisoformat(consent_value.read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
+        consent_at = telemetry.consent_at()
+        if consent_at is None:
             return None
-        if consent_at.tzinfo is None:
-            consent_at = consent_at.replace(tzinfo=UTC)
         notice_at = max(notice_at, consent_at)
     if notice_at.tzinfo is None:
         notice_at = notice_at.replace(tzinfo=UTC)
