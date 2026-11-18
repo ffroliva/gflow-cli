@@ -73,11 +73,15 @@ async def _export_first_offered(
 
 
 def _newest_per_model(rows: list[Any]) -> list[Any]:
-    """The newest clip of each model: Flow's offered scales follow the model (#1338)."""
-    seen: set[str | None] = set()
+    """The newest clip of each known model: the 2026-11-18 offers differed by model (#1338).
+
+    Rows with no recorded model are left out: the one measured had a disabled download
+    button, which is a different question from which scales Flow lists.
+    """
+    seen: set[str] = set()
     picked = []
     for row in rows:
-        if row.model not in seen:
+        if row.model and row.model not in seen:
             seen.add(row.model)
             picked.append(row)
     return picked
