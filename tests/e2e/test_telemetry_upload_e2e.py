@@ -23,6 +23,8 @@ from typing import Any
 
 import pytest
 
+from gflow_cli.telemetry import NOTICE_VERSION
+
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_telemetry]
 
 WRANGLER_DIR = Path(r"C:\development\github\gflow-telemetry-endpoint")
@@ -433,7 +435,7 @@ with sqlite3.connect(home / 'telemetry.db') as con:
     if {with_notice}:
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-            ('notice_seen_version', '2')
+            ('notice_seen_version', str(telemetry.NOTICE_VERSION))
         )
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
@@ -564,7 +566,7 @@ def test_notice_prints_once_in_a_real_tty_and_nothing_is_sent(
     # Verify local DB: notice recorded, nothing sent
     with sqlite3.connect(home / "telemetry.db") as con:
         meta = dict(con.execute("SELECT key, value FROM meta"))
-        assert meta.get("notice_seen_version") == "2"
+        assert meta.get("notice_seen_version") == str(NOTICE_VERSION)
         assert "last_attempt" not in meta
 
         row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
