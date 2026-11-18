@@ -155,12 +155,13 @@ async def test_full_i2v_roundtrip(): ...
 async def test_last_and_nth_minus_one_count_a_single_match(): ...
 ```
 
-`engine_contract` tests drive each installed browser engine (`playwright`, and
-`patchright` when the extra is installed) against system Chrome on a local page. They
-catch a driver regression that the unit suite's fake pages cannot see (#1319). They are
-excluded from the default run; run them with `uv sync --extra dev --extra patchright`,
+`engine_contract` tests check gflow against each installed browser engine
+(`playwright`, and `patchright` when the extra is installed): a locator check on system
+Chrome (#1319) and a parse of the patchright driver bundle's disabled-feature list
+(#1324). They catch driver regressions that the unit suite's fake pages cannot see. They
+are excluded from the default run; run them with `uv sync --extra dev --extra patchright`,
 then `uv run pytest -m engine_contract`. The `engine-contract` CI job does exactly that
-and fails if either engine case skips.
+and fails if fewer than three of them execute, so a skipped case fails the build.
 
 **E2E is required, not optional.** CI cannot run these — they need a live authenticated
 profile — so the e2e layer is the one gate that only a human, or an agent with credentials,
