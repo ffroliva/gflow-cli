@@ -24,6 +24,7 @@ from gflow_cli.errors import (
     UiSelectorDriftError,
     UpscaleUnavailableError,
     WireFormatError,
+    nothing_submitted,
 )
 from gflow_cli.paths import extension_from_magic
 
@@ -320,22 +321,23 @@ async def upscale_image_migrated(
     Returns:
         Raw decoded JPEG/PNG bytes.
     """
-    log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
-    await open_tile_download_menu(
-        page,
-        project_id=project_id,
-        media_id=media_id,
-        tile_selector=f'img[data-media-id="{media_id}"]',
-        tile_timeout_ms=30_000,
-        kind="image",
-        prefix="migrated upscale",
-        route="image_upscale",
-    )
+    with nothing_submitted():  # #1320: the menu click below is the first send
+        log.info("migrated_upscale.navigate", project_id=project_id, media_id=media_id)
+        await open_tile_download_menu(
+            page,
+            project_id=project_id,
+            media_id=media_id,
+            tile_selector=f'img[data-media-id="{media_id}"]',
+            tile_timeout_ms=30_000,
+            kind="image",
+            prefix="migrated upscale",
+            route="image_upscale",
+        )
 
-    scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
-    btn_target = await find_download_menu_item(page, scale_label, route="image_upscale")
-    if await is_menu_item_disabled(btn_target):
-        raise _unavailable_error(target_resolution)
+        scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
+        btn_target = await find_download_menu_item(page, scale_label, route="image_upscale")
+        if await is_menu_item_disabled(btn_target):
+            raise _unavailable_error(target_resolution)
 
     found_b64: asyncio.Future[str] = asyncio.get_running_loop().create_future()
     on_response = _sprcad_listener(found_b64)

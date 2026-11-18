@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A failure before a flow.google.com submit reports `charged: no` ([#1320](https://github.com/ffroliva/gflow-cli/issues/1320)).** `UiSelectorDriftError` (exit 23) defaults to `charged: maybe`, and its pre-submit raise sites inherited that default, so a settings-pane miss, which sends nothing to Flow, told an agent to reconcile a charge that cannot exist (seen in #1319). Every gflow error raised before the submit click on the classic and agent-only composers and in `video extend` now reads `charged: no`; its `next_action` is unchanged. A submit the route guard aborts in the browser reads `charged: no` with `next_action: retry`. A failure at or after the click keeps `maybe`.
+- **A failure before a flow.google.com submit reports `charged: no` ([#1320](https://github.com/ffroliva/gflow-cli/issues/1320)).** `UiSelectorDriftError` (exit 23) defaults to `charged: maybe`, and its pre-submit raise sites inherited that default, so a settings-pane miss, which sends nothing to Flow, told an agent to reconcile a charge that cannot exist (seen in #1319). Every gflow error raised before the submit click on the classic and agent-only composers and in `video extend`, before the export click of `image upscale` and `video upscale`, and during a reference upload now reads `charged: no`; its `next_action` is unchanged. A submit the route guard aborts in the browser reads `charged: no` with `next_action: retry`. A failure at or after the click keeps `maybe`.
 
 ## [0.101.2] — 2026-11-17
 

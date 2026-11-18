@@ -177,3 +177,20 @@ async def test_a_slow_remount_after_a_reload_spends_the_attempt(
     ref = await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
     assert ref is not None and ref.name == "media-1"
     assert page.reload.await_count == 2
+
+
+async def test_a_drift_during_an_upload_reports_nothing_charged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1320: uploading a reference is never a billed generation."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    t = _transport("https://flow.google.com/project/p", monkeypatch)
+    monkeypatch.setattr(
+        migrated_composer.MigratedComposer,
+        "upload",
+        AsyncMock(side_effect=UiSelectorDriftError(detail="upload chip missing")),
+    )
+    with pytest.raises(UiSelectorDriftError) as info:
+        await t.upload_reference(project_id="p", path=tmp_path / "photo.png")
+    assert info.value.charged == "no"
