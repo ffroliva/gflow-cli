@@ -47,6 +47,6 @@ aborted before Flow sees it.
 
 ## Open
 
-- Other readers that pick a clip's record by media id (`decode_record(media_id=...)`)
-  also take the first record listed; whether that serves an older version of an extended
-  clip was not measured here.
+- `gflow data download` picks a clip's record by media id from the clip route's own
+  `as29s` reply, not from this listing; whether that reply also lists one record per
+  extend was not measured here.
