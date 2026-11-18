@@ -987,7 +987,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
-| Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1333 #1334 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
+| Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1332 #1333 #1334 #1335 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
 | patchright close hang fixed: the disabled-feature parse reads patchright 1.64's exclusion filter, and each launch site names its engine (#1324) | ✅ done (v0.101.2) |
 | `patchright` extra pinned to 1.64.4 so `.last` locators resolve under the patchright engine, with a real-engine CI contract (#1319) | ✅ done (v0.101.1) |
 | Universal `-o/--output [json\|table\|id]` format selector across all commands, `--out-file PATH` enforced for file paths, MCP `output` removed (#1158) | ✅ done (v0.101.0) |

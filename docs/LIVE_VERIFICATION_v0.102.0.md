@@ -30,13 +30,17 @@ Release ledger for v0.102.0. It covers the fixes and additions merged into `deve
 | Worker failure names its class (#1343, PR #1345) | `tests/worker/test_daemon.py` | Offline only: the change adds a field to an error record built in the worker; an untyped worker failure cannot be produced on demand live | $0 |
 | Failure after the submit is `indeterminate` (#1347, PR #1350) | `tests/worker/test_daemon.py` | Offline only: the change classifies a worker failure record; it touches no Flow surface | $0 |
 | CI browser cache (#1335, PR #1342) | CI run 44387711147 | ✅ cache miss: Install Chromium 19-270 s; cache hit: restore 2-5 s, Install Chromium 10-14 s; the macOS lease leg runs on pushes only | $0 |
-| Release tree, default engine (live-verify step 0) | `gflow video t2v --model veo-lite --aspect 16:9 --out-file <path> --json` | T2V_ROW | 1 veo-lite generation |
+| Release tree, default engine (live-verify step 0) | `gflow video t2v --model veo-lite --aspect 16:9 --out-file <path> --json` | ✅ `gflow, version 0.102.0`; exit 0 in 94 s, `MEDIA_GENERATION_STATUS_SUCCESSFUL`, model `veo_3_1_lite`; file is MP4 (`ftyp`), h264 1280x720, 7.93 s; stderr empty | 1 veo-lite generation |
 
 ## Pre-tag gates
 
-- `/gflow:check` on `develop` (`54cee3ca`): GATE_ROW
+- `/gflow:check` on `develop` (`54cee3ca`): all repository gates pass, `ruff` clean, `pyright` `0 errors`, `7331 passed, 14 skipped` in 198 s, coverage 93.45%.
 - Reviews: every PR had a fresh `/code-review xhigh` and `/ponytail-review xhigh` with one fix round, then `/gflow:pr-council-review` and `/gflow:sonar` green before merge.
-- `/gflow:doc-review`: DOC_REVIEW_ROW
+- `/gflow:doc-review`: _Council verdict: YELLOW, YELLOW, YELLOW; no Tier 1 findings. 8 Tier 2 fixed in the release-prep commit: the one-time manual upgrade for pip installs at 0.101.2 and below (`docs/USAGE.md`); the notice-version reset in every region (`docs/TELEMETRY.md`); image upscale exit 22 for an unlisted scale (`docs/USAGE.md`, `docs/MCP.md`); how `tasks/get` reads an `indeterminate` job (`docs/MCP.md`); the ledger cost in `docs/INDEX.md`; #1332 and #1335 in the milestone row; the `docs/INDEX.md` size in `CLAUDE.md`; `lhm.plugin.json` bumped from 0.99.0 and added to the release skill's version sites. Tier 3, not changed: a #1334 clause in the exit-code table, a contributor note that the macOS lease leg runs on pushes only, and a telemetry mention in `README.md`. Council reports at `tmp/council/0{1,2,3}-*.md` (local-only)._
+
+## Post-tag evidence
+
+Recorded after the tag is published: the `Release` workflow run, the PyPI upload and the GitHub Release.
 
 ### What these runs do not prove
 
