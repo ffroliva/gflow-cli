@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import structlog
 
+from gflow_cli import telemetry
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
@@ -84,6 +85,13 @@ class FlowWorker:
                 await asyncio.sleep(5)
 
     async def process_task(self, task: QueueTask) -> None:
+        """Run one claimed task, then count the browser facts it observed (#1326)."""
+        try:
+            await self._process_task(task)
+        finally:
+            telemetry.flush_run_facts("mcp")
+
+    async def _process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.
 
         The pending -> processing transition belongs to the atomic claim

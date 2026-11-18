@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The weekly usage report counts the browser engine and the Flow site served ([#1326](https://github.com/ffroliva/gflow-cli/issues/1326)).** Two new fields, `engines` (`playwright`, `patchright`, `other`) and `hosts` (`labs`, `flow`, `unknown`), count the commands and queued jobs that launched a browser, so a defect limited to one engine (#1319, #1324) or one Flow site can be sized. Both are closed enums; no hostname or setting value is sent, and a command that launches no browser counts in neither. The privacy notice moves to version 3 and names both fields. In the EU and EEA, consent given to an earlier notice no longer counts: uploads stop until `gflow telemetry on` is run again. A rejected upload (HTTP 400 or 413) is now logged at debug level.
+
 ## [0.101.2] — 2026-11-17
 
 ### Fixed

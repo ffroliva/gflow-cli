@@ -758,7 +758,11 @@ def test_eu_region_needs_consent_then_uploads(
                 "SELECT value FROM meta WHERE key = 'notice_seen_at'"
             ).fetchone()
             if notice_at_row:
-                (home / "telemetry.consent").write_text(notice_at_row[0], encoding="utf-8")
+                from gflow_cli.telemetry import NOTICE_VERSION
+
+                (home / "telemetry.consent").write_text(
+                    f"{notice_at_row[0]}\n{NOTICE_VERSION}", encoding="utf-8"
+                )
 
         second = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
         assert second.returncode == 0, second.stderr

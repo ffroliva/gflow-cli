@@ -288,3 +288,90 @@ def test_no_connection_outlives_record(tmp_home: Path) -> None:
     # An open connection would hold the file on Windows; deletion proves none is left.
     for f in tmp_home.glob("telemetry.db*"):
         f.unlink()
+
+
+# --- #1326: browser engine and served Flow host ------------------------------------------
+
+
+def _report() -> dict[str, object]:
+    return telemetry.build_report(telemetry.iso_week())
+
+
+def test_a_browser_run_counts_its_engine_and_host_once(tmp_home: Path) -> None:
+    telemetry.note_engine("patchright")
+    telemetry.note_host("migrated")
+    telemetry.note_host("migrated")  # routing reads the URL again on a retry
+    telemetry.record("cli", "image t2i", [], "0", 3.0)
+    report = _report()
+    assert report["engines"] == {"patchright": 1}
+    assert report["hosts"] == {"flow": 1}
+
+
+def test_a_command_that_launched_no_browser_counts_neither(tmp_home: Path) -> None:
+    telemetry.record("cli", "docs", [], "0", 0.1)
+    report = _report()
+    assert "engines" not in report and "hosts" not in report
+
+
+def test_a_launch_that_never_reached_flow_counts_host_unknown(tmp_home: Path) -> None:
+    telemetry.note_engine("playwright")
+    telemetry.note_host(None)  # about:blank, or an unparseable URL
+    telemetry.record("cli", "video t2v", [], "23", 5.0)
+    assert _report()["hosts"] == {"unknown": 1}
+
+
+def test_an_engine_outside_the_enum_is_other_and_facts_reset_per_command(tmp_home: Path) -> None:
+    telemetry.note_engine("chromium-nightly")
+    telemetry.note_host("labs")
+    telemetry.record("cli", "image t2i", [], "0", 3.0)
+    telemetry.record("cli", "docs", [], "0", 0.1)  # the next command launched nothing
+    report = _report()
+    assert report["engines"] == {"other": 1}
+    assert report["hosts"] == {"labs": 1}
+
+
+def test_the_worker_flushes_a_queued_job_s_facts(tmp_home: Path) -> None:
+    telemetry.note_engine("playwright")
+    telemetry.note_host("migrated")
+    telemetry.flush_run_facts("mcp")
+    telemetry.flush_run_facts("mcp")  # nothing noted since: no second count
+    assert _report()["engines"] == {"playwright": 1}
+
+
+def test_telemetry_off_records_no_run_facts(
+    tmp_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_TELEMETRY", "0")
+    telemetry.killed.cache_clear()
+    telemetry.note_engine("playwright")
+    telemetry.flush_run_facts("mcp")
+    monkeypatch.delenv("GFLOW_CLI_TELEMETRY")
+    telemetry.killed.cache_clear()
+    assert "engines" not in _report()
+
+
+def test_a_browser_launch_and_its_route_note_the_facts(tmp_home: Path) -> None:
+    from gflow_cli.api._engine import log_engine_selected
+    from gflow_cli.api.transports._common import migrated_route
+
+    log_engine_selected("playwright")
+    migrated_route("https://flow.google.com/project/p1", "auto", prefer_migrated=True)
+    migrated_route(None, "auto")  # the url-less pre-check classifies nothing
+    telemetry.record("cli", "video t2v", [], "0", 60.0)
+    report = _report()
+    assert report["engines"] == {"playwright": 1}
+    assert report["hosts"] == {"flow": 1}
+
+
+async def test_the_worker_counts_a_job_s_facts_even_when_it_fails(tmp_home: Path) -> None:
+    from types import SimpleNamespace
+
+    from gflow_cli.worker.daemon import FlowWorker
+
+    async def _boom(_task: object) -> None:
+        telemetry.note_engine("patchright")
+        raise RuntimeError("job failed after launch")
+
+    with pytest.raises(RuntimeError):
+        await FlowWorker.process_task(SimpleNamespace(_process_task=_boom), object())  # type: ignore[arg-type]
+    assert _report()["engines"] == {"patchright": 1}
