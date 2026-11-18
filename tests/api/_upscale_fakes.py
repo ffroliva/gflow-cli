@@ -85,6 +85,9 @@ class FakeMenu:
     async def count(self) -> int:
         return len(self.items)
 
+    async def all_inner_texts(self) -> list[str]:
+        return [i.text for i in self.items]
+
 
 def fake_page(
     menu: list[FakeItem],

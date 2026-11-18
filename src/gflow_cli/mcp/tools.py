@@ -1887,6 +1887,9 @@ async def gflow_upscale_image(
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
         "flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). "
+        "Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p); "
+        "a scale the clip's menu does not list returns UpscaleUnavailableError (exit 22) "
+        "naming the scales it does list. "
         "Measured free (1 observation, 2026-10-07): the 1080p export spent no credits."
     ),
 )

@@ -61,6 +61,10 @@ def menu_token_pattern(token: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![0-9A-Za-z]){re.escape(token)}(?![0-9A-Za-z])", re.IGNORECASE)
 
 
+#: Any whole scale token (``270p``, ``2K``): what tells "Flow lists other scales" from drift.
+_SCALE = re.compile(r"(?<![0-9A-Za-z])\d+[pk](?![0-9A-Za-z])", re.IGNORECASE)
+
+
 async def find_download_menu_item(page: Page, token: str, *, route: str) -> Locator:
     """The open download menu's item for resolution ``token``, picked by that token.
 
@@ -70,8 +74,14 @@ async def find_download_menu_item(page: Page, token: str, *, route: str) -> Loca
     ORDER differs between the two (video 270p/720p/1080p vs 720p/1080p/270p) and the
     WORDS are translated ("2K (Aprimorada)", "Tamanho original"), but the resolution
     token itself is identical in en and pt. So the token is the only stable anchor —
-    it is a format name, not a translated label. A missing item is selector drift
-    (exit 23); a present-but-disabled one is the caller's tier gate (exit 22).
+    it is a format name, not a translated label. A present-but-disabled item is the
+    caller's tier gate (exit 22).
+
+    Flow decides the offered scales per media (#1338, measured 2026-11-18): a Veo 3.1
+    Lite clip lists only 270p and 720p, an Omni 1.2 Flash clip 270p, 360p and 720p. So
+    a token missing from a menu whose other items carry scale tokens is Flow not
+    offering it (exit 22, naming what it does offer); a menu with no scale token at
+    all means the anchor itself missed (exit 23).
     """
     items = page.locator('[role="menuitem"]')
     try:
@@ -83,6 +93,19 @@ async def find_download_menu_item(page: Page, token: str, *, route: str) -> Loca
         ) from exc
     match = items.filter(has_text=menu_token_pattern(token))
     if await match.count() == 0:
+        offered = [m.group(0) for t in await items.all_inner_texts() if (m := _SCALE.search(t))]
+        if offered:
+            raise UpscaleUnavailableError(
+                detail=(
+                    f"Flow does not offer {token} for this media: its download menu "
+                    f"lists {', '.join(offered)}."
+                ),
+                route=route,
+                remediation_hint=(
+                    "Flow decides which scales it offers for each clip or image (a Veo 3.1 "
+                    "Lite clip lists no 1080p, for one). Pick a listed scale with --scale."
+                ),
+            )
         raise UiSelectorDriftError(
             detail=f"migrated upscale: menu item for {token} was not found on {page.url}",
             route=route,

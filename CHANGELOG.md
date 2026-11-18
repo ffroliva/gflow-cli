@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow video upscale` reports a scale Flow does not offer as exit 22, not selector drift ([#1338](https://github.com/ffroliva/gflow-cli/issues/1338)).** Flow decides which scales a clip's download menu lists. Measured 2026-11-18 on flow.google.com: a Veo 3.1 Fast clip still lists 1080p, but Veo 3.1 Lite and Veo 3.1 Quality clips list only 270p and 720p, and an Omni 1.2 Flash clip lists 270p, 360p and 720p, so `--scale 1080p` found no item and exited 23 ("menu item for 1080p was not found"), which reads as a broken selector. When the menu's other items carry scale tokens but not the requested one, the image and video upscale paths now raise `UpscaleUnavailableError` (exit 22, do not retry) naming the scales Flow does list. A menu with no readable scale at all is still exit 23. `gflow_upscale_video` over MCP returns the same error.
+
 ## [0.101.2] — 2026-11-17
 
 ### Fixed

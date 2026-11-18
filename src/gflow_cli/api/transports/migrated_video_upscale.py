@@ -1,7 +1,10 @@
 """Drive Flow's migrated ``flow.google.com`` editor to upscale/export generated videos.
 
-Flow's video viewer download menu offers 270p (animated GIF), 720p (the original MP4)
-and 1080p (the upscaled MP4); 4K is listed but disabled on the account measured.
+Flow's video viewer download menu offers 270p (animated GIF), the original MP4 and, for
+some models, an upscaled MP4. Measured 2026-10-07: 270p, 720p, 1080p and a disabled 4K.
+Measured 2026-11-18 (#1338): a Veo 3.1 Fast clip still lists 1080p; Veo 3.1 Lite and
+Quality clips list 270p and 720p only, an Omni 1.2 Flash clip 270p, 360p (original) and
+720p (upscaled).
 """
 
 from __future__ import annotations

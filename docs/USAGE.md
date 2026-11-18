@@ -334,6 +334,12 @@ Notes:
   and 270p exports an animated GIF. A saved MP4 is checked to really be at least the
   requested resolution, so a preview or the 720p original is refused (exit 7,
   `WireFormatError`) rather than saved as the export.
+- **Flow decides which scales a clip offers.** Measured 2026-11-18: a Veo 3.1 Fast clip's
+  download menu lists 270p, 720p, 1080p and 4K; Veo 3.1 Lite and Veo 3.1 Quality clips list
+  only 270p and 720p; an Omni 1.2 Flash clip lists 270p, 360p (its original) and 720p
+  (upscaled). Asking for a scale the menu does not list exits 22
+  (`UpscaleUnavailableError`) and names the scales Flow does list; exit 23 is kept for a menu
+  in which no scale can be read at all.
 - **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
   refuses the command with exit 36.
 - **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
