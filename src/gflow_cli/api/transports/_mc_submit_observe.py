@@ -83,8 +83,14 @@ def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
     refused = WireFormatError(
         detail=problem, route=f"batchexecute:{rpcid}", remediation_hint=ABORTED_BEFORE_SEND
     )
-    refused.charged, refused.next_action, refused.retryable = "no", "retry", True  # #1320
-    return refused
+    return _mark_unsent(refused)
+
+
+def _mark_unsent(error: WireFormatError) -> WireFormatError:
+    """Flow received and billed nothing; a re-run is safe (#1320)."""
+    error.charged, error.next_action, error.retryable = "no", "retry", True
+    error.remediation_hint = ABORTED_BEFORE_SEND
+    return error
 
 
 class SubmitObserveMixin(MentionMixin):
@@ -729,11 +735,7 @@ class SubmitObserveMixin(MentionMixin):
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))
-            # A guarded run (references or characters) is judged by the route guard, which
-            # aborts a bad body before it leaves (#1320); this event fires first and must
-            # not record that abort as a sent request.
-            guarded = bool(reference_ids or entity_ids)
-            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done() or guarded:
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
                 return
             problem = _image_body_problem(
                 request_body(raw_request), reference_ids, request.model, entity_ids
@@ -828,8 +830,14 @@ class SubmitObserveMixin(MentionMixin):
                 body_media=None if found is None else len(found[0]),
                 body_characters=None if found is None else len(found[1]),
             )
-            if problem is not None and not route_error.done():
+            if problem is None:
+                return
+            if not route_error.done():
                 route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
+            else:
+                # The request event fires first and already recorded this body; the guard
+                # aborted it, so nothing was sent (#1320).
+                _mark_unsent(route_error.result())
 
         page.on("request", on_request)
         page.on("response", on_response)
