@@ -541,6 +541,8 @@ class FlowWorker:
                     # Hash, never the raw message — it may carry tokens (#341,
                     # same privacy rule as operations.error_detail).
                     "detail": f"sha256:{exception_message_hash(exc)}",
+                    # #1343: the class is safe to share and names an intermittent cause.
+                    "error_class": type(exc).__name__,
                     "exit_code": 1,
                     "exit_code_legacy": 1,
                     # #1201: same members as a typed failure; nothing is proven.
