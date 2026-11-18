@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A weekly `driver-watch` job announces browser-driver releases.** Dependabot ignores patchright updates and playwright minor and major updates by design, because a driver bump needs the engine-contract job and a live run (#1319, #1324), so seven patchright releases went unnoticed. The job compares both pins with PyPI and opens or updates one `driver-watch` issue per package whose latest release falls outside its pin, and closes it once the pin admits that release; a release whose issue is closed as not planned is not announced again. It never opens a pull request or changes a pin. `workflow_dispatch` with `dry_run` prints the plan only.
+
 ### Fixed
 
 - **`gflow update` keeps installed extras on a pip install ([#1322](https://github.com/ffroliva/gflow-cli/issues/1322)).** It ran `pip install --upgrade gflow-cli`, which upgrades gflow-cli alone, so an extra's own pin never moved: a user who installed `gflow-cli[patchright]` and updated to v0.101.1 kept the broken patchright 1.61.2 (#1319). The pip command now requests every extra whose requirements are all installed (for example `gflow-cli[patchright]`; the contributor `dev` extra is never requested), and the repair commands gflow prints for uv, pipx and pip carry the same extras. `uv tool upgrade` and `pipx upgrade` were measured to keep the extras recorded at install time and are unchanged. The update runs the installed version's code, so a pip install of 0.101.2 or earlier needs one manual `pip install -U 'gflow-cli[patchright]'` to leave it.
