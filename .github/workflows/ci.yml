@@ -463,11 +463,14 @@ jobs:
   # ── Browser-engine contract (#1319) ────────────────────────────────────────
   # patchright 1.61.2 counted 0 for `.last` on a single match, and no job saw it:
   # every other job installs only `--extra dev`, so the patchright case skipped.
-  # This job installs the extra and runs both engines against the runner's Chrome.
-  # The count guard requires both cases to EXECUTE, so a skip fails the build.
+  # This job installs the extra and runs every engine contract: the locator check on
+  # the runner's Chrome for both engines, and the patchright bundle-parse pin (#1324).
+  # The count guard is a floor on EXECUTED tests, so a skip fails the build.
   engine-contract:
     name: Browser-engine contract
     runs-on: ubuntu-latest
+    # Driver regressions tend to show up as hangs (#559, #1140).
+    timeout-minutes: 15
     env:
       PYTHONUTF8: "1"
     steps:
@@ -485,10 +488,11 @@ jobs:
         run: uv sync --frozen --extra dev --extra patchright
 
       - name: Engine contract tests
-        run: uv run --no-sync python -m pytest -m engine_contract tests/api/test_engine_locator_contract.py -q -rs --junitxml=pytest-engine.xml
+        run: uv run --no-sync python -m pytest -m engine_contract tests/api/test_engine_locator_contract.py tests/test_browser_manager.py -q -rs --junitxml=pytest-engine.xml
 
-      - name: Test-count guard (both engines executed)
-        run: uv run --no-sync python scripts/ci/check_test_count.py pytest-engine.xml 2
+      # 2 locator cases (one per engine) + the patchright bundle-parse pin (#1324).
+      - name: Test-count guard (every engine contract executed)
+        run: uv run --no-sync python scripts/ci/check_test_count.py pytest-engine.xml 3
 
   # ── Storage container tests (S3 via RustFS, GCS via fake-gcs-server) ───────
   # Nothing ran `-m containers` before this job, so the pinned MinIO image was

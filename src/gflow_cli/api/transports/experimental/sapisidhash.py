@@ -211,6 +211,7 @@ class SapisidhashTransport:
             disable_features_args,
             ensure_profile_engine_compatible,
         )
+        from gflow_cli.config import BrowserEngine
 
         # Own the profile for this momentary fingerprint-capture context (D3).
         # Lease is the OUTER context so it releases only after the driver stops.
@@ -224,7 +225,10 @@ class SapisidhashTransport:
                     headless=True,
                     viewport={"width": 1280, "height": 720},
                     locale="en-US",
-                    args=["--password-store=basic", *disable_features_args()],
+                    args=[
+                        "--password-store=basic",
+                        *disable_features_args(BrowserEngine.PLAYWRIGHT),
+                    ],
                 )
                 try:
                     page = await ctx.new_page()

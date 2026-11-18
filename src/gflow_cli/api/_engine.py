@@ -4,7 +4,7 @@ Patchright is an OPT-IN, drop-in patched Playwright (Chromium) that runs page
 evaluations in an isolated execution context to avoid the ``Runtime.enable`` CDP
 leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. It is
 selected via ``GFLOW_CLI_BROWSER_ENGINE=patchright`` and must be installed
-separately (``pip install patchright``). It is **not** a headless unlock. The
+separately (``pip install 'gflow-cli[patchright]'``). It is **not** a headless unlock. The
 default engine is Playwright and is entirely unaffected by this module — callers
 only route through the resolver when the non-default engine is selected.
 
@@ -42,8 +42,8 @@ logger = structlog.get_logger(__name__)
 
 _PATCHRIGHT_PIP_HINT = (
     "GFLOW_CLI_BROWSER_ENGINE=patchright but the 'patchright' package is not "
-    "installed. Install it with `pip install patchright` (or "
-    "`uv pip install gflow-cli[patchright]`). When using system Chrome "
+    "installed. Install the pinned version with `pip install 'gflow-cli[patchright]'` "
+    "(or `uv pip install 'gflow-cli[patchright]'`). When using system Chrome "
     "(channel=chrome, the gflow default) you do NOT need `patchright install "
     "chromium`. Or unset GFLOW_CLI_BROWSER_ENGINE to use the default playwright "
     "engine."

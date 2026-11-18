@@ -4,6 +4,17 @@
 
 ## Current release
 
+**v0.101.2 — alpha.** Patch release restoring the prompt Chrome close under `GFLOW_CLI_BROWSER_ENGINE=patchright` (#1324), a regression in v0.101.1.
+
+**Fixed.**
+- **patchright close hang (#1324).** patchright 1.64.4 ends its disabled-feature list with an exclusion filter, so gflow's parse stopped matching and the `CloudSyncedFolderChecker` switch (#1140) was left out: every patchright run waited out the 30 s close timeout, then force-closed the profile. The parse now reads that filter and keeps `MediaRouter` enabled as patchright intends.
+- **Launch-site engine.** Sign-in, renewal, verification, cookie export and the experimental transports always launch Playwright, and now read Playwright's own feature list rather than the configured engine's.
+- **Install hints** name the `patchright` extra, so they follow the pin. The `engine-contract` CI job also pins the patchright bundle parse.
+
+Full ledger: [LIVE_VERIFICATION_v0.101.2](LIVE_VERIFICATION_v0.101.2.md).
+
+<details><summary>v0.101.1 — patchright `.last` locators</summary>
+
 **v0.101.1 — alpha.** Patch release fixing exit 23 "0 option groups rendered" on every flow.google.com generation under `GFLOW_CLI_BROWSER_ENGINE=patchright` (#1319).
 
 **Fixed.**
@@ -11,6 +22,8 @@
 - **Upgrade note.** An upgrade must re-install the extra (`pip install -U 'gflow-cli[patchright]'`); `gflow update` alone leaves patchright at its installed version.
 
 Full ledger: [LIVE_VERIFICATION_v0.101.1](LIVE_VERIFICATION_v0.101.1.md).
+
+</details>
 
 <details><summary>v0.101.0 — universal output format selector</summary>
 
@@ -957,6 +970,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| patchright close hang fixed: the disabled-feature parse reads patchright 1.64's exclusion filter, and each launch site names its engine (#1324) | ✅ done (v0.101.2) |
 | `patchright` extra pinned to 1.64.4 so `.last` locators resolve under the patchright engine, with a real-engine CI contract (#1319) | ✅ done (v0.101.1) |
 | Universal `-o/--output [json\|table\|id]` format selector across all commands, `--out-file PATH` enforced for file paths, MCP `output` removed (#1158) | ✅ done (v0.101.0) |
 | Locale-invariant count selector for settings pane on flow.google.com under non-English account locales (#1312) | ✅ done (v0.100.1) |

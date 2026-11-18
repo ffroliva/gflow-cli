@@ -104,7 +104,7 @@ pacing is defensible; a stealth feature that fails silently in six months is not
 |---|---|
 | `--jitter 10-30` / [`GFLOW_CLI_JITTER_RANGE`](CONFIGURATION.md#gflow_cli_jitter_range) | After a 403, or before a large batch. Widens the between-submission pause. `--jitter 0` disables pacing entirely (don't) |
 | `--project <id>` | Repeated runs (`t2i`, `i2i`, multi-prompt `t2i`, `gflow run`) — avoids project churn |
-| [`GFLOW_CLI_BROWSER_ENGINE=patchright`](CONFIGURATION.md#gflow_cli_browser_engine) | Opt-in patched Playwright that avoids the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. Install separately (`pip install patchright`). Not a headless unlock |
+| [`GFLOW_CLI_BROWSER_ENGINE=patchright`](CONFIGURATION.md#gflow_cli_browser_engine) | Opt-in patched Playwright that avoids the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. Install separately (`pip install 'gflow-cli[patchright]'`). Not a headless unlock |
 | `--profile <name>` | Spread work across profiles; a profile that has been driven hard is the "hottest" |
 
 ## Field data — what actually triggers a block

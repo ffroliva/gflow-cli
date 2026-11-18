@@ -158,7 +158,7 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
         disable_features_args,
         ensure_profile_engine_compatible,
     )
-    from gflow_cli.config import get_settings
+    from gflow_cli.config import BrowserEngine, get_settings
 
     # Through the strategies module so tests patch one seam for every auth launch.
     from .strategies import async_playwright
@@ -183,7 +183,7 @@ async def renew_profile(profile_dir: Path, *, source: str = "renew") -> RenewRes
                     "--password-store=basic",
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
-                    *disable_features_args(),
+                    *disable_features_args(BrowserEngine.PLAYWRIGHT),
                 ],
                 **browser_proxy_kwargs(get_settings().browser_proxy),
             )

@@ -701,7 +701,7 @@ class BrowserEngineUnavailableError(ConfigurationError):
     title = "Selected browser engine is unavailable"
     _default_remediation = (
         "The selected browser engine is unavailable. Install it with "
-        "`pip install patchright`, or unset GFLOW_CLI_BROWSER_ENGINE to use the "
+        "`pip install 'gflow-cli[patchright]'`, or unset GFLOW_CLI_BROWSER_ENGINE to use the "
         "default playwright engine."
     )
 

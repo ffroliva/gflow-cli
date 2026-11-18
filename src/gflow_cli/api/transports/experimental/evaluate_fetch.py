@@ -164,6 +164,7 @@ class EvaluateFetchTransport:
                 disable_features_args,
                 ensure_profile_engine_compatible,
             )
+            from gflow_cli.config import BrowserEngine
 
             ensure_profile_engine_compatible(profile_dir, None)
             pw = await pw_cm.__aenter__()
@@ -173,7 +174,7 @@ class EvaluateFetchTransport:
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--password-store=basic",
-                    *disable_features_args(),
+                    *disable_features_args(BrowserEngine.PLAYWRIGHT),
                 ],
                 viewport={"width": 1280, "height": 720},
                 locale="en-US",
