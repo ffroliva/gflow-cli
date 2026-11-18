@@ -38,7 +38,12 @@ from gflow_cli.paths import image_output_path, numbered_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
-from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
+from gflow_cli.worker.queue import (
+    QueueRepository,
+    QueueTask,
+    classify_interrupted,
+    mark_interrupted,
+)
 
 logger = structlog.get_logger()
 
@@ -578,7 +583,7 @@ class FlowWorker:
 
             self.repo.update_task_status(
                 task.task_id,
-                status="failed",
+                status=self._failure_status(task.task_id, exc, error_payload),
                 error=error_payload,
                 # #895: a generation can finish, and bill, and then lose its download.
                 # The media id is the only handle an agent has on that clip, and the
@@ -589,6 +594,25 @@ class FlowWorker:
                 # failed before any media id existed still writes NULL, as before.
                 flow_media_id=started_media_ids[0] if started_media_ids else None,
             )
+
+    def _failure_status(self, task_id: str, exc: Exception, error: dict[str, Any]) -> str:
+        """``failed`` or ``indeterminate`` for a job that raised (#1347).
+
+        A gflow error already states, from its raise site, whether anything was sent
+        (#1320), so its job stays ``failed`` with that record. An unexpected exception
+        says nothing, so the checkpoint decides, as for a cancelled job: past the submit
+        Flow may have billed it, and ``error`` then says reconcile, never retry. An
+        unreadable checkpoint is treated as past the submit."""
+        if isinstance(exc, GFlowError):
+            return "failed"
+        try:
+            status = classify_interrupted(self.repo.read_checkpoint(task_id))
+        except Exception as read_exc:  # noqa: BLE001 - a DB fault must not mask the failure
+            logger.warning("failure_checkpoint_unreadable", task_id=task_id, exc_info=read_exc)
+            status = "indeterminate"
+        if status == "indeterminate":
+            error.update(outcome_members("maybe", "reconcile"))
+        return status
 
     def _checkpoint_observer(
         self,

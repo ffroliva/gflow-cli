@@ -125,7 +125,9 @@ The server registers three protocol surfaces:
 > client closes a stdio server, or `gflow serve` stops, running jobs are stopped and stored
 > by how far they got: `failed` before the submit, `indeterminate` after it (a credit may
 > have been spent, so check the Flow project before you retry); `tasks/get` reads both as
-> `cancelled`.
+> `cancelled`. A job that fails with an unexpected (untyped) error follows the same rule:
+> after its submit it is stored `indeterminate` with `next_action: reconcile`. A gflow
+> error keeps the job `failed` with its own `charged` and `next_action`.
 > A server killed outright leaves its row `processing` — see
 > [Known issues](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md). Jobs
 > queued with `wait=false` by v0.90.0 or earlier were never run and are not picked up now:
