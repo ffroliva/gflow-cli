@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast, get_args
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from gflow_cli.diagnostics import IncidentRef
 
 __all__ = [
@@ -76,6 +78,7 @@ __all__ = [
     "is_retryable",
     "legacy_exit_code_for",
     "outcome_members",
+    "nothing_submitted",
 ]
 
 
@@ -238,6 +241,27 @@ class GFlowError(Exception):
         if self.operation_id:
             out["operation_id"] = self.operation_id
         return out
+
+
+class nothing_submitted:  # noqa: N801 - used as a lowercase `with` statement
+    """Mark every gflow error raised inside as ``charged="no"``: no request has left yet.
+
+    Wrap only code that runs before the generation submit. A class default of ``maybe``
+    would otherwise answer for every pre-submit raise site, telling the caller to
+    reconcile a charge that cannot exist (#1320). The exception always propagates.
+
+    ``sent``, when given, reports whether a submit request was seen inside the region
+    (a stray keystroke can submit); the override is then withheld."""
+
+    def __init__(self, sent: Callable[[], bool] | None = None) -> None:
+        self._sent = sent
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, _type: object, exc: BaseException | None, _tb: object) -> None:
+        if isinstance(exc, GFlowError) and not (self._sent is not None and self._sent()):
+            exc.charged = "no"
 
 
 class FlowApiError(GFlowError):

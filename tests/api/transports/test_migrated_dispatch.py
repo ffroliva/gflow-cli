@@ -548,3 +548,49 @@ async def test_a_cancelled_composer_run_still_parks_inline(
         await harness["transport"].generate_video(request=_req(), project_id="p1")
     assert harness["page"].url == "about:blank"
     assert harness["transport"]._deferred_park_pending is True  # noqa: SLF001
+
+
+# --- #1320: charged before and after the video submit click -------------------------------
+
+
+def _composer_stubs(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    async def _noop(*_a: Any, **_kw: Any) -> None:
+        return None
+
+    async def _classic(*_a: Any, **_kw: Any) -> str:
+        return "classic"
+
+    stubs: dict[str, Any] = {
+        "ensure_editor_for": _classic,
+        "apply_video_settings": _noop,
+        "send_prompt": _noop,
+        **overrides,
+    }
+    for name, fn in stubs.items():
+        monkeypatch.setattr(MigratedComposer, name, fn)
+
+
+async def test_a_video_settings_drift_before_the_click_reports_nothing_charged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _drift(*_a: Any, **_kw: Any) -> None:
+        raise UiSelectorDriftError(detail="no duration radio")
+
+    _composer_stubs(monkeypatch, apply_video_settings=_drift)
+    with pytest.raises(UiSelectorDriftError) as info:
+        await _run(_req())
+    assert info.value.charged == "no"
+
+
+async def test_a_video_drift_after_the_click_still_reports_maybe_charged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _drift_after_click(*_a: Any, **_kw: Any) -> None:
+        raise UiSelectorDriftError(detail="result tile moved")
+
+    _composer_stubs(monkeypatch, submit_and_observe=_drift_after_click)
+    with pytest.raises(UiSelectorDriftError) as info:
+        await _run(_req())
+    assert info.value.charged == "maybe"

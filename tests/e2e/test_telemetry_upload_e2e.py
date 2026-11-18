@@ -23,6 +23,8 @@ from typing import Any
 
 import pytest
 
+from gflow_cli.telemetry import NOTICE_VERSION
+
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_telemetry]
 
 WRANGLER_DIR = Path(r"C:\development\github\gflow-telemetry-endpoint")
@@ -50,6 +52,8 @@ ALLOWED_D1_FIELDS = {
     "mcp_clients",
     "crashes",
     "tools",
+    "engines",
+    "hosts",
     "country",
     "reports",
     "x:os_exit",
@@ -433,7 +437,7 @@ with sqlite3.connect(home / 'telemetry.db') as con:
     if {with_notice}:
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
-            ('notice_seen_version', '2')
+            ('notice_seen_version', str(telemetry.NOTICE_VERSION))
         )
         con.execute(
             "INSERT OR REPLACE INTO meta VALUES (?, ?)",
@@ -447,6 +451,12 @@ with sqlite3.connect(home / 'telemetry.db') as con:
         "INSERT INTO counters (week, surface, kind, key, n) VALUES (?, 'cli', 'exit', ?, 1)",
         (week, '{marker} 0')
     )
+    # #1326: a browser run's facts, so the live post carries both new maps.
+    for kind, key in (('engine', 'patchright'), ('host', 'flow')):
+        con.execute(
+            "INSERT INTO counters (week, surface, kind, key, n) VALUES (?, 'cli', ?, ?, 1)",
+            (week, kind, key)
+        )
 
 print(week)
 """
@@ -564,7 +574,7 @@ def test_notice_prints_once_in_a_real_tty_and_nothing_is_sent(
     # Verify local DB: notice recorded, nothing sent
     with sqlite3.connect(home / "telemetry.db") as con:
         meta = dict(con.execute("SELECT key, value FROM meta"))
-        assert meta.get("notice_seen_version") == "2"
+        assert meta.get("notice_seen_version") == str(NOTICE_VERSION)
         assert "last_attempt" not in meta
 
         row = con.execute("SELECT sent_at FROM reports WHERE week = ?", (week,)).fetchone()
@@ -692,6 +702,10 @@ def test_one_real_post_lands_in_d1_from_a_command_that_exits_at_once(
             f"Missing marker command key cli|{marker}: {totals_rows}"
         )
         assert report_row and report_row[0].get("n") == 1, f"Missing reports/all: {totals_rows}"
+        # #1326: the deployed endpoint stores both new maps.
+        assert {("engines", "patchright"), ("hosts", "flow")} <= {
+            (r.get("field"), r.get("key")) for r in totals_rows
+        }, f"Missing engines/hosts rows: {totals_rows}"
 
         # Assert every field is in the allow-list
         fields = {r["field"] for r in totals_rows}
@@ -758,7 +772,11 @@ def test_eu_region_needs_consent_then_uploads(
                 "SELECT value FROM meta WHERE key = 'notice_seen_at'"
             ).fetchone()
             if notice_at_row:
-                (home / "telemetry.consent").write_text(notice_at_row[0], encoding="utf-8")
+                from gflow_cli.telemetry import NOTICE_VERSION
+
+                (home / "telemetry.consent").write_text(
+                    f"{notice_at_row[0]}\n{NOTICE_VERSION}", encoding="utf-8"
+                )
 
         second = subprocess.run(command, cwd=str(home), env=env, capture_output=True, text=True)
         assert second.returncode == 0, second.stderr

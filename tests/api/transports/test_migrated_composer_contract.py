@@ -216,7 +216,7 @@ PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
         "SUBMIT_ENABLE_BUDGET_S",
     ): "gflow_cli.api.transports._mc_submit_observe",
     (
-        "SubmitObserveMixin.submit_and_observe",
+        "SubmitObserveMixin._await_submit_enabled",
         "SUBMIT_ENABLE_POLL_S",
     ): "gflow_cli.api.transports._mc_submit_observe",
     (

@@ -121,8 +121,9 @@ async def test_migrated_upscale_menu_without_any_scale_token_raises_drift() -> N
 async def test_migrated_upscale_menu_never_opens_raises_drift() -> None:
     page = fake_page([])
 
-    with pytest.raises(UiSelectorDriftError, match="download menu did not open"):
+    with pytest.raises(UiSelectorDriftError, match="download menu did not open") as exc_info:
         await _run(page)
+    assert exc_info.value.charged == "no"  # #1320: before the billed menu click
 
 
 async def test_migrated_upscale_missing_tile_raises_drift() -> None:

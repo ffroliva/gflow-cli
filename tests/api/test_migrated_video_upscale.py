@@ -200,8 +200,9 @@ async def test_migrated_video_upscale_token_in_text_but_unmatched_raises_drift()
 async def test_migrated_video_upscale_menu_without_any_scale_token_raises_drift() -> None:
     page = fake_page([FakeItem("Animated GIF"), FakeItem("Original size")])
 
-    with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found"):
+    with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found") as exc_info:
         await _run(page)
+    assert exc_info.value.charged == "no"  # #1320: before the billed menu click
 
 
 async def test_migrated_video_upscale_missing_download_button_raises_drift() -> None:

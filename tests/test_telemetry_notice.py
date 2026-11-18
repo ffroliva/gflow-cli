@@ -4,7 +4,7 @@ import sqlite3
 import sys
 from collections.abc import Iterator
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -217,8 +217,8 @@ def test_on_and_off_persist_consent_only_in_consent_region(
     assert result.exit_code == 0, result.output
     assert "Usage telemetry is on." in result.output
     assert not (home / "telemetry.off").exists()
-    consent_at = datetime.fromisoformat((home / telemetry.CONSENT_FILE).read_text(encoding="utf-8"))
-    assert consent_at.tzinfo == UTC
+    consent_at = telemetry.consent_at()
+    assert consent_at is not None and consent_at.tzinfo == UTC
 
     result = CliRunner().invoke(main, ["telemetry", "off"])
     assert result.exit_code == 0, result.output
@@ -441,7 +441,7 @@ def test_no_writer_can_undo_off() -> None:
             )
             allowed = {"opted_out", "set_opted_out", "state"}
             if constant == "CONSENT_FILE":
-                allowed |= {"set_consent", "upload_disabled_reason"}
+                allowed |= {"set_consent", "consent_at"}  # consent_at only reads (#1326)
             assert owner in allowed
 
 
@@ -497,3 +497,17 @@ def test_corrupt_db_means_no_upload(tmp_path: Path) -> None:
     db = tmp_path / "gflow_home" / "telemetry.db"
     db.write_bytes(b"not a database" * 100)
     assert not telemetry.uploads_enabled()
+
+
+def test_consent_to_an_earlier_notice_is_not_consent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1326: the notice now names the engine and host, so a v2 consent must be renewed."""
+    home = tmp_path / "gflow_home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    (home / telemetry.CONSENT_FILE).write_text("2026-11-01T00:00:00+00:00", encoding="utf-8")
+    assert telemetry.consent_at() is None  # v2 wrote a bare timestamp
+    telemetry.set_consent()
+    assert telemetry.consent_at() is not None
