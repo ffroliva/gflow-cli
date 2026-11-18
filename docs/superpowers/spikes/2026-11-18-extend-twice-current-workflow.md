@@ -47,6 +47,7 @@ aborted before Flow sees it.
 
 ## Open
 
-- `gflow data download` picks a clip's record by media id from the clip route's own
-  `as29s` reply, not from this listing; whether that reply also lists one record per
-  extend was not measured here.
+- `gflow data download`, and the download fallback after an extend whose reply carries no
+  video URL, pick a clip's record by media id from the clip route's own `as29s` reply,
+  not from this listing; whether that reply also lists one record per extend was not
+  measured here ([#1352](https://github.com/ffroliva/gflow-cli/issues/1352)).

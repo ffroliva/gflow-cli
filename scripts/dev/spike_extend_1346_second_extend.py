@@ -12,7 +12,7 @@ id, and created/modified timestamps). The full listings go to the gitignored
 Positive control: the run must log one ``fZytfe`` and one listing holding the media id.
 
 Usage:
-    python scripts/dev/spike_extend_1346_second_extend.py --profile ffroliva \
+    python scripts/dev/spike_extend_1346_second_extend.py --profile <name> \
         --project <uuid> --media <uuid>
 """
 
@@ -27,7 +27,7 @@ from typing import Any
 
 from gflow_cli.api.transports import migrated_composer as mc
 from gflow_cli.api.transports import migrated_extend as mx
-from gflow_cli.api.transports.batchexecute import parse_frames
+from gflow_cli.api.transports.batchexecute import find_record, parse_frames
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings
 from gflow_cli.errors import GFlowError
@@ -134,7 +134,9 @@ async def main() -> None:
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(LISTINGS), encoding="utf-8")
     source = [mx.source_record(p, a.media) for p in LISTINGS]
+    first = [r[0] for p in LISTINGS if (r := find_record(p, (2, a.media)))]
     print("Zzl0ze listings:", len(LISTINGS), "source records:", [s for s in source if s])
+    print("first-listed workflow per listing (the pre-#1346 expectation):", first)
     for entry in SENT:
         print("sent:", entry["rpcids"], entry["frame_uuids"], "slot0:", entry["fZytfe_slot0"])
     submits = [e for e in SENT if mx.EXTEND_SUBMIT_RPC in e["rpcids"]]

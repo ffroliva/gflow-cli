@@ -146,15 +146,14 @@ def _at(node: Any, *path: int) -> Any:
     return current
 
 
-def _current_workflow(node: Any, media_id: str) -> str | None:
-    """The workflow the media's own listing entry names as current (slot 3, item 4)."""
-    if not isinstance(node, list):
-        return None
-    items = cast("list[Any]", node)
-    current = _at(items, 3, 4)
-    if items and items[0] == media_id and isinstance(current, str):
-        return current
-    return next((w for child in items if (w := _current_workflow(child, media_id))), None)
+def _current_workflow(payload: Any, media_id: str) -> str | None:
+    """The workflow the media's own entry (payload slot 1) names as current (slot 3, item 4)."""
+    entries = _at(payload, 1)
+    for entry in cast(list[Any], entries) if isinstance(entries, list) else []:
+        current = _at(entry, 3, 4)
+        if _at(entry, 0) == media_id and isinstance(current, str):
+            return current
+    return None
 
 
 def source_record(payload: Any, media_id: str) -> SourceClip | None:
@@ -173,6 +172,8 @@ def source_record(payload: Any, media_id: str) -> SourceClip | None:
     head = find_record(payload, (0, current)) if current else None
     if head is not None and head[2] == media_id:
         rec = head
+    elif current:  # the guard then expects the first-listed record, which may be stale
+        log.warning("migrated_extend.current_workflow_unresolved", media_id=media_id)
     mime = _at(rec, 7, 1, 6)
     if isinstance(mime, str) and mime.startswith("image/"):
         kind = "image"

@@ -125,10 +125,20 @@ def test_an_extended_clip_maps_to_the_workflow_its_media_entry_names() -> None:
     assert clip == mx.SourceClip(workflow_id=HEAD_WF, kind="video")
 
 
+def test_another_clips_entry_listed_first_is_not_read_as_this_clips() -> None:
+    listing = _extended_zzl0ze()
+    listing[1].insert(0, _media_entry(IMAGE_WF, media=IMAGE))
+    assert mx.source_record(listing, MEDIA) == mx.SourceClip(workflow_id=HEAD_WF, kind="video")
+
+
 def test_a_current_workflow_of_another_clip_is_not_taken() -> None:
     # The entry's pointer must name one of THIS media's records; otherwise the first stands.
-    clip = mx.source_record(_extended_zzl0ze(current=IMAGE_WF), MEDIA)
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        clip = mx.source_record(_extended_zzl0ze(current=IMAGE_WF), MEDIA)
     assert clip == mx.SourceClip(workflow_id=MID_WF, kind="video")
+    assert [e["event"] for e in logs] == ["migrated_extend.current_workflow_unresolved"]
 
 
 def test_source_record_reads_an_image_as_an_image() -> None:
@@ -536,7 +546,9 @@ def _fzytfe_inner(wf: str = WF) -> Any:
     return json.loads(json.loads(_fzytfe(wf=wf)[len("f.req=") :].split("&at=")[0])[0][0][1])
 
 
-async def _guard_calls(monkeypatch: pytest.MonkeyPatch, *requests: Any) -> list[str]:
+async def _guard_calls(
+    monkeypatch: pytest.MonkeyPatch, *requests: Any, listing: Any = None
+) -> list[str]:
     calls: list[str] = []
 
     async def observe(_self: Any, page: Any, **_kwargs: Any) -> GenerationRecord:
@@ -547,7 +559,7 @@ async def _guard_calls(monkeypatch: pytest.MonkeyPatch, *requests: Any) -> list[
         return _done_record()
 
     monkeypatch.setattr(mx.MigratedComposer, "submit_and_observe", observe)
-    await _run(_Page(_zzl0ze()))
+    await _run(_Page(_zzl0ze() if listing is None else listing))
     return calls
 
 
@@ -556,17 +568,8 @@ async def test_an_extended_clip_releases_only_the_extend_of_its_current_workflow
     driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#1346: the next extend continues the newest workflow; any other is still aborted."""
-    calls: list[str] = []
-
-    async def observe(_self: Any, page: Any, **_kwargs: Any) -> GenerationRecord:
-        for wf in (OTHER_WF, ROOT_WF, MID_WF, HEAD_WF):
-            route = _Route()
-            await page.routes[0](route, _Request("fZytfe", _fzytfe(wf=wf)))
-            calls.append(route.calls[0])
-        return _done_record()
-
-    monkeypatch.setattr(mx.MigratedComposer, "submit_and_observe", observe)
-    await _run(_Page(_extended_zzl0ze()))
+    requests = (_Request("fZytfe", _fzytfe(wf=wf)) for wf in (OTHER_WF, ROOT_WF, MID_WF, HEAD_WF))
+    calls = await _guard_calls(monkeypatch, *requests, listing=_extended_zzl0ze())
     assert calls == ["abort", "abort", "abort", "fallback"]
 
 

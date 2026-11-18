@@ -331,6 +331,14 @@ async def test_e2e_a_clip_extended_once_extends_again(
     reset_settings()
     seconds: list[float] = []
     workflows: list[str] = []
+    expected: list[str] = []  # the workflow the route guard expects, per run
+    real_require = mx.require_video_source
+
+    def spy_require(clip: Any, **kw: Any) -> str:
+        expected.append(real_require(clip, **kw))
+        return expected[-1]
+
+    monkeypatch.setattr(mx, "require_video_source", spy_require)
     for run in (1, 2):
         async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
             outcome, target = await client.extend_video_migrated(
@@ -342,7 +350,10 @@ async def test_e2e_a_clip_extended_once_extends_again(
                 on_started=lambda s, _a: workflows.append(s.workflow_id),
             )
         assert outcome.record.is_done and target is not None, run
+        if outcome.record.media_id != media:
+            pytest.skip("Flow made a separate clip, not an in-place extend (#1184): not #1346")
         seconds.append(_mp4_seconds(Path(str(target)).read_bytes()))
     assert len(workflows) == 2 and workflows[0] != workflows[1], workflows
-    if outcome.record.media_id == media:  # #1184: in place, so the second file is longer
-        assert seconds[1] > seconds[0], seconds
+    # The second run continued the workflow the first one created, and its file is longer.
+    assert expected[1] == workflows[0], (expected, workflows)
+    assert seconds[1] > seconds[0], seconds
