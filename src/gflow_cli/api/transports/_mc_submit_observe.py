@@ -83,14 +83,38 @@ def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
     refused = WireFormatError(
         detail=problem, route=f"batchexecute:{rpcid}", remediation_hint=ABORTED_BEFORE_SEND
     )
-    return _mark_unsent(refused)
+    refused.charged, refused.next_action, refused.retryable = "no", "retry", True  # #1320
+    return refused
 
 
-def _mark_unsent(error: WireFormatError) -> WireFormatError:
-    """Flow received and billed nothing; a re-run is safe (#1320)."""
-    error.charged, error.next_action, error.retryable = "no", "retry", True
-    error.remediation_hint = ABORTED_BEFORE_SEND
-    return error
+def _image_request_listener(
+    route_error: asyncio.Future[WireFormatError],
+    *,
+    guarded: bool,
+    problem_of: Callable[[Any], str | None],
+) -> tuple[Callable[[Any], None], list[WireFormatError]]:
+    """The image submit's request listener, and the problems it saw on a guarded run.
+
+    A guarded run's verdict belongs to the route guard, which the request event precedes:
+    setting ``route_error`` here would end the wait and unroute the guard before it
+    aborts, letting the submit out (#1320). So on a guarded run the listener only records
+    the problem, the backstop for a submit no guard saw, raised once the run settles."""
+    unguarded: list[WireFormatError] = []
+
+    def on_request(raw_request: Any) -> None:
+        url = str(getattr(raw_request, "url", ""))
+        if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+            return
+        problem = problem_of(raw_request)
+        if problem is None:
+            return
+        sent = WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
+        if guarded:
+            unguarded.append(sent)
+        else:
+            route_error.set_result(sent)
+
+    return on_request, unguarded
 
 
 class SubmitObserveMixin(MentionMixin):
@@ -733,17 +757,14 @@ class SubmitObserveMixin(MentionMixin):
         # References and characters already exist; a late-listed upload is not output.
         baseline = None if grid is None else {*grid, *reference_ids, *entity_ids}
 
-        def on_request(raw_request: Any) -> None:
-            url = str(getattr(raw_request, "url", ""))
-            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
-                return
-            problem = _image_body_problem(
-                request_body(raw_request), reference_ids, request.model, entity_ids
-            )
-            if problem is not None:
-                route_error.set_result(
-                    WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
-                )
+        guarded = bool(reference_ids or entity_ids)
+        on_request, unguarded_problem = _image_request_listener(
+            route_error,
+            guarded=guarded,
+            problem_of=lambda raw: _image_body_problem(
+                request_body(raw), reference_ids, request.model, entity_ids
+            ),
+        )
 
         async def on_response(response: Any) -> None:
             url = str(getattr(response, "url", ""))
@@ -834,15 +855,11 @@ class SubmitObserveMixin(MentionMixin):
                 return
             if not route_error.done():
                 route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
-            else:
-                # The request event fires first and already recorded this body; the guard
-                # aborted it, so nothing was sent (#1320).
-                _mark_unsent(route_error.result())
 
         page.on("request", on_request)
         page.on("response", on_response)
         try:
-            if reference_ids or entity_ids:
+            if guarded:
                 await page.route(is_image_submit, guard)
             await self._await_submit_enabled(
                 page, submit, disabled="migrated host: image submit stayed disabled (host=migrated)"
@@ -855,6 +872,8 @@ class SubmitObserveMixin(MentionMixin):
             )
             if route_error.done():
                 raise route_error.result()
+            if unguarded_problem:  # it left the browser: Flow may have billed it
+                raise unguarded_problem[0]
             if body_lost.done():
                 return await _recover_images(page, request, baseline)
             if result not in done:
@@ -872,7 +891,7 @@ class SubmitObserveMixin(MentionMixin):
                 result.exception()
             page.remove_listener("request", on_request)
             page.remove_listener("response", on_response)
-            if reference_ids or entity_ids:
+            if guarded:
                 try:
                     await page.unroute(is_image_submit, guard)
                 except Exception as exc:  # noqa: BLE001 - must not mask the real outcome

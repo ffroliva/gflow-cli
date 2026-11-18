@@ -4538,3 +4538,50 @@ async def test_a_failed_route_registration_leaves_no_listener_on_the_page() -> N
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
     assert page.listeners("request") == [] and page.listeners("response") == []
+
+
+class _UnrouteSkippingPage(RoutingPage):
+    """Playwright skips a route handler removed before it runs: the request goes out."""
+
+    def _fire_submit(self) -> None:
+        assert self.scripted_request is not None
+        rpcid, body = self.scripted_request
+        url = _batch_url(rpcid) if rpcid is not None else _batch_bare_url()
+        request = FakeRequest(url, body)
+        for h in list(self._handlers["request"]):
+            asyncio.get_event_loop().create_task(_maybe_await(h(request)))
+
+        async def through_route() -> None:
+            for _ in range(5):  # let the request listeners and the waiting task run first
+                await asyncio.sleep(0)
+            route = FakeRoute()
+            if self.routes[-1] not in self.unrouted:
+                await self.routes[-1][1](route, request)
+            self.route_outcomes.append(route.outcome or "sent")
+            if route.outcome == "abort":
+                return
+            for scripted in self.scripted_responses:
+                u, text, *rest = scripted
+                response = FakeResponse(u, text, *rest)
+                response.request = request if request.url == u else None
+                self._fire_response(response)
+
+        asyncio.get_event_loop().create_task(through_route())
+
+
+async def test_the_request_listener_does_not_unroute_the_guard_before_it_aborts() -> None:
+    """#1320 review: the request event precedes the route guard; ending the wait on it
+    removed the guard before it ran, so the bad submit left the browser."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _UnrouteSkippingPage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_request = ("ogiZ0b", "")  # a body the guard cannot read
+    page.scripted_responses = [(_batch_url("ogiZ0b"), _image_frame())]
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert page.route_outcomes == ["abort"]
+    assert ei.value.charged == "no"
