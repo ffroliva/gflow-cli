@@ -343,14 +343,7 @@ class MentionMixin(UploadFrameMixin):
             for _ in range(len(name) + 1):
                 await page.keyboard.press("Backspace")
             await page.keyboard.press("Escape")
-            if len(await self.read_chips(page)) < len(before):
-                raise ReferenceNotFoundError(
-                    detail=(
-                        f"migrated host: clearing the failed {name!r} query removed an "
-                        "already-attached reference, so this run is abandoned rather than "
-                        "submitted"
-                    ),
-                )
+            await self._require_chips_kept(page, len(before), name)
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         exact = [i for i, t in enumerate(titles) if t.strip().casefold() == name.casefold()]
         # Titles are asset names, often prompt-like captions: report counts, not text,
@@ -372,8 +365,8 @@ class MentionMixin(UploadFrameMixin):
                 ),
                 # The class default speaks of media captions, which is not this miss.
                 remediation_hint=(
-                    "Nothing was submitted. The project has no character by that name: check "
-                    "it with `gflow character list --project <id>` (MCP: "
+                    "Nothing was submitted. No picker option carried that name: check the "
+                    "project's characters with `gflow character list --project <id>` (MCP: "
                     "gflow_character_list)"
                     if not exact
                     else "Nothing was submitted. Rename the colliding asset in Flow, or give "
@@ -404,6 +397,25 @@ class MentionMixin(UploadFrameMixin):
         _require_appended(before, chips)
         # The kind check lives in `attach_character_entities`: a media chip here is
         # refused there, before any submit.
+
+    async def _require_chips_kept(self, page: Page, before: int, name: str) -> list[dict[str, str]]:
+        """The chips after a failed query was cleared; refuse if one already attached is gone."""
+        chips = await self.read_chips(page)
+        if len(chips) < before:
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: clearing the failed {name!r} query removed an "
+                    f"already-attached reference ({before} chip(s) before, "
+                    f"{len(chips)} after) — the prompt is no longer the one that was "
+                    "built, so this run is abandoned rather than submitted"
+                ),
+                # The reference was not missing from Flow, so the class default misleads.
+                remediation_hint=(
+                    "Nothing was submitted. The composer dropped a reference while a "
+                    "mention was retried; re-run the command"
+                ),
+            )
+        return chips
 
     async def _caret_to_end(self, page: Page) -> list[dict[str, str]]:
         """Focus the composer with the caret at its END; return the chips already there.
@@ -473,16 +485,7 @@ class MentionMixin(UploadFrameMixin):
                 offered=len(offered),
             )
             await page.keyboard.press("Escape")
-            chips = await self.read_chips(page)
-            if len(chips) < before:
-                raise ReferenceNotFoundError(
-                    detail=(
-                        f"migrated host: clearing the failed {name!r} query removed an "
-                        f"already-attached reference ({before} chip(s) before, "
-                        f"{len(chips)} after) — the prompt is no longer the one that was "
-                        "built, so this run is abandoned rather than submitted"
-                    ),
-                )
+            chips = await self._require_chips_kept(page, before, name)
             if attempt == FRAME_SEARCH_ATTEMPTS:
                 break
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)

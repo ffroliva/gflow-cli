@@ -64,7 +64,8 @@ def _cli(world: dict[str, Any], prompt: str, e2e_env: dict[str, str], tmp_path: 
             "--out",
             str(out),
         ],
-        env=e2e_env,
+        # No colour codes, so the remediation text can be matched.
+        env={k: v for k, v in e2e_env.items() if k != "FORCE_COLOR"},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -78,7 +79,8 @@ def _cli_refused(world: dict[str, Any], name: str) -> None:
     proc = world["proc"]
     output = proc.stdout + proc.stderr
     assert proc.returncode == 32, output[-3000:]
-    assert name in output and "gflow character list" in output, output[-3000:]
+    # Rich wraps long lines, so compare with whitespace collapsed.
+    assert name in output and "gflow character list" in " ".join(output.split()), output[-3000:]
     assert "Locator.click" not in output, output[-3000:]
     out = world["out"]
     assert not out.exists() or not [p for p in out.iterdir() if p.is_file()]
