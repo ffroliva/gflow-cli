@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A weekly `driver-watch` job announces browser-driver releases.** Dependabot ignores patchright updates and playwright minor and major updates by design, because a driver bump needs the engine-contract job and a live run (#1319, #1324), so seven patchright releases went unnoticed. The job compares both pins with PyPI and opens or updates one `driver-watch` issue per package whose latest release falls outside its pin, and closes it once the pin admits that release; a release whose issue is closed as not planned is not announced again. It never opens a pull request or changes a pin. `workflow_dispatch` with `dry_run` prints the plan only.
+
 ### Fixed
 
+- **`gflow update` keeps installed extras on a pip install ([#1322](https://github.com/ffroliva/gflow-cli/issues/1322)).** It ran `pip install --upgrade gflow-cli`, which upgrades gflow-cli alone, so an extra's own pin never moved: a user who installed `gflow-cli[patchright]` and updated to v0.101.1 kept the broken patchright 1.61.2 (#1319). The pip command now requests every extra whose requirements are all installed (for example `gflow-cli[patchright]`; the contributor `dev` extra is never requested), and the repair commands gflow prints for uv, pipx and pip carry the same extras. `uv tool upgrade` and `pipx upgrade` were measured to keep the extras recorded at install time and are unchanged. The update runs the installed version's code, so a pip install of 0.101.2 or earlier needs one manual `pip install -U 'gflow-cli[patchright]'` to leave it.
 - **A failure before a flow.google.com submit reports `charged: no` ([#1320](https://github.com/ffroliva/gflow-cli/issues/1320)).** `UiSelectorDriftError` (exit 23) defaults to `charged: maybe`, and its pre-submit raise sites inherited that default, so a settings-pane miss, which sends nothing to Flow, told an agent to reconcile a charge that cannot exist (seen in #1319). Every gflow error raised before the submit click on the classic and agent-only composers and in `video extend`, before the export click of `image upscale` and `video upscale`, and during a reference upload now reads `charged: no`; its `next_action` is unchanged. A submit the route guard aborts in the browser reads `charged: no` with `next_action: retry`. A failure at or after the click keeps `maybe`.
 
 ## [0.101.2] — 2026-11-17
