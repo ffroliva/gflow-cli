@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.0] — 2026-11-18
+
 ### Added
 
 - **A queued job that fails unexpectedly names the exception class ([#1343](https://github.com/ffroliva/gflow-cli/issues/1343)).** The worker's `errors/unknown` result carried only a SHA-256 of the message, so an intermittent failure could not be told apart from any other. It now also carries `class`, the qualified exception class (for example `playwright._impl._errors.TimeoutError`); the message itself is still never stored.
@@ -7264,7 +7266,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.101.2...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.102.0...HEAD
+[0.102.0]: https://github.com/ffroliva/gflow-cli/compare/v0.101.2...v0.102.0
 [0.101.2]: https://github.com/ffroliva/gflow-cli/compare/v0.101.1...v0.101.2
 [0.101.1]: https://github.com/ffroliva/gflow-cli/compare/v0.101.0...v0.101.1
 [0.101.0]: https://github.com/ffroliva/gflow-cli/compare/v0.100.1...v0.101.0

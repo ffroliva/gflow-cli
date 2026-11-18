@@ -116,7 +116,7 @@ This branch now contains all of `develop` (⊇ `main`) plus your release prep. A
 release prep commits live here; the PR into `main` (step 14) carries the full
 integration history forward.
 
-**6. Bump the shared release version — SEVEN sites, and no single gate sees them all.**
+**6. Bump the shared release version — EIGHT sites, and no single gate sees them all.**
 
 This is the canonical list. It is the only one that spans all three gates; the previous
 version of this step named four sites, `check_repo_hygiene.py`'s docstring named three,
@@ -132,6 +132,7 @@ failure mid-release (#839). **If you add a version site, add it here.**
 | 5 | `server.json` `.version` **and** `.packages[*].version` (twice) | same |
 | 6 | `plugins/gflow/.claude-plugin/plugin.json` `"version"` | `tests/test_plugin_manifests.py::test_plugin_version_tracks_pyproject` |
 | 7 | `docker/Dockerfile` `ARG GFLOW_VERSION` | `tests/test_dockerfile_version_pin.py` |
+| 8 | `lhm.plugin.json` `"version"` (LobeHub marketplace manifest) | nothing yet: it stayed at 0.99.0 for three releases |
 
 `server.json` is the one that bites quietly: it is the MCP Registry's copy of our
 metadata, and the registry publish carries whatever the ref says. Forget it and the
@@ -139,7 +140,7 @@ listing points at a superseded version with nothing downstream noticing.
 
 **Do not bulk-replace the old version across the repo.** `docker/README.md` quotes
 measured results (`gflow_cli : <version>`, `✅ measured`); rewriting those turns a
-record of what was tested into a false claim. Bump declaration sites only — the seven
+record of what was tested into a false claim. Bump declaration sites only — the eight
 above — and leave measurement records alone unless the measurement was re-run.
 
 Sites 1–3 and 6:
@@ -213,10 +214,10 @@ will fail the gate.
 **11. Commit the release prep.**
 
 ```bash
-# All seven version sites from step 6 — a bumped-but-unstaged site fails the gate
+# All eight version sites from step 6 — a bumped-but-unstaged site fails the gate
 # on the release branch, after the tag is already in your fingers.
 git add pyproject.toml .codex-plugin/plugin.json plugins/gflow/.claude-plugin/plugin.json
-git add src/gflow_cli/__init__.py uv.lock server.json docker/Dockerfile CHANGELOG.md
+git add src/gflow_cli/__init__.py uv.lock server.json docker/Dockerfile lhm.plugin.json CHANGELOG.md
 git add docs/PROJECT_STATUS.md                 # step 9b — enforced by check_release_artifacts
 git add docs/ website/docs/ skills/ .claude/commands/gflow/   # include any doc-review + mirror fixes
 # doc-review version-currency fixes often also touch ROOT docs — stage them too:

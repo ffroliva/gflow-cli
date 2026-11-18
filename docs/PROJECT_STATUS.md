@@ -4,6 +4,21 @@
 
 ## Current release
 
+**v0.102.0 — alpha.** A reliability release: failures that happen before anything reaches Flow now say so, extend works on clips that were already extended, and several raw timeouts become typed exit codes.
+
+**Fixed.**
+- **Billing truth (#1320, #1347).** A failure before a flow.google.com submit reports `charged: no`; a queued job that fails unexpectedly after its submit is stored as `indeterminate` and points at reconcile.
+- **Extend (#1346, #1334).** `gflow video extend` continues the newest version of an already-extended clip, and a disabled Extend item is exit 35 rather than a 30 s timeout.
+- **Typed refusals (#1333, #1338).** A missing `@character` is exit 32 naming `gflow character list`; an upscale scale Flow does not list is exit 22 naming the scales it does list.
+- **`gflow update` keeps installed extras (#1322).**
+
+**Added.**
+- The weekly usage report counts the browser engine and the Flow host served (#1326); queued-job failures name their exception class (#1343); a weekly `driver-watch` job opens one issue per browser-driver release.
+
+Full ledger: [LIVE_VERIFICATION_v0.102.0](LIVE_VERIFICATION_v0.102.0.md).
+
+<details><summary>v0.101.2 — patchright close hang</summary>
+
 **v0.101.2 — alpha.** Patch release restoring the prompt Chrome close under `GFLOW_CLI_BROWSER_ENGINE=patchright` (#1324), a regression in v0.101.1.
 
 **Fixed.**
@@ -12,6 +27,8 @@
 - **Install hints** name the `patchright` extra, so they follow the pin. The `engine-contract` CI job also pins the patchright bundle parse.
 
 Full ledger: [LIVE_VERIFICATION_v0.101.2](LIVE_VERIFICATION_v0.101.2.md).
+
+</details>
 
 <details><summary>v0.101.1 — patchright `.last` locators</summary>
 
@@ -970,6 +987,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1332 #1333 #1334 #1335 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
 | patchright close hang fixed: the disabled-feature parse reads patchright 1.64's exclusion filter, and each launch site names its engine (#1324) | ✅ done (v0.101.2) |
 | `patchright` extra pinned to 1.64.4 so `.last` locators resolve under the patchright engine, with a real-engine CI contract (#1319) | ✅ done (v0.101.1) |
 | Universal `-o/--output [json\|table\|id]` format selector across all commands, `--out-file PATH` enforced for file paths, MCP `output` removed (#1158) | ✅ done (v0.101.0) |

@@ -95,6 +95,11 @@ Agents and MCP-only use without an interactive terminal do not display the notic
 do not upload. A person can show the notice by running a gflow command from an interactive terminal.
 The telemetry commands themselves do not show it.
 
+A new notice version applies in every region, not only the EU and EEA: uploads wait until the new
+notice has been shown, and showing it restarts the upload clock, so weeks finished before it was
+shown are not sent. When version 3 arrived (v0.102.0), a machine used only through MCP stops
+uploading until a person runs a gflow command from an interactive terminal.
+
 ## Turn usage uploads off or on
 
 Run `gflow telemetry off` to stop local counting and uploads. Add `--delete` to also remove the local

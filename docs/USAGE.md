@@ -296,6 +296,7 @@ Notes:
 - **Credit-free** — upscaling is an image operation and spends no credits.
 - **4K is Ultra-only.** On a non-Ultra account a 4K request fails with exit code 22
   (`UpscaleUnavailableError`, detected from the disabled UI state or 403) and a hint to use `--scale 2k` or upgrade.
+  A scale the image's download menu does not list is also exit 22, naming the scales it does list (#1338).
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
 
@@ -1967,6 +1968,12 @@ and the extra's own pin moves with the release (#1322). `uv tool upgrade` and `p
 already reinstall the extras recorded at install time. The repair commands gflow prints carry
 the same extras.
 
+> [!NOTE]
+> **One-time manual upgrade for pip installs at 0.101.2 and below ([#1322](https://github.com/ffroliva/gflow-cli/issues/1322)):**
+> an install at <= 0.101.2 runs its *existing* `gflow update` code, which upgrades only
+> `gflow-cli` and leaves an extra's pin behind. Upgrade once by hand with the extras named,
+> for example `pip install -U 'gflow-cli[patchright]'`; every later `gflow update` keeps them.
+
 `gflow update` first asks PyPI for the latest version (when PyPI answers, this
 refreshes the once-a-day notice cache too). If you are already current it says so and runs
 nothing. Otherwise it runs the manager with output captured (pass `-v`/`--verbose` to view it, or see it on failure), then re-reads the
@@ -2533,7 +2540,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `19` | `SceneConcatError`    | Server-side scene render/concat failed (`gflow scene --out-file`) | Retry; the recorded compose survives, so re-render is safe |
 | `20` | `FrameExtractionError` | Could not extract the last frame for a video chain link, or a `video chain --resume-from` whose last completed clip is no longer at its recorded path (refused before anything is billed, [#1300](https://github.com/ffroliva/gflow-cli/issues/1300)) | Check the source video downloaded intact; retry the link. For a resume, put the clip back at the path named, or start a new chain |
 | `21` | `ChainPartialError`   | A video chain stopped mid-way; earlier links completed | Resume from the last completed link shown in the error     |
-| `22` | `UpscaleUnavailableError`, `ServerCancelUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts; or requested video export quality is disabled, or not listed in the clip's download menu (#1338); or `gflow cancel` hit a job a gflow worker already submitted (#1198) | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
+| `22` | `UpscaleUnavailableError`, `ServerCancelUnavailableError` | 4K image upscale is gated to Flow **Ultra** accounts, or an image scale is not listed in its download menu (#1338); or requested video export quality is disabled, or not listed in the clip's download menu (#1338); or `gflow cancel` hit a job a gflow worker already submitted (#1198) | For images, use `--scale 2k` or upgrade the Flow plan; for videos, check available options in Flow |
 | `23` | `UiSelectorDriftError` | A Flow editor control could not be located — Google changed the frontend (issues #183, #493) — **or** a blocking announcement overlay survived dismissal, so no control below it can be clicked (probe `overlay_close_button`, #593). On the migrated host a missing submit control is checked against the wallet first and reported as **37** when Flow swapped in its insufficient-credits warning, so a short balance no longer arrives here | If the detail says the model picker is **hidden**, nothing was submitted: turn the **Agent** chip off in a browser and re-run ([#788](https://github.com/ffroliva/gflow-cli/issues/788)). Otherwise update gflow-cli; file a bug with the probe name + the diagnostics JSON / debug screenshot referenced in the error message, plus the incident bundle's `report.md` when one was written. For `overlay_close_button`: open the project once in Chrome and dismiss the announcement — the dismissal persists on your account |
 | `24` | `BrowserEngineUnavailableError` | `GFLOW_CLI_BROWSER_ENGINE=patchright` but the engine is not installed | `pip install 'gflow-cli[patchright]'`, or unset `GFLOW_CLI_BROWSER_ENGINE` |
 | `25` | `FlowAgentUiError`    | The profile is on Flow's Agentic UI cohort and the classic media panel is unrecoverable for this operation — **or**, on `flow.google.com`'s agent-only composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), the agent did something other than what was asked: a second credit confirmation, more results than requested, or an image turn that made nothing (a video turn that makes nothing ends in exit 9, `TransportTimeoutError`, instead) | On labs this is rare since v0.38.0 (#332): the mode controller reliably recovers agentic→classic, so first retry with `--ui-mode classic`. On the agent-only composer it is `retryable: false` — read `detail` (it may include the agent's last reply), rephrase the prompt, and check the project before re-running a video. See KNOWN_ISSUES |
