@@ -81,7 +81,8 @@ def _run_cli(
             "--out",
             str(out),
         ],
-        env=e2e_env,
+        # The steps read INFO events from stderr; the CLI defaults to WARNING (#1041, #1332).
+        env={**e2e_env, "GFLOW_CLI_LOG_LEVEL": "INFO"},
         capture_output=True,
         text=True,
         encoding="utf-8",

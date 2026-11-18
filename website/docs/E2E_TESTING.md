@@ -532,7 +532,7 @@ All fixtures live in `tests/e2e/conftest.py` unless noted.
 |---|---|
 | `e2e_profile_dir` | Resolves `GFLOW_CLI_E2E_PROFILE` → `Path`. Skips if unset or absent. Use in all tests that need a live authenticated session. |
 | `e2e_nosession_profile` | Creates a fresh UUID-named empty profile dir inside gflow home. For testing the "no session" path without spending credits. Tears down in `finally` with Windows-lock delay. |
-| `e2e_env` | Builds an isolated subprocess environment: temp SQLite DB + temp output dir + active profile. Use for tests that drive `gflow` via subprocess. |
+| `e2e_env` | Builds an isolated subprocess environment: temp SQLite DB + temp output dir + active profile. Use for tests that drive `gflow` via subprocess. It keeps the CLI's default log level, WARNING, so a test that reads INFO events from the child's stderr adds `"GFLOW_CLI_LOG_LEVEL": "INFO"` to its env; `tests/test_e2e_log_level.py` enforces this (#1332). |
 | `install_log_capture` | *(in `tests/conftest.py`)* Installs a fresh `structlog.LogCapture` + `merge_contextvars`. Use instead of defining a local `log_capture` fixture. |
 
 ---

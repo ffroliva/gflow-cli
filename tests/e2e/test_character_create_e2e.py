@@ -122,6 +122,7 @@ def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
     """
     env = dict(e2e_env)
     env["PYTHONUTF8"] = "1"  # explicit: accented names must round-trip byte-for-byte
+    env["GFLOW_CLI_LOG_LEVEL"] = "INFO"  # the prompt-format check reads INFO events (#1332)
     # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a temp
     # dir that holds no profiles, and `e2e_env` inherits it — a child process
     # would resolve "no session for profile <name>" and exit 2 before touching

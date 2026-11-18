@@ -49,7 +49,7 @@ def _gflow(args: list[str], env: dict[str, str], timeout: int) -> subprocess.Com
         text=True,
         check=False,
         timeout=timeout,
-        env={**child, "GFLOW_CLI_LOG_FORMAT": "json"},
+        env={**child, "GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
     )
 
 

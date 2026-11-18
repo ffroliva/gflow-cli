@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `@Character` image e2e reads the CLI's events again ([#1332](https://github.com/ffroliva/gflow-cli/issues/1332)).** Since the CLI's default log level became WARNING (#1041), a `gflow` subprocess writes no INFO event to stderr, so `test_migrated_image_character_mention_bdd.py` reported "no character was attached" for a CLI run that did attach the character. The product was not affected: on an unchanged build, both CLI scenarios pass once `GFLOW_CLI_LOG_LEVEL=INFO` is set. The test now sets it, and so do `test_agent_only_composer_bdd.py` and `test_character_create_e2e.py`, which read INFO events the same way. A new offline guard, `tests/test_e2e_log_level.py`, fails when an e2e module parses a child's stderr for events without setting the level.
+
 ## [0.101.2] — 2026-11-17
 
 ### Fixed
