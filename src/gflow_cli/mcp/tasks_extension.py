@@ -84,7 +84,9 @@ def _mcp_status(task: QueueTask) -> TaskStatus:
 
 def _status_message(task: QueueTask) -> str | None:
     if task.status == "indeterminate":
-        return "Stopped after submit; a credit may have been spent. Check the Flow project."
+        return (
+            "Stopped or failed after submit; a credit may have been spent. Check the Flow project."
+        )
     if task.status == "abandoned":
         return (
             "Cancelled after a gflow worker had submitted it: Flow cannot cancel it, so it "

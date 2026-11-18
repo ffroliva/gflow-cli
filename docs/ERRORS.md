@@ -207,7 +207,7 @@ members. They have no exit code of their own.
 
 | `type` | Built by | Exit | `charged` | `next_action` |
 |---|---|---|---|---|
-| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure (the message is never shared; the worker's `detail` is its SHA-256 and `class` names the exception class) | — | `maybe` | `none` |
+| `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure (the message is never shared; the worker's `detail` is its SHA-256 and `class` names the exception class; after the submit the worker stores the job `indeterminate` and sets `next_action: reconcile`) | — | `maybe` | `none` |
 | `https://gflow-cli.dev/errors/bad-parameter` | MCP, a tool argument it refuses | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/no-profile` | MCP, no profile, or its directory is missing | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |

@@ -335,10 +335,15 @@ class MentionMixin(UploadFrameMixin):
             titles = [str(t) for t in await page.evaluate(_OPTION_TITLES_JS, PICKER_OPTION)]
             if titles or attempt == FRAME_SEARCH_ATTEMPTS:
                 break
-            # The search had not settled: clear the typed `@name` and ask again.
+            # The search had not settled: clear the typed `@name` and ask again. Backspace
+            # alone leaves the picker's overlay open over the composer, where it blocks the
+            # next click (#1333, measured live), so Escape then closes it. Backspace goes
+            # first: the text is removed whether or not a picker opened to own it.
             log.info("migrated.mention_miss", name_chars=len(name), attempt=attempt, offered=0)
             for _ in range(len(name) + 1):
                 await page.keyboard.press("Backspace")
+            await page.keyboard.press("Escape")
+            await self._require_chips_kept(page, len(before), name)
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
         exact = [i for i, t in enumerate(titles) if t.strip().casefold() == name.casefold()]
         # Titles are asset names, often prompt-like captions: report counts, not text,
@@ -356,9 +361,16 @@ class MentionMixin(UploadFrameMixin):
             raise ReferenceNotFoundError(
                 detail=(
                     f"migrated host: asked for character {name!r} but {why}; the picker "
-                    f"offered {offered}. Refusing before submit — rename the colliding "
-                    "asset in Flow, or give the character a one-word name that is its full "
-                    "name"
+                    f"offered {offered}. Refusing before submit"
+                ),
+                # The class default speaks of media captions, which is not this miss.
+                remediation_hint=(
+                    "Nothing was submitted. No picker option carried that name: check the "
+                    "project's characters with `gflow character list --project <id>` (MCP: "
+                    "gflow_character_list)"
+                    if not exact
+                    else "Nothing was submitted. Rename the colliding asset in Flow, or give "
+                    "the character a unique one-word name"
                 ),
             )
         index = exact[0]
@@ -385,6 +397,25 @@ class MentionMixin(UploadFrameMixin):
         _require_appended(before, chips)
         # The kind check lives in `attach_character_entities`: a media chip here is
         # refused there, before any submit.
+
+    async def _require_chips_kept(self, page: Page, before: int, name: str) -> list[dict[str, str]]:
+        """The chips after a failed query was cleared; refuse if one already attached is gone."""
+        chips = await self.read_chips(page)
+        if len(chips) < before:
+            raise ReferenceNotFoundError(
+                detail=(
+                    f"migrated host: clearing the failed {name!r} query removed an "
+                    f"already-attached reference ({before} chip(s) before, "
+                    f"{len(chips)} after) — the prompt is no longer the one that was "
+                    "built, so this run is abandoned rather than submitted"
+                ),
+                # The reference was not missing from Flow, so the class default misleads.
+                remediation_hint=(
+                    "Nothing was submitted. The composer dropped a reference while a "
+                    "mention was retried; re-run the command"
+                ),
+            )
+        return chips
 
     async def _caret_to_end(self, page: Page) -> list[dict[str, str]]:
         """Focus the composer with the caret at its END; return the chips already there.
@@ -454,16 +485,7 @@ class MentionMixin(UploadFrameMixin):
                 offered=len(offered),
             )
             await page.keyboard.press("Escape")
-            chips = await self.read_chips(page)
-            if len(chips) < before:
-                raise ReferenceNotFoundError(
-                    detail=(
-                        f"migrated host: clearing the failed {name!r} query removed an "
-                        f"already-attached reference ({before} chip(s) before, "
-                        f"{len(chips)} after) — the prompt is no longer the one that was "
-                        "built, so this run is abandoned rather than submitted"
-                    ),
-                )
+            chips = await self._require_chips_kept(page, before, name)
             if attempt == FRAME_SEARCH_ATTEMPTS:
                 break
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)
