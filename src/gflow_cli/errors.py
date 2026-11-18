@@ -846,6 +846,11 @@ class ExtendUnavailableError(GFlowError):
     :class:`UpscaleUnavailableError` has 22: both are tier gates that look like a
     WAF 403 on the wire, and a caller told "you were blocked, cool down 30 minutes"
     would wait for a condition that never changes. The caller MUST NOT auto-retry.
+
+    On flow.google.com it is also raised when Flow shows the clip editor's Extend menu
+    item disabled (#1334): measured beside a Google AI plan-upgrade link on an account
+    holding 12 credits. That raise site carries its own remediation, since the page does
+    not say whether the plan or the balance gates the item.
     """
 
     problem_type = "https://gflow-cli.dev/errors/extend-unavailable"
