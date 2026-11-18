@@ -717,7 +717,7 @@ async def test_a_model_choice_that_does_not_take_is_drift_not_a_silent_old_model
 ) -> None:
     """Review: an unconfirmed menu click would generate, and bill, on the previous model."""
     await _load(page, **scenario)
-    with pytest.raises(UiSelectorDriftError, match="model"):
+    with pytest.raises(UiSelectorDriftError, match="model") as info:
         await aoc.AgentOnlyComposer().apply_defaults(
             page,
             section="video",
@@ -728,6 +728,7 @@ async def test_a_model_choice_that_does_not_take_is_drift_not_a_silent_old_model
         )
     assert (await _log(page))["saves"] == []
     assert await page.locator("flow-settings-view").count() == 0
+    assert info.value.charged == "no"  # #1320: settings are bound before any submit
 
 
 @pytest.mark.asyncio
@@ -1083,9 +1084,10 @@ async def test_a_missing_editor_or_submit_is_drift_before_anything_is_sent(
     loc.first.is_visible = AsyncMock(return_value=False)  # no credits warning shown (#745)
     loc.click = AsyncMock()
     page.keyboard = MagicMock(press=AsyncMock(), insert_text=AsyncMock())
-    with pytest.raises(UiSelectorDriftError, match=f"{missing} .* missing"):
+    with pytest.raises(UiSelectorDriftError, match=f"{missing} .* missing") as info:
         await aoc.AgentOnlyComposer()._submit(page, "a cat")  # pyright: ignore[reportPrivateUsage]
     assert loc.click.await_count == (len(counts) > 1)
+    assert info.value.charged == "no"  # #1320: the submit was never clicked
 
 
 @pytest.mark.asyncio

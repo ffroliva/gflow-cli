@@ -1492,11 +1492,12 @@ async def test_submit_still_disabled_after_the_budget_is_selector_drift(
     monkeypatch.setattr(_mc_submit_observe, "SUBMIT_ENABLE_POLL_S", 0.01)
     page = FakePage()
     page.dom.prompt = ""  # nothing in the composer: the button never enables
-    with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+    with pytest.raises(UiSelectorDriftError, match="stayed disabled") as info:
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
         )
     assert page.dom.submit_clicked == 0
+    assert info.value.charged == "no"  # #1320: never clicked, so nothing was sent
 
 
 async def test_a_missing_submit_with_a_credits_warning_is_not_reported_as_drift() -> None:
@@ -3786,6 +3787,37 @@ async def test_run_images_without_a_project_is_a_configuration_error() -> None:
     assert page.dom.submit_clicked == 0
 
 
+async def test_a_settings_drift_before_submit_reports_nothing_charged() -> None:
+    """#1320: the pane has no radio for the requested aspect, so nothing was submitted."""
+    from gflow_cli.api.image import Aspect, GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    page.dom.groups["aspect"] = [r for r in page.dom.groups["aspect"] if r.label != "9:16"]
+    with pytest.raises(UiSelectorDriftError) as info:
+        await run_images(
+            page, GenerateImageRequest(prompt="a blue cup", aspect=Aspect.PORTRAIT), project_id="p1"
+        )
+    assert page.dom.submit_clicked == 0
+    assert info.value.to_problem_details()["charged"] == "no"
+
+
+async def test_a_drift_after_the_submit_click_still_reports_maybe_charged() -> None:
+    """#1320's boundary: once the submit is clicked, Flow may have billed the run."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer, run_images
+
+    async def _drift_after_click(*_: Any, **__: Any) -> list[Any]:
+        raise UiSelectorDriftError(detail="result grid moved")
+
+    with (
+        patch.object(MigratedComposer, "submit_images_and_observe", _drift_after_click),
+        pytest.raises(UiSelectorDriftError) as info,
+    ):
+        await run_images(_image_page(), GenerateImageRequest(prompt="a blue cup"), project_id="p1")
+    assert info.value.charged == "maybe"
+
+
 async def test_run_images_refuses_when_a_reference_uploaded_but_never_bound(
     tmp_path: Path,
 ) -> None:
@@ -3862,11 +3894,12 @@ async def test_an_image_submit_that_stays_disabled_is_drift_not_a_hang(
     page = _image_page()
     page.dom.prompt = ""  # nothing in the composer: the button never enables
 
-    with pytest.raises(UiSelectorDriftError, match="stayed disabled"):
+    with pytest.raises(UiSelectorDriftError, match="stayed disabled") as info:
         await MigratedComposer().submit_images_and_observe(
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert page.dom.submit_clicked == 0
+    assert info.value.charged == "no"  # #1320
 
 
 async def test_pre_submit_gate_refuses_blocking_overlay_before_network_observers() -> None:

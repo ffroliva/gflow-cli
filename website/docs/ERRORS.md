@@ -124,6 +124,11 @@ place today:
   --out-file <path>`.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
+- On flow.google.com, any gflow error raised before the generation's submit click reads
+  `charged: no` (#1320): editor readiness, the settings pane, frame, reference and
+  character attach, the prompt, and a submit button that is missing or stays disabled, on
+  both the classic and the agent-only composer. A failure at or after the click keeps the
+  class default. The labs (`labs.google`) arm is unchanged.
 
 `operation_id` is only set where an id already exists on the error.
 

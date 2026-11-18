@@ -64,6 +64,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:
@@ -420,31 +421,32 @@ class SubmitObserveMixin(MentionMixin):
                 else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
             )
             submit_named = submit_selector or "arrow_forward"
-            if not await submit.count():
-                # A credit shortfall and a moved frontend look identical here: both are
-                # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
-                # reporting a short balance as selector drift tells the user to file a
-                # frontend bug that no code change can fix.
-                await _raise_if_out_of_credits(page)
-                raise UiSelectorDriftError(
-                    detail=(
-                        f"migrated host: the submit button ({submit_named}) is missing "
-                        "after the prompt was typed (host=migrated)"
-                    ),
-                )
-            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
-            while not await submit.is_enabled():
-                if time.monotonic() >= enable_deadline:
-                    # Same question as above, on the other way of giving up on submit.
+            with nothing_submitted():  # #1320: the click below is the first send
+                if not await submit.count():
+                    # A credit shortfall and a moved frontend look identical here: both are
+                    # "arrow_forward is gone". Ask which one BEFORE naming a culprit --
+                    # reporting a short balance as selector drift tells the user to file a
+                    # frontend bug that no code change can fix.
                     await _raise_if_out_of_credits(page)
                     raise UiSelectorDriftError(
                         detail=(
-                            f"migrated host: the submit button ({submit_named}) stayed disabled "
-                            f"for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed "
-                            "(host=migrated)"
+                            f"migrated host: the submit button ({submit_named}) is missing "
+                            "after the prompt was typed (host=migrated)"
                         ),
                     )
-                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+                enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
+                while not await submit.is_enabled():
+                    if time.monotonic() >= enable_deadline:
+                        # Same question as above, on the other way of giving up on submit.
+                        await _raise_if_out_of_credits(page)
+                        raise UiSelectorDriftError(
+                            detail=(
+                                f"migrated host: the submit button ({submit_named}) stayed "
+                                f"disabled for {SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt "
+                                "was typed (host=migrated)"
+                            ),
+                        )
+                    await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             deadline = time.monotonic() + poll_timeout_s
             clicked_at = time.time()
             # The credit-spending click: a bare timeout here leaves "did it submit?"
@@ -706,7 +708,8 @@ class SubmitObserveMixin(MentionMixin):
         # Complete all UI gates before registering network observers or clicking
         # Generate. A deterministic DOM failure therefore cannot spend a request or
         # enter the transport retry loop.
-        submit = await self._pre_submit_gate(page)
+        with nothing_submitted():  # #1320
+            submit = await self._pre_submit_gate(page)
         loop = asyncio.get_running_loop()
         result: asyncio.Future[list[GeneratedImage]] = loop.create_future()
         route_error: asyncio.Future[WireFormatError] = loop.create_future()
@@ -822,14 +825,15 @@ class SubmitObserveMixin(MentionMixin):
         try:
             if reference_ids or entity_ids:
                 await page.route(is_image_submit, guard)
-            enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
-            while not await submit.is_enabled():
-                if time.monotonic() >= enable_deadline:
-                    await _raise_if_out_of_credits(page)
-                    raise UiSelectorDriftError(
-                        detail="migrated host: image submit stayed disabled (host=migrated)"
-                    )
-                await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
+            with nothing_submitted():  # #1320
+                enable_deadline = time.monotonic() + SUBMIT_ENABLE_BUDGET_S
+                while not await submit.is_enabled():
+                    if time.monotonic() >= enable_deadline:
+                        await _raise_if_out_of_credits(page)
+                        raise UiSelectorDriftError(
+                            detail="migrated host: image submit stayed disabled (host=migrated)"
+                        )
+                    await asyncio.sleep(SUBMIT_ENABLE_POLL_S)
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
             done, _ = await asyncio.wait(
                 {result, route_error, body_lost},

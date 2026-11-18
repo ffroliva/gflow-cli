@@ -61,6 +61,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    nothing_submitted,
 )
 from gflow_cli.redaction import redact_sensitive_text
 
@@ -462,28 +463,29 @@ class AgentOnlyComposer:
         confirm: Confirm,
     ) -> DefaultsSnapshot:
         """Set this run's defaults, Save, and return what to restore."""
-        await self._open_pane(page)
-        base = _GROUP_BASE[section]
-        try:
-            snapshot = DefaultsSnapshot(
-                section=section,
-                aspect_index=await self._checked_index(page, base),
-                count_index=await self._checked_index(page, base + 1),
-                model_text=_picker_label(
-                    await page.locator(MODEL_PICKER[section]).first.inner_text()
-                ),
-            )
-            await self._check_radio(page, base, aspect_ligature, "aspect")
-            await self._check_radio(page, base + 1, count - 1, "count")
-            if model is not None:
-                await self._choose_model(page, section, model)
-            await self._set_confirm(page, confirm)
-            await self._save(page)
-        except Exception:
-            # Unsaved radios left in an open pane would be snapshotted by the next run in
-            # the session as the account's originals. A no-op once Save has closed it.
-            await self._discard_pane(page)
-            raise
+        with nothing_submitted():  # #1320: settings are bound before any submit
+            await self._open_pane(page)
+            base = _GROUP_BASE[section]
+            try:
+                snapshot = DefaultsSnapshot(
+                    section=section,
+                    aspect_index=await self._checked_index(page, base),
+                    count_index=await self._checked_index(page, base + 1),
+                    model_text=_picker_label(
+                        await page.locator(MODEL_PICKER[section]).first.inner_text()
+                    ),
+                )
+                await self._check_radio(page, base, aspect_ligature, "aspect")
+                await self._check_radio(page, base + 1, count - 1, "count")
+                if model is not None:
+                    await self._choose_model(page, section, model)
+                await self._set_confirm(page, confirm)
+                await self._save(page)
+            except Exception:
+                # Unsaved radios left in an open pane would be snapshotted by the next run in
+                # the session as the account's originals. A no-op once Save has closed it.
+                await self._discard_pane(page)
+                raise
         log.info(
             "migrated.agent_only.defaults_applied",
             section=section,
@@ -690,17 +692,18 @@ class AgentOnlyComposer:
         return set(_video_uuids(state0)), head
 
     async def _submit(self, page: Page, directive: str) -> None:
-        editor = page.locator(EDITOR).last
-        if not await editor.count():
-            raise UiSelectorDriftError(detail=f"agent-only composer: editor ({EDITOR}) missing")
-        await _click(editor, "the editor", timeout_ms=5000)
-        await page.keyboard.press("ControlOrMeta+a")
-        await page.keyboard.press("Delete")
-        await page.keyboard.insert_text(directive)
-        submit = page.locator(SUBMIT).last
-        if not await submit.count():
-            await _raise_if_out_of_credits(page)
-            raise UiSelectorDriftError(detail=f"agent-only composer: submit ({SUBMIT}) missing")
+        with nothing_submitted():  # #1320: the click below is the first send
+            editor = page.locator(EDITOR).last
+            if not await editor.count():
+                raise UiSelectorDriftError(detail=f"agent-only composer: editor ({EDITOR}) missing")
+            await _click(editor, "the editor", timeout_ms=5000)
+            await page.keyboard.press("ControlOrMeta+a")
+            await page.keyboard.press("Delete")
+            await page.keyboard.insert_text(directive)
+            submit = page.locator(SUBMIT).last
+            if not await submit.count():
+                await _raise_if_out_of_credits(page)
+                raise UiSelectorDriftError(detail=f"agent-only composer: submit ({SUBMIT}) missing")
         await _click(submit, "submit", timeout_ms=5000)
 
     async def generate(
