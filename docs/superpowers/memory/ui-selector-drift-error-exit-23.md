@@ -101,3 +101,20 @@ and the labs REST 401 at `project.createProject` (3) are wrong on such an accoun
 They read an oracle that cannot discriminate — the session endpoint answers 200 with
 an empty `user` for an abandoned sign-in *and* for no entitlement — and on the login
 path Chrome has already closed by the time the verdict runs.
+
+## Carve-out 6 — a scale the download menu does not list is not drift (#1338, 2026-11-18, exit 22)
+
+`find_download_menu_item` (`migrated_upscale.py`) picks a download-menu item by its
+resolution token (the measured locale exception in AGENTS.md). It used to raise exit 23
+whenever no item carried the requested token. Flow decides per clip which scales it
+lists: a $0 DOM spike on one en-GB profile found Veo 3.1 Fast listing 1080p and 4K while
+Veo 3.1 Lite, Veo 3.1 Quality and Omni 1.2 Flash clips list none
+(`docs/superpowers/spikes/2026-11-18-video-download-menu-scales.md`). gflow reported a
+missing offer as a broken selector.
+
+The helper now raises `UpscaleUnavailableError` (22, do not retry) only when the menu's
+**other** items carry scale tokens and none is the requested one, after a 1.5 s grace
+period for the item. Exit 23 stays for a menu with no readable scale token, and for a
+menu whose text does carry the requested token although the token filter missed it: in
+both the anchor failed, not Flow's offer. The discriminator is the menu's structure
+(other tokens present), never its translated wording.

@@ -149,7 +149,9 @@ the five other mirror axes), which no command here can check and no CI gate can 
   the words around it were translated (#922, `scripts/dev/spike_upscale_menu_anchors.py`).
   `migrated_upscale.menu_token_pattern` matches that token as a whole token. That is the bar
   for any further exception: no structural anchor exists, the token is measured on 2+
-  locales, and a miss raises exit 23 rather than clicking the wrong item.
+  locales, and a miss raises exit 23 rather than clicking the wrong item. The one refinement
+  (#1338): when the menu's other items carry scale tokens but not the requested one, Flow is
+  not offering that scale for the item, and that is exit 22 naming the listed scales.
 
   **A second, on the same bar: the duration radio's number.** The settings pane's
   duration radios carry only Angular instance counters, and their unit is translated

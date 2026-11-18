@@ -109,7 +109,7 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: Omni models only; without --project a project is created first, on either host (#864); durations: 4/6/8 Veo, 4/6/8/10 omni-flash, 3-15 omni-1.2-flash
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
 gflow video generate "<prompt>" [--initial-frame F | --ref IMG] [...]  # bridge: none -> t2v, frame -> i2v, --ref -> r2v; frame AND --ref = exit 2 (#1193)
-gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF
+gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
 # `gflow video` has no `batch` subcommand — that stub never worked and was
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \

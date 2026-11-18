@@ -55,6 +55,7 @@ _MENU_JS = r"""() => [...document.querySelectorAll(
   icons: [...el.querySelectorAll('mat-icon, i, .google-symbols')].map(x => x.textContent.trim()),
   digits: (el.textContent.match(/\d+\s*[KkPp]?/g) || []).map(s => s.replace(/\s/g, '')),
   text_len: el.textContent.trim().length,
+  text: el.textContent.trim().replace(/\s+/g, ' ').slice(0, 60),
   children: [...el.children].map(c => c.tagName.toLowerCase()),
 }))"""
 

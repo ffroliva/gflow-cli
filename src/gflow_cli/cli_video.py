@@ -2336,7 +2336,7 @@ def extend(  # noqa: PLR0913
     "upscale",
     short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",
     help=(
-        "Upscale a Flow-generated video to 1080p Full HD, download the original 720p, "
+        "Upscale a Flow-generated video to 1080p Full HD, download it at 720p, "
         "or export as a 270p animated GIF and save it locally.\n\n"
         "MEDIA_ID is the UUID of a platform video — find one with `gflow data list videos`.\n\n"
         "\b\n"
@@ -2354,8 +2354,9 @@ def extend(  # noqa: PLR0913
     default="1080p",
     show_default=True,
     help=(
-        "Target quality: 1080p (enhanced Full HD), 720p (original download), "
-        "or 270p (animated GIF export)."
+        "Target quality: 1080p (enhanced Full HD), 720p (the original download, "
+        "or Flow's upscale of a smaller original), or 270p (animated GIF export). "
+        "Flow lists only some scales for some models; an unlisted one exits 22."
     ),
 )
 @upscale_out_dir_option()
