@@ -31,7 +31,9 @@ def _reads_child_events(text: str) -> bool:
 
 
 def _sets_info(name: str) -> bool:
-    return bool(_SETS_INFO.search((_E2E / _VIA_RUNNER.get(name, name)).read_text("utf-8")))
+    """INFO is assigned in the module, or in the runner it borrows."""
+    module = _E2E / _VIA_RUNNER.get(name, name)
+    return bool(_SETS_INFO.search(module.read_text(encoding="utf-8")))
 
 
 def _modules_reading_child_events_without_info() -> list[str]:

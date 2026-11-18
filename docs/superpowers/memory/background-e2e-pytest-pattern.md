@@ -19,7 +19,7 @@ The full working snippet that ran PR #70's de-DE T2V (2026-05-25, ~71 s end-to-e
 
 - Use `.planning/e2e-logs/<pr#>_<test>_<locale>_<ts>.log` as the log path so the artefact has provenance.
 - Pre-flight: confirm the chosen profile has a non-empty `Cookies` file (`stat -c %s` ≥ 30 KB is a fine sanity check — see [[real-browser-auth-mandatory]]).
-- Surface 5-layer ledger verification ([[verification-ledger-5-layer]]) after the test exits: file presence, magic bytes, ffprobe dims, structlog success event, ask user for gallery confirmation.
+- Surface 5-layer ledger verification ([[verification-ledger-5-layer]]) after the test exits: file presence, magic bytes, ffprobe dims, structlog success event (INFO: run the child with `GFLOW_CLI_LOG_LEVEL=INFO`, #1332), ask user for gallery confirmation.
 - Per [[e2e-tests-parameterize]] — `GFLOW_CLI_LOCALE=<bcp47>`, `GFLOW_CLI_E2E_PROFILE=<name>`, `GFLOW_CLI_E2E_VIDEO_ASPECT=<aspect>` should be passed explicitly even if defaults exist.
 
 The Monitor's poll loop:
