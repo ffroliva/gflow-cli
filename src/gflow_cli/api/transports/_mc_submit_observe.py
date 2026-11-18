@@ -78,6 +78,29 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
+async def _aborted_by_check(
+    route: Any,
+    request_check: Callable[[str, str], GFlowError | None] | None,
+    rpcid: str | None,
+    body: str,
+    route_error: asyncio.Future[GFlowError],
+) -> bool:
+    """Abort a request ``request_check`` refuses, in the browser, and record it unsent.
+
+    The guard judges here, before the request leaves (#1320): the request listener only
+    records the same verdict as a backstop, because ending the wait from that event
+    would unroute this guard before it runs."""
+    verdict = request_check(rpcid, body) if request_check and rpcid else None
+    if verdict is None:
+        return False
+    await route.abort()
+    log.warning("migrated.request_refused_before_send", rpc=rpcid)
+    if not route_error.done():
+        verdict.charged, verdict.next_action, verdict.retryable = "no", "retry", True
+        route_error.set_result(verdict)
+    return True
+
+
 def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
     """A submit the route guard aborted in the browser: Flow received and billed nothing."""
     refused = WireFormatError(
@@ -182,6 +205,7 @@ class SubmitObserveMixin(MentionMixin):
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
+        unguarded_verdicts: list[GFlowError] = []
         # Body problems the observer saw; raised only if the route guard did not stop them.
         observed: list[GFlowError] = []
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
@@ -213,7 +237,10 @@ class SubmitObserveMixin(MentionMixin):
             if request_check is not None:
                 verdict = request_check(rpcid, body)
                 if verdict is not None:
-                    route_error.set_result(verdict)
+                    # The guard below judges first and aborts; ending the wait here would
+                    # unroute it before it runs (#1320). Kept as the backstop for a request
+                    # no guard saw, raised once the run settles.
+                    unguarded_verdicts.append(verdict)
                     return
             if rpcid in submit_rpcs:
                 submit_requests.append((request, rpcid))
@@ -414,6 +441,8 @@ class SubmitObserveMixin(MentionMixin):
             try:
                 body = request_body(request)
                 rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
+                if await _aborted_by_check(route, request_check, rpcid, body, route_error):
+                    return
                 problem = (
                     _submit_body_problem(
                         rpcid,
@@ -507,6 +536,8 @@ class SubmitObserveMixin(MentionMixin):
                 # The request is inspected before its reply lands, so a wrong body is
                 # named as such and not as whatever the reply then says.
                 raise route_error.result()
+            if unguarded_verdicts:  # it left the browser unguarded: Flow may have billed it
+                raise unguarded_verdicts[0]
             if observed:
                 raise observed[0]  # the route did not stop it: sent, and Flow bills it
             if not submitted.done() and lost:

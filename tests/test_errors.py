@@ -765,3 +765,20 @@ def test_refused_2k_image_upscale_does_not_advise_2k() -> None:
 
     err = _unavailable_error(TargetResolution.RES_2K)
     assert "--scale 2k" not in (err.remediation_hint or "")
+
+
+def test_nothing_submitted_marks_a_pre_submit_error_charged_no() -> None:
+    from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
+
+    with pytest.raises(UiSelectorDriftError) as info, nothing_submitted():
+        raise UiSelectorDriftError(detail="no radio")
+    assert info.value.charged == "no"
+
+
+def test_nothing_submitted_withholds_the_claim_once_a_submit_left() -> None:
+    """#1320 review: a stray Enter in a closing picker can submit; then it is not 'no'."""
+    from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
+
+    with pytest.raises(UiSelectorDriftError) as info, nothing_submitted(sent=lambda: True):
+        raise UiSelectorDriftError(detail="chip vanished after the key press")
+    assert info.value.charged == "maybe"

@@ -4585,3 +4585,30 @@ async def test_the_request_listener_does_not_unroute_the_guard_before_it_aborts(
         )
     assert page.route_outcomes == ["abort"]
     assert ei.value.charged == "no"
+
+
+async def test_a_request_check_verdict_is_aborted_by_the_guard_and_reads_unsent() -> None:
+    """#1320 review: video extend's request_check ended the wait from the request event,
+    unrouting the guard before it aborted, so a wrong submit left the browser."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(rpcid: str, _body: str) -> WireFormatError | None:
+        return (
+            WireFormatError(detail=f"{rpcid} names the wrong source") if rpcid == "fZytfe" else None
+        )
+
+    page = _UnrouteSkippingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", '[["fZytfe", "wrong source"]]')
+    page.scripted_responses = []
+    with pytest.raises(WireFormatError, match="wrong source") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")

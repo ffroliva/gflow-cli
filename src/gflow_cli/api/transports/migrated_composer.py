@@ -168,6 +168,7 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     NAVIGATION_GRACE_S,
+    SubmitWatch,
     _as_list_any,
     _write_outcome_unknown,
 )
@@ -412,8 +413,9 @@ async def run_video(
         )
     if unported is not None:
         raise refuse()
-    # Everything up to the submit click spends nothing (#1320).
-    with nothing_submitted():
+    # Everything up to the submit click spends nothing (#1320); a stray Enter while a
+    # mention picker closes could submit, so the watch withholds the claim if one left.
+    with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
         await composer.apply_video_settings(page, request)
         media_id: str | None = None
         end_media_id: str | None = None
@@ -534,8 +536,8 @@ async def run_images(
         return await agent.run_agent_images(page, request, project_id=pid)
     if unported is not None:
         raise refuse()
-    # Everything up to the submit click spends nothing (#1320).
-    with nothing_submitted():
+    # Everything up to the submit click spends nothing (#1320); see run_video on the watch.
+    with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
         reference_ids: tuple[str, ...] = ()
         if request.refs:
             # Images already in this project (a manifest's `batch:N`, #913): referenced in
