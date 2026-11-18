@@ -158,8 +158,8 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, out_path: Pat
     print(f"[recon] html -> {out_path.with_suffix('.html')}", flush=True)
     print(f"[recon] stages = {stages}", flush=True)
     print(
-        f"[recon] dump: tabs={len(dump.get('tabs', []))} "
-        f"picker-hits={len(dump.get('picker', []))} audio-hits={len(dump.get('audio', []))} "
+        f"[recon] dump: tabs={len(dump.get('tabs',[]))} "
+        f"picker-hits={len(dump.get('picker',[]))} audio-hits={len(dump.get('audio',[]))} "
         f"dialogs={dump.get('dialogCount')}",
         flush=True,
     )
@@ -176,17 +176,10 @@ def main(argv: list[str] | None = None) -> int:
 
     profile_dir = resolve_profile_dir(args.profile)
     out_path = Path(args.out) if args.out else default_out_path("spike_movie_entity_recon", ".json")
-    step(
-        "--", f"profile={args.profile} project={args.project} locale={args.locale}", prefix="recon"
-    )
+    step("--", f"profile={args.profile} project={args.project} locale={args.locale}", prefix="recon")
     try:
         return asyncio.run(
-            _run(
-                profile_dir=profile_dir,
-                project_id=args.project,
-                locale=args.locale,
-                out_path=out_path,
-            )
+            _run(profile_dir=profile_dir, project_id=args.project, locale=args.locale, out_path=out_path)
         )
     except KeyboardInterrupt:
         print("[recon] aborted", file=sys.stderr)

@@ -32,9 +32,7 @@ if os.environ.pop("GFLOW_SPIKE_1298", None):  # pop: no child ever re-arms the h
                 print("PROBE rename FAILED", os.path.basename(p), exc)
         r = subprocess.run(
             [sys.executable, "-m", "pip", "install", "--upgrade", "gflow-cli"],
-            capture_output=True,
-            text=True,
-            timeout=600,
+            capture_output=True, text=True, timeout=600,
         )
         print("PROBE pip rc:", r.returncode)
         print("PROBE pip tail:", "\n".join((r.stdout + r.stderr).splitlines()[-6:]))
@@ -44,14 +42,8 @@ if os.environ.pop("GFLOW_SPIKE_1298", None):  # pop: no child ever re-arms the h
                 os.replace(old, p)
                 print("PROBE restored", os.path.basename(p))
         chk = subprocess.run(
-            [
-                sys.executable,
-                "-I",
-                "-c",
-                "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)",
-            ],
-            capture_output=True,
-            text=True,
+            [sys.executable, "-I", "-c", "import gflow_cli.cli, gflow_cli; print(gflow_cli.__version__)"],
+            capture_output=True, text=True,
         )
         print("PROBE import rc:", chk.returncode, chk.stdout.strip(), chk.stderr.strip()[-300:])
 

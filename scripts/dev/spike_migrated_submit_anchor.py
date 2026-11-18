@@ -104,16 +104,11 @@ async def main() -> int:
             return 3
 
         findings["before"] = await page.evaluate(_INVENTORY_JS)
-        step(
-            "before",
-            f"{findings['before']['button_count']} buttons, "
-            f"ligatures={findings['before']['all_ligatures']}",
-        )
+        step("before", f"{findings['before']['button_count']} buttons, "
+                       f"ligatures={findings['before']['all_ligatures']}")
 
         # Type into the composer exactly as the driver does, then look again.
-        box = page.locator(
-            'div.ProseMirror[contenteditable="true"], [contenteditable="true"]'
-        ).first
+        box = page.locator('div.ProseMirror[contenteditable="true"], [contenteditable="true"]').first
         try:
             await box.wait_for(state="visible", timeout=20_000)
             await box.click()
@@ -126,11 +121,8 @@ async def main() -> int:
             step("type", f"FAILED {findings['type_error']}")
 
         findings["after"] = await page.evaluate(_INVENTORY_JS)
-        step(
-            "after",
-            f"{findings['after']['button_count']} buttons, "
-            f"ligatures={findings['after']['all_ligatures']}",
-        )
+        step("after", f"{findings['after']['button_count']} buttons, "
+                      f"ligatures={findings['after']['all_ligatures']}")
 
         shot = default_out_path("spike_migrated_submit_anchor", ".png")
         await page.screenshot(path=str(shot))

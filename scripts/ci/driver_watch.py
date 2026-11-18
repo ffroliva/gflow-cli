@@ -171,7 +171,18 @@ def main(argv: list[str] | None = None) -> int:
     pinned = pins(Path("pyproject.toml").read_text(encoding="utf-8"))
     found = bumps(pinned, {pkg: _latest(pkg) for pkg in pinned})
     issues = json.loads(
-        _gh("issue", "list", "--label", LABEL, "--state", "all", "--json", "number,title,state")
+        _gh(
+            "issue",
+            "list",
+            "--label",
+            LABEL,
+            "--state",
+            "all",
+            "--limit",
+            "500",
+            "--json",
+            "number,title,state",
+        )
     )
     actions = plan(found, issues)
     print(f"pins: {pinned}; releases outside them: {[b.title for b in found] or 'none'}")

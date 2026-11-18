@@ -62,11 +62,7 @@ def post(base_url: str, key: str | None, payload: dict) -> tuple[int, str, float
     start = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
-            return (
-                response.status,
-                response.read().decode("utf-8", errors="replace"),
-                time.monotonic() - start,
-            )
+            return response.status, response.read().decode("utf-8", errors="replace"), time.monotonic() - start
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", errors="replace"), time.monotonic() - start
     except OSError as exc:
@@ -116,122 +112,82 @@ def main() -> int:
     results: list[bool] = []
 
     # --- 1. plain text -----------------------------------------------------
-    status, body, elapsed = post(
-        base,
-        key,
-        {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "Reply with only the word OK."},
-                {"role": "user", "content": "hi"},
-            ],
-        },
-    )
+    status, body, elapsed = post(base, key, {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Reply with only the word OK."},
+            {"role": "user", "content": "hi"},
+        ],
+    })
     text = content(body)
-    results.append(
-        report(
-            "1. text chat/completions",
-            status == 200 and "OK" in text.upper(),
-            status,
-            elapsed,
-            body,
-            f"content={text[:80]!r}",
-        )
-    )
+    results.append(report(
+        "1. text chat/completions", status == 200 and "OK" in text.upper(), status, elapsed, body,
+        f"content={text[:80]!r}",
+    ))
     if not results[0]:
         print("\nProbe 1 failed — the whole design is dead against this endpoint. Stopping.")
         return 1
 
     # --- 2. temperature + max_tokens ---------------------------------------
-    status, body, elapsed = post(
-        base,
-        key,
-        {
+    status, body, elapsed = post(base, key, {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Reply with only the word OK."},
+            {"role": "user", "content": "hi"},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 875,  # what expander.py's //4 heuristic produces for 3500 chars
+    })
+    ok = status == 200 and content(body) != ""
+    note = ""
+    if not ok:
+        # Some endpoints reject max_tokens in favour of max_completion_tokens.
+        alt_status, alt_body, alt_elapsed = post(base, key, {
             "model": model,
             "messages": [
                 {"role": "system", "content": "Reply with only the word OK."},
                 {"role": "user", "content": "hi"},
             ],
             "temperature": 0.7,
-            "max_tokens": 875,  # what expander.py's //4 heuristic produces for 3500 chars
-        },
-    )
-    ok = status == 200 and content(body) != ""
-    note = ""
-    if not ok:
-        # Some endpoints reject max_tokens in favour of max_completion_tokens.
-        alt_status, alt_body, alt_elapsed = post(
-            base,
-            key,
-            {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": "Reply with only the word OK."},
-                    {"role": "user", "content": "hi"},
-                ],
-                "temperature": 0.7,
-                "max_completion_tokens": 875,
-            },
-        )
+            "max_completion_tokens": 875,
+        })
         if alt_status == 200 and content(alt_body) != "":
             ok, status, elapsed = True, alt_status, alt_elapsed
             note = "NOTE: rejected max_tokens, accepted max_completion_tokens"
     results.append(report("2. temperature + max_tokens", ok, status, elapsed, body, note))
 
     # --- 3. multimodal image_url data: URI ----------------------------------
-    status, body, elapsed = post(
-        base,
-        key,
-        {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "What color is this square? Reply with one word."},
-                        {"type": "image_url", "image_url": {"url": red_square_data_uri()}},
-                    ],
-                }
+    status, body, elapsed = post(base, key, {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What color is this square? Reply with one word."},
+                {"type": "image_url", "image_url": {"url": red_square_data_uri()}},
             ],
-        },
-    )
+        }],
+    })
     text = content(body)
-    results.append(
-        report(
-            "3. multimodal image_url (SEMANTIC)",
-            status == 200 and "RED" in text.upper(),
-            status,
-            elapsed,
-            body,
-            f"content={text[:80]!r}",
-        )
-    )
+    results.append(report(
+        "3. multimodal image_url (SEMANTIC)", status == 200 and "RED" in text.upper(),
+        status, elapsed, body, f"content={text[:80]!r}",
+    ))
 
     # --- 4. bad key -> real 4xx, not a 200 with an error body ---------------
     if key:
-        status, body, elapsed = post(
-            base,
-            "sk-definitely-not-a-valid-key",
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": "hi"}],
-            },
-        )
+        status, body, elapsed = post(base, "sk-definitely-not-a-valid-key", {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+        })
         # Any 4xx is a pass: what matters is that the failure is knowable from the
         # STATUS. freellmapi answers 401, Google's compat endpoint answers 400.
         # Neither is in _RETRYABLE_STATUS, so both fail fast to the fallback —
         # which is the property under test. A 200 carrying an error body would
         # bypass that rule entirely and parse as an empty response.
-        results.append(
-            report(
-                "4. bad key yields a 4xx status",
-                400 <= status < 500,
-                status,
-                elapsed,
-                body,
-                "a 200-with-error-body would bypass expander.py's fail-fast rule",
-            )
-        )
+        results.append(report(
+            "4. bad key yields a 4xx status", 400 <= status < 500, status, elapsed, body,
+            "a 200-with-error-body would bypass expander.py's fail-fast rule",
+        ))
     else:
         print("\n[SKIP] 4. bad key — endpoint is keyless")
 

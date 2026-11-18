@@ -57,7 +57,6 @@ async def main() -> None:
             }))
         """)
         import json
-
         Path(str(out / "buttons.json")).write_text(json.dumps(buttons, indent=2))
         print("Buttons dumped to", out / "buttons.json")
         print(f"Total buttons: {len(buttons)}")
@@ -66,6 +65,5 @@ async def main() -> None:
                 print(f"  text={b['text']!r} aria={b['aria']!r} cls={b['cls']!r}")
 
         await ctx.close()
-
 
 asyncio.run(main())

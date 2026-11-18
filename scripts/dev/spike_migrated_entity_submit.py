@@ -135,11 +135,9 @@ async def _arm(
     rec.armed = True
     t0 = time.monotonic()
 
-    submit = (
-        page.locator("button")
-        .filter(has=page.locator("mat-icon").filter(has_text=re.compile(r"^\s*arrow_forward\s*$")))
-        .first
-    )
+    submit = page.locator("button").filter(
+        has=page.locator("mat-icon").filter(has_text=re.compile(r"^\s*arrow_forward\s*$"))
+    ).first
     found = bool(await submit.count())
     enabled = bool(found and await submit.is_enabled())
     step(label, f"submit found={found} enabled={enabled}")

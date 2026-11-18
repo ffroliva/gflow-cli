@@ -6,6 +6,9 @@ that announces a driver release the pins refuse. Offline: no PyPI, no `gh`.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from scripts.ci import driver_watch as dw
@@ -94,3 +97,53 @@ def test_conflicting_pins_for_one_driver_are_loud() -> None:
     )
     with pytest.raises(ValueError, match="pinned twice"):
         dw.pins(text)
+
+
+def _run_main(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, issues: list[dict[str, object]], *argv: str
+) -> list[tuple[tuple[str, ...], str | None]]:
+    """main() against a fake pyproject, PyPI and gh; returns every gh call made."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["playwright>=1.61,<1.62", "patchright==1.64.4"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(dw, "_latest", {"playwright": "1.65.2", "patchright": "1.64.4"}.get)
+    calls: list[tuple[tuple[str, ...], str | None]] = []
+
+    def fake_gh(*args: str, stdin: str | None = None) -> str:
+        calls.append((args, stdin))
+        return json.dumps(issues) if args[:2] == ("issue", "list") else ""
+
+    monkeypatch.setattr(dw, "_gh", fake_gh)
+    assert dw.main(list(argv)) == 0
+    return calls
+
+
+def test_main_creates_one_issue_with_its_body_on_stdin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls = _run_main(monkeypatch, tmp_path, [])
+    listing, label, create = (c[0] for c in calls)
+    assert "--limit" in listing and "all" in listing
+    assert label[:2] == ("label", "create")
+    assert create[:2] == ("issue", "create") and "--body-file" in create
+    assert "playwright 1.65.2" in create[create.index("--title") + 1]
+    assert "playwright 1.65.2" in (calls[2][1] or "")
+
+
+def test_main_closes_an_issue_whose_pin_now_admits_the_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stale = {
+        "number": 4,
+        "title": "Driver release available: patchright 1.64.4 (pinned ==1.64.3)",
+        "state": "OPEN",
+    }
+    calls = _run_main(monkeypatch, tmp_path, [stale])
+    assert ("issue", "close", "4") == calls[-1][0][:3]
+
+
+def test_main_dry_run_only_lists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls = _run_main(monkeypatch, tmp_path, [], "--dry-run")
+    assert [c[0][:2] for c in calls] == [("issue", "list")]

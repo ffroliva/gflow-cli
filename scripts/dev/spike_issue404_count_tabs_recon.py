@@ -130,7 +130,9 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, out_path: Pat
             # settings (#40) — replicate via the ligature-keyed mode tab
             # (locale-invariant, memory: flow-locale-leak-icon-ligatures).
             step("2b", "selecting Image mode tab (ligature-keyed)", prefix="404")
-            image_tab = page.locator("[role='tab']:has(i.google-symbols:text-is('image'))").first
+            image_tab = page.locator(
+                "[role='tab']:has(i.google-symbols:text-is('image'))"
+            ).first
             await image_tab.wait_for(state="visible", timeout=5_000)
             await image_tab.click()
             await page.wait_for_timeout(800)
@@ -210,7 +212,9 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, out_path: Pat
             # this project — restore Flow's x2 default so the recon leaves no
             # sticky state behind.
             step("6", "cleanup: restore video count row to x2", prefix="404")
-            video_tab = page.locator("[role='tab']:has(i.google-symbols:text-is('videocam'))").first
+            video_tab = page.locator(
+                "[role='tab']:has(i.google-symbols:text-is('videocam'))"
+            ).first
             if await video_tab.count() > 0:
                 await video_tab.click()
                 await page.wait_for_timeout(800)
@@ -218,7 +222,9 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, out_path: Pat
                 if await x2_tab.count() > 0:
                     await x2_tab.click()
                     await page.wait_for_timeout(300)
-                    result["videoCountRestored"] = await x2_tab.get_attribute("aria-selected")
+                    result["videoCountRestored"] = await x2_tab.get_attribute(
+                        "aria-selected"
+                    )
         finally:
             client._checkin_page(page)  # noqa: SLF001
             out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")

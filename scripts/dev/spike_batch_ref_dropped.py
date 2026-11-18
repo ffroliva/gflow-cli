@@ -102,19 +102,8 @@ def main(profile: str, ref_image: Path, arms: list[str]) -> int:
         d.mkdir(parents=True)
         step("control", "image i2i --ref <local>")
         findings["control"] = _run(
-            [
-                "image",
-                "i2i",
-                "the same scene at night",
-                "--ref",
-                str(ref_image),
-                "--profile",
-                profile,
-                "--aspect",
-                "1:1",
-                "--out",
-                str(d),
-            ],
+            ["image", "i2i", "the same scene at night", "--ref", str(ref_image),
+             "--profile", profile, "--aspect", "1:1", "--out", str(d)],
             d,
         )
         step("control", json.dumps(findings["control"]))
@@ -150,11 +139,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default="ci-probe")
     ap.add_argument("--ref-image", type=Path, required=True)
-    ap.add_argument(
-        "--arms",
-        nargs="+",
-        default=["control", "batch", "run"],
-        choices=["control", "batch", "run"],
-    )
+    ap.add_argument("--arms", nargs="+", default=["control", "batch", "run"],
+                    choices=["control", "batch", "run"])
     a = ap.parse_args()
     raise SystemExit(main(a.profile, a.ref_image, a.arms))

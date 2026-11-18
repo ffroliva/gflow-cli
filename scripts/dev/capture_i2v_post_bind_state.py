@@ -150,9 +150,7 @@ async def capture(profile_name: str, probe_image: Path, out_dir: Path) -> int:
                 out_dir=out_dir,
             )
             await page.wait_for_timeout(500)
-            evidence["t1_slot_count_after_start_bind"] = await page.locator(
-                FRAME_SLOTS_STRUCT
-            ).count()
+            evidence["t1_slot_count_after_start_bind"] = await page.locator(FRAME_SLOTS_STRUCT).count()
             await page.screenshot(path=str(out_dir / "02-t1-after-start.png"))
             print(
                 f"t1 slot count after Start bind (expect 1): {evidence['t1_slot_count_after_start_bind']}"
@@ -168,9 +166,7 @@ async def capture(profile_name: str, probe_image: Path, out_dir: Path) -> int:
                 out_dir=out_dir,
             )
             await page.wait_for_timeout(500)
-            evidence["t2_slot_count_after_end_bind"] = await page.locator(
-                FRAME_SLOTS_STRUCT
-            ).count()
+            evidence["t2_slot_count_after_end_bind"] = await page.locator(FRAME_SLOTS_STRUCT).count()
             await page.screenshot(path=str(out_dir / "03-t2-after-end.png"))
             print(
                 f"t2 slot count after End bind  (expect 0): {evidence['t2_slot_count_after_end_bind']}"
@@ -246,9 +242,7 @@ async def capture(profile_name: str, probe_image: Path, out_dir: Path) -> int:
             await _enumerate_arrow_forward(page, post_typing)
             evidence["t5_submit_candidates_after_typing"] = post_typing
             await page.screenshot(path=str(out_dir / "05-t5-after-typing.png"))
-            print(
-                f"t5 slot count after typing (expect 0): {evidence['t5_slot_count_after_typing']}"
-            )
+            print(f"t5 slot count after typing (expect 0): {evidence['t5_slot_count_after_typing']}")
             print(f"t5 arrow_forward count: {post_typing['arrow_forward_count']}")
             for b in post_typing["arrow_forward_buttons"]:
                 vis = "visible" if b["visible"] else "hidden"

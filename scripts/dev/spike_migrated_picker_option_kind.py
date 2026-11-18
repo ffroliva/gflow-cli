@@ -121,14 +121,8 @@ async def main() -> int:
     if len(opts) > 1:
         shared_attrs = set.intersection(*(set(o["attrs"]) for o in opts))
         shared_cls = set.intersection(*(set(o["classes"]) for o in opts))
-        step(
-            "DISCRIMINATOR attrs",
-            str(sorted(set().union(*(set(o["attrs"]) for o in opts)) - shared_attrs) or "NONE"),
-        )
-        step(
-            "DISCRIMINATOR classes",
-            str(sorted(set().union(*(set(o["classes"]) for o in opts)) - shared_cls) or "NONE"),
-        )
+        step("DISCRIMINATOR attrs", str(sorted(set().union(*(set(o["attrs"]) for o in opts)) - shared_attrs) or "NONE"))
+        step("DISCRIMINATOR classes", str(sorted(set().union(*(set(o["classes"]) for o in opts)) - shared_cls) or "NONE"))
     step("chips after Escape", str(findings["chips_after_escape"]))
     step("done", f"wrote {out}")
     return 0

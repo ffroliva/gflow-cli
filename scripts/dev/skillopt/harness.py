@@ -40,7 +40,6 @@ Other flags:
     --model ID         Override GFLOW_CLI_LLM_MODEL for one comparison run
     --tags auth,video  Filter tasks by tag
 """
-
 from __future__ import annotations
 
 import argparse
@@ -72,7 +71,6 @@ _QUOTA_WINDOW_SECONDS = 30
 
 class RolloutError(RuntimeError):
     """One task's rollout could not be completed. The suite records it and goes on."""
-
 
 SYSTEM_TEMPLATE = """\
 You are an agent assistant helping users operate gflow-cli, the terminal CLI for Google Flow (Veo video generation and Imagen image generation).
@@ -148,10 +146,10 @@ def score_response(response: str, expected: dict[str, Any]) -> tuple[float, list
     return score, reasons
 
 
-def format_prompt(
-    skill_text: str, version: str, epoch: int, task: dict[str, Any]
-) -> tuple[str, str]:
-    system = SYSTEM_TEMPLATE.format(version=version, epoch=epoch, skill_body=skill_text)
+def format_prompt(skill_text: str, version: str, epoch: int, task: dict[str, Any]) -> tuple[str, str]:
+    system = SYSTEM_TEMPLATE.format(
+        version=version, epoch=epoch, skill_body=skill_text
+    )
     question = task["question"]
     context = task.get("context")
     user = f"Context: {context}\n\n{question}" if context else question
@@ -305,7 +303,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     passed = sum(1 for r in scored if r["status"] == "PASS")
     failed = [r for r in scored if r["status"] == "FAIL"]
 
-    print(f"\n{'=' * 60}")
+    print(f"\n{'='*60}")
     if scored:
         avg = sum(r["score"] for r in scored) / len(scored)
         print(f"SUMMARY: {passed}/{len(scored)} passed  avg score {avg:.3f}")
@@ -329,7 +327,7 @@ def _print_summary(results: list[dict[str, Any]]) -> None:
     if tag_scores:
         print("\nPer-tag averages:")
         for tag, scores in sorted(tag_scores.items()):
-            print(f"  {tag:<20} {sum(scores) / len(scores):.3f}  (n={len(scores)})")
+            print(f"  {tag:<20} {sum(scores)/len(scores):.3f}  (n={len(scores)})")
     print("=" * 60)
 
 

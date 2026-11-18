@@ -155,11 +155,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default="ci-probe")
     ap.add_argument("--project", required=True)
-    ap.add_argument(
-        "--ref-file",
-        type=Path,
-        required=True,
-        help="any existing local image; it routes row 1 but is never uploaded",
-    )
+    ap.add_argument("--ref-file", type=Path, required=True,
+                    help="any existing local image; it routes row 1 but is never uploaded")
     a = ap.parse_args()
     raise SystemExit(asyncio.run(main(a.profile, a.project, a.ref_file)))

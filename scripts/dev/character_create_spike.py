@@ -261,9 +261,7 @@ async def _read_back(
 
     print("[spike] --- read-back assertions ---", flush=True)
     print(f"[spike]   entityId         = {entity_id}", flush=True)
-    print(
-        f"[spike]   entityType       = {entity_type}  (expect CHARACTER) -> {type_ok}", flush=True
-    )
+    print(f"[spike]   entityType       = {entity_type}  (expect CHARACTER) -> {type_ok}", flush=True)
     print(f"[spike]   displayName      = {info.get('displayName')}", flush=True)
     print(
         f"[spike]   imageRef workflowIds = {ref_workflow_ids}  "

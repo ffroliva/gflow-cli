@@ -55,6 +55,7 @@ async def capture(profile_name: str, model_alias: str, settle_ms: int) -> int:
             sys.exit("FlowApiClient.transport is None")
         page = await client._checkout_page()
         try:
+
             # PRODUCTION order (mirrors _generate_video_locked exactly).
             await transport._enter_editor(page, None)  # type: ignore[attr-defined]
             await VideoGenerationMixin._wait_video_editor_ready(page)
@@ -68,9 +69,7 @@ async def capture(profile_name: str, model_alias: str, settle_ms: int) -> int:
             # Enumerate menu items right before select (diagnostic).
             try:
                 items = await page.locator("[role='menuitem']").all_inner_texts()
-                print(
-                    f"menuitems visible before select ({len(items)}): {[t[:30] for t in items][:12]}"
-                )
+                print(f"menuitems visible before select ({len(items)}): {[t[:30] for t in items][:12]}")
             except Exception as e:
                 print(f"menuitem enumeration failed: {e}")
 

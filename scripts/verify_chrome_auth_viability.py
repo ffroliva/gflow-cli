@@ -1,6 +1,6 @@
 """Durable verification tool for 'Real Chrome' authentication viability.
 
-This script launches the system's installed Google Chrome via Playwright with
+This script launches the system's installed Google Chrome via Playwright with 
 an isolated user-data-dir and navigates to the Google Login page.
 
 It serves as the definitive 'ground truth' prober for:
@@ -90,7 +90,7 @@ async def verify_viability() -> bool:
             clicked_landing = False
             clicked_account = False
 
-            for _ in range(120):  # 10 minutes total, 5s intervals
+            for _ in range(120): # 10 minutes total, 5s intervals
                 current_url = page.url
                 cookies = await context.cookies()
                 cookie_names = [c["name"] for c in cookies]
@@ -115,10 +115,8 @@ async def verify_viability() -> bool:
                 # Success Condition: Landed in the tool with valid cookies
                 if "fx/tools/flow" in current_url and "SAPISID" in cookie_names:
                     # Double check we aren't just on the landing page
-                    if (
-                        await page.locator('text="New project"').count() > 0
-                        or await page.locator('text="Your projects"').count() > 0
-                    ):
+                    if await page.locator('text="New project"').count() > 0 or \
+                       await page.locator('text="Your projects"').count() > 0:
                         success = True
                         break
 
@@ -154,7 +152,7 @@ async def verify_viability() -> bool:
             log.info("closing_browser")
             try:
                 # We use a timeout to avoid hanging if the browser is unresponsive
-                await asyncio.wait_for(context.close(), timeout=5)  # type: ignore[name-defined]
+                await asyncio.wait_for(context.close(), timeout=5) # type: ignore[name-defined]
             except Exception:
                 # Target already closed or unresponsive — safe to ignore
                 pass
@@ -180,14 +178,14 @@ async def _run_test_generation_in_context(context, tmp_dir: Path) -> bool:
         print(f"  Using Project: {project.project_id}")
 
         for i in range(1, 3):
-            prompt = (
-                "A high-tech terminal with a green glowing screen"
-                if i == 1
-                else "A futuristic city skyline"
-            )
+            prompt = "A high-tech terminal with a green glowing screen" if i == 1 else "A futuristic city skyline"
             print(f"  Generating Image {i}/2: '{prompt}'...")
 
-            req = GenerateImageRequest(prompt=prompt, model=Model.NANO2, aspect=Aspect.SQUARE)
+            req = GenerateImageRequest(
+                prompt=prompt,
+                model=Model.NANO2,
+                aspect=Aspect.SQUARE
+            )
 
             images = await client.generate_images(project.project_id, req)
             if images:

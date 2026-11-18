@@ -89,11 +89,7 @@ async def main() -> int:
     async def on_response(response: Any) -> None:
         if "batchexecute" not in response.url:
             return
-        rpcids = (
-            response.url.split("rpcids=", 1)[1].split("&", 1)[0]
-            if "rpcids=" in response.url
-            else "?"
-        )
+        rpcids = response.url.split("rpcids=", 1)[1].split("&", 1)[0] if "rpcids=" in response.url else "?"
         try:
             body = await response.text()
         except Exception:  # noqa: BLE001
@@ -138,23 +134,13 @@ async def main() -> int:
                 v = tile.locator("video").first
                 if await v.count():
                     src = await v.get_attribute("src") or ""
-                    hover_video = (
-                        "asb" if "/asb/" in src else ("cdn" if "flow-content" in src else "other")
-                    )
+                    hover_video = "asb" if "/asb/" in src else ("cdn" if "flow-content" in src else "other")
                 await page.mouse.move(5, 5)
             elapsed = round(time.monotonic() - t0)
-            s["t"], s["new_opts"], s["hover_video"], s["uuid"] = (
-                elapsed,
-                new,
-                hover_video,
-                watch.get("uuid"),
-            )
+            s["t"], s["new_opts"], s["hover_video"], s["uuid"] = elapsed, new, hover_video, watch.get("uuid")
             f["timeline"].append(s)
-            step(
-                "poll",
-                f"t={elapsed}s in_flight={s['in_flight']} new_opts={len(new)} hover_video={hover_video!r} "
-                f"tile={s['tile'] and s['tile']['title']!r} media={s['tile'] and s['tile']['media']}",
-            )
+            step("poll", f"t={elapsed}s in_flight={s['in_flight']} new_opts={len(new)} hover_video={hover_video!r} "
+                 f"tile={s['tile'] and s['tile']['title']!r} media={s['tile'] and s['tile']['media']}")
             partial.write_text(json.dumps(f, indent=2, ensure_ascii=False), encoding="utf-8")
             if hover_video and watch.get("uuid") and elapsed > 30:
                 break

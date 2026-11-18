@@ -177,13 +177,12 @@ async def main() -> int:
     out = default_out_path("spike_migrated_composer_mode_axis")
     out.write_text(json.dumps(findings, indent=2), encoding="utf-8")
 
-    step(
-        "groups",
-        f"{findings['overlay']['group_count']} groups, {findings['overlay']['radio_total']} radios",
-    )
+    step("groups", f"{findings['overlay']['group_count']} groups, "
+                   f"{findings['overlay']['radio_total']} radios")
     for g in findings["overlay"]["groups"]:
         labels = ", ".join(
-            f"{(r['text'] or r['aria_label'] or '?')}{'*' if r['aria_checked'] == 'true' else ''}"
+            f"{(r['text'] or r['aria_label'] or '?')}"
+            f"{'*' if r['aria_checked'] == 'true' else ''}"
             for r in g["radios"]
         )
         step(f"group{g['index']}", f"[{labels}]  aria-label={g['aria_label']!r}")

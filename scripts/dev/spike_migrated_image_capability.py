@@ -63,7 +63,6 @@ class SpikeUnreachedError(RuntimeError):
     became a shipped claim that the migrated composer has no image mode.
     """
 
-
 # Anything that could plausibly name an image mode, by ligature or by role.
 _SURFACE_JS = r"""() => {
   const LIG = '.google-symbols, .material-symbols-outlined, .material-icons, mat-icon';
@@ -169,11 +168,9 @@ async def _main(profile: str, project: str) -> int:
                     await page.wait_for_timeout(1800)
                     # Presence of the trigger is not entry to the panel: wait for a
                     # pane that actually contains radios before claiming to have read it.
-                    await (
-                        page.locator(".cdk-overlay-pane")
-                        .filter(has=page.locator("[role='radiogroup']"))
-                        .last.wait_for(state="visible", timeout=10_000)
-                    )
+                    await page.locator(".cdk-overlay-pane").filter(
+                        has=page.locator("[role='radiogroup']")
+                    ).last.wait_for(state="visible", timeout=10_000)
                     await _snapshot(page, "settings_open", findings)
                     reached["settings_overlay"] = True
                 except Exception as exc:  # noqa: BLE001 - recorded, never swallowed

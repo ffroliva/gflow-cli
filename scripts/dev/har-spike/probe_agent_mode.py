@@ -36,12 +36,13 @@ async def main():
         # Launch persistent context using system Google Chrome
         try:
             context = await p.chromium.launch_persistent_context(
-                user_data_dir=profile_dir, channel="chrome", headless=False, no_viewport=True
+                user_data_dir=profile_dir,
+                channel="chrome",
+                headless=False,
+                no_viewport=True
             )
         except Exception as e:
-            print(
-                f"Error: Could not launch Chrome. Is another Chrome instance using this profile? Details: {e}"
-            )
+            print(f"Error: Could not launch Chrome. Is another Chrome instance using this profile? Details: {e}")
             sys.exit(1)
 
         page = await context.new_page()
@@ -49,10 +50,10 @@ async def main():
         print(f"Opening Flow URL: {url}...")
         await page.goto(url)
 
-        print("\n" + "=" * 80)
+        print("\n" + "="*80)
         print("Please use the opened Chrome window to navigate to a Flow project.")
         print("Once you are on the project page, return here.")
-        print("=" * 80 + "\n")
+        print("="*80 + "\n")
 
         input("Press Enter once you have loaded a Flow project...")
 
@@ -98,9 +99,7 @@ async def main():
 
             # Print active instruction cards if present
             if add_card_present_after:
-                textareas = await page.locator(
-                    "textarea[placeholder='Create a guideline for your agent'], textarea.gCefUl"
-                ).all()
+                textareas = await page.locator("textarea[placeholder='Create a guideline for your agent'], textarea.gCefUl").all()
                 print(f"  Found {len(textareas)} instruction card textareas.")
                 for i, ta in enumerate(textareas):
                     val = await ta.input_value()
@@ -112,13 +111,10 @@ async def main():
                 await page.locator(close_btn_selector).first.click()
                 await asyncio.sleep(1)
         else:
-            print(
-                "Could not find article_spark button. Make sure Agent Mode is enabled on the project."
-            )
+            print("Could not find article_spark button. Make sure Agent Mode is enabled on the project.")
 
         print("\nClosing browser...")
         await context.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

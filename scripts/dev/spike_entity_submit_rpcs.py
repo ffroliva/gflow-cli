@@ -79,15 +79,8 @@ def _rpcid(url: str) -> str | None:
         return None
 
 
-async def _probe(
-    page: Any,
-    project_id: str,
-    entity_id: str,
-    name: str,
-    wait_s: float,
-    ref_image: Path | None = None,
-    model: VideoModel | None = None,
-) -> dict:
+async def _probe(page: Any, project_id: str, entity_id: str, name: str, wait_s: float,
+                 ref_image: Path | None = None, model: VideoModel | None = None) -> dict:
     seen: list[dict[str, Any]] = []
     phase = {"now": "idle"}
 
@@ -127,17 +120,15 @@ async def _probe(
             body = await response.text()
         except Exception:  # noqa: BLE001 - streamed/aborted body
             body = ""
-        seen.append(
-            {
-                "dir": "response",
-                "phase": phase["now"],
-                "rpcid": rid,
-                "watched": rid in SUBMIT_RPCS,
-                "status": getattr(response, "status", None),
-                "bytes": len(body),
-                "head": body[:400],
-            }
-        )
+        seen.append({
+            "dir": "response",
+            "phase": phase["now"],
+            "rpcid": rid,
+            "watched": rid in SUBMIT_RPCS,
+            "status": getattr(response, "status", None),
+            "bytes": len(body),
+            "head": body[:400],
+        })
 
     page.on("request", on_request)
     page.on("response", lambda r: asyncio.create_task(on_response(r)))
@@ -170,7 +161,8 @@ async def _probe(
     )
     await composer.apply_video_settings(page, request)
     _stage(
-        f"settings applied: mode={request.mode.value}, model={model or 'FLOW DEFAULT'}, 16:9, 8s"
+        f"settings applied: mode={request.mode.value}, "
+        f"model={model or 'FLOW DEFAULT'}, 16:9, 8s"
     )
 
     reference_ids: tuple[str, ...] = ()
@@ -217,16 +209,9 @@ async def _probe(
     }
 
 
-async def _main(
-    profile: str,
-    project_id: str,
-    entity_id: str,
-    name: str,
-    wait_s: float,
-    out_path: str,
-    ref_image: Path | None,
-    model: VideoModel | None,
-) -> int:
+async def _main(profile: str, project_id: str, entity_id: str, name: str,
+                wait_s: float, out_path: str, ref_image: Path | None,
+                model: VideoModel | None) -> int:
     async with build_client(resolve_profile_dir(profile)) as client:
         page = client._page  # noqa: SLF001 — dev instrument
         assert page is not None
@@ -246,18 +231,12 @@ def main() -> int:
     p.add_argument("--entity-id", required=True)
     p.add_argument("--entity-name", required=True)
     p.add_argument("--wait", type=float, default=90.0)
-    p.add_argument(
-        "--ref-image",
-        default=None,
-        help="local image to attach as an R2V media reference alongside the "
-        "character; makes this a genuine r2v run rather than t2v-in-Ingredients",
-    )
-    p.add_argument(
-        "--model",
-        default=None,
-        help="omni-flash | veo-lite | veo-fast | veo-quality; omit to leave "
-        "Flow's own picker untouched, which is what a human gets",
-    )
+    p.add_argument("--ref-image", default=None,
+                   help="local image to attach as an R2V media reference alongside the "
+                        "character; makes this a genuine r2v run rather than t2v-in-Ingredients")
+    p.add_argument("--model", default=None,
+                   help="omni-flash | veo-lite | veo-fast | veo-quality; omit to leave "
+                        "Flow's own picker untouched, which is what a human gets")
     p.add_argument("--out", default=None)
     a = p.parse_args()
     out = a.out or str(default_out_path("entity_submit_rpcs"))

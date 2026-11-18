@@ -67,31 +67,20 @@ async def _main(profile: str, project_id: str, media_id: str, out: Path, wait_s:
         while "url" not in found and asyncio.get_running_loop().time() < deadline:
             await page.wait_for_timeout(500)
         if "url" not in found:
-            print(
-                f"[spike] no signed url for {media_id} within {wait_s:.0f}s",
-                file=sys.stderr,
-                flush=True,
-            )
+            print(f"[spike] no signed url for {media_id} within {wait_s:.0f}s",
+                  file=sys.stderr, flush=True)
             return 2
-        print(
-            f"[spike] rpc={found['rpc']} workflow={found['wf']} size={found['size']}",
-            file=sys.stderr,
-            flush=True,
-        )
+        print(f"[spike] rpc={found['rpc']} workflow={found['wf']} size={found['size']}",
+              file=sys.stderr, flush=True)
 
         resp = await page.request.get(found["url"], timeout=180_000, max_redirects=0)
         body = await resp.body()
         expected = found["size"]
-        ok = (
-            resp.status == 200
-            and body[4:8] == b"ftyp"
-            and (expected is None or len(body) == expected)
-        )
+        ok = resp.status == 200 and body[4:8] == b"ftyp" and (expected is None or len(body) == expected)
         print(
             f"[spike] GET -> HTTP {resp.status} {len(body)} B ftyp={body[4:8] == b'ftyp'} "
             f"size_match={len(body) == expected}",
-            file=sys.stderr,
-            flush=True,
+            file=sys.stderr, flush=True,
         )
         if not ok:
             return 2

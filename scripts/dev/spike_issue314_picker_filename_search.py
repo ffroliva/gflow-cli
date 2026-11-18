@@ -137,9 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True)
     ap.add_argument("--project", required=True)
-    ap.add_argument(
-        "--term", default=None, help="explicit search token (else first tile's first word)"
-    )
+    ap.add_argument("--term", default=None, help="explicit search token (else first tile's first word)")
     args = ap.parse_args(argv)
     res = asyncio.run(_run(args.profile, args.project, args.term))
     print(json.dumps({k: v for k, v in res.items() if not k.startswith("tiles")}, indent=2))

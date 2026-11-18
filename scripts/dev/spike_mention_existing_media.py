@@ -132,12 +132,8 @@ async def main(profile: str, project: str, query: str, media: list[str]) -> int:
             }
             findings["picks"].append(rec)
             save()
-            step(
-                f"pick{pick}",
-                json.dumps(
-                    {"options": len(opts), "chips": chips, "matches": rec["chip_matches_known"]}
-                ),
-            )
+            step(f"pick{pick}", json.dumps({"options": len(opts), "chips": chips,
+                                            "matches": rec["chip_matches_known"]}))
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(800)
         await composer.clear_composer(page)  # leave the composer empty; nothing submitted

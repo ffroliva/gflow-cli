@@ -157,7 +157,6 @@ async def _run(profile: str, project: str) -> int:
         if not await _open_settings(page):
             step("menu", "ERROR could not open the settings popover at all")
             return 1
-
         async def _tabs() -> list[str]:
             return await page.evaluate(
                 """() => [...document.querySelectorAll("[role='tab']")]

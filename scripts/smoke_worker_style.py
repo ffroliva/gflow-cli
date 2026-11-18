@@ -55,7 +55,7 @@ FLOW_URL = "https://labs.google/fx/tools/flow?hl=en"
 PROMPT_INPUT_SELECTORS = [
     'div[role="textbox"][data-slate-editor="true"]',
     'div[contenteditable="true"]',
-    "textarea",
+    'textarea',
     '[aria-label*="prompt"]',
 ]
 
@@ -82,9 +82,9 @@ GEN_SETTINGS_BUTTON_SELECTORS = [
 ASPECT_RATIO_MAP: dict[str, str] = {
     "16:9": "16:9",
     "9:16": "9:16",
-    "1:1": "1:1",
-    "4:3": "4:3",
-    "3:4": "3:4",
+    "1:1":  "1:1",
+    "4:3":  "4:3",
+    "3:4":  "3:4",
 }
 
 # Map --count to the Flow tab button text.
@@ -180,13 +180,18 @@ async def _ensure_logged_in_to_flow(
             log.info("logged_in_detected", url=page.url)
             print(">> Detected sign-in — continuing.\n", flush=True)
             return
-        if "accounts.google.com" not in page.url and "labs.google" not in page.url:
+        if (
+            "accounts.google.com" not in page.url
+            and "labs.google" not in page.url
+        ):
             try:
                 await page.goto(FLOW_URL, wait_until="networkidle", timeout=15_000)
             except Exception:  # noqa: BLE001
                 pass
         log.info("polling_for_signin", url=page.url[:80])
-    raise TimeoutError(f"Sign-in not detected within {timeout_s:.0f}s. Last URL: {page.url}")
+    raise TimeoutError(
+        f"Sign-in not detected within {timeout_s:.0f}s. Last URL: {page.url}"
+    )
 
 
 async def _enter_editor(page: Page, out_dir: Path) -> None:
@@ -202,7 +207,9 @@ async def _enter_editor(page: Page, out_dir: Path) -> None:
             log.info("clicking_new_project", selector=selector)
             await loc.click()
             try:
-                await page.wait_for_url(lambda url: "/project/" in url, timeout=15_000)
+                await page.wait_for_url(
+                    lambda url: "/project/" in url, timeout=15_000
+                )
                 log.info("entered_editor", url=page.url)
                 return
             except Exception:
@@ -216,7 +223,8 @@ async def _enter_editor(page: Page, out_dir: Path) -> None:
     except Exception:  # noqa: BLE001
         pass
     raise RuntimeError(
-        f"Could not find 'New project' on Flow gallery. URL: {page.url}. Screenshot: {shot}"
+        f"Could not find 'New project' on Flow gallery. URL: {page.url}. "
+        f"Screenshot: {shot}"
     )
 
 
@@ -240,7 +248,8 @@ async def _send_prompt(page: Page, prompt_text: str, out_dir: Path) -> None:
         except Exception:  # noqa: BLE001
             pass
         raise RuntimeError(
-            f"Prompt input not found in Flow UI. URL: {page.url}. Screenshot: {shot}"
+            f"Prompt input not found in Flow UI. URL: {page.url}. "
+            f"Screenshot: {shot}"
         )
 
     await input_box.click()
@@ -413,13 +422,7 @@ async def _configure_generation_settings(
     await page.wait_for_timeout(400)
 
 
-async def _drive(
-    context: BrowserContext,
-    prompt_text: str,
-    out_dir: Path,
-    expected_count: int = 2,
-    aspect_ratio: str | None = None,
-) -> None:
+async def _drive(context: BrowserContext, prompt_text: str, out_dir: Path, expected_count: int = 2, aspect_ratio: str | None = None) -> None:
     page = context.pages[0] if context.pages else await context.new_page()
 
     await _ensure_logged_in_to_flow(page, out_dir)
@@ -484,18 +487,11 @@ async def _drive(
         print(f"   - {p}")
 
 
-async def run(
-    profile_dir: Path,
-    prompt_text: str,
-    out_dir: Path,
-    expected_count: int = 1,
-    aspect_ratio: str | None = None,
-) -> None:
+async def run(profile_dir: Path, prompt_text: str, out_dir: Path, expected_count: int = 1, aspect_ratio: str | None = None) -> None:
     """Drive the smoke using Playwright's persistent context (Worker pattern)."""
     log.info("launching_persistent_context", profile_dir=str(profile_dir))
     async with async_playwright() as pw:
         from gflow_cli.browser_manager import channel_for_profile
-
         channel = channel_for_profile(profile_dir)
 
         context = await pw.chromium.launch_persistent_context(
@@ -517,15 +513,10 @@ async def run(
         """)
 
         try:
-            await _drive(
-                context,
-                prompt_text,
-                out_dir,
-                expected_count=expected_count,
-                aspect_ratio=aspect_ratio,
-            )
+            await _drive(context, prompt_text, out_dir, expected_count=expected_count, aspect_ratio=aspect_ratio)
         finally:
             await context.close()
+
 
 
 def main() -> None:
@@ -534,7 +525,8 @@ def main() -> None:
         "--profile-dir",
         type=Path,
         default=Path.home() / "gflow-worker-style-smoke",
-        help="Playwright Chromium user-data-dir (default: $HOME/gflow-worker-style-smoke)",
+        help="Playwright Chromium user-data-dir "
+        "(default: $HOME/gflow-worker-style-smoke)",
     )
     parser.add_argument(
         "--prompt",
@@ -548,15 +540,13 @@ def main() -> None:
         help="Output dir (default: tmp/smoke/<utc>)",
     )
     parser.add_argument(
-        "--count",
-        "-n",
+        "--count", "-n",
         type=int,
         default=1,
         help="Number of images to generate and wait for (default: 1)",
     )
     parser.add_argument(
-        "--aspect-ratio",
-        "-a",
+        "--aspect-ratio", "-a",
         dest="aspect_ratio",
         choices=list(ASPECT_RATIO_MAP),
         default=None,
@@ -564,17 +554,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    out_dir = args.out or (Path("tmp") / "smoke" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
-    args.profile_dir.mkdir(parents=True, exist_ok=True)
-    asyncio.run(
-        run(
-            args.profile_dir,
-            args.prompt,
-            out_dir,
-            expected_count=args.count,
-            aspect_ratio=args.aspect_ratio,
-        )
+    out_dir = args.out or (
+        Path("tmp") / "smoke" / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     )
+    args.profile_dir.mkdir(parents=True, exist_ok=True)
+    asyncio.run(run(args.profile_dir, args.prompt, out_dir, expected_count=args.count, aspect_ratio=args.aspect_ratio))
 
 
 if __name__ == "__main__":

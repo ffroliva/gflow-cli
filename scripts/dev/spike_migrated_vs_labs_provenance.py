@@ -117,9 +117,7 @@ async def _main(profile: str, project: str) -> int:
                 ),
             )
             frame_navs: list[str] = []
-            page.on(
-                "framenavigated", lambda f: frame_navs.append(f.url) if not f.parent_frame else None
-            )
+            page.on("framenavigated", lambda f: frame_navs.append(f.url) if not f.parent_frame else None)
 
             # --- P1: how does the labs URL become the flow URL? --------------
             labs_url = character_editor_url("en", project, entity_id)
