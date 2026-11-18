@@ -78,6 +78,15 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
+
+def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
+    """A submit the route guard aborted in the browser: Flow received and billed nothing."""
+    refused = WireFormatError(
+        detail=problem, route=f"batchexecute:{rpcid}", remediation_hint=ABORTED_BEFORE_SEND
+    )
+    refused.charged, refused.next_action, refused.retryable = "no", "retry", True  # #1320
+    return refused
+
 class SubmitObserveMixin(MentionMixin):
     """Prompt sending, generation submission, response polling and observation."""
 
@@ -399,13 +408,7 @@ class SubmitObserveMixin(MentionMixin):
             await route.abort()
             log.warning("migrated.submit_refused_before_send", rpc=rpcid)
             if not route_error.done():
-                route_error.set_result(
-                    WireFormatError(
-                        detail=problem,
-                        route=f"batchexecute:{rpcid}",
-                        remediation_hint=ABORTED_BEFORE_SEND,
-                    )
-                )
+                route_error.set_result(_aborted_before_send(problem, str(rpcid)))
 
         # Both are ALWAYS armed, t2v included: a stale End chip makes the app submit
         # `nprQif` on a run that asked for no end frame. The route guard is where refusing
@@ -816,9 +819,7 @@ class SubmitObserveMixin(MentionMixin):
                 body_characters=None if found is None else len(found[1]),
             )
             if problem is not None and not route_error.done():
-                route_error.set_result(
-                    WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
-                )
+                route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
 
         page.on("request", on_request)
         page.on("response", on_response)

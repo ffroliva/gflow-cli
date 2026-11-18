@@ -4412,6 +4412,8 @@ async def test_a_wrong_start_end_submit_is_aborted_before_it_is_sent() -> None:
         )
     assert page.route_outcomes == ["abort"]
     assert ei.value.remediation_hint == ABORTED_BEFORE_SEND
+    # #1320: aborted in the browser, so nothing was sent or billed, and a re-run is safe.
+    assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
     assert page.routes[0][0] == BATCHEXECUTE_GLOB  # a glob, not a per-request predicate
     assert page.unrouted == page.routes
 

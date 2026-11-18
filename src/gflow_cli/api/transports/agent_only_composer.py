@@ -687,6 +687,7 @@ class AgentOnlyComposer:
                     "a new one could not be told apart from it; nothing was submitted"
                 ),
                 remediation_hint="Wait for the pending clip in the Flow project, then re-run.",
+                charged="no",  # #1320: raised before the submit
             )
         head = _tile_key(state0["finished"][0]) if state0["finished"] else None
         return set(_video_uuids(state0)), head

@@ -525,9 +525,10 @@ async def test_two_clips_queued_for_one_is_a_typed_failure(page: Page) -> None:
 async def test_a_clip_already_pending_refuses_before_submitting(page: Page) -> None:
     """Review: after a timed-out run the old clip could finish during ours and be returned."""
     await _load(page, kind="video", prePending=True)
-    with pytest.raises(FlowAgentUiError, match="still generating"):
+    with pytest.raises(FlowAgentUiError, match="still generating") as info:
         await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=10)
     assert (await _log(page))["submitted"] is None
+    assert info.value.charged == "no"  # #1320
 
 
 @pytest.mark.asyncio

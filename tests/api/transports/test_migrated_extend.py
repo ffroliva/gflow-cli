@@ -546,3 +546,21 @@ async def test_a_missing_anchor_is_selector_drift_exit_23(monkeypatch: pytest.Mo
     with pytest.raises(UiSelectorDriftError, match="add-clip") as info:
         await mx._anchor(page, mx.ADD_CLIP_BUTTON, named="timeline add-clip button")  # type: ignore[arg-type]
     assert exit_code_for(info.value) == 23
+
+
+@pytest.mark.asyncio
+async def test_a_missing_extend_anchor_before_the_submit_reports_nothing_charged(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1320: the add-clip/Extend/prompt anchors come before any request Flow could bill."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    async def missing(_page: Any, _selector: str, *, named: str) -> Any:
+        raise UiSelectorDriftError(detail=f"{named} missing")
+
+    monkeypatch.setattr(mx, "_anchor", missing)
+    page = _Page([[[_image_record()]]], then=_zzl0ze())
+    with pytest.raises(UiSelectorDriftError) as info:
+        await _run(page)
+    assert info.value.charged == "no"
+    assert driver["observe"] is None

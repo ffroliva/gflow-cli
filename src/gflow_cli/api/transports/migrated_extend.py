@@ -49,6 +49,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -536,10 +537,11 @@ async def run_extend(  # noqa: PLR0913
     log.info("migrated_extend.source", media_id=media_id, workflow_id=workflow_id)
 
     composer = MigratedComposer()
-    await (await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")).click()
-    await (await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")).click()
-    await (await _anchor(page, EXTEND_PROMPT, named="extend prompt box")).click()
-    await page.keyboard.insert_text(prompt)
+    with nothing_submitted():  # #1320: the submit inside submit_and_observe is the first send
+        await (await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")).click()
+        await (await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")).click()
+        await (await _anchor(page, EXTEND_PROMPT, named="extend prompt box")).click()
+        await page.keyboard.insert_text(prompt)
 
     facts: dict[str, str | None] = {}
 
