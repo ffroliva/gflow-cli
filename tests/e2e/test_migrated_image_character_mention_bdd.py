@@ -81,7 +81,8 @@ def _run_cli(
             "--out",
             str(out),
         ],
-        env=e2e_env,
+        # The steps read INFO events from stderr; the CLI defaults to WARNING (#1041, #1332).
+        env={**e2e_env, "GFLOW_CLI_LOG_LEVEL": "INFO", "GFLOW_CLI_LOG_FORMAT": "json"},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -137,6 +138,8 @@ def _log_events(stderr: str) -> list[dict[str, Any]]:
                 events.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
+    # No events at all is a logging setup problem, not a missing character (#1332).
+    assert events, "the CLI wrote no JSON log events; check GFLOW_CLI_LOG_LEVEL/_FORMAT"
     return events
 
 
