@@ -37,8 +37,8 @@ def _events(capture: structlog.testing.LogCapture) -> list[str]:
     return [str(e["event"]) for e in capture.entries]
 
 
-#: Clips tried before a capability refusal becomes a skip (#967).
-_CLIP_TRIES = 3
+#: Clips tried before a capability refusal becomes a skip (#967); a refusal clicks nothing.
+_CLIP_TRIES = 5
 
 
 async def _export_first_offered(
@@ -67,9 +67,24 @@ async def _export_first_offered(
             refused.append(f"{row.media_id}: {exc.detail}")
             continue
         return row, result
-    # Exit 22 is raised only once the download menu item has been read, so the driver
-    # did reach the menu; only Flow's offer for this scale was missing.
+    # Exit 22 is raised only once the menu opened and its other items carried scale
+    # tokens (#1338), so the driver did reach the menu; only Flow's offer was missing.
     pytest.skip(f"Flow offers no {scale} for the newest {len(refused)} clip(s): {refused}")
+
+
+def _newest_per_model(rows: list[Any]) -> list[Any]:
+    """The newest clip of each known model: the 2026-11-18 offers differed by model (#1338).
+
+    Rows with no recorded model are left out: the one measured had a disabled download
+    button, which is a different question from which scales Flow lists.
+    """
+    seen: set[str] = set()
+    picked = []
+    for row in rows:
+        if row.model and row.model not in seen:
+            seen.add(row.model)
+            picked.append(row)
+    return picked
 
 
 @pytest.fixture
@@ -194,7 +209,7 @@ async def test_migrated_video_upscale_1080p_e2e(
         pytest.skip("GFLOW_CLI_E2E_PROFILE required")
 
     db_path = get_settings().resolved_db_path()
-    rows = list_videos(db_path=db_path, profile=profile, limit=20, offset=0)
+    rows = list_videos(db_path=db_path, profile=profile, limit=100, offset=0)
     usable = [r for r in rows if r.project_id]
     if not usable:
         pytest.skip(f"no catalogued videos for profile {profile!r} to upscale")
@@ -202,7 +217,8 @@ async def test_migrated_video_upscale_1080p_e2e(
     async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
         _row, result = await _export_first_offered(
             client,
-            usable,
+            # Veo 3.1 Lite and Omni 1.2 Flash clips list no 1080p (#1338): try other models.
+            _newest_per_model(usable),
             scale="1080p",
             out_for=lambda r: tmp_path / f"{r.media_id}_1080p.mp4",
         )
@@ -257,3 +273,37 @@ async def test_migrated_video_export_270p_gif_e2e(
     assert len(data) > 100_000, f"implausibly small for an animated GIF: {len(data)} bytes"
     seen = _events(install_log_capture)
     assert "migrated_video_upscale.completed" in seen, f"events: {seen}"
+
+
+@pytest.mark.e2e_auth  # zero credits: nothing is clicked
+@pytest.mark.asyncio
+async def test_migrated_video_upscale_unlisted_scale_is_unavailable_e2e(
+    e2e_profile_dir: Path,
+    real_catalog: None,
+    tmp_path: Path,
+) -> None:
+    """Live proof (#1338): 1080p on a Veo 3.1 Lite clip is exit 22, not selector drift.
+
+    Measured 2026-11-18, that clip's download menu lists 270p and 720p only, so nothing is
+    clicked and this spends nothing. Should Flow start listing 1080p for it, the export
+    runs (measured free, 2026-10-07) and the test fails, which is the signal wanted.
+    """
+    profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not profile:
+        pytest.skip("GFLOW_CLI_E2E_PROFILE required")
+    rows = list_videos(
+        db_path=get_settings().resolved_db_path(), profile=profile, limit=100, offset=0
+    )
+    lite = [r for r in rows if r.project_id and r.model == "veo_3_1_lite"]
+    if not lite:
+        pytest.skip(f"no catalogued Veo 3.1 Lite clip for profile {profile!r}")
+
+    async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
+        with pytest.raises(UpscaleUnavailableError, match="Flow does not offer 1080p") as exc:
+            await client.upsample_video(
+                media_id=lite[0].media_id,
+                project_id=lite[0].project_id,
+                scale="1080p",
+                out_path=tmp_path / "unlisted_1080p.mp4",
+            )
+    assert "720p" in exc.value.detail, exc.value.detail

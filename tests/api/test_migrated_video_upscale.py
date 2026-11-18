@@ -159,8 +159,46 @@ async def test_migrated_video_upscale_disabled_raises_unavailable() -> None:
         await _run(page)
 
 
-async def test_migrated_video_upscale_missing_menu_item_raises_drift() -> None:
-    page = fake_page([FakeItem("270p"), FakeItem("720p"), FakeItem("11080p")])
+@pytest.mark.parametrize(
+    ("labels", "offered"),
+    [
+        # Measured 2026-11-18 (#1338): a Veo 3.1 Lite clip and an Omni 1.2 Flash clip.
+        (["270p Animated GIF", "720p Original size"], "270p, 720p"),
+        (["270p Animated GIF", "360p Original size", "720p Upscaled"], "270p, 360p, 720p"),
+        (["270p", "720p", "11080p"], "270p, 720p, 11080p"),
+    ],
+)
+async def test_migrated_video_upscale_scale_flow_does_not_list_is_unavailable(
+    labels: list[str], offered: str
+) -> None:
+    page = fake_page([FakeItem(label) for label in labels])
+
+    with pytest.raises(UpscaleUnavailableError, match="Flow does not offer 1080p") as exc_info:
+        await _run(page)
+    assert f"lists {offered}" in exc_info.value.detail
+    assert exc_info.value.route == "video_upscale"
+    assert "gflow can export: 270p, 720p." in exc_info.value.remediation_hint
+
+
+async def test_migrated_video_upscale_unlisted_scale_with_nothing_exportable() -> None:
+    page = fake_page([FakeItem("360p Original size")])
+
+    with pytest.raises(UpscaleUnavailableError, match="lists 360p") as exc_info:
+        await _run(page)
+    assert "none of the listed ones" in exc_info.value.remediation_hint
+
+
+async def test_migrated_video_upscale_token_in_text_but_unmatched_raises_drift() -> None:
+    # The token filter missed an item whose text carries it: the anchor failed, not Flow.
+    items = [FakeItem("270p"), FakeItem("720p"), FakeItem("1080pUpscaled", inner_text="1080p")]
+    page = fake_page(items)
+
+    with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found"):
+        await _run(page)
+
+
+async def test_migrated_video_upscale_menu_without_any_scale_token_raises_drift() -> None:
+    page = fake_page([FakeItem("Animated GIF"), FakeItem("Original size")])
 
     with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found") as exc_info:
         await _run(page)

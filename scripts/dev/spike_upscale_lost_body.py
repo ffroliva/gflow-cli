@@ -144,7 +144,7 @@ async def _one_run(page: Any, project_id: str, media_id: str, idx: int) -> dict[
         prefix="spike",
         route="image_upscale",
     )
-    item = await find_download_menu_item(page, "2K", route="image_upscale")
+    item = await find_download_menu_item(page, "2K", route="image_upscale", accepted=("2K",))
     page.on("response", on_response)
     t0 = time.monotonic()
     try:

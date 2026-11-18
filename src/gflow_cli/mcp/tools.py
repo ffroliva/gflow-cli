@@ -1839,6 +1839,8 @@ async def gflow_download_media(
         "out_dir is the output directory (defaults to configured images directory; "
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
+        "A scale the image's download menu does not list returns UpscaleUnavailableError "
+        "(exit 22) naming the listed scales. "
         "Spends no credits: image upscale is free."
     ),
 )
@@ -1893,12 +1895,16 @@ async def gflow_upscale_image(
     description=(
         "Upscale or export a platform-generated Flow video to 1080p Full HD (or 270p GIF). "
         "media_id is the UUID of the video to upscale. "
-        "scale is '1080p' (Full HD), '720p' (original), or '270p' (animated GIF). "
+        "scale is '1080p' (Full HD), '720p' (original, or Flow's upscale of a smaller original), "
+        "or '270p' (animated GIF). "
         "project is optional (resolved from the local catalog when omitted). "
         "out_dir is the output directory (defaults to configured videos directory; "
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
         "flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). "
+        "Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p); "
+        "a scale the clip's menu does not list returns UpscaleUnavailableError (exit 22) "
+        "naming the scales it does list. "
         "Measured free (1 observation, 2026-10-07): the 1080p export spent no credits."
     ),
 )
@@ -1917,7 +1923,7 @@ async def gflow_upscale_video(
 
     Args:
         media_id: The Flow media ID (UUID) of the generated video.
-        scale: Target quality: '1080p' (enhanced), '720p' (original), or '270p' (GIF).
+        scale: Target quality: '1080p' (enhanced), '720p' (original or upscaled), or '270p' (GIF).
         project: Project UUID that owns the media. Resolved from local catalog when omitted.
         out_dir: Output directory, inside the configured output dir (the default).
         profile: Profile name (overrides default).
