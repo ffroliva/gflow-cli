@@ -146,15 +146,33 @@ def _at(node: Any, *path: int) -> Any:
     return current
 
 
+def _current_workflow(node: Any, media_id: str) -> str | None:
+    """The workflow the media's own listing entry names as current (slot 3, item 4)."""
+    if not isinstance(node, list):
+        return None
+    items = cast("list[Any]", node)
+    current = _at(items, 3, 4)
+    if items and items[0] == media_id and isinstance(current, str):
+        return current
+    return next((w for child in items if (w := _current_workflow(child, media_id))), None)
+
+
 def source_record(payload: Any, media_id: str) -> SourceClip | None:
     """The ``Zzl0ze`` record for ``media_id``: its workflow id (slot 0) and kind.
 
     Kind (spike round 2, B3): a video carries a media-info list at ``rec[7][0]``; an
     image carries an ``image/*`` mime at ``rec[7][1][6]``.
+
+    An extended clip has one record per extend under the same media id, in no set order;
+    its media entry names the newest, which the page's next extend continues (#1346).
     """
     rec = find_record(payload, (2, media_id))
     if rec is None:
         return None
+    current = _current_workflow(payload, media_id)
+    head = find_record(payload, (0, current)) if current else None
+    if head is not None and head[2] == media_id:
+        rec = head
     mime = _at(rec, 7, 1, 6)
     if isinstance(mime, str) and mime.startswith("image/"):
         kind = "image"

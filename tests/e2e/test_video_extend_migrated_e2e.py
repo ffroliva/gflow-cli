@@ -5,7 +5,8 @@ against a live page and keep every ``fZytfe`` from reaching Flow:
 
 * the submit contract — any ``rqZuUc`` carries the media id (since 2026-11-08 the page
   on our account sends none before ``fZytfe``, #1180) and ``fZytfe`` slot 1 the
-  workflow id the passive ``Zzl0ze`` read maps it to (the release hook is replaced so the
+  workflow id the passive ``Zzl0ze`` read maps it to, for an extended clip the newest one
+  (#1346) (the release hook is replaced so the
   checked ``fZytfe`` is aborted instead of let through);
 * the refusal matrix on a live page — a media id that is not in the project exits 11
   before any click, and an ``--aspect`` the source does not have is aborted at the
@@ -22,7 +23,8 @@ fall-through in the driver cannot bill.
 a run that sends one leaves an empty "Untitled Scene" in the project. gflow has no scene
 delete; remove them from Flow's Scenes tab if wanted.
 
-The ``e2e_video`` test runs ONE real extend and spends Veo credits — opt in with
+The ``e2e_video`` tests run one real extend, then two in a row on the same clip (#1346:
+the second continues the workflow the first created), and spend Veo credits — opt in with
 ``GFLOW_CLI_E2E_RUN_VIDEO=1`` and only with the account owner's consent.
 
 Env: ``GFLOW_CLI_E2E_PROFILE`` (profile served flow.google.com), ``GFLOW_CLI_E2E_PROJECT``,
@@ -310,3 +312,37 @@ async def test_e2e_one_paid_extend_downloads_an_mp4(
         )
     else:
         assert 6.5 <= seconds <= 8.5  # a separate Veo segment: Flow bills 8 s, ~7 s content
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
+async def test_e2e_a_clip_extended_once_extends_again(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPENDS VEO CREDITS (two extends). #1346: the second extend of the same clip is billed
+    and downloaded, not aborted by the route guard as a request for another workflow."""
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
+        pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    _need_enabled_extend()
+    from gflow_cli.api.client import FlowApiClient
+
+    project, media = _ids()
+    monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    reset_settings()
+    seconds: list[float] = []
+    workflows: list[str] = []
+    for run in (1, 2):
+        async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
+            outcome, target = await client.extend_video_migrated(
+                media_id=media,
+                project_id=project,
+                prompt=_PROMPT,
+                aspect=None,
+                out_path=tmp_path / f"extend-{run}.mp4",
+                on_started=lambda s, _a: workflows.append(s.workflow_id),
+            )
+        assert outcome.record.is_done and target is not None, run
+        seconds.append(_mp4_seconds(Path(str(target)).read_bytes()))
+    assert len(workflows) == 2 and workflows[0] != workflows[1], workflows
+    if outcome.record.media_id == media:  # #1184: in place, so the second file is longer
+        assert seconds[1] > seconds[0], seconds
