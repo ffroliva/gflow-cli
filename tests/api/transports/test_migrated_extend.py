@@ -384,10 +384,11 @@ async def test_a_silent_listing_is_a_timeout_before_any_click(
 ) -> None:
     monkeypatch.setattr(mx, "LISTING_BUDGET_S", 0.01)
     page = _Page(_zzl0ze(), answer=False)
-    with pytest.raises(TransportTimeoutError, match="Zzl0ze"):
+    with pytest.raises(TransportTimeoutError, match="Zzl0ze") as info:
         await _run(page)
     assert driver["clicks"] == []
     assert page.listeners["response"] == []
+    assert info.value.charged == "no"  # #1320: the source read precedes any submit
 
 
 @pytest.mark.asyncio

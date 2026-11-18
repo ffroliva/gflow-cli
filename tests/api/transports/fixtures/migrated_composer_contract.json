@@ -47,7 +47,7 @@
     "reference_existing": "function (self, page: 'Page', project_id: 'str', request: 'GenerateImageRequest', *, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'tuple[str, ...]' sha=8fb9a1d97c81eba0",
     "send_prompt": "function (self, page: 'Page', prompt: 'str', *, append: 'bool' = False) -> 'None' sha=da72d766802c433e",
     "submit_and_observe": "function (self, page: 'Page', *, poll_timeout_s: 'float', on_started: 'VideoStartedCallback | None', project_id: 'str | None', expect_media_id: 'str | None' = None, expect_end_media_id: 'str | None' = None, expect_reference_ids: 'tuple[str, ...]' = (), submit_rpcs: 'tuple[str, ...]' = ('YhhmEf', 'eb1hJf', 'MZZa6b', 'nprQif'), submit_selector: 'str | None' = None, request_check: 'Callable[[str, str], GFlowError | None] | None' = None, adopt_ids: 'tuple[str, ...]' = (), adopt_prompt: 'str | None' = None) -> 'GenerationRecord' sha=4d10c405740d90e5",
-    "submit_images_and_observe": "function (self, page: 'Page', request: 'GenerateImageRequest', *, reference_ids: 'tuple[str, ...]' = (), entity_ids: 'tuple[str, ...]' = ()) -> 'list[GeneratedImage]' sha=f07f6f06759c027e",
+    "submit_images_and_observe": "function (self, page: 'Page', request: 'GenerateImageRequest', *, reference_ids: 'tuple[str, ...]' = (), entity_ids: 'tuple[str, ...]' = ()) -> 'list[GeneratedImage]' sha=0160103bffa4f4b5",
     "upload": "function (self, page: 'Page', project_id: 'str', image_path: 'Path') -> 'tuple[str, str]' sha=f33460601b0af4b8"
   },
   "module_names": {

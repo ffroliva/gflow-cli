@@ -128,8 +128,9 @@ place today:
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 - On flow.google.com, a gflow error raised before the generation's submit click reads
   `charged: no` (#1320): the settings pane, frame, reference and character attach, the
-  prompt, and a submit button that is missing or stays disabled, on the classic and the
-  agent-only composer and in `video extend`; `next_action` keeps the class default. A raw
+  prompt, and a submit button that is missing or stays disabled on the classic composer
+  (missing only, on the agent-only composer), and the source read and anchors of
+  `video extend`; `next_action` keeps the class default. A raw
   browser-driver timeout is not a gflow error and still reads `maybe`. A submit the route
   guard aborts in the browser reads `no` / `retry`. A failure at or after the click keeps
   the class default. The labs (`labs.google`) arm is unchanged.

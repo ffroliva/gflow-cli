@@ -3543,6 +3543,24 @@ async def test_a_non_200_image_submit_is_a_wire_format_error_carrying_the_status
             page, GenerateImageRequest(prompt="a blue cup")
         )
     assert "HTTP 500" in str(info.value)
+    assert info.value.charged == "maybe"  # #1320: answered after the click
+
+
+async def test_a_guarded_image_submit_the_route_aborts_reports_nothing_charged() -> None:
+    """#1320: the request event fires before the route guard; the guard's abort, not the
+    listener, decides, so an unsent image submit reads `no` / `retry`."""
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = RoutingPage()
+    page.dom.prompt = "a blue cup"
+    page.scripted_request = ("ogiZ0b", "")  # a body the guard cannot read
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert page.route_outcomes == ["abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
 
 
 async def test_an_image_reply_that_never_arrives_is_a_timeout_not_a_hang(
@@ -4476,6 +4494,7 @@ async def test_a_problem_the_route_never_saw_is_still_raised_after_send() -> Non
             expect_end_media_id=END_UP,
         )
     assert "billed nothing" not in (ei.value.remediation_hint or "")
+    assert ei.value.charged == "maybe"  # #1320: it left the browser, so Flow may have billed
 
 
 async def test_a_check_that_raises_on_a_submit_aborts_it_unsent(

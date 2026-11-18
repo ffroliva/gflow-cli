@@ -729,7 +729,11 @@ class SubmitObserveMixin(MentionMixin):
 
         def on_request(raw_request: Any) -> None:
             url = str(getattr(raw_request, "url", ""))
-            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+            # A guarded run (references or characters) is judged by the route guard, which
+            # aborts a bad body before it leaves (#1320); this event fires first and must
+            # not record that abort as a sent request.
+            guarded = bool(reference_ids or entity_ids)
+            if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done() or guarded:
                 return
             problem = _image_body_problem(
                 request_body(raw_request), reference_ids, request.model, entity_ids
