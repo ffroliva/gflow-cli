@@ -143,7 +143,7 @@ gflow instructions toggle-mode (--on | --off) --project ID # toggle master agent
 gflow --help --json                                       # also: gflow <group> [<cmd>] --help --json
 
 # Keeping gflow-cli current (other commands show a banner when a newer release exists)
-gflow update [--check] [-v|--verbose] [--json]                         # upgrades via uv tool / pipx / pip; source installs refused (exit 11); on Windows pip, exit 11 also when another gflow process holds a launcher (nothing changed: close it, retry); a Windows pip install at <=0.99.0 upgrades once by hand: close every gflow process, then `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (docs/USAGE.md#gflow-update); -v streams the installer output
+gflow update [--check] [-v|--verbose] [--json]                         # upgrades via uv tool / pipx / pip; source installs refused (exit 11); on Windows pip, exit 11 also when another gflow process holds a launcher (nothing changed: close it, retry); a Windows pip install at <=0.99.0 upgrades once by hand: close every gflow process, then `<venv>\Scripts\python.exe -m pip install --upgrade gflow-cli` (with any installed extras, e.g. `"gflow-cli[patchright]"`; docs/USAGE.md#gflow-update); -v streams the installer output
 gflow docs [TOPIC] [--search TERM] [--json]
 
 # Usage statistics and weekly telemetry (local counters; upload after interactive notice)

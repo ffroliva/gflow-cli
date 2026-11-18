@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A weekly `driver-watch` job announces browser-driver releases.** Dependabot ignores patchright updates and playwright minor and major updates by design, because a driver bump needs the engine-contract job and a live run (#1319, #1324), so seven patchright releases went unnoticed. The job compares both pins with PyPI and opens or updates one `driver-watch` issue per package whose latest release falls outside its pin, and closes it once the pin admits that release; a release whose issue is closed as not planned is not announced again. It never opens a pull request or changes a pin. `workflow_dispatch` with `dry_run` prints the plan only.
+
 ### Fixed
 
 - **`gflow video upscale` reports a scale Flow does not offer as exit 22, not selector drift ([#1338](https://github.com/ffroliva/gflow-cli/issues/1338)).** Flow decides which scales a clip's download menu lists. Measured 2026-11-18 on flow.google.com: a Veo 3.1 Fast clip still lists 1080p, but Veo 3.1 Lite and Veo 3.1 Quality clips list only 270p and 720p, and an Omni 1.2 Flash clip lists 270p, 360p and 720p, so `--scale 1080p` found no item and exited 23 ("menu item for 1080p was not found"), which reads as a broken selector. When the menu's other items carry scale tokens but not the requested one, the image and video upscale paths now raise `UpscaleUnavailableError` (exit 22, do not retry) naming the scales Flow does list. The hint names which of the listed scales gflow can export. A menu with no readable scale at all, or one whose text carries the requested token, is still exit 23. `gflow_upscale_video` and `gflow_upscale_image` over MCP return the same error.
+- **`gflow update` keeps installed extras on a pip install ([#1322](https://github.com/ffroliva/gflow-cli/issues/1322)).** It ran `pip install --upgrade gflow-cli`, which upgrades gflow-cli alone, so an extra's own pin never moved: a user who installed `gflow-cli[patchright]` and updated to v0.101.1 kept the broken patchright 1.61.2 (#1319). The pip command now requests every extra whose requirements are all installed (for example `gflow-cli[patchright]`; the contributor `dev` extra is never requested), and the repair commands gflow prints for uv, pipx and pip carry the same extras. `uv tool upgrade` and `pipx upgrade` were measured to keep the extras recorded at install time and are unchanged. The update runs the installed version's code, so a pip install of 0.101.2 or earlier needs one manual `pip install -U 'gflow-cli[patchright]'` to leave it.
 
 ## [0.101.2] — 2026-11-17
 
