@@ -180,6 +180,14 @@ async def test_migrated_video_upscale_scale_flow_does_not_list_is_unavailable(
     assert "gflow can export: 270p, 720p." in exc_info.value.remediation_hint
 
 
+async def test_migrated_video_upscale_unlisted_scale_with_nothing_exportable() -> None:
+    page = fake_page([FakeItem("360p Original size")])
+
+    with pytest.raises(UpscaleUnavailableError, match="lists 360p") as exc_info:
+        await _run(page)
+    assert "none of the listed ones" in exc_info.value.remediation_hint
+
+
 async def test_migrated_video_upscale_token_in_text_but_unmatched_raises_drift() -> None:
     # The token filter missed an item whose text carries it: the anchor failed, not Flow.
     items = [FakeItem("270p"), FakeItem("720p"), FakeItem("1080pUpscaled", inner_text="1080p")]

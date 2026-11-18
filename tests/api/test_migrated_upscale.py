@@ -108,6 +108,7 @@ async def test_migrated_upscale_scale_flow_does_not_list_is_unavailable() -> Non
     with pytest.raises(UpscaleUnavailableError, match="Flow does not offer 4K") as exc_info:
         await _run(page, TargetResolution.RES_4K)
     assert "lists 1K, 2K, 14K" in exc_info.value.detail
+    assert "gflow can export: 2K." in exc_info.value.remediation_hint
 
 
 async def test_migrated_upscale_menu_without_any_scale_token_raises_drift() -> None:
