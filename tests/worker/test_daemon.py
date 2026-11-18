@@ -1302,6 +1302,32 @@ async def test_an_unexpected_error_before_the_submit_stays_failed(temp_db: DataS
 
 
 @pytest.mark.asyncio
+async def test_a_gflow_error_after_the_checkpoint_keeps_its_own_record(temp_db: DataStore) -> None:
+    """Review: the checkpoint is written before the transport call, so a typed pre-click
+    error (selector drift, a WAF block) must keep its own failed / retry record."""
+    from gflow_cli.errors import UiSelectorDriftError
+
+    row = await _run_t2i_failing(
+        temp_db, "typed1347", UiSelectorDriftError(detail="no editor"), after_submit=True
+    )
+    assert row.status == "failed"
+    assert row.error["next_action"] != "reconcile"
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_checkpoint_fails_safe_to_indeterminate(
+    temp_db: DataStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("db gone")
+
+    monkeypatch.setattr(QueueRepository, "read_checkpoint", broken)
+    row = await _run_t2i_failing(temp_db, "nockpt", RuntimeError("boom"), after_submit=False)
+    assert row.status == "indeterminate"
+    assert row.error["next_action"] == "reconcile"
+
+
+@pytest.mark.asyncio
 async def test_an_error_proven_unsent_after_the_click_stays_failed(temp_db: DataStore) -> None:
     """A guard abort reads charged no: proven unbilled, so the checkpoint does not override it."""
     from gflow_cli.errors import WireFormatError

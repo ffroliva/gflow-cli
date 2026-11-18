@@ -596,11 +596,14 @@ class FlowWorker:
             )
 
     def _failure_status(self, task_id: str, exc: Exception, error: dict[str, Any]) -> str:
-        """``failed`` or ``indeterminate`` for a job that raised (#1347): an error that
-        proves nothing was sent stays ``failed``; otherwise the checkpoint decides, as for
-        a cancelled job. An unreadable checkpoint is treated as past the submit. Past the
-        submit Flow may have billed it, so ``error`` then says reconcile, never retry."""
-        if isinstance(exc, GFlowError) and exc.charged == "no":
+        """``failed`` or ``indeterminate`` for a job that raised (#1347).
+
+        A gflow error already states, from its raise site, whether anything was sent
+        (#1320), so its job stays ``failed`` with that record. An unexpected exception
+        says nothing, so the checkpoint decides, as for a cancelled job: past the submit
+        Flow may have billed it, and ``error`` then says reconcile, never retry. An
+        unreadable checkpoint is treated as past the submit."""
+        if isinstance(exc, GFlowError):
             return "failed"
         try:
             status = classify_interrupted(self.repo.read_checkpoint(task_id))
