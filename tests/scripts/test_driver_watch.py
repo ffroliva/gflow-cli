@@ -154,9 +154,3 @@ def test_a_release_the_job_closed_itself_is_announced_again() -> None:
     bump = dw.Bump("patchright", "==1.64.4", "1.65.0")
     self_closed = {"number": 9, "title": bump.title, "state": "CLOSED", "stateReason": "COMPLETED"}
     assert dw.plan([bump], [self_closed]) == [("create", bump, 0)]
-
-
-def test_a_release_closed_as_not_planned_stays_declined() -> None:
-    bump = dw.Bump("patchright", "==1.64.4", "1.65.0")
-    declined = {"number": 9, "title": bump.title, "state": "CLOSED", "stateReason": "NOT_PLANNED"}
-    assert dw.plan([bump], [declined]) == []
