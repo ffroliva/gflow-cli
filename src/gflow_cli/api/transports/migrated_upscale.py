@@ -62,8 +62,10 @@ def menu_token_pattern(token: str) -> re.Pattern[str]:
     return re.compile(rf"(?<![0-9A-Za-z]){re.escape(token)}(?![0-9A-Za-z])", re.IGNORECASE)
 
 
-#: Any whole scale token (``270p``, ``2K``): what tells "Flow lists other scales" from drift.
-_SCALE = re.compile(r"(?<![\da-z])\d++[pk](?![\da-z])", re.IGNORECASE | re.ASCII)
+#: A whole scale token (``270p``, ``2K``): what tells "Flow lists other scales" from drift.
+#: Matched against the words of a label, so no lookaround is needed for token boundaries.
+_SCALE = re.compile(r"\d+[pk]", re.IGNORECASE | re.ASCII)
+_WORD_SPLIT = re.compile(r"[^da-z]+", re.IGNORECASE | re.ASCII)
 
 
 async def find_download_menu_item(
@@ -102,7 +104,8 @@ async def find_download_menu_item(
         return match.first
     except PlaywrightTimeoutError:
         pass
-    offered = [m.group(0) for t in await items.all_inner_texts() if (m := _SCALE.search(t))]
+    texts = await items.all_inner_texts()
+    offered = [w for t in texts for w in _WORD_SPLIT.split(t) if _SCALE.fullmatch(w)]
     if offered and token.lower() not in {o.lower() for o in offered}:
         usable = [o for o in offered if o.lower() in {a.lower() for a in accepted}]
         raise UpscaleUnavailableError(
