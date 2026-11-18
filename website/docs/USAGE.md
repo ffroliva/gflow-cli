@@ -1114,7 +1114,12 @@ reach for it before spending anything.
 > (`/project/<id>/edit/<media-id>`) and drives Flow's own Extend control; the page builds
 > and signs the request itself. Before any click, Flow's project read must list
 > `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
-> is checked at the route and aborted, before Flow sees it, if it names another clip. The
+> is checked at the route and aborted, before Flow sees it, if it names another clip. When
+> Flow shows the Extend menu item disabled, gflow does not click it and exits 35, or 37
+> when Flow also shows its insufficient-credits warning; nothing is submitted
+> ([#1334](https://github.com/ffroliva/gflow-cli/issues/1334)). Measured 2026-11-18 on an
+> account holding 12 credits: the item was disabled with a link to Google's AI plans beside
+> it, and enabled on a funded account. The
 > result is downloaded to `-o` (default: `videos/<date>/<media-id>_extend.mp4` in the output
 > directory, with a random tag added when that file already exists, so a same-day re-run
 > keeps the earlier file). **Measured 2026-11-08 with

@@ -37,12 +37,15 @@ from gflow_cli.api.transports.migrated_composer import (
     LISTING_RPC,
     MIGRATED_PROJECT_URL,
     MigratedComposer,
+    _raise_if_out_of_credits,  # pyright: ignore[reportPrivateUsage]
     request_body,
 )
 from gflow_cli.api.transports.migrated_recover import MIGRATED_CLIP_URL
+from gflow_cli.api.transports.migrated_upscale import is_menu_item_disabled
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.errors import (
     ConfigurationError,
+    ExtendUnavailableError,
     FlowAppError,
     FlowHostMigratedError,
     GFlowError,
@@ -332,6 +335,26 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
     return locator
 
 
+def _extend_disabled() -> ExtendUnavailableError:
+    """Exit 35 for an Extend item Flow renders disabled (#1334).
+
+    Measured 2026-11-18 on an account holding 12 credits: ``disabled="true"``, a link to
+    Google's AI plans page beside it, and no credits warning, while a funded account's item
+    was enabled. A plan gate, as far as the page says; the error names the item it saw.
+    """
+    return ExtendUnavailableError(
+        detail=(
+            "migrated host: Flow shows the Extend menu item disabled on this account, so "
+            "extend cannot start — nothing was submitted (host=migrated)"
+        ),
+        remediation_hint=(
+            "Flow offers a Google AI plan upgrade beside the disabled item. Upgrade the plan, "
+            "or extend from an account where Flow enables Extend; `gflow credits user` shows "
+            "the balance. Retrying on this account does not help."
+        ),
+    )
+
+
 def _listing_clip(text: str, media_id: str) -> tuple[bool, SourceClip | None]:
     """(whether any ``Zzl0ze`` frame was in ``text``, the first one holding ``media_id``)."""
     seen = False
@@ -538,7 +561,11 @@ async def run_extend(  # noqa: PLR0913
         _confirm_editor(page, project_id=project_id, media_id=media_id)
         log.info("migrated_extend.source", media_id=media_id, workflow_id=workflow_id)
         await (await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")).click()
-        await (await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")).click()
+        extend = await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")
+        if await is_menu_item_disabled(extend):  # a click would wait out 30 s (#1334)
+            await _raise_if_out_of_credits(page)
+            raise _extend_disabled()
+        await extend.click()
         await (await _anchor(page, EXTEND_PROMPT, named="extend prompt box")).click()
         await page.keyboard.insert_text(prompt)
 

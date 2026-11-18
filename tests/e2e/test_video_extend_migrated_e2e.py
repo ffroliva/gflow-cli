@@ -9,7 +9,11 @@ against a live page and keep every ``fZytfe`` from reaching Flow:
   checked ``fZytfe`` is aborted instead of let through);
 * the refusal matrix on a live page — a media id that is not in the project exits 11
   before any click, and an ``--aspect`` the source does not have is aborted at the
-  production route guard (exit 36).
+  production route guard (exit 36);
+* on an account where Flow renders the Extend menu item disabled (declare it with
+  ``GFLOW_CLI_E2E_EXTEND_DISABLED=1``), the run ends in a typed refusal before any click
+  on that item instead of a 30 s click timeout (#1334). The two tests that need an
+  enabled item skip on such a profile.
 
 Belt and braces: a context-level route aborts ``fZytfe`` for the whole test, so even a
 fall-through in the driver cannot bill.
@@ -42,7 +46,9 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import reset_settings
 from gflow_cli.errors import (
     ConfigurationError,
+    ExtendUnavailableError,
     FlowHostMigratedError,
+    InsufficientCreditsError,
     TransportTimeoutError,
 )
 
@@ -63,6 +69,15 @@ def _env(name: str, default: str | None = None) -> str:
 
 def _ids() -> tuple[str, str]:
     return _env("GFLOW_CLI_E2E_PROJECT"), _env("GFLOW_CLI_E2E_EXTEND_MEDIA")
+
+
+def _extend_disabled() -> bool:
+    return os.environ.get("GFLOW_CLI_E2E_EXTEND_DISABLED") == "1"
+
+
+def _need_enabled_extend() -> None:
+    if _extend_disabled():
+        pytest.skip("Flow disables Extend on this profile (GFLOW_CLI_E2E_EXTEND_DISABLED=1)")
 
 
 async def _block_fzytfe(route: Any, request: Any) -> None:
@@ -89,6 +104,7 @@ async def _live_page(profile: Path) -> tuple[UiAutomationTransport, Any]:
 async def test_e2e_extend_submit_contract_at_zero_cost(
     e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _need_enabled_extend()
     project, media = _ids()
     monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
     reset_settings()
@@ -174,6 +190,7 @@ async def test_e2e_a_media_not_in_the_project_is_refused_before_any_click(
 async def test_e2e_a_foreign_aspect_is_aborted_by_the_production_guard(
     e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _need_enabled_extend()
     project, media = _ids()
     source = _env("GFLOW_CLI_E2E_EXTEND_ASPECT", "16:9")
     foreign = "9:16" if source == "16:9" else "16:9"
@@ -192,6 +209,42 @@ async def test_e2e_a_foreign_aspect_is_aborted_by_the_production_guard(
             )
     finally:
         await transport.teardown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_a_disabled_extend_item_is_a_typed_refusal_not_a_timeout(
+    e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1334: on a profile where Flow disables Extend, exit 35 (or 37), nothing sent."""
+    if not _extend_disabled():
+        pytest.skip("needs a profile where Flow disables Extend (GFLOW_CLI_E2E_EXTEND_DISABLED=1)")
+    project, media = _ids()
+    monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    reset_settings()
+    sent: list[str] = []
+    transport, page = await _live_page(e2e_profile_dir)
+
+    def on_request(request: Any) -> None:
+        rpcid = migrated_composer.url_rpcid(str(request.url))
+        if rpcid in (mx.SCENE_CREATE_RPC, mx.EXTEND_SUBMIT_RPC):
+            sent.append(rpcid)
+
+    page.on("request", on_request)
+    try:
+        with pytest.raises((ExtendUnavailableError, InsufficientCreditsError)) as info:
+            await mx.run_extend(
+                page,
+                project_id=project,
+                media_id=media,
+                prompt=_PROMPT,
+                aspect=None,
+                poll_timeout_s=_SUBMIT_WAIT_S,
+            )
+    finally:
+        await transport.teardown()
+    assert info.value.charged == "no"
+    assert sent == []
 
 
 def _mp4_seconds(data: bytes) -> float:

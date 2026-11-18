@@ -130,7 +130,7 @@ place today:
   `charged: no` (#1320): the settings pane, frame, reference and character attach, the
   prompt, and a submit button that is missing or stays disabled on the classic composer
   (missing only, on the agent-only composer), the source read and anchors of
-  `video extend`, the tile and menu steps of `image upscale` and `video upscale` before
+  `video extend` (including an Extend menu item Flow shows disabled: exit 35, #1334), the tile and menu steps of `image upscale` and `video upscale` before
   the export click, and any failure of a reference upload (an upload is never a billed
   generation); `next_action` keeps the class default. A raw
   browser-driver timeout is not a gflow error and still reads `maybe`. A submit the route
