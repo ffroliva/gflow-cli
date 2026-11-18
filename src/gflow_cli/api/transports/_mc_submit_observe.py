@@ -78,7 +78,6 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
-
 def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
     """A submit the route guard aborted in the browser: Flow received and billed nothing."""
     refused = WireFormatError(
@@ -86,6 +85,7 @@ def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
     )
     refused.charged, refused.next_action, refused.retryable = "no", "retry", True  # #1320
     return refused
+
 
 class SubmitObserveMixin(MentionMixin):
     """Prompt sending, generation submission, response polling and observation."""
