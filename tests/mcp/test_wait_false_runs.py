@@ -452,4 +452,5 @@ async def test_a_wait_false_job_counts_its_own_browser_facts(
     await _finish(reply["task_id"])
 
     assert _status(db, reply["task_id"]) == "completed"
-    assert [("engine", "patchright"), ("host", "unknown")] in taken
+    # Exactly once: the job's own scope counts it, the returned tool call does not.
+    assert [t for t in taken if t] == [[("engine", "patchright"), ("host", "unknown")]]
