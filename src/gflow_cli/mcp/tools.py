@@ -1827,6 +1827,8 @@ async def gflow_download_media(
         "out_dir is the output directory (defaults to configured images directory; "
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
+        "A scale the image's download menu does not list returns UpscaleUnavailableError "
+        "(exit 22) naming the listed scales. "
         "Spends no credits: image upscale is free."
     ),
 )

@@ -37,6 +37,7 @@ log = structlog.get_logger(__name__)
 UPSCALE_RPCID = "SPrCad"
 _DEFAULT_TIMEOUT_S = 90.0
 _MENU_TIMEOUT_MS = 5_000
+_ITEM_SETTLE_MS = 1_500
 
 # The download button in the image / video detail view (icon ligature, not a label).
 DOWNLOAD_BUTTON_SELECTOR = (
@@ -65,7 +66,9 @@ def menu_token_pattern(token: str) -> re.Pattern[str]:
 _SCALE = re.compile(r"(?<![0-9A-Za-z])\d+[pk](?![0-9A-Za-z])", re.IGNORECASE)
 
 
-async def find_download_menu_item(page: Page, token: str, *, route: str) -> Locator:
+async def find_download_menu_item(
+    page: Page, token: str, *, route: str, accepted: tuple[str, ...]
+) -> Locator:
     """The open download menu's item for resolution ``token``, picked by that token.
 
     Measured 2026-10-07 (scripts/dev/spike_upscale_menu_anchors.py, en) against the
@@ -80,8 +83,9 @@ async def find_download_menu_item(page: Page, token: str, *, route: str) -> Loca
     Flow decides the offered scales per media (#1338, measured 2026-11-18): a Veo 3.1
     Lite clip lists only 270p and 720p, an Omni 1.2 Flash clip 270p, 360p and 720p. So
     a token missing from a menu whose other items carry scale tokens is Flow not
-    offering it (exit 22, naming what it does offer); a menu with no scale token at
-    all means the anchor itself missed (exit 23).
+    offering it (exit 22, naming what it does offer and which of those ``accepted``
+    holds); a menu with no scale token at all, or one whose text does carry ``token``,
+    means the anchor itself missed (exit 23).
     """
     items = page.locator('[role="menuitem"]')
     try:
@@ -92,25 +96,33 @@ async def find_download_menu_item(page: Page, token: str, *, route: str) -> Loca
             route=route,
         ) from exc
     match = items.filter(has_text=menu_token_pattern(token))
-    if await match.count() == 0:
-        offered = [m.group(0) for t in await items.all_inner_texts() if (m := _SCALE.search(t))]
-        if offered:
-            raise UpscaleUnavailableError(
-                detail=(
-                    f"Flow does not offer {token} for this media: its download menu "
-                    f"lists {', '.join(offered)}."
-                ),
-                route=route,
-                remediation_hint=(
-                    "Flow decides which scales it offers for each clip or image (a Veo 3.1 "
-                    "Lite clip lists no 1080p, for one). Pick a listed scale with --scale."
-                ),
-            )
-        raise UiSelectorDriftError(
-            detail=f"migrated upscale: menu item for {token} was not found on {page.url}",
+    try:
+        # A grace period before "not offered" (exit 22, do not retry) is concluded.
+        await match.first.wait_for(state="visible", timeout=_ITEM_SETTLE_MS)
+        return match.first
+    except PlaywrightTimeoutError:
+        pass
+    offered = [m.group(0) for t in await items.all_inner_texts() if (m := _SCALE.search(t))]
+    if offered and token.lower() not in {o.lower() for o in offered}:
+        usable = [o for o in offered if o.lower() in {a.lower() for a in accepted}]
+        raise UpscaleUnavailableError(
+            detail=(
+                f"Flow does not offer {token} for this media: its download menu on "
+                f"{page.url} lists {', '.join(offered)}."
+            ),
             route=route,
+            remediation_hint=(
+                f"Flow decides which scales it offers for each item. Of those listed, "
+                f"gflow can export: {', '.join(usable)}."
+                if usable
+                else "Flow decides which scales it offers for each item, and none of the "
+                "listed ones is a scale gflow can export here."
+            ),
         )
-    return match.first
+    raise UiSelectorDriftError(
+        detail=f"migrated upscale: menu item for {token} was not found on {page.url}",
+        route=route,
+    )
 
 
 async def is_menu_item_disabled(item: Locator) -> bool:
@@ -356,7 +368,9 @@ async def upscale_image_migrated(
     )
 
     scale_label = "4K" if target_resolution is TargetResolution.RES_4K else "2K"
-    btn_target = await find_download_menu_item(page, scale_label, route="image_upscale")
+    btn_target = await find_download_menu_item(
+        page, scale_label, route="image_upscale", accepted=("2K", "4K")
+    )
     if await is_menu_item_disabled(btn_target):
         raise _unavailable_error(target_resolution)
 

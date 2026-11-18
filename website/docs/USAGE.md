@@ -312,8 +312,10 @@ Arguments:
                             `gflow data list videos`).
 
 Options:
-  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (original download),
-                            or 270p (animated GIF export). [default: 1080p]
+  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (the original
+                            download, or Flow's upscale of a smaller original), or 270p
+                            (animated GIF export). Flow lists only some scales for some
+                            models; an unlisted one exits 22. [default: 1080p]
   --project ID              Project that owns the video. Resolved from the local
                             catalog when omitted; pass it explicitly for videos
                             gflow didn't record (e.g. generated in the web UI).

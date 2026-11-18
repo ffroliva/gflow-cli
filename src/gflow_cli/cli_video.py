@@ -2354,8 +2354,9 @@ def extend(  # noqa: PLR0913
     default="1080p",
     show_default=True,
     help=(
-        "Target quality: 1080p (enhanced Full HD), 720p (original download), "
-        "or 270p (animated GIF export)."
+        "Target quality: 1080p (enhanced Full HD), 720p (the original download, "
+        "or Flow's upscale of a smaller original), or 270p (animated GIF export). "
+        "Flow lists only some scales for some models; an unlisted one exits 22."
     ),
 )
 @upscale_out_dir_option()

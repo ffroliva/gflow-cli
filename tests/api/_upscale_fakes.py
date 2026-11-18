@@ -25,8 +25,10 @@ class FakeItem:
         *,
         disabled: bool = False,
         on_click: Callable[[], Awaitable[None]] | None = None,
+        inner_text: str | None = None,
     ) -> None:
         self.text = text
+        self.inner_text = text if inner_text is None else inner_text  # innerText vs textContent
         self.disabled = disabled
         self.on_click = on_click
         self.clicked = False
@@ -86,7 +88,7 @@ class FakeMenu:
         return len(self.items)
 
     async def all_inner_texts(self) -> list[str]:
-        return [i.text for i in self.items]
+        return [i.inner_text for i in self.items]
 
 
 def fake_page(

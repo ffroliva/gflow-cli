@@ -274,7 +274,9 @@ async def upscale_video_migrated(
     )
     await _open_download_menu(page, project_id=project_id, media_id=media_id)
 
-    btn_target = await find_download_menu_item(page, scale_norm, route="video_upscale")
+    btn_target = await find_download_menu_item(
+        page, scale_norm, route="video_upscale", accepted=VALID_VIDEO_SCALES
+    )
     if await is_menu_item_disabled(btn_target):
         raise _unavailable_error(scale_norm)
 

@@ -177,6 +177,16 @@ async def test_migrated_video_upscale_scale_flow_does_not_list_is_unavailable(
         await _run(page)
     assert f"lists {offered}" in exc_info.value.detail
     assert exc_info.value.route == "video_upscale"
+    assert "gflow can export: 270p, 720p." in exc_info.value.remediation_hint
+
+
+async def test_migrated_video_upscale_token_in_text_but_unmatched_raises_drift() -> None:
+    # The token filter missed an item whose text carries it: the anchor failed, not Flow.
+    items = [FakeItem("270p"), FakeItem("720p"), FakeItem("1080pUpscaled", inner_text="1080p")]
+    page = fake_page(items)
+
+    with pytest.raises(UiSelectorDriftError, match="menu item for 1080p was not found"):
+        await _run(page)
 
 
 async def test_migrated_video_upscale_menu_without_any_scale_token_raises_drift() -> None:

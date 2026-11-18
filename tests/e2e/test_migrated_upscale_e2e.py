@@ -67,8 +67,8 @@ async def _export_first_offered(
             refused.append(f"{row.media_id}: {exc.detail}")
             continue
         return row, result
-    # Exit 22 is raised only once the download menu item has been read, so the driver
-    # did reach the menu; only Flow's offer for this scale was missing.
+    # Exit 22 is raised only once the menu opened and its other items carried scale
+    # tokens (#1338), so the driver did reach the menu; only Flow's offer was missing.
     pytest.skip(f"Flow offers no {scale} for the newest {len(refused)} clip(s): {refused}")
 
 
@@ -271,7 +271,7 @@ async def test_migrated_video_export_270p_gif_e2e(
     assert "migrated_video_upscale.completed" in seen, f"events: {seen}"
 
 
-@pytest.mark.e2e_video
+@pytest.mark.e2e_auth  # zero credits: nothing is clicked
 @pytest.mark.asyncio
 async def test_migrated_video_upscale_unlisted_scale_is_unavailable_e2e(
     e2e_profile_dir: Path,
@@ -280,8 +280,9 @@ async def test_migrated_video_upscale_unlisted_scale_is_unavailable_e2e(
 ) -> None:
     """Live proof (#1338): 1080p on a Veo 3.1 Lite clip is exit 22, not selector drift.
 
-    Measured 2026-11-18, that clip's download menu lists 270p and 720p only. Nothing is
-    clicked, so this spends nothing and needs no GFLOW_CLI_E2E_RUN_VIDEO.
+    Measured 2026-11-18, that clip's download menu lists 270p and 720p only, so nothing is
+    clicked and this spends nothing. Should Flow start listing 1080p for it, the export
+    runs (measured free, 2026-10-07) and the test fails, which is the signal wanted.
     """
     profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
     if not profile:
