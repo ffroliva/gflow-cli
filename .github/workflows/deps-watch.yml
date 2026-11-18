@@ -19,6 +19,11 @@ on:
     # so the audit result is already on screen when the bump PRs land.
     - cron: "0 7 * * 1"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "driver-watch: print the issue plan without opening or editing issues"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -81,3 +86,28 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           uv pip list --outdated 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Driver watch: Dependabot ignores playwright and patchright on purpose (a driver
+  #    bump broke generation in #1319 and #1324), so nothing else says a release exists.
+  #    One issue per package, opened or updated; never a PR, never merged automatically.
+  driver-watch:
+    name: Announce browser-driver releases the pins refuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Compare pins with PyPI and open or update issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
+        # Standard library only, so no project install is needed.
+        run: uv run --no-project --python 3.13 python scripts/ci/driver_watch.py $DRY_RUN

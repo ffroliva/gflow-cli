@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A weekly `driver-watch` job announces browser-driver releases.** Dependabot ignores patchright updates and playwright minor and major updates by design, because a driver bump needs the engine-contract job and a live run (#1319, #1324), so seven patchright releases went unnoticed. The job compares both pins with PyPI and opens or updates one `driver-watch` issue per package whose latest release falls outside its pin, and closes it once the pin admits that release; a release whose issue is closed as not planned is not announced again. It never opens a pull request or changes a pin. `workflow_dispatch` with `dry_run` prints the plan only.
+
 ### Tests
 
 - **The `@Character` image e2e reads the CLI's events again ([#1332](https://github.com/ffroliva/gflow-cli/issues/1332)).** Since the CLI's default log level became WARNING (#1041), a `gflow` subprocess writes no INFO event to stderr, so `test_migrated_image_character_mention_bdd.py` reported "no character was attached" for a CLI run that did attach the character. The product was not affected: on an unchanged build, both CLI scenarios pass once `GFLOW_CLI_LOG_LEVEL=INFO` is set. The test now sets the level and the JSON format, and fails with a message naming those settings when the child wrote no events at all. `test_agent_only_composer_bdd.py` and the format-prompt test in `test_character_create_e2e.py` read INFO events the same way and now set the level too. A new offline check, `tests/test_e2e_log_level.py`, flags an e2e module that splits a child's stderr into lines and reads their `"event"` without assigning `GFLOW_CLI_LOG_LEVEL=INFO`.
