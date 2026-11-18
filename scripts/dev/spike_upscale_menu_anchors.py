@@ -153,7 +153,8 @@ async def _main(profile: str, image: str | None, video: str | None, export: bool
                         if any((b.get("type") or "").startswith("video") for b in blobs):
                             break
                     report["blobs"] = (
-                        "page closed" if page.is_closed()
+                        "page closed"
+                        if page.is_closed()
                         else await page.evaluate("window.__spikeBlobs || []")
                     )
     report["frames"] = frames

@@ -224,9 +224,11 @@ async def _probe(
                     return os.apply(this, arguments); };
             }"""
         )
-        submit = page.locator("button").filter(
-            has=page.locator("mat-icon", has_text="arrow_forward")
-        ).first
+        submit = (
+            page.locator("button")
+            .filter(has=page.locator("mat-icon", has_text="arrow_forward"))
+            .first
+        )
         if await submit.count():
             _stage("in-page block armed; clicking submit")
             await submit.click(timeout=5000)
@@ -273,7 +275,9 @@ def main() -> int:
     parser.add_argument("profile")
     parser.add_argument("project_id")
     parser.add_argument("image")
-    parser.add_argument("--second", default=None, help="attach a SECOND existing asset by name prefix")
+    parser.add_argument(
+        "--second", default=None, help="attach a SECOND existing asset by name prefix"
+    )
     parser.add_argument(
         "--out",
         default=None,
@@ -284,9 +288,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     args.out = args.out or str(default_out_path("migrated_upload_flow"))
-    return asyncio.run(
-        _main(args.profile, args.project_id, args.image, args.out, args.second)
-    )
+    return asyncio.run(_main(args.profile, args.project_id, args.image, args.out, args.second))
 
 
 if __name__ == "__main__":

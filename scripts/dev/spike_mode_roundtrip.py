@@ -64,9 +64,7 @@ async def _state(page: Any) -> dict[str, Any]:
         "crop_present": await page.locator(CROP).count() > 0,
         "expand_present": await page.locator(EXPAND_BTN).count() > 0,
         "sidebar_close_present": await page.locator(SIDEBAR_CLOSE).count() > 0,
-        "slate_present": await page.locator(
-            'div[role="textbox"][data-slate-editor="true"]'
-        ).count()
+        "slate_present": await page.locator('div[role="textbox"][data-slate-editor="true"]').count()
         > 0,
     }
 
@@ -98,7 +96,9 @@ async def _run(profile: str, project: str) -> dict[str, Any]:
         assert ctx is not None
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         step("A", f"goto project {project}", prefix="rt")
-        await page.goto(routes.project_editor_url("en", project), wait_until="domcontentloaded", timeout=60_000)
+        await page.goto(
+            routes.project_editor_url("en", project), wait_until="domcontentloaded", timeout=60_000
+        )
         result["editor_ready"] = await _wait_editor(page)
         await page.wait_for_timeout(1500)
         await snap(page, "00_initial")

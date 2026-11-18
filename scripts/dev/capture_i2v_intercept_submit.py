@@ -101,7 +101,6 @@ async def capture(
             sys.exit("FlowApiClient.transport is None")
         page = await client._checkout_page()
         try:
-
             await transport._enter_editor(page, None)  # type: ignore[attr-defined]
             await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
@@ -132,12 +131,16 @@ async def capture(
 
             async def bind_frames() -> None:
                 print("Attaching Start...")
-                await VideoGenerationMixin._attach_frame(page, 0, "Start", probe_image, out_dir=out_dir)
+                await VideoGenerationMixin._attach_frame(
+                    page, 0, "Start", probe_image, out_dir=out_dir
+                )
                 if start_only:
                     print("Skipping End (start-only mode).")
                     return
                 print("Attaching End...")
-                await VideoGenerationMixin._attach_frame(page, 1, "End", probe_image, out_dir=out_dir)
+                await VideoGenerationMixin._attach_frame(
+                    page, 1, "End", probe_image, out_dir=out_dir
+                )
 
             # Sequence selection — this is what the probe is testing.
             if reorder:

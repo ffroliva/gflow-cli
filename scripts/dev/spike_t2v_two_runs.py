@@ -95,7 +95,9 @@ async def run(profile: str, project: str) -> None:
     def on_request(req: Any) -> None:
         if mc.url_rpcid(req.url) in mc.SUBMIT_RPCS:
             ids = sorted(set(UUID.findall(unquote(req.post_data or ""))))
-            report["requests"].append({"rpc": mc.url_rpcid(req.url), "wall": time.time(), "ids": ids})
+            report["requests"].append(
+                {"rpc": mc.url_rpcid(req.url), "wall": time.time(), "ids": ids}
+            )
             ev("submit_sent", rpc=mc.url_rpcid(req.url), ids=len(ids))
 
     async with build_client(resolve_profile_dir(profile)) as client:

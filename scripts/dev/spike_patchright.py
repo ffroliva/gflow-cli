@@ -155,11 +155,15 @@ async def probe_primitives(engine: str, profile_dir: Path, action: str) -> dict[
                 "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})",
             )
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-            page.on("request", lambda *_: req_count.__setitem__("request", req_count["request"] + 1))
+            page.on(
+                "request", lambda *_: req_count.__setitem__("request", req_count["request"] + 1)
+            )
             page.on(
                 "response", lambda *_: req_count.__setitem__("response", req_count["response"] + 1)
             )
-            await page.goto(routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000)
+            await page.goto(
+                routes.EDITOR_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout=60_000
+            )
             await page.wait_for_timeout(4000)
 
             out["navigator_webdriver"] = await page.evaluate("() => navigator.webdriver")
@@ -263,7 +267,9 @@ async def probe_generation(
             try:
                 img = await client.generate_image(req=req, recaptcha_action=action)
                 out["result"] = "OK_200"
-                out["media_url_present"] = bool(getattr(img, "url", None) or getattr(img, "name", None))
+                out["media_url_present"] = bool(
+                    getattr(img, "url", None) or getattr(img, "name", None)
+                )
             except RecaptchaError as exc:
                 out["result"] = "MINT_BROKEN"
                 out["detail"] = str(exc)[:160]
@@ -344,19 +350,33 @@ async def _run(args: argparse.Namespace, profile_dir: Path, out_path: Path) -> i
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Patchright engine Phase-0 spike (credit-free).")
-    p.add_argument("--profile", default="ffroliva", help="gflow profile name (use a HOT one for the decisive leg)")
+    p.add_argument(
+        "--profile",
+        default="ffroliva",
+        help="gflow profile name (use a HOT one for the decisive leg)",
+    )
     p.add_argument("--engines", default="playwright,patchright", help="comma list")
     p.add_argument("--prompt", default="a red ceramic mug on a wooden table, soft studio light")
     p.add_argument("--aspect", default="9:16")
     p.add_argument("--model", default="nano2")
-    p.add_argument("--action", default="imageGeneration", help="reCAPTCHA action (memory: action mismatch → silent 403)")
-    p.add_argument("--skip-generation", action="store_true", help="primitives only (no credit-free gen)")
+    p.add_argument(
+        "--action",
+        default="imageGeneration",
+        help="reCAPTCHA action (memory: action mismatch → silent 403)",
+    )
+    p.add_argument(
+        "--skip-generation", action="store_true", help="primitives only (no credit-free gen)"
+    )
     p.add_argument("--out", default=None)
     args = p.parse_args(argv)
 
     profile_dir = resolve_profile_dir(args.profile)
     out_path = Path(args.out) if args.out else default_out_path("spike_patchright", ".json")
-    step("--", f"profile={args.profile} engines={args.engines} gen={not args.skip_generation}", prefix="patch")
+    step(
+        "--",
+        f"profile={args.profile} engines={args.engines} gen={not args.skip_generation}",
+        prefix="patch",
+    )
     try:
         return asyncio.run(_run(args, profile_dir, out_path))
     except KeyboardInterrupt:

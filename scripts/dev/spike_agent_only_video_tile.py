@@ -66,7 +66,9 @@ async def main() -> int:
         requests: list[str] = []
         page.on(
             "request",
-            lambda r: requests.append(r.url.split("?")[0]) if "flow-content.google" in r.url else None,
+            lambda r: (
+                requests.append(r.url.split("?")[0]) if "flow-content.google" in r.url else None
+            ),
         )
         await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         await page.wait_for_timeout(10_000)
@@ -77,7 +79,10 @@ async def main() -> int:
             await tile.hover()
             await page.wait_for_timeout(3_000)
             f["after_hover"] = await page.evaluate(_TILES_JS)
-            step("after_hover", f"videos={sum(n['tag']=='video' for t in f['after_hover'] for n in t['nodes'])}")
+            step(
+                "after_hover",
+                f"videos={sum(n['tag'] == 'video' for t in f['after_hover'] for n in t['nodes'])}",
+            )
             # Is the hover player's opaque /asb/ URL a downloadable MP4? Bytes are not kept.
             video = tile.locator("video").first
             if await video.count():

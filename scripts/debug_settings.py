@@ -22,7 +22,9 @@ async def main() -> None:
 
     async with async_playwright() as pw:
         ctx = await pw.chromium.launch_persistent_context(
-            str(profile_path), channel="chrome", headless=False,
+            str(profile_path),
+            channel="chrome",
+            headless=False,
             ignore_default_args=["--enable-automation", "--no-sandbox"],
             args=["--disable-blink-features=AutomationControlled"],
         )
@@ -62,8 +64,11 @@ async def main() -> None:
         print("=== SETTINGS PANEL CONTENTS ===")
         for el in panel_info:
             if el.get("text"):
-                print(f"  [{el['tag']}] text={el['text']!r} aria={el['aria']!r} role={el['role']!r} selected={el['selected']!r}")
+                print(
+                    f"  [{el['tag']}] text={el['text']!r} aria={el['aria']!r} role={el['role']!r} selected={el['selected']!r}"
+                )
 
         await ctx.close()
+
 
 asyncio.run(main())

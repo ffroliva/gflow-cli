@@ -126,8 +126,9 @@ async def _arm(client: Any, arm: str) -> dict[str, Any]:
         n = len(rec["submits"])
         if arm == "tamper" and n == 0:
             new_body, tlen = _tamper_body(body)
-            rec["submits"].append({"t": round(time.monotonic() - t0, 2), "action": "tamper",
-                                   "token_len": tlen})
+            rec["submits"].append(
+                {"t": round(time.monotonic() - t0, 2), "action": "tamper", "token_len": tlen}
+            )
             if new_body is None:
                 rec["submits"][-1]["action"] = "abort (no token found)"
                 await r.abort()
@@ -144,14 +145,18 @@ async def _arm(client: Any, arm: str) -> dict[str, Any]:
             text = await resp.text()
         except Exception as exc:  # noqa: BLE001
             text = f"<unreadable: {exc}>"
-        rec["responses"].append({"t": round(time.monotonic() - t0, 2), "status": resp.status,
-                                 "text": text[:4000],
-                                 "parse_frames": repr(parse_frames(text))[:500]})
+        rec["responses"].append(
+            {
+                "t": round(time.monotonic() - t0, 2),
+                "status": resp.status,
+                "text": text[:4000],
+                "parse_frames": repr(parse_frames(text))[:500],
+            }
+        )
 
     def on_failed(req: Any) -> None:
         if mc.url_rpcid(req.url) == mc.IMAGE_SUBMIT_RPC:
-            rec["failed"].append({"t": round(time.monotonic() - t0, 2),
-                                  "failure": req.failure})
+            rec["failed"].append({"t": round(time.monotonic() - t0, 2), "failure": req.failure})
 
     await ctx.route("**/batchexecute*", route)
     page.on("response", on_response)
@@ -161,18 +166,23 @@ async def _arm(client: Any, arm: str) -> dict[str, Any]:
         await asyncio.wait_for(client.generate_image(req=req), ARM_TIMEOUT_S)
         rec["outcome"] = "SUCCESS (an image was generated)"
     except Exception as exc:  # noqa: BLE001 — the error IS the evidence
-        rec["outcome"] = {"class": type(exc).__name__,
-                          "exit_code": getattr(exc, "exit_code", None),
-                          "retryable": getattr(exc, "retryable", None),
-                          "detail": str(getattr(exc, "detail", exc))[:600]}
+        rec["outcome"] = {
+            "class": type(exc).__name__,
+            "exit_code": getattr(exc, "exit_code", None),
+            "retryable": getattr(exc, "retryable", None),
+            "detail": str(getattr(exc, "detail", exc))[:600],
+        }
     rec["elapsed_s"] = round(time.monotonic() - t0, 1)
     try:
         await page.wait_for_timeout(4000)
         rec["failure_tiles"] = await page.evaluate(_TILES_JS)
     except Exception as exc:  # noqa: BLE001
         rec["failure_tiles"] = f"<unreadable: {exc}>"
-    step(arm, f"outcome={rec['outcome']} submits={len(rec['submits'])} "
-              f"responses={[r['status'] for r in rec['responses']]} failed={len(rec['failed'])}")
+    step(
+        arm,
+        f"outcome={rec['outcome']} submits={len(rec['submits'])} "
+        f"responses={[r['status'] for r in rec['responses']]} failed={len(rec['failed'])}",
+    )
     return rec
 
 

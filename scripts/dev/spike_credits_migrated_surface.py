@@ -153,7 +153,6 @@ async def main() -> int:
     profile_dir = resolve_profile_dir(args.profile)
     out: dict[str, Any] = {"profile": args.profile, "responses": [], "dom": {}}
 
-
     async with build_client(profile_dir) as client:
         page: Page | None = None
         pending: list[asyncio.Task[None]] = []

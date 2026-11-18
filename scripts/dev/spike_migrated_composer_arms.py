@@ -174,19 +174,30 @@ class ProbeFailedError(RuntimeError):
 
 def _report(tag: str, inv: dict[str, Any]) -> None:
     c = inv["counts"]
-    step(tag, f"buttons={c['buttons']} mat_icon={c['mat_icon']} "
-              f"settings_trigger={c['settings_trigger']} radiogroup={c['radiogroup']}")
+    step(
+        tag,
+        f"buttons={c['buttons']} mat_icon={c['mat_icon']} "
+        f"settings_trigger={c['settings_trigger']} radiogroup={c['radiogroup']}",
+    )
     for t in inv["settings_triggers"]:
-        step(f"{tag}.trigger", f"hidden_attr={t['hidden_attr']} display={t['display']} "
-                               f"{t['w']}x{t['h']} hit_testable={t['hit_testable']} "
-                               f"chain={t['component_chain']}")
+        step(
+            f"{tag}.trigger",
+            f"hidden_attr={t['hidden_attr']} display={t['display']} "
+            f"{t['w']}x{t['h']} hit_testable={t['hit_testable']} "
+            f"chain={t['component_chain']}",
+        )
     step(f"{tag}.agent_elements", str(len(inv["agent_elements"])))
     for b in inv["tune_buttons"]:
-        step(f"{tag}.tune", f"classes={b['classes']} chain={b['component_chain']} "
-                            f"hidden_attr={b['hidden_attr']} hit_testable={b['hit_testable']}")
+        step(
+            f"{tag}.tune",
+            f"classes={b['classes']} chain={b['component_chain']} "
+            f"hidden_attr={b['hidden_attr']} hit_testable={b['hit_testable']}",
+        )
     for b in inv["aria_pressed"]:
-        step(f"{tag}.aria_pressed", f"pressed={b['pressed']} ligatures={b['ligatures']} "
-                                    f"classes={b['classes']}")
+        step(
+            f"{tag}.aria_pressed",
+            f"pressed={b['pressed']} ligatures={b['ligatures']} classes={b['classes']}",
+        )
 
 
 async def main() -> int:
@@ -206,7 +217,7 @@ async def main() -> int:
         "profile": args.profile,
         "project": args.project,
         "question": "is an agentic arm reachable on the migrated composer, and what "
-                    "state carries `hidden` on .settings-trigger-button? (#749)",
+        "state carries `hidden` on .settings-trigger-button? (#749)",
         "cost": "credit-free: navigation, DOM reads, at most one toggle click",
     }
     url = f"https://flow.google.com/project/{args.project}"

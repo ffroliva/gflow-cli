@@ -132,10 +132,10 @@ async def _main(profile: str, project_id: str, rounds: int, watch_s: float) -> i
     print(f"\n{'navigation':<14} {'goto ret':>9} {'host@goto':>10} {'flip':>8}  final host")
     print("-" * 62)
     for r in rows:
-        flip = "—" if r["migrated_flip_ms"] is None else f'{r["migrated_flip_ms"]} ms'
+        flip = "—" if r["migrated_flip_ms"] is None else f"{r['migrated_flip_ms']} ms"
         print(
-            f'{r["label"]:<14} {r["goto_returned_ms"]:>7} ms '
-            f'{str(r["host_kind_when_goto_returned"]):>10} {flip:>8}  {r["final_host_kind"]}'
+            f"{r['label']:<14} {r['goto_returned_ms']:>7} ms "
+            f"{str(r['host_kind_when_goto_returned']):>10} {flip:>8}  {r['final_host_kind']}"
         )
     print(f"\nhtml lang (last): {rows[-1]['html_lang']!r}")
     print(f"written: {path}")

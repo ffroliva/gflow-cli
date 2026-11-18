@@ -74,9 +74,11 @@ async def main() -> None:
         for mode in ("image", "videocam"):
             await composer._select(page, pane, axis="mode", lig=mode)  # noqa: SLF001
             await page.wait_for_timeout(1500)
-            handle = await page.locator(".cdk-overlay-pane").filter(
-                has=page.locator(RADIOGROUP)
-            ).last.element_handle()
+            handle = (
+                await page.locator(".cdk-overlay-pane")
+                .filter(has=page.locator(RADIOGROUP))
+                .last.element_handle()
+            )
             out[mode] = await page.evaluate(_GROUPS_JS, handle)
             step(mode, f"{len(out[mode])} radiogroups ({RADIOGROUP})")
             for i, group in enumerate(out[mode]):

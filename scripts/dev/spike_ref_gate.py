@@ -141,8 +141,12 @@ async def main(a: argparse.Namespace) -> int:
             row0 = await client.generate_image(project_id=a.project, req=_req("a single red apple"))
             findings["row0"] = {"media_id": row0.media_name, "display_name": row0.display_name}
             findings["row1"] = await _row_with_existing_ref(
-                client, a.project, "the same apple, now green",
-                a.unrelated_caption, row0.media_name, a.ref_file,
+                client,
+                a.project,
+                "the same apple, now green",
+                a.unrelated_caption,
+                row0.media_name,
+                a.ref_file,
             )
             step("negative", json.dumps(findings))
 
@@ -156,8 +160,12 @@ async def main(a: argparse.Namespace) -> int:
                     findings["rows"].append({"skipped": "parent has no display_name"})
                     break
                 rec = await _row_with_existing_ref(
-                    client, a.project, f"the same apple, variation {k}",
-                    prev["display_name"], prev["media_id"], a.ref_file,
+                    client,
+                    a.project,
+                    f"the same apple, variation {k}",
+                    prev["display_name"],
+                    prev["media_id"],
+                    a.ref_file,
                 )
                 findings["rows"].append(rec)
                 step(f"row{k}", json.dumps(rec))

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A weekly `driver-watch` job announces browser-driver releases.** Dependabot ignores playwright and patchright updates by design, because a driver bump needs the engine-contract job and a live run (#1319, #1324), so seven patchright releases went unnoticed. The job compares both pins with PyPI and opens or updates one `driver-watch` issue per package whose latest release falls outside its pin. It never opens a pull request or changes a pin. `workflow_dispatch` with `dry_run` prints the plan only.
+
 ## [0.101.2] — 2026-11-17
 
 ### Fixed

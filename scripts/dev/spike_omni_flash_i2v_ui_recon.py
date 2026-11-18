@@ -180,7 +180,6 @@ async def recon(
             sys.exit("FlowApiClient.transport is None")
         page = await client._checkout_page()  # type: ignore[reportPrivateUsage]
         try:
-
             await transport._enter_editor(page, None)  # type: ignore[attr-defined]
             await transport._dismiss_blocking_overlays(page, None)  # type: ignore[attr-defined]
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)  # type: ignore[reportPrivateUsage]

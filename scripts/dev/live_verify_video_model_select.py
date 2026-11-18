@@ -76,9 +76,7 @@ async def main() -> int:
         # --- 1 & 2: every registered model, as-shipped ---
         for model in VideoModel:
             outcome, detail = await _try_select(page, t, model)
-            expected = (
-                "REFUSED" if model is VideoModel.VEO_3_1_LITE_LOWER_PRIORITY else "SELECTED"
-            )
+            expected = "REFUSED" if model is VideoModel.VEO_3_1_LITE_LOWER_PRIORITY else "SELECTED"
             rows.append((model.value, expected, outcome, detail))
 
         # --- 3: injected ambiguity ---

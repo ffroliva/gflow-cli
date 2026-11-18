@@ -80,9 +80,7 @@ class ResetServer:
                 if n <= self.fail_times:
                     # SO_LINGER with timeout 0 makes close() emit RST, not FIN.
                     # That is what surfaces as ECONNRESET on the peer.
-                    conn.setsockopt(
-                        socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
-                    )
+                    conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
                 else:
                     conn.sendall(_OK)
             finally:
@@ -110,9 +108,7 @@ async def _arm(
         async with async_playwright() as p:
             ctx = await p.request.new_context()
             try:
-                resp = await ctx.get(
-                    url, max_retries=max_retries, timeout=timeout_ms
-                )
+                resp = await ctx.get(url, max_retries=max_retries, timeout=timeout_ms)
                 status = resp.status
                 body = await resp.body()
                 outcome = "SUCCESS" if body == _BODY else "WRONG_BODY"
@@ -141,9 +137,15 @@ async def _arm(
 async def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     results = [
-        await _arm("A_retry_recovers", fail_times=1, max_retries=2, timeout_ms=10_000, expect="SUCCESS"),
-        await _arm("B_control_no_retry", fail_times=1, max_retries=0, timeout_ms=10_000, expect="FAILURE"),
-        await _arm("C_budget_shared", fail_times=99, max_retries=2, timeout_ms=5_000, expect="FAILURE"),
+        await _arm(
+            "A_retry_recovers", fail_times=1, max_retries=2, timeout_ms=10_000, expect="SUCCESS"
+        ),
+        await _arm(
+            "B_control_no_retry", fail_times=1, max_retries=0, timeout_ms=10_000, expect="FAILURE"
+        ),
+        await _arm(
+            "C_budget_shared", fail_times=99, max_retries=2, timeout_ms=5_000, expect="FAILURE"
+        ),
     ]
 
     a, b, c = results

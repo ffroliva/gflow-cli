@@ -278,7 +278,9 @@ async def _generate_face_with_entity_context(
     returned_parent = wf0.get("parentEntityId")
     returned_project = wf0.get("projectId")
     if not media_id or not workflow_id:
-        msg = f"missing media[0].name or workflows[0].name; media0={sorted(media0)} wf0={sorted(wf0)}"
+        msg = (
+            f"missing media[0].name or workflows[0].name; media0={sorted(media0)} wf0={sorted(wf0)}"
+        )
         raise ValueError(msg)
 
     _step(
@@ -301,7 +303,9 @@ async def _generate_face_with_entity_context(
         flush=True,
     )
     if parent_ok and project_ok:
-        _step("3 PASS", "entityContext bound the generation to the character in the existing project")
+        _step(
+            "3 PASS", "entityContext bound the generation to the character in the existing project"
+        )
     else:
         _step("3 FAIL", "entityContext binding NOT confirmed (see assertions above)")
 
@@ -332,9 +336,7 @@ async def _set_primary_image(
     _step("4 OK", "PATCH flowWorkflows -> primaryMediaId set")
 
 
-async def _save_character(
-    client: FlowApiClient, *, project_id: str, entity_id: str
-) -> None:
+async def _save_character(client: FlowApiClient, *, project_id: str, entity_id: str) -> None:
     """Step 5 — PATCH flow/entities to persist the character. FREE Bearer REST.
 
     Reuses V1's payload shape but DELIBERATELY omits imageReferences — we test
@@ -352,17 +354,17 @@ async def _save_character(
                 },
             },
         },
-        "updateMask": (
-            "entityInfo.displayName,"
-            "entityInfo.characterInfo.personalityNotes"
-        ),
+        "updateMask": ("entityInfo.displayName,entityInfo.characterInfo.personalityNotes"),
     }
     await client._patch_json(  # noqa: SLF001
         FLOW_ENTITIES_URL,
         body,
         route_name="saveCharacter",
     )
-    _step("5 OK", f"PATCH flow/entities -> saved '{DISPLAY_NAME}' (imageReferences NOT set — testing auto-link)")
+    _step(
+        "5 OK",
+        f"PATCH flow/entities -> saved '{DISPLAY_NAME}' (imageReferences NOT set — testing auto-link)",
+    )
 
 
 async def _read_back(
@@ -404,7 +406,10 @@ async def _read_back(
 
     print("[spike-v2] --- read-back assertions ---", flush=True)
     print(f"[spike-v2]   entityId         = {entity_id}", flush=True)
-    print(f"[spike-v2]   entityType       = {entity_type}  (expect CHARACTER) -> {type_ok}", flush=True)
+    print(
+        f"[spike-v2]   entityType       = {entity_type}  (expect CHARACTER) -> {type_ok}",
+        flush=True,
+    )
     print(f"[spike-v2]   displayName      = {info.get('displayName')}", flush=True)
     print(
         f"[spike-v2]   imageRef workflowIds = {ref_workflow_ids}  "

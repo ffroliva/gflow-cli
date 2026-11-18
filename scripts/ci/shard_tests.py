@@ -89,7 +89,9 @@ def main() -> int:
         print("usage: shard_tests.py <junit-xml>...")
         return 2
     durations = durations_from_junit([Path(p) for p in sys.argv[1:]])
-    DURATIONS_FILE.write_text(json.dumps(durations, indent=1) + "\n", encoding="utf-8", newline="\n")
+    DURATIONS_FILE.write_text(
+        json.dumps(durations, indent=1) + "\n", encoding="utf-8", newline="\n"
+    )
     print(f"wrote {len(durations)} files, {sum(durations.values()):.0f} s -> {DURATIONS_FILE}")
     return 0
 

@@ -354,9 +354,7 @@ async def main() -> int:
     for visit in result["visits"]:
         summary[visit["label"]] = _summarise(visit)
         if "readings_after_dismiss" in visit:
-            summary[f"{visit['label']}_after_dismiss"] = _summarise(
-                visit, "readings_after_dismiss"
-            )
+            summary[f"{visit['label']}_after_dismiss"] = _summarise(visit, "readings_after_dismiss")
             summary[f"{visit['label']}_dismiss_error"] = visit.get("dismiss_error")
     result["summary"] = summary
     out = default_out_path("spike_migrated_cookie_bar", ".json")

@@ -165,9 +165,7 @@ async def _probe(page: Any, project_id: str) -> dict[str, Any]:
     await page.keyboard.press("Enter")
     await page.wait_for_timeout(3500)
     report["composer_after_asset_click"] = await _composer_state(page)
-    report["active_after_click"] = await page.locator(
-        "button.asset-item.asset-item-active"
-    ).count()
+    report["active_after_click"] = await page.locator("button.asset-item.asset-item-active").count()
 
     phase["now"] = "after_confirm_click"
     confirm = page.locator("button.detail-add-to-prompt-btn")

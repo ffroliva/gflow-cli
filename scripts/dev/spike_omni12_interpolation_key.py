@@ -100,7 +100,10 @@ async def run_case(
         end_image=end,
     )
     ids: dict[str, str] = {}
-    real_start, real_end = mc.MigratedComposer.attach_start_frame, mc.MigratedComposer.attach_end_frame
+    real_start, real_end = (
+        mc.MigratedComposer.attach_start_frame,
+        mc.MigratedComposer.attach_end_frame,
+    )
 
     async def rec_start(self: Any, *a: Any, **k: Any) -> str:
         ids["start"] = await real_start(self, *a, **k)

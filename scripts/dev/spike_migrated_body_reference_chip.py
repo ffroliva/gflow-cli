@@ -108,7 +108,9 @@ async def _main(profile: str, project: str, entity: str) -> int:
         findings["before"] = await page.evaluate(_SNAPSHOT_JS)
         step("before", f"imaged_controls={len(findings['before']['imaged_controls'])}")
         for c in findings["before"]["imaged_controls"][:6]:
-            step("  img", f"<{c['host_tag']}> {sorted(c['host_attrs'])} src={c['img_src_head'][:60]}")
+            step(
+                "  img", f"<{c['host_tag']}> {sorted(c['host_attrs'])} src={c['img_src_head'][:60]}"
+            )
 
         body_sel = "flow-slot-chip-button:has(mat-icon:text-is('accessibility_new')) button"
         chip = page.locator(body_sel).first

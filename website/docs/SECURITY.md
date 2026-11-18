@@ -305,6 +305,11 @@ Controls:
   exactly that to playwright's upper bound). The enforcement is the explicit
   `ignore` entry in `.github/dependabot.yml`, guarded by
   `tests/test_playwright_pin.py::test_dependabot_ignores_driver_engine_bumps`.
+- **Announced, not applied** — because Dependabot stays silent about driver
+  releases, the weekly `driver-watch` job (`.github/workflows/deps-watch.yml`,
+  `scripts/ci/driver_watch.py`) compares the playwright and patchright pins with
+  PyPI and opens or updates one `driver-watch` issue per package when a release
+  falls outside its pin. It never opens a PR or changes a pin.
 - Default engine is `playwright` (Microsoft, security-reviewed); patchright is an
   experiment you opt into per the trade-off above.
 

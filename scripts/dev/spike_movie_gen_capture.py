@@ -54,12 +54,22 @@ _CAPTURE_FRAGMENTS = (
     "voice",
 )
 _GENERATE_MARKER = "batchAsyncGenerateVideo"
-_SIGNED = ("signature=", "x-goog-signature=", "expires=", "x-goog-credential=", "authorization", "bearer ")
+_SIGNED = (
+    "signature=",
+    "x-goog-signature=",
+    "expires=",
+    "x-goog-credential=",
+    "authorization",
+    "bearer ",
+)
 
 
 def _redact(obj: Any) -> Any:
     if isinstance(obj, dict):
-        return {k: ("<REDACTED>" if k.lower() in ("authorization", "cookie") else _redact(v)) for k, v in obj.items()}
+        return {
+            k: ("<REDACTED>" if k.lower() in ("authorization", "cookie") else _redact(v))
+            for k, v in obj.items()
+        }
     if isinstance(obj, list):
         return [_redact(x) for x in obj]
     if isinstance(obj, str) and any(m in obj.lower() for m in _SIGNED):
@@ -74,24 +84,39 @@ def _keys_summary(body: Any) -> dict[str, Any]:
         # tRPC/json wrappers: dig for the first 'requests' list or relevant keys
         def walk(o: Any) -> None:
             if isinstance(o, dict):
-                for key in ("referenceEntities", "referenceImages", "audioReferences",
-                            "videoGenerationMode", "videoModelKey", "presetVoiceId",
-                            "textInput", "structuredPrompt", "audioFailurePreference"):
+                for key in (
+                    "referenceEntities",
+                    "referenceImages",
+                    "audioReferences",
+                    "videoGenerationMode",
+                    "videoModelKey",
+                    "presetVoiceId",
+                    "textInput",
+                    "structuredPrompt",
+                    "audioFailurePreference",
+                ):
                     if key in o and key not in out:
                         v = o[key]
-                        out[key] = (len(v) if isinstance(v, list) else (v if isinstance(v, (str, int, bool)) else "present"))
+                        out[key] = (
+                            len(v)
+                            if isinstance(v, list)
+                            else (v if isinstance(v, (str, int, bool)) else "present")
+                        )
                 for v in o.values():
                     walk(v)
             elif isinstance(o, list):
                 for x in o:
                     walk(x)
+
         walk(body)
     except Exception as e:  # noqa: BLE001
         out["_walk_error"] = str(e)
     return out
 
 
-async def _run(*, profile_dir: Path, project_id: str, locale: str, window: int, line: str, out_path: Path) -> int:
+async def _run(
+    *, profile_dir: Path, project_id: str, locale: str, window: int, line: str, out_path: Path
+) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     events: list[dict[str, Any]] = []
     state = {"generate_seen_at": 0.0}
@@ -137,7 +162,11 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, window: int, 
                 events.append(ev)
                 if _GENERATE_MARKER in url:
                     state["generate_seen_at"] = time.monotonic()
-                    step("WIRE", f"GENERATE request captured! key_fields={ev['key_fields']}", prefix="cap")
+                    step(
+                        "WIRE",
+                        f"GENERATE request captured! key_fields={ev['key_fields']}",
+                        prefix="cap",
+                    )
                 else:
                     step("wire", f"{ev['url']} fields={ev['key_fields']}", prefix="cap")
                 flush()
@@ -153,14 +182,16 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, window: int, 
                     rbody = await resp.json()
                 except Exception:  # noqa: BLE001
                     rbody = (await resp.text())[:2000]
-                events.append({
-                    "dir": "response",
-                    "t": round(time.monotonic(), 2),
-                    "status": resp.status,
-                    "url": url.split("?")[0][-90:],
-                    "key_fields": _keys_summary(rbody),
-                    "body": _redact(rbody) if isinstance(rbody, (dict, list)) else rbody,
-                })
+                events.append(
+                    {
+                        "dir": "response",
+                        "t": round(time.monotonic(), 2),
+                        "status": resp.status,
+                        "url": url.split("?")[0][-90:],
+                        "key_fields": _keys_summary(rbody),
+                        "body": _redact(rbody) if isinstance(rbody, (dict, list)) else rbody,
+                    }
+                )
                 step("WIRE", f"GENERATE response status={resp.status}", prefix="cap")
                 flush()
             except Exception as e:  # noqa: BLE001
@@ -178,9 +209,12 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, window: int, 
         print("  TIER-2 CAPTURE READY — do the following IN THE BROWSER now:", flush=True)
         print("  1. Switch to  Vídeo  +  Elementos  (references) sub-mode.", flush=True)
         print("  2. Choose a model that supports audio (Veo 3.1).", flush=True)
-        print("  3. + Add Media -> Personagens -> pick a 'Stickman' -> 'Incluir no comando'.", flush=True)
+        print(
+            "  3. + Add Media -> Personagens -> pick a 'Stickman' -> 'Incluir no comando'.",
+            flush=True,
+        )
         print("  4. + Add Media -> Vozes -> pick a voice -> 'Incluir no comando'.", flush=True)
-        print(f"  5. Type the prompt incl. dialogue, e.g.:  Stickman says: \"{line}\"", flush=True)
+        print(f'  5. Type the prompt incl. dialogue, e.g.:  Stickman says: "{line}"', flush=True)
         print("  6. Click generate, solve reCAPTCHA.", flush=True)
         print("     (For 2-speaker: add a 2nd Stickman + 2nd voice + 2 lines.)", flush=True)
         print(f"  Capturing for up to {window}s; exits ~20s after a generate response.", flush=True)
@@ -201,12 +235,16 @@ async def _run(*, profile_dir: Path, project_id: str, locale: str, window: int, 
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(description="Movie spike Tier-2: capture r2v dialogue wire (you generate).")
+    p = argparse.ArgumentParser(
+        description="Movie spike Tier-2: capture r2v dialogue wire (you generate)."
+    )
     p.add_argument("--profile", default=os.environ.get("GFLOW_CLI_PROFILE", "denon82"))
     p.add_argument("--project", required=True)
     p.add_argument("--locale", default="pt")
     p.add_argument("--window", type=int, default=480, help="Capture window seconds (default 480).")
-    p.add_argument("--line", default="We finally made it to the top!", help="Dialogue line to speak.")
+    p.add_argument(
+        "--line", default="We finally made it to the top!", help="Dialogue line to speak."
+    )
     p.add_argument("--out", default=None)
     args = p.parse_args(argv)
 
@@ -214,8 +252,16 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out) if args.out else default_out_path("spike_movie_gen_capture", ".json")
     step("--", f"profile={args.profile} project={args.project} window={args.window}s", prefix="cap")
     try:
-        return asyncio.run(_run(profile_dir=profile_dir, project_id=args.project, locale=args.locale,
-                                window=args.window, line=args.line, out_path=out_path))
+        return asyncio.run(
+            _run(
+                profile_dir=profile_dir,
+                project_id=args.project,
+                locale=args.locale,
+                window=args.window,
+                line=args.line,
+                out_path=out_path,
+            )
+        )
     except KeyboardInterrupt:
         print("[cap] aborted", file=sys.stderr)
         return 130

@@ -47,7 +47,9 @@ async def _component_check(profile: str) -> None:
         print(f"\n[A · COMPONENT — helper on a live page]  profile={profile}")
         print(f"    naive early read : {naive!r}")
         print(f"    _settled_lang    : {settled!r}   (+{ms} ms)")
-        print(f"    verdict          : {'CAPTURED THE FLIP' if settled != naive else 'no flip seen'}")
+        print(
+            f"    verdict          : {'CAPTURED THE FLIP' if settled != naive else 'no flip seen'}"
+        )
 
 
 async def _end_to_end(profile: str) -> None:

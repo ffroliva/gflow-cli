@@ -168,8 +168,7 @@ async def main() -> None:
     profile_dir = resolve_profile_dir(args.profile)
     routes = {
         "labs": (
-            f"https://labs.google/fx/en/tools/flow/project/{args.project}"
-            f"/character/{args.entity}"
+            f"https://labs.google/fx/en/tools/flow/project/{args.project}/character/{args.entity}"
         ),
         "migrated": f"https://flow.google.com/project/{args.project}/character/{args.entity}",
     }

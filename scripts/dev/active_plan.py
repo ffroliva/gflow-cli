@@ -14,6 +14,7 @@ plan; otherwise the root PLAN.md is the source of truth for the current phase.
 Output is intentionally compact: only the relevant chunk enters the agent's context.
 Run directly or via the /gflow:status, /gflow:next, or /gflow:active slash commands.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,6 +43,7 @@ _SECTION_H2 = re.compile(r"^##\s+")
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
+
 
 def _superpowers_candidates() -> list[Path]:
     """All non-orchestration plan files, newest first."""
@@ -80,6 +82,7 @@ def _find_plan(feature: str | None) -> Path | None:
 # ---------------------------------------------------------------------------
 # Superpowers plan extraction
 # ---------------------------------------------------------------------------
+
 
 def _summarise_superpowers(path: Path) -> str:
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -124,8 +127,11 @@ def _summarise_superpowers(path: Path) -> str:
     # Walk forward to the next ### or ## heading to close the block.
     task_end = len(lines)
     for k in range(task_start + 1, len(lines)):
-        if (_TASK_HEADING.match(lines[k]) or _PHASE_HEADING.match(lines[k])
-                or _SECTION_H2.match(lines[k])):
+        if (
+            _TASK_HEADING.match(lines[k])
+            or _PHASE_HEADING.match(lines[k])
+            or _SECTION_H2.match(lines[k])
+        ):
             task_end = k
             break
 
@@ -136,6 +142,7 @@ def _summarise_superpowers(path: Path) -> str:
 # ---------------------------------------------------------------------------
 # PLAN.md extraction
 # ---------------------------------------------------------------------------
+
 
 def _summarise_root_plan() -> str:
     if not ROOT_PLAN.exists():
@@ -168,12 +175,14 @@ def _summarise_root_plan() -> str:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Print the active plan summary (compact — for agent context)."
     )
     parser.add_argument(
-        "--feature", "-f",
+        "--feature",
+        "-f",
         metavar="NAME",
         help="Feature name to match against docs/superpowers/plans/ (e.g. shell-multi-prompt)",
     )
@@ -184,10 +193,7 @@ def main() -> None:
         if plan_path:
             print(_summarise_superpowers(plan_path))
             return
-        print(
-            f"No superpowers plan matches --feature {args.feature!r}; "
-            "falling back to PLAN.md.\n"
-        )
+        print(f"No superpowers plan matches --feature {args.feature!r}; falling back to PLAN.md.\n")
     print(_summarise_root_plan())
 
 

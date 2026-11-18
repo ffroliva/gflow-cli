@@ -82,8 +82,12 @@ async def _classic_present(page: Any) -> bool:
 async def _snapshot(page: Any) -> dict[str, Any]:
     snap: dict[str, Any] = {"classic_crop_present": await _classic_present(page)}
     snap["media_panel_present"] = await VideoGenerationMixin._media_panel_present(page)  # noqa: SLF001
-    snap["agent_pill_present"] = await page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first.count() > 0
-    snap["chat_close_present"] = await page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first.count() > 0
+    snap["agent_pill_present"] = (
+        await page.locator(COMPOSER_AGENT_TOGGLE_SELECTOR).first.count() > 0
+    )
+    snap["chat_close_present"] = (
+        await page.locator(AGENT_CHAT_PANEL_CLOSE_SELECTOR).first.count() > 0
+    )
     ind: dict[str, int] = {}
     for name, sel in _AGENTIC_INDICATORS.items():
         ind[name] = await page.locator(sel).count()

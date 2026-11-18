@@ -91,8 +91,9 @@ async def _pass(page: Any, project_id: str, hl: str, lengths: list[int]) -> dict
             for r in await pane.locator(RADIO).evaluate_all(_RADIO_DUMP)
             if r["checked"] == "true"
         ]
-        picks.append({"wanted": wanted, "matcher_hits": hits, "outcome": outcome,
-                      "checked_after": checked})
+        picks.append(
+            {"wanted": wanted, "matcher_hits": hits, "outcome": outcome, "checked_after": checked}
+        )
     row["picks"] = picks
     await composer._close_pane(page, strict=False)  # noqa: SLF001
     return row
