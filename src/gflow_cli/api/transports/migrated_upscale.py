@@ -65,7 +65,7 @@ def menu_token_pattern(token: str) -> re.Pattern[str]:
 #: A whole scale token (``270p``, ``2K``): what tells "Flow lists other scales" from drift.
 #: Matched against the words of a label, so no lookaround is needed for token boundaries.
 _SCALE = re.compile(r"\d+[pk]", re.IGNORECASE | re.ASCII)
-_WORD_SPLIT = re.compile(r"[^da-z]+", re.IGNORECASE | re.ASCII)
+_WORD_SPLIT = re.compile(r"[^\da-z]+", re.IGNORECASE | re.ASCII)
 
 
 async def find_download_menu_item(
