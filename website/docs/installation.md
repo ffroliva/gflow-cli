@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- A Google account with Flow access — every generation bills your own account (a paid AI Pro/Ultra plan only affects credit allowances).
+- A Google account with Flow access — every video generation bills your own Flow credits, and images count against a daily image quota (a paid AI Pro/Ultra plan only affects credit allowances).
 - [`uv`](https://docs.astral.sh/uv/) to install the tool.
 - A Chromium the browser transport can drive (installed via Playwright, below).
 - A display for the one-time browser login (headless CI without a prerecorded profile won't work — see [Known issues](KNOWN_ISSUES.md)).

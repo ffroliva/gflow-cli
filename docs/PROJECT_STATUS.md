@@ -1,6 +1,8 @@
 # Project Status
 
 > Where gflow-cli is in its lifecycle, by release. Updated on every signed tag.
+>
+> **Status: beta** (PyPI classifier `Development Status :: 4 - Beta`) from the first release after v0.102.1. Each release entry below keeps the label it shipped with.
 
 ## Current release
 
@@ -1140,7 +1142,7 @@ For per-release deltas see [CHANGELOG.md](../CHANGELOG.md). Per-release evidence
 
 ## Lifecycle policy
 
-- **Alpha (`0.x.y`)** — current. APIs may change between minor versions; breaking changes are noted in the changelog.
+- **Beta (`0.x.y`)** — current. Every release since v0.54.0 is live-verified against Google Flow; APIs may still change between minor versions; breaking changes are noted in the changelog.
 - **`1.0.0`** — stable surface. Breaking changes require MAJOR bump + migration notes.
 - **Patch releases** — bug fixes, doc refreshes (like v0.8.1), and other backward-compatible changes.
 

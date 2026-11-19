@@ -2,7 +2,7 @@
   "name": "gflow",
   "displayName": "gflow-cli",
   "version": "0.102.1",
-  "description": "Drive Google Flow from your agent: Veo text-to-video, image-to-video and clip extension, Imagen images, reusable Characters and scene composition.",
+  "description": "Drive Google Flow from your agent: Veo 3.1 and Omni text-, image- and reference-to-video, clip extension, Nano Banana and Imagen images, reusable Characters and scene composition.",
   "author": {
     "name": "Flavio Oliva",
     "url": "https://github.com/ffroliva"
@@ -14,6 +14,8 @@
     "google-flow",
     "veo",
     "imagen",
+    "omni",
+    "nano-banana",
     "video-generation",
     "mcp"
   ],

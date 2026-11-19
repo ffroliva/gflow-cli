@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ffroliva/gflow-cli",
   "title": "gflow-cli",
-  "description": "Drive Google Flow from an agent: Veo video and Imagen image generation",
+  "description": "Google Flow from any agent: Veo 3.1 and Omni video, Nano Banana and Imagen images, CLI included",
   "version": "0.102.1",
   "websiteUrl": "https://ffroliva.github.io/gflow-cli/",
   "repository": {
