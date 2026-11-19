@@ -39,10 +39,13 @@ tile and option, it reports which listing record carries the same `/asb/` token 
 ## Decision
 
 When the new finished tile names no uuid, the agent-only driver reads the project listing in a
-second tab and takes the record whose poster carries the tile's token. That record must be
-finished and created no earlier than the submit, less a 15 s clock margin. The time check is
-needed because an agent that only re-renders an older tile to `/asb/` also changes the newest
-tile, and that tile's record must not be returned as the new clip.
+second tab and takes the record whose poster carries the tile's token. The listing is read only
+after a pending clip has been seen since the submit. The record must be finished, its media id
+and the tile's token must not have been on the page before the submit, and it must have been
+created no earlier than the submit, less a 15 s clock margin. These checks exist because an
+agent that only re-renders an older tile to `/asb/` also changes the newest tile, and that
+tile's record must not be returned as the new clip. The clock check is the second guard, after
+the page-state checks, because it compares Flow's time with the local clock.
 
 ## Verification
 
