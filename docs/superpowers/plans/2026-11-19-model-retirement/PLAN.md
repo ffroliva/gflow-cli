@@ -155,7 +155,7 @@ exists.
 - [x] `/gflow:check` green, including `generate_website_docs.py --check` and `generate_plugin_skills.py --check` (the skills changed).
 - [x] e2e: `tests/e2e/test_migrated_host_e2e.py` (and one migrated t2v) on the swept models, plus a $0 `gflow models list --json` check.
 - [x] CHANGELOG `[Unreleased]`: Added `retires_on` and the warning. Changed the movie template default and the doc examples.
-- [ ] Fresh `/code-review xhigh` + `/ponytail-review xhigh`, one fix round, then `/gflow:pr-council-review`.
+- [x] Fresh `/code-review xhigh` + `/ponytail-review xhigh`, one fix round, then `/gflow:pr-council-review` (PR #1380; council fix round and CodeRabbit triage applied).
 
 ## Follow-up (separate PR, first release after 5 Dec)
 
@@ -165,14 +165,14 @@ exists.
 
 ## Definition of done
 
-- [ ] All task steps checked off
-- [ ] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated
-- [ ] Docs updated (`USAGE.md` / `MCP.md` / skills)
-- [ ] BDD feature file covers all Critical + High scenarios from `SCENARIO.md`
-- [ ] No `# TODO` in diff without a tracked issue link
-- [ ] Task 1's red tests failed before Task 3
-- [ ] Worktree clean: no untracked scratch files, no leftover clones or temp dirs
+- [x] All task steps checked off
+- [x] `/gflow:check` green (ruff / format / pyright / pytest ≥ 80% coverage)
+- [x] `CHANGELOG.md` `[Unreleased]` section updated
+- [x] Docs updated (`USAGE.md` / `MCP.md` / skills)
+- [x] Every High scenario is covered at the layer SCENARIO.md names: the feature file holds the five BDD scenarios (3, 6, 7, 12 and the non-retiring control), and the rest are unit or e2e tests
+- [x] No `# TODO` in diff without a tracked issue link
+- [x] Task 1's red tests failed before Task 3
+- [x] Worktree clean: no untracked scratch files, no leftover clones or temp dirs
 
 ## Decision log
 
