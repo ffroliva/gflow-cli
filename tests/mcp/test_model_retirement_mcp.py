@@ -18,7 +18,7 @@ from gflow_cli.worker.queue import QueueRepository
 _RETIRING = {"type": "model_retiring", "model": "veo_3_1_fast", "retires_on": "2026-12-05"}
 
 
-def _store(tmp_path: Path, model: str | None, status: str = "completed") -> DataStore:
+def _store(tmp_path: Path, model: object, status: str = "completed") -> DataStore:
     store = DataStore.open(tmp_path / "q.db")
     store.conn.execute(
         "INSERT OR IGNORE INTO profiles (name, first_seen_at) VALUES ('p', CURRENT_TIMESTAMP)"
@@ -44,8 +44,8 @@ def test_a_failed_job_on_a_retiring_model_still_warns(tmp_path: Path) -> None:
     assert reply["warnings"] == [_RETIRING]
 
 
-@pytest.mark.parametrize("model", ["veo-lite", None, "a-model-gflow-no-longer-knows"])
-def test_no_warnings_key_when_the_model_stays(tmp_path: Path, model: str | None) -> None:
+@pytest.mark.parametrize("model", ["veo-lite", None, "a-model-gflow-no-longer-knows", 5])
+def test_no_warnings_key_when_the_model_stays(tmp_path: Path, model: object) -> None:
     store = _store(tmp_path, model)
     assert "warnings" not in task_payload("p", "t1", store.path)
 
