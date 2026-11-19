@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from gflow_cli.api.image import (
     AgentInstruction,
@@ -36,6 +36,7 @@ from gflow_cli.api.image import (
 )
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
+from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
@@ -43,6 +44,9 @@ from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.config import UiMode
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import QueueSchemaError
+
+if TYPE_CHECKING:
+    from gflow_cli.worker.queue import QueueTask
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
@@ -229,6 +233,24 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
         instructions=_parse_agent_instructions(payload.get("instructions")),
         ui_mode=UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None,
     )
+
+
+def retirement_warnings(task: QueueTask) -> dict[str, Any]:
+    """#1375: ``{"warnings": [...]}`` for a video task on a model Flow is retiring, else ``{}``.
+
+    Read from the queued payload's ``model``, the value the worker generated with, so the MCP
+    ``wait=true`` reply and ``tasks/get`` say the same thing.
+    """
+    alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
+    try:
+        model = VideoModel.from_cli(alias) if alias else None
+    except ValueError:  # a row an older gflow queued; the reply must still go out
+        return {}
+    when = retires_on(model) if model else None
+    if model is None or when is None:
+        return {}
+    warning = {"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}
+    return {"warnings": [warning]}
 
 
 def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
