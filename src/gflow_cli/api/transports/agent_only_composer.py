@@ -610,6 +610,12 @@ class AgentOnlyComposer:
                 detail=(
                     f"agent-only composer: no finished {run.kind} within {run.budget_s:.0f}s "
                     f"of submit (approvals={run.approvals})"
+                    + (
+                        f"; last poll: {run.lookup}; pending seen: {run.saw_pending}; "
+                        f"listing reads: {run.listing_reads}"
+                        if run.kind == "video"
+                        else ""
+                    )
                 ),
                 retryable=False,
                 remediation_hint=(
@@ -820,7 +826,14 @@ class AgentOnlyComposer:
         # before submit, and a uuid names THIS clip: from the page, or else from the listing
         # record checked in `_listed_uuid` (a re-render alone swaps a tile's cdn media for
         # /asb/, which changes the head without making a clip).
-        if not (head and not state["pending"] and _tile_key(head) != baseline_head):
+        if not head:
+            run.lookup = "no finished video tile mounted"
+            return None
+        if state["pending"]:
+            run.lookup = "a clip is pending"
+            return None
+        if _tile_key(head) == baseline_head:
+            run.lookup = "the newest finished tile is the one from before the submit"
             return None
         if named:
             uuid = _cdn_uuid(head["video"], "video") or named[-1]
@@ -828,11 +841,13 @@ class AgentOnlyComposer:
             uuid = await self._listed_uuid(head, run, read_listing)
             # The read takes seconds: the tile hovered below must still be the one it named.
             if uuid is not None and not await _head_carries(page, asb_token(head["img"])):
+                run.lookup = "the newest tile changed during the listing read"
                 return None
         if uuid is None:
             return None
         src = head["video"] or await self._hover_video_src(page)
         if not src:
+            run.lookup = f"clip {uuid} named, its player not mounted"
             return None
         log.info("migrated.agent_only.video_ready", media_id=uuid)
         return TileMedia(uuid, src)
@@ -849,21 +864,32 @@ class AgentOnlyComposer:
         token = asb_token(head["img"])
         if run.listed is not None and run.listed[0] == token:
             return run.listed[1]  # named already; only the hover player was not mounted yet
-        if (
-            read_listing is None
-            or token is None
-            or token in run.seen_before  # a tile already on the page before the submit
-            or not run.saw_pending  # head changes before our clip queues are not our clip
-            or time.monotonic() < run.listing_after
-        ):
+        if read_listing is None or token is None:
+            run.lookup = (
+                "no listing reader"
+                if read_listing is None
+                else "the newest tile has no /asb/ token"
+            )
+            return None
+        if token in run.seen_before:
+            run.lookup = "the newest tile was on the page before the submit"
+            return None
+        if not run.saw_pending:  # a head change before our clip queues is not our clip
+            run.lookup = "this run's clip was never seen pending"
+            return None
+        if time.monotonic() < run.listing_after:
             return None
         budget = max(1.0, min(LISTING_READ_BUDGET_S, run.deadline - time.monotonic()))
         listing = await read_listing(budget)
+        run.listing_reads += 1
         run.listing_after = time.monotonic() + LISTING_RETRY_S
         found = (
             None if listing is None else generation_record_by_poster(LISTING_RPC, listing, token)
         )
         if found is None:
+            run.lookup = "the listing " + (
+                "did not answer" if listing is None else "has no record for the newest tile"
+            )
             log.info("migrated.agent_only.video_not_listed_yet")
             return None
         record, created = found
@@ -874,6 +900,7 @@ class AgentOnlyComposer:
             # Second guard; the clock margin matches the classic composer's prompt match.
             or created < run.submitted_at - PROMPT_MATCH_MARGIN_S
         ):
+            run.lookup = f"the listed record {record.media_id} is unfinished or not this run's"
             log.info(
                 "migrated.agent_only.listed_video_not_ours",
                 media_id=record.media_id,
@@ -948,6 +975,10 @@ class _Run:
     listing_after: float = 0.0
     #: (tile token, media id) the listing already named: kept while the hover player mounts.
     listed: tuple[str, str] | None = None
+    #: Why the last poll did not return a video, and how often the listing was read: the
+    #: timeout names both, so an exit 9 says where the run stopped (#1354).
+    lookup: str = "nothing polled yet"
+    listing_reads: int = 0
 
 
 async def _head_carries(page: Page, token: str | None) -> bool:

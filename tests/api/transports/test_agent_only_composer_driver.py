@@ -619,10 +619,15 @@ async def test_a_listing_record_older_than_the_submit_is_not_this_run_1354(page:
     """An idle agent that only re-renders the OLD tile to `/asb/` must not hand it back."""
     await _load(page, kind="video", readyMedia="asb", optionAsb=True)
     read = _listing(_listed("opaque-100", OLD_CLIP, created=time.time() - 3600))
-    with pytest.raises(TransportTimeoutError):
+    with pytest.raises(TransportTimeoutError) as exc_info:
         await aoc.AgentOnlyComposer().generate(
             page, "x", kind="video", count=1, budget_s=2, read_listing=read
         )
+    # The exit 9 says where the run stopped, not only that it did.
+    detail = str(exc_info.value.detail)
+    assert f"the listed record {OLD_CLIP} is unfinished or not this run's" in detail
+    assert "pending seen: True" in detail
+    assert "listing reads: " in detail
 
 
 @pytest.mark.asyncio
