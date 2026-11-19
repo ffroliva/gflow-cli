@@ -40,7 +40,10 @@ Release ledger for v0.103.0, a minor release and the first beta. It covers one f
 
 ## Post-tag evidence
 
-Recorded after the tag is published: the `Release` workflow run, the PyPI upload and the GitHub Release.
+- **Signed tag** `v0.103.0` on `b1d133c7` (SSH signature present).
+- **`Release` workflow** run 44623129004: `build-and-publish` success, `mcp-registry / publish` success.
+- **PyPI:** `gflow-cli 0.103.0` is the latest version, with `gflow_cli-0.103.0-py3-none-any.whl` (21:53:07Z) and `gflow_cli-0.103.0.tar.gz` (21:53:09Z), classifier `Development Status :: 4 - Beta`.
+- **GitHub Release:** https://github.com/ffroliva/gflow-cli/releases/tag/v0.103.0, not a prerelease.
 
 ### What these runs do not prove
 
