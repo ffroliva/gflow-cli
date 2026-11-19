@@ -356,6 +356,32 @@ def generation_records_matching(
     return found
 
 
+def asb_token(url: str | None) -> str | None:
+    """The opaque media token of an ``/asb/`` URL, without its size spec (#1354).
+
+    Measured 2026-11-19: a grid tile's ``flow.google.com/asb/<token>=…`` src and its
+    ``Zzl0ze`` record's ``lh3.googleusercontent.com/asb/<token>`` poster share the token."""
+    try:
+        path = urlsplit(url or "").path
+    except ValueError:  # a malformed authority (an unclosed IPv6 bracket) names no token
+        return None
+    _, sep, rest = path.partition("/asb/")
+    token = rest.split("=", 1)[0].split("/", 1)[0]
+    return token if sep and token else None
+
+
+def generation_record_by_poster(
+    rpcid: str, payload: Any, token: str
+) -> tuple[GenerationRecord, int | None] | None:
+    """The (record, ``created``) whose poster carries ``token``, or ``None`` (#1354)."""
+    for node in _walk_lists(payload):
+        if _is_record(node) and asb_token(_url(_at(node, 5, 10))) == token:
+            created = _at(node, 5, 0, 0)
+            record = generation_record(rpcid, node, workflow_id=node[0])
+            return record, created if isinstance(created, int) else None
+    return None
+
+
 def image_records(rpcid: str, payload: Any) -> list[ImageGenerationRecord]:
     """Decode every completed image in the migrated ``ogiZ0b`` payload.
 
