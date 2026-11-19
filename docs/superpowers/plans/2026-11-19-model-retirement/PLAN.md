@@ -83,16 +83,16 @@ exists.
 **Files:** `tests/api/test_model_catalog.py`, `tests/cli/test_cli_models.py`
 
 **Steps:**
-- [ ] Record the fixture first (Task 3's script, or trim `scripts/dev/_spike_out/htrjv_direct_*/a.json` by hand once), so the tests read real data.
-- [ ] Write the tests below against the not-yet-existing `api/model_catalog.py`.
-- [ ] Commit red, with the failing line in the message.
+- [x] Record the fixture first (Task 3's script, or trim `scripts/dev/_spike_out/htrjv_direct_*/a.json` by hand once), so the tests read real data.
+- [x] Write the tests below against the not-yet-existing `api/model_catalog.py`.
+- [x] Commit red, with the failing line in the message.
 
 **Tests created (red):**
-- [ ] `test_leaving_models_retire_on_2026_12_05`: Omni 1.1 Flash, Veo 3.1 Fast and Veo 3.1 Quality are on 2026-12-05; every other `VideoModel` is `None`.
-- [ ] `test_every_video_model_maps_to_a_family_in_the_recorded_catalog`: each `VideoModel` appears in `FAMILY_KEY` with a key present in the fixture.
-- [ ] `test_static_dates_match_the_recorded_catalog`: for each family in the fixture, index 6 equals `retires_on`.
-- [ ] `test_parser_tolerates_a_changed_date_slot`: a non-date at index 6 gives `None` and does not raise (scenario 8).
-- [ ] `test_catalog_video_entries_carry_retires_on`: `build_catalog()["video"]["models"][*]["retires_on"]` is an ISO string or `None`, and the existing keys are unchanged (scenario 6).
+- [x] `test_leaving_models_retire_on_2026_12_05`: Omni 1.1 Flash, Veo 3.1 Fast and Veo 3.1 Quality are on 2026-12-05; every other `VideoModel` is `None`.
+- [x] `test_every_video_model_maps_to_a_family_in_the_recorded_catalog`: each `VideoModel` appears in `FAMILY_KEY` with a key present in the fixture.
+- [x] `test_static_dates_match_the_recorded_catalog`: for each family in the fixture, index 6 equals `retires_on`.
+- [x] `test_parser_tolerates_a_changed_date_slot`: a non-date at index 6 gives `None` and does not raise (scenario 8).
+- [x] `test_catalog_video_entries_carry_retires_on`: `build_catalog()["video"]["models"][*]["retires_on"]` is an ISO string or `None`, and the existing keys are unchanged (scenario 6).
 
 ## Task 2 — BDD scaffold (red)
 

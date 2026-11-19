@@ -39,6 +39,20 @@ def test_models_json_lists_image_and_video() -> None:
     assert by_vid["veo_3_1_fast"]["max_duration"] == 8
 
 
+def test_catalog_video_entries_carry_retires_on() -> None:
+    """#1375: each video model says when Flow retires it (ISO date) or null; existing keys stay."""
+    by_name = {m["name"]: m for m in build_catalog()["video"]["models"]}
+    assert by_name["veo_3_1_fast"]["retires_on"] == "2026-12-05"
+    assert by_name["veo_3_1_quality"]["retires_on"] == "2026-12-05"
+    assert by_name["omni_flash"]["retires_on"] == "2026-12-05"
+    assert by_name["veo_3_1_lite"]["retires_on"] is None
+    assert by_name["omni_1_2_flash"]["retires_on"] is None
+    for entry in by_name.values():
+        assert {"name", "aliases", "ref_cap", "max_duration", "durations", "retires_on"} <= set(
+            entry
+        )
+
+
 def test_models_table_renders_without_json() -> None:
     runner = CliRunner()
     from gflow_cli.cli import main
