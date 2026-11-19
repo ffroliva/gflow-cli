@@ -36,7 +36,7 @@ Release ledger for v0.103.0, a minor release and the first beta. It covers one f
 - `/gflow:check` on `develop` at `7883770c`: every repository gate passes (hygiene, size, doc links, website PII, website mirror, council memory, plugin skills); `ruff` clean; `pyright` `0 errors`; `7394 passed, 16 skipped` in 248 s, coverage 93%.
 - **PR #1380 CI** at `091fb3dc`: 21 checks passed, CodeRabbit skipped on the last (docs-only) commit, SonarCloud green.
 - **Reviews:** a fresh `/code-review xhigh` and `/ponytail-review xhigh` with one fix round; `/gflow:pr-council-review` (7 reviewers over 12 dimensions) with one fix round; CodeRabbit's findings accepted and fixed, or declined with a reason on each thread.
-- `/gflow:doc-review`: _recorded below once run._
+- `/gflow:doc-review`: _Council verdict: YELLOW, YELLOW, YELLOW; no Tier 1 findings. Fixed in the release prep: the CHANGELOG and README name the replacement models next to the date; USAGE documents `retires_on` in `gflow models` and the omitted-`--model` limit; the gflow-cli skill notes the retirement and the video-production note points at omni-1.2; `lhm.plugin.json` tool descriptions name `retires_on` and `model_retiring`; AGENTS.md lists `cli_video_reporting.py`; two INDEX anchors predating this release are repaired. Tier 3, not changed: a retirement hint in the CLI `--model` help. Council reports at `tmp/council/0{1,2,3}-*.md` (local-only)._
 
 ## Post-tag evidence
 

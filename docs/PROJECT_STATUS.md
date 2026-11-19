@@ -1015,7 +1015,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
-| Model retirement: `retires_on`, a `model.retiring` warning on every video route (CLI and MCP), the exit-11 refusal naming the date, and defaults/docs/e2e moved off the leaving models (#1375) | ✅ done (v0.103.0) |
+| Model retirement, slice 1: `retires_on`, a `model.retiring` warning on every video route (CLI and MCP), the exit-11 refusal naming the date, and defaults/docs/e2e moved off the leaving models (#1375) | ✅ done (v0.103.0) |
 | Agent-only video named from the project listing when the page shows only `/asb/` media (#1354) | ✅ done (v0.102.1) |
 | Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1332 #1333 #1334 #1335 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
 | patchright close hang fixed: the disabled-feature parse reads patchright 1.64's exclusion filter, and each launch site names its engine (#1324) | ✅ done (v0.101.2) |
