@@ -243,6 +243,8 @@ def retirement_warnings(task: QueueTask) -> dict[str, Any]:
     ``wait=true`` reply and ``tasks/get`` say the same thing.
     """
     alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
+    if not isinstance(alias, str):  # absent, or a hand-edited row; the reply must still go out
+        return {}
     try:
         model = VideoModel.from_cli(alias) if alias else None
     except ValueError:  # a row an older gflow queued; the reply must still go out

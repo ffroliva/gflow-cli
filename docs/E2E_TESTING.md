@@ -540,7 +540,7 @@ All fixtures live in `tests/e2e/conftest.py` unless noted.
 ## Cost minimization patterns
 
 1. **Single model, minimum parameters** — always use `--model narwhal`, `--count 1`
-   for image tests; `--model veo-lite`, `--count 1` and no `--duration` for video (a test about one model's own behaviour pins that model instead, and a test about a model Flow retires skips from that date with `until_retired`, #1375).
+   for image tests; `--model veo-lite`, `--count 1` and no `--duration` for video (omitting it keeps the editor's current length, which is not always the shortest; where the account shows a duration control, `--duration 4` is cheapest. a test about one model's own behaviour pins that model instead, and a test about a model Flow retires skips from that date with `until_retired`, #1375).
 2. **Video is always opt-in** — `GFLOW_CLI_E2E_RUN_VIDEO` defaults to `"0"`. A
    developer running `pytest -m e2e` will not burn Veo credits by accident.
 3. **Shared project for batch** — `--same-project` (always-on in the batch runner)
