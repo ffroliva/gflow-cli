@@ -2,9 +2,18 @@
 
 > Where gflow-cli is in its lifecycle, by release. Updated on every signed tag.
 >
-> **Status: beta** (PyPI classifier `Development Status :: 4 - Beta`) from the first release after v0.102.0. Each release entry below keeps the label it shipped with.
+> **Status: beta** (PyPI classifier `Development Status :: 4 - Beta`) from the first release after v0.102.1. Each release entry below keeps the label it shipped with.
 
 ## Current release
+
+**v0.102.1 — alpha.** Patch release: `gflow video t2v` on the agent-only composer saves a clip whose page shows no media id, instead of timing out after Flow has billed and finished it (#1354).
+
+**Fixed.**
+- **Agent-only video naming (#1354).** When the finished tile, its player and the chat option are all opaque `/asb/` URLs, gflow reads the project listing and takes the record whose poster carries the tile's token, finished, not on the page before the submit and created after it. A run that still cannot name its clip says where it stopped in its exit 9. CLI and MCP (`gflow_generate_video`, `mode="t2v"`) share the fix.
+
+Full ledger: [LIVE_VERIFICATION_v0.102.1](LIVE_VERIFICATION_v0.102.1.md).
+
+<details><summary>v0.102.0 — reliability release</summary>
 
 **v0.102.0 — alpha.** A reliability release: failures that happen before anything reaches Flow now say so, extend works on clips that were already extended, and several raw timeouts become typed exit codes.
 
@@ -18,6 +27,8 @@
 - The weekly usage report counts the browser engine and the Flow host served (#1326); queued-job failures name their exception class (#1343); a weekly `driver-watch` job opens one issue per browser-driver release.
 
 Full ledger: [LIVE_VERIFICATION_v0.102.0](LIVE_VERIFICATION_v0.102.0.md).
+
+</details>
 
 <details><summary>v0.101.2 — patchright close hang</summary>
 
@@ -989,6 +1000,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Agent-only video named from the project listing when the page shows only `/asb/` media (#1354) | ✅ done (v0.102.1) |
 | Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1332 #1333 #1334 #1335 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
 | patchright close hang fixed: the disabled-feature parse reads patchright 1.64's exclusion filter, and each launch site names its engine (#1324) | ✅ done (v0.101.2) |
 | `patchright` extra pinned to 1.64.4 so `.last` locators resolve under the patchright engine, with a real-engine CI contract (#1319) | ✅ done (v0.101.1) |
