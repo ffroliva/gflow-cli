@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The project status moves from alpha to beta.** The PyPI classifier is now `Development Status :: 4 - Beta`, matching the README badge, `docs/PROJECT_STATUS.md` and the docs site. The status reflects more than 130 releases, each live-verified against Google Flow; `0.x` minor versions may still change the API.
+- **The project status moves from alpha to beta.** The PyPI classifier is now `Development Status :: 4 - Beta`, matching the README badge, `docs/PROJECT_STATUS.md` and the docs site. The status reflects more than 130 releases, every one since v0.54.0 live-verified against Google Flow; `0.x` minor versions may still change the API.
 - **The README leads with what gflow-cli is and does.** It opens with a one-paragraph definition and an at-a-glance table, then answers the common questions under their own headings: what it can do, how to connect Claude Code, Cursor or Codex, which models it supports, how it protects credits and the account, and how it compares with other Google Flow automation tools (dated, sourced from each project's README, with planned items linked to [#1367](https://github.com/ffroliva/gflow-cli/issues/1367)). The package description, `server.json`, `llms.txt` and the docs-site home page name the current models (Veo 3.1, Omni, Nano Banana).
 
 ## [0.102.0] — 2026-11-18

@@ -1128,7 +1128,7 @@ For per-release deltas see [CHANGELOG.md](../CHANGELOG.md). Per-release evidence
 
 ## Lifecycle policy
 
-- **Beta (`0.x.y`)** — current. Live-verified against Google Flow every release; APIs may still change between minor versions; breaking changes are noted in the changelog.
+- **Beta (`0.x.y`)** — current. Every release since v0.54.0 is live-verified against Google Flow; APIs may still change between minor versions; breaking changes are noted in the changelog.
 - **`1.0.0`** — stable surface. Breaking changes require MAJOR bump + migration notes.
 - **Patch releases** — bug fixes, doc refreshes (like v0.8.1), and other backward-compatible changes.
 

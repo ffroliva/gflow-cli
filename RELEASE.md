@@ -5,7 +5,7 @@ Git tags. The release workflow is `.github/workflows/release.yml`.
 
 ## Current Policy
 
-- `0.x` versions are beta releases: live-verified against Google Flow, but APIs
+- `0.x` versions are beta releases, live-verified against Google Flow, but APIs
   may still change before `1.0.0`.
 - PEP 440 prerelease tags use the form `vX.Y.ZaN`, `vX.Y.ZbN`, or `vX.Y.ZrcN`.
   Example: `v0.4.0a2`.

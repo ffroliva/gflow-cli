@@ -1,7 +1,7 @@
 site_name: gflow-cli
 site_description: >-
-  CLI and MCP server for Google Flow — script Veo video and Imagen
-  stills from the terminal, or let your AI assistant drive it.
+  MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and
+  Nano Banana images from Claude, Cursor, Codex or the terminal.
 site_url: https://ffroliva.github.io/gflow-cli/docs/
 repo_url: https://github.com/ffroliva/gflow-cli
 repo_name: ffroliva/gflow-cli

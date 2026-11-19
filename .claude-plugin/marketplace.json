@@ -4,13 +4,13 @@
     "name": "Flavio Oliva",
     "url": "https://github.com/ffroliva"
   },
-  "description": "Drive Google Flow (Veo video, Imagen images) from Claude Code.",
+  "description": "Google Flow from Claude Code: Veo 3.1 and Omni video, Nano Banana and Imagen images, Characters.",
   "plugins": [
     {
       "name": "gflow",
       "source": "./plugins/gflow",
       "category": "Developer Tools",
-      "tags": ["video", "image", "google-flow", "veo", "imagen", "mcp"],
+      "tags": ["video", "image", "google-flow", "veo", "omni", "nano-banana", "imagen", "mcp"],
       "defaultEnabled": false
     }
   ]
