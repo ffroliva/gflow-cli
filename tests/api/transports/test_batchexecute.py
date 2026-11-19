@@ -413,6 +413,7 @@ def test_no_ids_match_nothing_1112() -> None:
         ("https://flow.google.com/asb/", None),
         ("", None),
         (None, None),
+        ("https://[::1/asb/ANqvTOKEN", None),  # urlsplit raises on the unclosed bracket
     ],
 )
 def test_asb_token_is_the_id_without_its_size_spec(url: str | None, token: str | None) -> None:

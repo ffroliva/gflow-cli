@@ -1541,7 +1541,8 @@ reloads (log event `migrated.agent_only_reload`, #1142).
   names one. When every URL on the page is `/asb/`, the reply's poster included
   ([#1354](https://github.com/ffroliva/gflow-cli/issues/1354)), gflow reads the project's
   listing in a second tab and takes the record whose poster shares the new tile's `/asb/`
-  token, finished and created after the submit. A run whose clip it cannot match that way
+  token, finished, not on the page before the submit, and created after it (15 s are
+  allowed for clock skew). A run whose clip it cannot match that way
   still ends with exit 9 and `charged: "maybe"`.
   **Image** tiles also load an opaque `/asb/` src (a 512-px preview) but carry the media id on
   `img[data-media-id]`; gflow downloads the original size by rewriting the size spec to `=s0`.

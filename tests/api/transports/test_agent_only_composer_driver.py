@@ -233,7 +233,7 @@ def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(aoc, "POLL_S", 0.05)
     monkeypatch.setattr(aoc, "IDLE_S", 0.8)
     monkeypatch.setattr(aoc, "GATE_SETTLE_S", 2.0)
-    monkeypatch.setattr(aoc, "LISTING_RETRY_S", 1.2, raising=False)
+    monkeypatch.setattr(aoc, "LISTING_RETRY_S", 1.2)
 
 
 async def _load(page: Page, **scenario: Any) -> None:
@@ -574,12 +574,13 @@ def _listed(token: str, media: str, *, created: float, status: int = 3) -> list[
     ]
 
 
-def _listing(*records: list[Any]) -> Any:
+def _listing(*records: list[Any], answers: bool = True) -> Any:
     calls: list[float] = []
 
-    async def read() -> Any:
+    async def read(budget_s: float) -> Any:
+        assert 1.0 <= budget_s <= aoc.LISTING_READ_BUDGET_S
         calls.append(time.monotonic())
-        return [None, [list(records)]]
+        return [None, [list(records)]] if answers else None
 
     read.calls = calls  # type: ignore[attr-defined]
     return read
@@ -634,6 +635,82 @@ async def test_an_unfinished_or_unlisted_record_keeps_polling_1354(page: Page) -
         )
     # Re-read on a throttle, never once per poll: each read opens a tab.
     assert 1 <= len(running.calls) <= 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_does_not_answer_keeps_polling_1354(page: Page) -> None:
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    silent = _listing(answers=False)
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=2, read_listing=silent
+        )
+    assert silent.calls  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_named_clip_is_not_looked_up_again_while_its_player_mounts_1354(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The listing named the clip but the hover `<video>` never mounted: one read, not one
+    per throttle window (each opens a tab)."""
+
+    async def not_mounted(*_: Any) -> str:
+        return ""  # fast, so several throttle windows pass within the budget
+
+    monkeypatch.setattr(aoc.AgentOnlyComposer, "_hover_video_src", not_mounted)
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    read = _listing(_listed("opaque-100", NEW_CLIP, created=time.time()))
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=4, read_listing=read
+        )
+    assert len(read.calls) == 1  # type: ignore[attr-defined]
+
+
+def _run(**changes: Any) -> Any:
+    run = aoc._Run("video", 60, time.monotonic() + 60, 0, 1, time.time())  # pyright: ignore[reportPrivateUsage]
+    run.saw_pending = True
+    for key, value in changes.items():
+        setattr(run, key, value)
+    return run
+
+
+_HEAD = {"video": "", "img": "https://flow.google.com/asb/opaque-100=s512-rw"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"saw_pending": False},  # the head changed before this run's clip ever queued
+        {"seen_before": frozenset({"opaque-100"})},  # that tile was on the page before
+    ],
+    ids=["never-pending", "token-before-submit"],
+)
+async def test_the_listing_is_not_read_for_a_tile_that_cannot_be_this_run_1354(
+    changes: dict[str, Any],
+) -> None:
+    read = _listing(_listed("opaque-100", NEW_CLIP, created=time.time()))
+    got = await aoc.AgentOnlyComposer._listed_uuid(_HEAD, _run(**changes), read)  # pyright: ignore[reportPrivateUsage]
+    assert got is None
+    assert read.calls == []  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_listed_clip_already_named_before_the_submit_is_not_this_run_1354() -> None:
+    """Clock-free guard: the record names a media id the page showed before the submit."""
+    read = _listing(_listed("opaque-100", OLD_CLIP, created=time.time()))
+    run = _run(seen_before=frozenset({OLD_CLIP}))
+    assert await aoc.AgentOnlyComposer._listed_uuid(_HEAD, run, read) is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_a_record_with_no_creation_time_is_not_this_run_1354() -> None:
+    record = _listed("opaque-100", NEW_CLIP, created=0)
+    record[5][0] = None
+    run = _run()
+    assert await aoc.AgentOnlyComposer._listed_uuid(_HEAD, run, _listing(record)) is None  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.asyncio

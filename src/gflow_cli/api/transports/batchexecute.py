@@ -361,7 +361,11 @@ def asb_token(url: str | None) -> str | None:
 
     Measured 2026-11-19: a grid tile's ``flow.google.com/asb/<token>=…`` src and its
     ``Zzl0ze`` record's ``lh3.googleusercontent.com/asb/<token>`` poster share the token."""
-    _, sep, rest = urlsplit(url or "").path.partition("/asb/")
+    try:
+        path = urlsplit(url or "").path
+    except ValueError:  # a malformed authority (an unclosed IPv6 bracket) names no token
+        return None
+    _, sep, rest = path.partition("/asb/")
     token = rest.split("=", 1)[0].split("/", 1)[0]
     return token if sep and token else None
 

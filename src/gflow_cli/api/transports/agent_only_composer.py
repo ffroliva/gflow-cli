@@ -26,7 +26,8 @@ Shape of a run:
    poster — the tile's own media may be opaque ``/asb/`` (no uuid), and its ``<video>``
    then mounts only on hover. When every URL on the page is ``/asb/`` (#1354), the uuid
    comes from the project's ``Zzl0ze`` listing: the record whose poster shares the new
-   tile's ``/asb/`` token, finished, and created after this run's submit.
+   tile's ``/asb/`` token, finished, not on the page before this run's submit, and created
+   after it.
 
 Every selector is structural (component tags, classes, ``mat-icon`` ligatures, roles).
 """
@@ -82,6 +83,9 @@ if TYPE_CHECKING:  # pragma: no cover
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.transports.migrated_composer import ClipSaver
     from gflow_cli.api.video import GenerateVideoRequest, VideoStartedCallback
+
+    #: Reads the project's `Zzl0ze` listing within a budget in seconds (#1354).
+    ListingReader = Callable[[float], Awaitable[Any]]
 
 log = structlog.get_logger(__name__)
 
@@ -280,6 +284,12 @@ def _cdn_uuid(src: str, kind: str) -> str | None:
 
 def _picker_label(text: str) -> str:
     return text.replace("arrow_drop_down", "").strip()
+
+
+def _asb_tokens(state: dict[str, Any]) -> set[str]:
+    """Every `/asb/` token the grid or the chat shows (#1354)."""
+    srcs = [s for t in state["finished"] for s in (t["video"], t["img"])] + state["options"]
+    return {token for src in srcs if (token := asb_token(src))}
 
 
 def _video_uuids(state: dict[str, Any]) -> list[str]:
@@ -703,7 +713,7 @@ class AgentOnlyComposer:
                 charged="no",  # #1320: raised before the submit
             )
         head = _tile_key(state0["finished"][0]) if state0["finished"] else None
-        return set(_video_uuids(state0)), head
+        return set(_video_uuids(state0)) | _asb_tokens(state0), head
 
     async def _submit(self, page: Page, directive: str) -> None:
         with nothing_submitted():  # #1320: the click below is the first send
@@ -729,7 +739,7 @@ class AgentOnlyComposer:
         count: int,
         budget_s: float,
         on_first_media: Callable[[str], object] | None = None,
-        read_listing: Callable[[], Awaitable[Any]] | None = None,
+        read_listing: ListingReader | None = None,
     ) -> list[TileMedia]:
         """Submit ``directive`` and return the ``count`` new results it produced.
 
@@ -743,8 +753,8 @@ class AgentOnlyComposer:
         submitted_at = time.time()
         await self._submit(page, directive)
         log.info("migrated.agent_only.submitted", kind=kind, count=count)
-        run = _Run(kind, budget_s, time.monotonic() + budget_s, baseline_gates, count)
-        run.submitted_at = submitted_at
+        run = _Run(kind, budget_s, time.monotonic() + budget_s, baseline_gates, count, submitted_at)
+        run.seen_before = frozenset(baseline)
         if kind == "video":
             return await self._await_video(
                 page, run, count, baseline, baseline_head, on_first_media, read_listing
@@ -759,7 +769,7 @@ class AgentOnlyComposer:
         baseline: set[str],
         baseline_head: str | None,
         on_first_media: Callable[[str], object] | None,
-        read_listing: Callable[[], Awaitable[Any]] | None,
+        read_listing: ListingReader | None,
     ) -> list[TileMedia]:
         started = False
         peak_pending = 0
@@ -769,6 +779,7 @@ class AgentOnlyComposer:
             state = await page.evaluate(_VIDEO_JS)
             named = [u for u in _video_uuids(state) if u not in baseline]
             peak_pending = max(peak_pending, state["pending"])
+            run.saw_pending = run.saw_pending or bool(state["pending"])
             if peak_pending > count:
                 # One gate can cover several clips (its title names the count), so the
                 # one-approval rule alone does not stop an over-billed run.
@@ -797,7 +808,7 @@ class AgentOnlyComposer:
         named: list[str],
         baseline_head: str | None,
         run: _Run,
-        read_listing: Callable[[], Awaitable[Any]] | None,
+        read_listing: ListingReader | None,
     ) -> TileMedia | None:
         """This run's finished clip, or None while it is not ready yet."""
         head = state["finished"][0] if state["finished"] else None
@@ -821,17 +832,27 @@ class AgentOnlyComposer:
 
     @staticmethod
     async def _listed_uuid(
-        head: dict[str, str], run: _Run, read_listing: Callable[[], Awaitable[Any]] | None
+        head: dict[str, str], run: _Run, read_listing: ListingReader | None
     ) -> str | None:
         """The uuid of the listed record whose poster shares the tile's `/asb/` token (#1354).
 
-        Only a finished record created after this run's submit counts: an idle agent can
-        re-render the OLD tile to `/asb/`, and its record must not pass as this run's clip."""
+        Only a finished record that was not on the page before the submit, and was created
+        after it, counts: an idle agent can re-render the OLD tile to `/asb/`, and its record
+        must not pass as this run's clip. The clock check is the second guard, not the first."""
         token = asb_token(head["img"])
-        if read_listing is None or token is None or time.monotonic() < run.listing_after:
+        if run.listed is not None and run.listed[0] == token:
+            return run.listed[1]  # named already; only the hover player was not mounted yet
+        if (
+            read_listing is None
+            or token is None
+            or token in run.seen_before  # a tile already on the page before the submit
+            or not run.saw_pending  # head changes before our clip queues are not our clip
+            or time.monotonic() < run.listing_after
+        ):
             return None
+        budget = max(1.0, min(LISTING_READ_BUDGET_S, run.deadline - time.monotonic()))
+        listing = await read_listing(budget)
         run.listing_after = time.monotonic() + LISTING_RETRY_S
-        listing = await read_listing()
         found = (
             None if listing is None else generation_record_by_poster(LISTING_RPC, listing, token)
         )
@@ -841,7 +862,9 @@ class AgentOnlyComposer:
         record, created = found
         if (
             not record.is_done
+            or record.media_id.lower() in run.seen_before
             or created is None
+            # Second guard; the clock margin matches the classic composer's prompt match.
             or created < run.submitted_at - PROMPT_MATCH_MARGIN_S
         ):
             log.info(
@@ -852,7 +875,8 @@ class AgentOnlyComposer:
             )
             return None
         log.info("migrated.agent_only.video_named_by_listing", media_id=record.media_id)
-        return record.media_id.lower()
+        run.listed = (token, record.media_id.lower())
+        return run.listed[1]
 
     async def _await_images(
         self, page: Page, run: _Run, count: int, baseline: set[str]
@@ -904,13 +928,19 @@ class _Run:
     deadline: float
     baseline_gates: int
     count: int
+    #: Wall-clock time just before the submit click: a listed clip created earlier is not ours.
+    submitted_at: float
     approvals: int = 0
     #: When this run's gate was first seen with a title that could not be read yet.
     gate_seen_at: float | None = None
-    #: Wall-clock time just before the submit click: a listed clip created earlier is not ours.
-    submitted_at: float = 0.0
+    #: Clip uuids and `/asb/` tokens on the page before the submit: never this run's clip.
+    seen_before: frozenset[str] = frozenset()
+    #: Whether this run's clip has shown as pending; the listing is not read before that.
+    saw_pending: bool = False
     #: Monotonic time before which the project listing is not read again (#1354).
     listing_after: float = 0.0
+    #: (tile token, media id) the listing already named: kept while the hover player mounts.
+    listed: tuple[str, str] | None = None
 
 
 async def _maybe_await(value: object) -> None:
@@ -1158,9 +1188,7 @@ async def run_agent_video(
             count=1,
             budget_s=poll_timeout_s,
             on_first_media=started,
-            read_listing=lambda: read_project_listing(
-                page, project_id, budget_s=LISTING_READ_BUDGET_S
-            ),
+            read_listing=lambda budget_s: read_project_listing(page, project_id, budget_s=budget_s),
         )
     finally:
         await _restore_quietly(composer, page, snapshot)
