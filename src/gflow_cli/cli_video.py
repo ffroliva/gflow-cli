@@ -676,7 +676,7 @@ def _resolve_chain_model(model: str | None) -> VideoModel:
             f"wire-verified for a single generation on 2026-08-03 (refs #125) "
             f"but has not been proven at chain scale, so chains stay on the "
             f"long-verified Veo 3.1 models (e.g. --model veo-lite). Single "
-            f"clips: `gflow video i2v --model omni-flash` is available."
+            f"clips: `gflow video i2v --model omni-1.2` is available."
         )
         raise ModelModeIncompatibilityError(detail=msg)
     return resolved
@@ -1471,8 +1471,8 @@ def i2v(  # NOSONAR
         "does not support R2V at all.\n\n"
         "\b\n"
         "Examples:\n"
-        '  gflow video r2v "knight walks forward" --ref armor.png --model omni-flash\n'
-        '  gflow video r2v "they meet" --ref a.png --ref b.png --model veo-fast\n\n'
+        '  gflow video r2v "knight walks forward" --ref armor.png --model omni-1.2\n'
+        '  gflow video r2v "they meet" --ref a.png --ref b.png --model veo-lite\n\n'
         "Tag a saved character by name inline with @Name (--ref stays for one-off "
         "ingredient images). See docs/REFERENCE_STRATEGIES.md."
     ),
@@ -1646,7 +1646,7 @@ def r2v(
         "\b\n"
         "Examples:\n"
         "  gflow video chain story.jsonl --dry-run\n"
-        "  gflow video chain story.jsonl --model veo-fast --yes\n"
+        "  gflow video chain story.jsonl --model veo-lite --yes\n"
         "  gflow video chain story.jsonl --resume-from <chain-id>\n"
     ),
 )

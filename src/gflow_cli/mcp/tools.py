@@ -1282,7 +1282,7 @@ def _build_video_payload(
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
         "out_file, if given, must resolve inside the configured output directory. "
-        "Returns the local file path; a model Flow is retiring adds a model_retiring warning."
+        "Returns the local file path; a model Flow is retiring adds model_retiring to warnings."
     ),
 )
 @_guarded

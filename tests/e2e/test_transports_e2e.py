@@ -253,7 +253,7 @@ async def test_e2e_i2v_start_end_frame_attach(
     — its absence indicates the structural tier still misses.
 
     Costs 1 clip per run (veo-lite, count=1 by default). Override:
-        GFLOW_CLI_E2E_VIDEO_MODEL=veo-fast
+        GFLOW_CLI_E2E_VIDEO_MODEL=veo-lite-lp
         GFLOW_CLI_E2E_VIDEO_DURATION=6
         GFLOW_CLI_E2E_VIDEO_ASPECT=portrait
     """

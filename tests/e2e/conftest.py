@@ -206,15 +206,16 @@ def skip_on_migrated_host(
 
 
 def until_retired(model: VideoModel) -> pytest.MarkDecorator:
-    """Run a test about ``model`` itself only while Flow still lists it (#1375).
+    """Run a test that depends on ``model`` only while Flow still offers it (#1375).
 
-    From the retirement day on it skips with a reason naming the date, so a test that
-    exists to exercise a leaving model never fails, or bills, against its absence.
+    From the day Flow listed it as leaving, it skips with a reason naming that date, so a
+    test that needs the model never fails, or bills, against its absence. The date is
+    static: if Flow postpones, update ``model_catalog.RETIRES_ON`` and the tests resume.
     """
     when = retires_on(model)
     return pytest.mark.skipif(
         when is not None and date.today() >= when,
-        reason=f"#1375: Flow retired {model.value} on {when}; this test is about that model",
+        reason=f"#1375: Flow listed {model.value} as leaving on {when}; this test depends on it",
     )
 
 

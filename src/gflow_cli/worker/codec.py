@@ -55,6 +55,7 @@ __all__ = [
     "build_video_request",
     "decode_payload",
     "encode_payload",
+    "retirement_warnings",
 ]
 
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})

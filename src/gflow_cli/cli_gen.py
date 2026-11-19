@@ -137,7 +137,7 @@ def _refuse_an_image_as_the_prompt(positionals: tuple[str, ...]) -> None:
         "Examples:\n"
         '  gflow video generate "a golden sunset over mountains"\n'
         '  gflow video generate "slow pan left" --initial-frame hero.png\n'
-        '  gflow video generate "knight walks forward" --ref armor.png --model omni-flash'
+        '  gflow video generate "knight walks forward" --ref armor.png --model omni-1.2'
     ),
 )
 @click.argument("prompt")

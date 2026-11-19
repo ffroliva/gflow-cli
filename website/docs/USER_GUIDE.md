@@ -456,8 +456,8 @@ Costs are not published by Google. The numbers below are **rough observations fr
 
 | Command | Rough cost (Ultra) | Notes |
 |---|---|---|
-| `gflow video t2v "..."` (Veo 3.1 Fast, ~8 s clip) | ~1 credit / clip | Most expensive surface. |
-| `gflow video i2v IMAGE "..."` (Veo 3.1 Fast, ~8 s clip) | ~1 credit / clip | Same as t2v in practice. |
+| `gflow video t2v "..."` (Veo 3.1 Lite, ~8 s clip) | ~1 credit / clip | Most expensive surface. |
+| `gflow video i2v IMAGE "..."` (Veo 3.1 Lite, ~8 s clip) | ~1 credit / clip | Same as t2v in practice. |
 | `gflow image upload PATH` | 0 Veo credits | Asset upload is free. |
 | `gflow image t2i "..." --model nano2 -n 1` | Separate image quota | Uses that model's daily image allowance, not the displayed Veo balance. |
 | `gflow image t2i "..." --model nano-pro -n 1` | Separate image quota | Uses that model's daily image allowance. |

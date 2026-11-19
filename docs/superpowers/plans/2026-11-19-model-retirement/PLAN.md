@@ -114,7 +114,7 @@ exists.
 - [x] `RETIRES_ON: Mapping[VideoModel, date]` and `retires_on(model) -> date | None`.
 - [x] `FAMILY_KEY: Mapping[VideoModel, str]` (`omni_flash`→`abra`, `omni_1_2_flash`→`macaron_cookie`, `veo_3_1_lite`→`veo_3_1_lite`, `veo_3_1_fast`→`veo_3_1_fast`, `veo_3_1_quality`→`veo_3_1_quality`, `veo_3_1_lite_lower_priority`→`veo_3_1_lite_low_priority`; measured 2026-11-19).
 - [x] `@dataclass(frozen=True) ModelFamily(key, display_name, enabled, retires_on)` and `parse_htrjv_families(payload) -> list[ModelFamily]`, which tolerates shape drift (scenario 8).
-- [x] `scripts/dev/record_htrjv_fixture.py`: one direct read through the `flow_wire` path, trimmed to the family fields and the usage keys only. Write a header with the date and the account tier, but no account id.
+- [x] `scripts/dev/record_htrjv_fixture.py`: one direct read through `flow_wire`'s steps and its guards (home check, proxy refusal, reject-all cookie jar), trimmed to the family fields and the usage keys only. Write a header with the date and the account tier, but no account id.
 - [x] Tasks 1–2 green.
 
 ## Task 4 — Retirement warning at one chokepoint
@@ -130,7 +130,7 @@ exists.
 
 **Steps:**
 - [x] `build_catalog()` adds `retires_on`, and the table output gains a column.
-- [x] `_mc_settings_pane._select_model`'s "not offered" refusal (exit 11, `charged: no`): when `retires_on(model)` is past, the detail says Flow retired it on that date and lists the offered models. The exit code is unchanged (decision 2).
+- [x] `_mc_settings_pane._select_model`'s "not offered" refusal (exit 11, `charged: no`): when `retires_on(model)` is set, the detail says Flow listed it as leaving on that date and lists the offered models (on any day; see the decision log). The exit code is unchanged (decision 2).
 - [x] Unit tests for scenarios 2 and 6.
 
 ## Task 6 — MCP surface mirror (never optional)

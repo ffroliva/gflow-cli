@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.video import VideoModel
 from gflow_cli.mcp import tools as mcp_tools
 from tests.e2e.conftest import until_retired
@@ -25,7 +26,8 @@ from tests.e2e.conftest import until_retired
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video, until_retired(VideoModel.OMNI_FLASH)]
 
 _PROMPT = "a paper boat drifting across a still pond, slow push in"
-_WARNING = {"type": "model_retiring", "model": "omni_flash", "retires_on": "2026-12-05"}
+_WHEN = str(retires_on(VideoModel.OMNI_FLASH))
+_WARNING = {"type": "model_retiring", "model": "omni_flash", "retires_on": _WHEN}
 
 
 def _require_video() -> None:
@@ -77,7 +79,7 @@ def test_e2e_cli_warns_on_stderr_and_keeps_json_stdout_clean(
     assert Path(data["local_path"]).read_bytes()[4:8] == b"ftyp"
     warning = [line for line in proc.stderr.splitlines() if "model.retiring" in line]
     assert warning, f"no model.retiring on stderr; tail: {proc.stderr[-600:]!r}"
-    assert "2026-12-05" in warning[0]
+    assert _WHEN in warning[0]
 
 
 @pytest.mark.asyncio
