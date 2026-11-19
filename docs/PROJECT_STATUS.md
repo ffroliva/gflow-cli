@@ -1,6 +1,8 @@
 # Project Status
 
 > Where gflow-cli is in its lifecycle, by release. Updated on every signed tag.
+>
+> **Status: beta** (PyPI classifier `Development Status :: 4 - Beta`) from the first release after v0.102.0. Each release entry below keeps the label it shipped with.
 
 ## Current release
 

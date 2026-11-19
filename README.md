@@ -40,7 +40,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 - **Make long videos**: `gflow video extend --segments N` continues a clip past Flow's 8 s limit with a continuous join, `gflow video chain` links shots frame to frame, and `gflow scene create` stitches clips server-side for free.
 - **Generate images**: text-to-image and image-to-image, 1–4 per call, five aspect ratios (`gflow image t2i | i2i`).
 - **Keep characters consistent**: `gflow character create` makes a reusable Flow Character (face, body, voice), and prompts can mention it as `@Name`.
-- **Upscale**: video to 1080p (or a GIF), images to 2K or 4K.
+- **Upscale**: video to 1080p (or a GIF), images to 2K, or 4K on an Ultra plan.
 - **Run batches and pipelines**: JSON batch runs where a row can build on an earlier row (`gflow run`), multi-scene films from a manifest (`gflow movie run`), and persistent Agent-Mode briefs (`gflow instructions`).
 - **Rewrite prompts**: `--tool creative-director` and two other built-in prompt tools (`reverse-engineer`, `storyboard`), or your own ([TOOLS](docs/TOOLS.md)).
 - **Track spend and media**: the Veo credit balance (`gflow credits`), a local media catalog (`gflow data`), a health check (`gflow doctor`), and output to S3, MinIO or Google Cloud Storage.
@@ -140,7 +140,7 @@ Video comes in 16:9 and 9:16; images in 16:9, 4:3, 1:1, 3:4 and 9:16. Which mode
 
 - **Only video spends credits.** Image generation spends no credits (it counts against a daily image quota), and Scene stitching is free.
 - **A server that cannot spend.** `gflow mcp run --no-spend` never registers the credit-spending tools, so an agent cannot call them at all.
-- **Cost before commitment on multi-clip runs.** `video chain`, `video extend` and `movie run` take `--dry-run` to show the plan and cost without submitting, and `chain` and `extend` ask before they spend.
+- **Cost before commitment on multi-clip runs.** `video chain`, `video extend` and `movie run` take `--dry-run` to show the plan without submitting anything, and `chain` and `extend` ask before they spend.
 - **Never billed twice.** A billed request is sent once and never retried automatically, and `gflow run --resume` regenerates only the rows the local catalog does not already hold.
 - **Every error says whether you were charged.** Errors carry `charged: yes | no | maybe` and a `next_action` (`retry`, `reauth`, `reconcile`) in both the CLI's `--json` output and MCP replies ([ERRORS](docs/ERRORS.md)).
 - **Paced like a person.** gflow uses a real Chrome window with randomised interaction timing and paced submissions. It does no IP rotation, uses no proxy unless you set one, and does no fingerprint spoofing by default ([ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)).

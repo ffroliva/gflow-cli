@@ -11,6 +11,8 @@
 - Video: text-, image- (with start and end frames) and reference-to-video; `video extend` past the 8 s limit; `video chain`; free server-side stitching with `scene create`; upscale to 1080p. Images: text- and image-to-image, 1-4 per call, upscale to 2K/4K.
 - Consistency and pipelines: reusable Characters (`gflow character`, `@Name` mentions), JSON batch runs (`gflow run`), multi-scene films (`gflow movie run`), persistent Agent-Mode briefs (`gflow instructions`), prompt-rewriting tools (`--tool creative-director`).
 - Spend safety: only video spends Flow credits (images count against a daily image quota); `gflow mcp run --no-spend` never registers the credit-spending tools; every error carries `charged: yes|no|maybe` and a `next_action`; a billed request is never resent automatically.
+- No API key: gflow-cli needs no Gemini or Vertex AI key; it uses the Google account's own Flow access and Flow credits.
+- Compared with other Google Flow automation tools (README comparison table, sourced from each project's README on 2026-11-19), it is the only one that is both a CLI and an MCP server, installs from PyPI, is listed in the official MCP Registry and serves MCP over HTTP; features it does not have yet are tracked in https://github.com/ffroliva/gflow-cli/issues/1367.
 - Maturity: beta, 130+ releases since May 2026, every release since v0.54.0 live-verified against real Google Flow.
 - Not supported: browser-free (serverless) video generation, because every billed submit needs a reCAPTCHA Enterprise token minted in a live page.
 
