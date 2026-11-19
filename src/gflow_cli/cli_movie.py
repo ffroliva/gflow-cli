@@ -103,9 +103,9 @@ id = "establishing"
 action = "A futuristic city skyline at golden hour"
 framing = "establishing"
 aspect = "16:9"
-# Veo 3.1 accepts 4/6/8 seconds; omni-flash also accepts 10.
+# Veo 3.1 accepts 4/6/8 seconds; omni-1.2 accepts every integer from 3 to 15.
 duration = 8
-model = "omni-flash"
+model = "omni-1.2"
 
 [[scenes]]
 id = "arrival"
@@ -124,7 +124,7 @@ speaker = "Alice"
 line = "We made it!"
 style_suffix = "golden hour light"  # appended after the variant/base suffix
 aspect = "16:9"
-model = "veo-quality"  # Veo accepts 4/6/8 seconds
+model = "veo-lite"  # Veo accepts 4/6/8 seconds
 """
 
 # ---------------------------------------------------------------------------

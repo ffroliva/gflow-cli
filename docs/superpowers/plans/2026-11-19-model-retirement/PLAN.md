@@ -27,7 +27,7 @@ model, and a test fails when Flow's own catalog (`HTrJv`) disagrees with gflow's
 | High | Wire display names used to select menu items could bill the wrong model | Out of scope. Matchers stay static; the fixture's names are compared in tests only |
 | Medium | Usage-slot meanings (cost, duration, reference limits) rest on one capture | The drift test asserts family keys and retirement dates only |
 | Medium | The warning pollutes `--json` / `-o id` stdout | The warning is a stderr structlog event; MCP gets a result field |
-| Medium | The queued MCP path drops the warning | The warning is added in the worker path too, and asserted on a queued task's result |
+| Medium | The queued MCP path drops the warning | Both replies come from `task_payload()`, which derives the warning from the queued payload's `model`; asserted on a `tasks/get` result |
 | Low | The fixture goes stale silently | The recording script and its date sit in the fixture header; a refreshed fixture with a moved date fails the test until `retires_on` is updated |
 
 ---
@@ -54,7 +54,8 @@ tests/features/model_retirement.feature + tests/features/test_model_retirement_s
 src/gflow_cli/cli_models.py            video entries gain "retires_on" (ISO date or null)
 src/gflow_cli/mcp/tools.py             gflow_list_models description names retires_on;
                                        gflow_generate_video result gains the retirement warning
-src/gflow_cli/worker/ (codec/daemon)   the queued path carries the warning onto the task result
+src/gflow_cli/mcp/tools.py task_payload  both MCP replies (wait=true, tasks/get) derive the warning
+                                       from the queued payload's model
 <generation chokepoint>                one call that emits "model.retiring" (located in Task 4)
 src/gflow_cli/api/transports/_mc_settings_pane.py
                                        the exit-11 "not offered" message names a retired model
@@ -136,14 +137,14 @@ exists.
 
 **Steps:**
 - [x] `gflow_list_models`: the `description=` names `retires_on`; the entries come from `build_catalog()`, so the data is automatic.
-- [x] `gflow_generate_video`: the direct result carries the warning (for example `"warnings": [{"type": "model_retiring", "model": …, "retires_on": …}]`). The queued path stores the same on the task result (`worker/codec.py`, worker daemon).
+- [x] `gflow_generate_video`: the direct result carries the warning (for example `"warnings": [{"type": "model_retiring", "model": …, "retires_on": …}]`). The queued path carries the same on its `tasks/get` result; both come from `task_payload()` (see the decision log).
 - [x] The mirror axes are in `skills/check/SKILL.md` step 1b. Run `tests/mcp/test_cli_parity.py` and `test_server.py`.
 - [x] Unit tests for scenario 5, direct and queued.
 
 ## Task 7 — Sweep: defaults, examples, e2e
 
 **Steps:**
-- [ ] `cli_movie.py` template default moves to a model that is not leaving. Choose it from the movie path's needs (durations, cost) and record the choice in the decision log.
+- [x] `cli_movie.py` template default moves to a model that is not leaving. Choose it from the movie path's needs (durations, cost) and record the choice in the decision log.
 - [ ] `mcp/resources.py`, `docs/USAGE.md`, `docs/MCP.md`, `README.md`, `docs/USER_GUIDE.md`, `skills/gflow-cli/SKILL.md`, `skills/video-production/SKILL.md` + `tasks.json`: examples use `veo-lite` / `omni-1.2`, and the retirement is noted once where models are listed.
 - [ ] Move the 12 e2e files to models that are not leaving, or skip them with a reason naming the retirement when the test is about a leaving model specifically (scenario 13). `pytest --collect-only -m e2e` stays clean.
 - [ ] `KNOWN_ISSUES.md`: add an entry for the retirement, and the alias follow-up (decision 1).
@@ -186,3 +187,4 @@ exists.
 | 2026-11-19 | The warning sits in `FlowApiClient.generate_video`, before project creation and submit | Every video route reaches it: `cli_video.py:337`, `chain.py:257`, `cli_movie.py:882`, `worker/daemon.py:419`. `video chain` therefore warns once per clip, which is accurate and was accepted over a per-process dedupe that would silence a long-lived MCP server after its first job | Warning in each CLI command (four places, MCP missed); dedupe per process |
 | 2026-11-19 | The exit-11 "not offered" message names the retirement whenever `retires_on(model)` is set, not only once the day has passed | The refusal itself proves Flow no longer offers the model, and the date may move, so "Flow listed it as leaving on <date>" is true either side of it and needs no clock in the transport | A `today >= date` check in the settings pane (a second patchable clock) |
 | 2026-11-19 | The MCP `warnings` field is derived in `task_payload()` from the queued payload's `model`, not stored by the worker | `wait=true` and `tasks/get` both reply through `task_payload()`, and the payload already holds the model the worker generated with; no new column, codec key or schema version | Storing the notice on the task row from the daemon (`worker/codec.py` + a queue schema change) |
+| 2026-11-19 | The movie template's scenes move from `omni-flash` / `veo-quality` to `omni-1.2` (the scene with `duration = 8`) and `veo-lite` (the dialogue close-up, no duration) | Omni 1.2 renders a duration control and takes every integer 3–15, so the template's duration line still applies; `veo-lite` is the cheapest staying Veo, and that scene sets no duration. Omni 1.2 costs more per second than Omni 1.1 (12 against 7 credits for 4 s, 2026-11-19 capture) | `veo-lite` for the duration scene: the settings pane's own refusal says only Omni 1.1 showed a duration row on the maintainer cohort, so a Veo scene with `duration` risks stopping before submit, and Omni 1.2 has its own duration path there |
