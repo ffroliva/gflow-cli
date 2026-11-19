@@ -27,9 +27,11 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+from urllib.request import getproxies
 
 import httpx
 
@@ -45,6 +47,11 @@ DEFAULT_OUT = (
 
 
 async def read_htrjv(profile_dir: Path) -> Any:
+    fw.require_in_home(profile_dir)
+    if get_settings().browser_proxy or getproxies():
+        # flow_wire's rule: with a proxy the browser and a direct request may leave by
+        # different routes, and the session cookies must not.
+        sys.exit("a proxy is configured; this direct read is refused, as gflow's own is")
     ua = fw._user_agent(profile_dir)
     if ua is None:
         sys.exit(
@@ -56,7 +63,12 @@ async def read_htrjv(profile_dir: Path) -> Any:
         "accept-language": "en-US,en;q=0.9",
         "cookie": "; ".join(f"{name}={value}" for name, value in cookies),
     }
-    async with httpx.AsyncClient(follow_redirects=False, trust_env=False, timeout=15) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=False,
+        trust_env=False,
+        timeout=15,
+        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),  # never store or replay
+    ) as client:
         tokens = await fw._shell_tokens(client, profile_dir, headers)
         query = {
             "rpcids": RPC,
@@ -78,7 +90,8 @@ async def read_htrjv(profile_dir: Path) -> Any:
                 "referer": f"{fw._ORIGIN}/",
             },
         )
-    response.raise_for_status()
+    if response.status_code != 200:  # the URL carries f.sid and bl; never print it
+        sys.exit(f"HTrJv read failed: HTTP {response.status_code}")
     frames = [payload for rid, payload in parse_frames(response.text) if rid == RPC]
     return frames[0] if frames else None
 
