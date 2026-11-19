@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.103.0] — 2026-11-19
+
 ### Added
 
 - **gflow says which video models Flow is retiring ([#1375](https://github.com/ffroliva/gflow-cli/issues/1375)).** Flow retires Omni 1.1 Flash (`omni-flash`), Veo 3.1 Fast (`veo-fast`) and Veo 3.1 Quality (`veo-quality`) on 2026-12-05. `gflow models` shows the date in a `retires on` column, and `gflow models --json`, `gflow models show --json` and the MCP tool `gflow_list_models` carry `retires_on` (an ISO date, or `null`) on every video model. A generation that selects one of them logs a `model.retiring` warning on stderr (stdout stays clean for `--json` and `-o id`); over MCP, the `gflow_generate_video` reply and the queued task's `tasks/get` result carry `"warnings": [{"type": "model_retiring", "model": …, "retires_on": …}]`. Nothing is refused because of the date: once Flow's menu stops offering a model, the run stops before submit, charged nothing, as before; on flow.google.com's composer (exit 11) the message now also names the date and the models Flow does offer. The dates come from Flow's own catalog, recorded in a test fixture that fails when a refreshed capture moves them.
@@ -7283,7 +7285,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.102.1...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...HEAD
+[0.103.0]: https://github.com/ffroliva/gflow-cli/compare/v0.102.1...v0.103.0
 [0.102.1]: https://github.com/ffroliva/gflow-cli/compare/v0.102.0...v0.102.1
 [0.102.0]: https://github.com/ffroliva/gflow-cli/compare/v0.101.2...v0.102.0
 [0.101.2]: https://github.com/ffroliva/gflow-cli/compare/v0.101.1...v0.101.2

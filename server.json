@@ -3,7 +3,7 @@
   "name": "io.github.ffroliva/gflow-cli",
   "title": "gflow-cli",
   "description": "Google Flow from any agent: Veo 3.1 and Omni video, Nano Banana and Imagen images, CLI included",
-  "version": "0.102.1",
+  "version": "0.103.0",
   "websiteUrl": "https://ffroliva.github.io/gflow-cli/",
   "repository": {
     "url": "https://github.com/ffroliva/gflow-cli",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "gflow-cli",
-      "version": "0.102.1",
+      "version": "0.103.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.102.1"
+version = "0.103.0"
 description = "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude, Cursor, Codex or the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
