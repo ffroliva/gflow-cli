@@ -21,6 +21,9 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports.migrated_composer import RADIO, MigratedComposer, _duration
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.config import Settings
+from tests.e2e.conftest import until_retired
+
+pytestmark = [until_retired(VideoModel.OMNI_FLASH)]  # Omni 1.1's r2v duration radios
 
 scenarios("../features/migrated_omni_r2v_duration.feature")
 

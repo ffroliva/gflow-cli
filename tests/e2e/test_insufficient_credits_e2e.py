@@ -40,6 +40,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import InsufficientCreditsError, UiSelectorDriftError
 from gflow_cli.paths import default_home, profile_subdir
+from tests.e2e.conftest import until_retired
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
@@ -62,6 +63,7 @@ def _drained() -> tuple[str, str]:
     return profile, project
 
 
+@until_retired(VideoModel.VEO_3_1_QUALITY)  # needs the costliest model to stay $0
 async def test_a_drained_account_reports_insufficient_credits_not_drift() -> None:
     profile, project = _drained()
 
