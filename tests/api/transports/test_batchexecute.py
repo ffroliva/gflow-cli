@@ -398,3 +398,50 @@ def test_no_ids_match_nothing_1112() -> None:
 
     rec = _r2v_record(2, wf=WF, media=MEDIA, ref=REF)
     assert generation_records_carrying("jwpduf", [None, None, [[rec]]], ()) == []
+
+
+# --- #1354: an /asb/ tile names its record by the poster token ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "token"),
+    [
+        ("https://flow.google.com/asb/ANqvTOKEN", "ANqvTOKEN"),
+        ("https://flow.google.com/asb/ANqvTOKEN=s512-rw", "ANqvTOKEN"),
+        ("https://lh3.googleusercontent.com/asb/ANqv_x-Y1=w286-h512", "ANqv_x-Y1"),
+        ("https://flow-content.google/video/33333333-3333-4333-8333-333333333333", None),
+        ("https://flow.google.com/asb/", None),
+        ("", None),
+        (None, None),
+    ],
+)
+def test_asb_token_is_the_id_without_its_size_spec(url: str | None, token: str | None) -> None:
+    from gflow_cli.api.transports.batchexecute import asb_token
+
+    assert asb_token(url) == token
+
+
+def _poster_record(media: str, token: str, created: int, status: int = 3) -> list[Any]:
+    rec = _record(status, done_urls=True)
+    rec[2] = media
+    rec[5][0][0] = created
+    rec[5][10] = f"https://lh3.googleusercontent.com/asb/{token}=s512"
+    return rec
+
+
+def test_the_record_whose_poster_shares_the_tile_token_is_found_1354() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_record_by_poster
+
+    other = _poster_record("44444444-4444-4444-8444-444444444444", "ANqvOLD", 100)
+    ours = _poster_record(MEDIA, "ANqvNEW", 200)
+    found = generation_record_by_poster("Zzl0ze", [None, [[other], [ours]]], "ANqvNEW")
+    assert found is not None
+    rec, created = found
+    assert (rec.media_id, rec.is_done, created) == (MEDIA, True, 200)
+
+
+def test_no_record_with_the_token_is_none_1354() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_record_by_poster
+
+    rec = _poster_record(MEDIA, "ANqvOLD", 100)
+    assert generation_record_by_poster("Zzl0ze", [None, [[rec]]], "ANqvNEW") is None

@@ -24,7 +24,9 @@ Shape of a run:
    in the pre-submit baseline. A video is ready when no ``flow-pending-tile`` is left, the newest
    finished tile has changed, and a new uuid is named by that tile or by the chat reply's
    poster — the tile's own media may be opaque ``/asb/`` (no uuid), and its ``<video>``
-   then mounts only on hover.
+   then mounts only on hover. When every URL on the page is ``/asb/`` (#1354), the uuid
+   comes from the project's ``Zzl0ze`` listing: the record whose poster shares the new
+   tile's ``/asb/`` token, finished, and created after this run's submit.
 
 Every selector is structural (component tags, classes, ``mat-icon`` ligatures, roles).
 """
@@ -44,6 +46,13 @@ from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.transports._mc_common import (
+    LISTING_READ_BUDGET_S,
+    LISTING_RPC,
+    PROMPT_MATCH_MARGIN_S,
+)
+from gflow_cli.api.transports._mc_submit_observe import read_project_listing
+from gflow_cli.api.transports.batchexecute import asb_token, generation_record_by_poster
 from gflow_cli.api.transports.migrated_composer import (
     AGENT_ONLY_ANCHOR,
     ASPECT_LIGATURE,
@@ -66,7 +75,7 @@ from gflow_cli.errors import (
 from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from playwright.async_api import Locator, Page
 
@@ -119,6 +128,8 @@ _CONFIRM_VALUE = {"always": "1", "never": "2"}
 _VIDEO_ROUTE = "agent-only:video"
 
 POLL_S = 1.0
+#: Least seconds between two project-listing reads for one clip (#1354): each opens a tab.
+LISTING_RETRY_S = 10.0
 #: An image turn that ends with no gate and no tile for this long made nothing.
 IDLE_S = 20.0
 #: How long an approved gate gets to turn `.read-only` before a re-count.
@@ -163,7 +174,9 @@ _TILES_JS = r"""
 #: Video state, measured 2026-09-15: a tile holds `flow-pending-tile` (queued, then a
 #: percentage) until the finished tile REPLACES it. The finished tile's media is
 #: `flow-content.google/video/<uuid>` on the session that made it and opaque `/asb/` once
-#: the grid re-renders; the chat option's poster names the uuid either way.
+#: the grid re-renders; the chat option's poster then named the uuid. Reported 2026-11-19
+#: (#1354): the tile, its hover player and the chat option can all be `/asb/` from the start,
+#: so no uuid is on the page at all and the project listing has to name the clip.
 _VIDEO_JS = r"""
 () => ({
   pending: document.querySelectorAll('flow-video-tile flow-pending-tile').length,
@@ -716,19 +729,25 @@ class AgentOnlyComposer:
         count: int,
         budget_s: float,
         on_first_media: Callable[[str], object] | None = None,
+        read_listing: Callable[[], Awaitable[Any]] | None = None,
     ) -> list[TileMedia]:
-        """Submit ``directive`` and return the ``count`` new results it produced."""
+        """Submit ``directive`` and return the ``count`` new results it produced.
+
+        ``read_listing`` returns the project's ``Zzl0ze`` payload (or ``None``); a video
+        whose page names no uuid is looked up there (#1354)."""
         baseline_gates = await page.locator(LIVE_GATE).count()
         if kind == "video":
             baseline, baseline_head = await self._video_baseline(page)
         else:
             baseline, baseline_head = await self._any_uuids(page), None
+        submitted_at = time.time()
         await self._submit(page, directive)
         log.info("migrated.agent_only.submitted", kind=kind, count=count)
         run = _Run(kind, budget_s, time.monotonic() + budget_s, baseline_gates, count)
+        run.submitted_at = submitted_at
         if kind == "video":
             return await self._await_video(
-                page, run, count, baseline, baseline_head, on_first_media
+                page, run, count, baseline, baseline_head, on_first_media, read_listing
             )
         return await self._await_images(page, run, count, baseline)
 
@@ -740,6 +759,7 @@ class AgentOnlyComposer:
         baseline: set[str],
         baseline_head: str | None,
         on_first_media: Callable[[str], object] | None,
+        read_listing: Callable[[], Awaitable[Any]] | None,
     ) -> list[TileMedia]:
         started = False
         peak_pending = 0
@@ -763,27 +783,75 @@ class AgentOnlyComposer:
             if named and not started and on_first_media is not None:
                 started = True
                 await _maybe_await(on_first_media(named[0]))
-            ready = await self._ready_video(page, state, named, baseline_head)
+            ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
             if ready is not None:
+                if not started and on_first_media is not None:
+                    await _maybe_await(on_first_media(ready.uuid))  # #1354: named only now
                 return [ready]
             await asyncio.sleep(POLL_S)
 
     async def _ready_video(
-        self, page: Page, state: dict[str, Any], named: list[str], baseline_head: str | None
+        self,
+        page: Page,
+        state: dict[str, Any],
+        named: list[str],
+        baseline_head: str | None,
+        run: _Run,
+        read_listing: Callable[[], Awaitable[Any]] | None,
     ) -> TileMedia | None:
         """This run's finished clip, or None while it is not ready yet."""
         head = state["finished"][0] if state["finished"] else None
-        # All three: a uuid names THIS clip, nothing is still pending, and the newest
-        # finished tile is not the one that was newest before submit (a re-render alone
-        # swaps a tile's cdn media for /asb/ — not a new clip).
-        if not (named and head and not state["pending"] and _tile_key(head) != baseline_head):
+        # Nothing is still pending, the newest finished tile is not the one that was newest
+        # before submit, and a uuid names THIS clip: from the page, or else from the listing
+        # record checked in `_listed_uuid` (a re-render alone swaps a tile's cdn media for
+        # /asb/, which changes the head without making a clip).
+        if not (head and not state["pending"] and _tile_key(head) != baseline_head):
             return None
-        uuid = _cdn_uuid(head["video"], "video") or named[-1]
+        if named:
+            uuid = _cdn_uuid(head["video"], "video") or named[-1]
+        else:
+            uuid = await self._listed_uuid(head, run, read_listing)
+        if uuid is None:
+            return None
         src = head["video"] or await self._hover_video_src(page)
         if not src:
             return None
         log.info("migrated.agent_only.video_ready", media_id=uuid)
         return TileMedia(uuid, src)
+
+    @staticmethod
+    async def _listed_uuid(
+        head: dict[str, str], run: _Run, read_listing: Callable[[], Awaitable[Any]] | None
+    ) -> str | None:
+        """The uuid of the listed record whose poster shares the tile's `/asb/` token (#1354).
+
+        Only a finished record created after this run's submit counts: an idle agent can
+        re-render the OLD tile to `/asb/`, and its record must not pass as this run's clip."""
+        token = asb_token(head["img"])
+        if read_listing is None or token is None or time.monotonic() < run.listing_after:
+            return None
+        run.listing_after = time.monotonic() + LISTING_RETRY_S
+        listing = await read_listing()
+        found = (
+            None if listing is None else generation_record_by_poster(LISTING_RPC, listing, token)
+        )
+        if found is None:
+            log.info("migrated.agent_only.video_not_listed_yet")
+            return None
+        record, created = found
+        if (
+            not record.is_done
+            or created is None
+            or created < run.submitted_at - PROMPT_MATCH_MARGIN_S
+        ):
+            log.info(
+                "migrated.agent_only.listed_video_not_ours",
+                media_id=record.media_id,
+                status=record.status,
+                created=created,
+            )
+            return None
+        return record.media_id.lower()
 
     async def _await_images(
         self, page: Page, run: _Run, count: int, baseline: set[str]
@@ -838,6 +906,10 @@ class _Run:
     approvals: int = 0
     #: When this run's gate was first seen with a title that could not be read yet.
     gate_seen_at: float | None = None
+    #: Wall-clock time just before the submit click: a listed clip created earlier is not ours.
+    submitted_at: float = 0.0
+    #: Monotonic time before which the project listing is not read again (#1354).
+    listing_after: float = 0.0
 
 
 async def _maybe_await(value: object) -> None:
@@ -1085,6 +1157,9 @@ async def run_agent_video(
             count=1,
             budget_s=poll_timeout_s,
             on_first_media=started,
+            read_listing=lambda: read_project_listing(
+                page, project_id, budget_s=LISTING_READ_BUDGET_S
+            ),
         )
     finally:
         await _restore_quietly(composer, page, snapshot)
