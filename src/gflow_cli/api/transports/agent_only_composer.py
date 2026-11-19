@@ -851,6 +851,7 @@ class AgentOnlyComposer:
                 created=created,
             )
             return None
+        log.info("migrated.agent_only.video_named_by_listing", media_id=record.media_id)
         return record.media_id.lower()
 
     async def _await_images(

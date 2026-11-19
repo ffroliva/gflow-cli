@@ -594,16 +594,20 @@ async def test_an_all_asb_clip_is_named_by_its_listing_record_1354(page: Page) -
         _listed("opaque-old", OLD_CLIP, created=time.time() - 3600),
         _listed("opaque-100", NEW_CLIP, created=time.time()),
     )
+    from structlog.testing import capture_logs
+
     seen: list[str] = []
-    (media,) = await aoc.AgentOnlyComposer().generate(
-        page,
-        "x",
-        kind="video",
-        count=1,
-        budget_s=10,
-        on_first_media=seen.append,
-        read_listing=read,
-    )
+    with capture_logs() as logs:
+        (media,) = await aoc.AgentOnlyComposer().generate(
+            page,
+            "x",
+            kind="video",
+            count=1,
+            budget_s=10,
+            on_first_media=seen.append,
+            read_listing=read,
+        )
+    assert "migrated.agent_only.video_named_by_listing" in [e["event"] for e in logs]
     assert media.uuid == NEW_CLIP
     assert media.src == "https://flow.google.com/asb/opaque-100"
     assert seen == [NEW_CLIP]
