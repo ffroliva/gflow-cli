@@ -793,7 +793,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > run on one of them logs a `model.retiring` warning on stderr (MCP: a `warnings` entry). gflow
 > keeps accepting them: once Flow's menu stops offering one, the run stops before submit,
 > charged nothing (on flow.google.com's composer, exit 11 with a message naming the date). Use
-> `veo-lite` or `omni-1.2` instead.
+> `veo-lite` or `omni-1.2` instead. A run with no `--model` on t2v or r2v uses Flow's current
+> default, which gflow cannot read yet, so it is not warned about.
 >
 > **`--duration` support across models**: Flow's settings
 > popover is model- and cohort-conditional: `omni-flash` renders a `4s/6s/8s/10s` row,
@@ -2181,7 +2182,8 @@ resolves (`omni-flash`, `Omni Flash`, `veo_lite`, `NARWHAL`, ...). Its `--json`
 emits that model's catalog entry exactly as `gflow_list_models` returns it, so a
 script reading one model needs no list parsing. Video entries carry `durations`,
 the clip lengths `--duration` accepts for that model (Veo: 4, 6, 8; Omni Flash
-adds 10), next to `max_duration`. The table view adds the model's section aspects
+adds 10), next to `max_duration`, and `retires_on`, the ISO date Flow retires the
+model or `null` (the table shows it as the `retires on` column, #1375). The table view adds the model's section aspects
 for context. An unknown id exits 2 and names up to three closest models. That is
 a Click usage error: the message goes to stderr and stdout stays empty, even with
 `--json`. The catalog does not carry per-model generation modes or host

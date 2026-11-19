@@ -128,6 +128,8 @@ For the full 10-minute walkthrough with troubleshooting and multi-account setup,
 | Video | Omni Flash (1.1) | `omni-flash` | 10 s, 7 reference images; Flow retires it on 2026-12-05 |
 | Video | Veo 3.1 Quality | `veo-quality` | 8 s; Flow retires it on 2026-12-05 |
 | Video | Veo 3.1 Fast | `veo-fast` | 8 s, 3 reference images; Flow retires it on 2026-12-05 |
+
+For the three models Flow retires on 2026-12-05, use `veo-lite` or `omni-1.2` instead ([known issue](KNOWN_ISSUES.md#flow-retires-omni-11-flash-veo-31-fast-and-veo-31-quality-on-2026-12-05)).
 | Video | Veo 3.1 Lite | `veo-lite` | 8 s, 3 reference images |
 | Image | Nano Banana 2.1 | `nano2` | 10 reference images |
 | Image | Nano Banana Pro | `nano-pro` | 10 reference images |

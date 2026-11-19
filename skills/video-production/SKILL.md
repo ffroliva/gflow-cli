@@ -17,7 +17,7 @@ optimization_notes: |
   - `--ref` passed with `--model veo-quality`: that model's reference cap is 0, not 3
     ADDRESSED in epoch 1 — the doc banned it in two places and named the substitute
     in none, so a rollout recited "reference cap is 0" and still picked that model.
-    Step 4 now routes to omni-flash. Controlled A/B, one model: 0.00 -> 0.90.
+    Step 4 now routes to omni-flash (omni-1.2 since #1375). Controlled A/B, one model: 0.00 -> 0.90.
   - Multi-angle sets generated as N independent `t2i` calls, then drift accepted as unavoidable
   - "There is no `gflow project create`" — agents mint a project by burning a placeholder generation
   - `nano-pro` used for bulk image work; it is daily-capped, `nano2` is the batch model
