@@ -67,6 +67,7 @@
         "--duration 8 --aspect 9:16 --count 1 --project"
       ],
       "partial_credit": [
+        "omni-1.2",
         "omni-flash",
         "veo-lite",
         "exit 2",
@@ -85,7 +86,7 @@
     "context": "The references are a prop sheet and a location plate.",
     "expected": {
       "must_include": [
-        "omni-flash"
+        "omni-1.2"
       ],
       "must_not_include": [
         "veo-quality"

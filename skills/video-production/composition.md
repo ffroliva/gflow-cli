@@ -16,7 +16,7 @@ So: never accept a weak plate or a weak still to save budget — re-roll it. Con
 |---|---|---|
 | a character reference, a location plate, a prop sheet | `image t2i` | free; text only |
 | another angle of the same location, or a still inheriting a set | `image i2i --ref <anchor>` | free; the anchor chain |
-| the exact approved frame, animated | `video i2v --initial-frame` | **carries no identity [CONSTRAINT]**; omni-flash unlocks 10 s and `--end-frame` |
+| the exact approved frame, animated | `video i2v --initial-frame` | **carries no identity [CONSTRAINT]**; omni-1.2 takes 3–15 s (at most 10 with `--end-frame`) |
 | this person, in this place, in motion | `video r2v --reference-entity <one> --ref <plate>` | the only video path carrying identity; composes its own frame |
 | a shot continuing past 8 s | `video extend <media_id>` | seeded server-side, motion **and audio** carry |
 | a deliberate cut with visual continuity | `video chain` | restarts from an extracted still; audio does **not** carry |
@@ -58,7 +58,7 @@ gflow image i2i "<same room, reverse angle>" --ref <ANCHOR_UUID> --aspect 16:9 -
 # trial ONE beat, gate it, fix the template, then continue in pairs
 gflow video r2v "<style + geometry + cast + setup + action + dialogue + avoid>" \
   --reference-entity <LEAD_ID> --ref <PLATE_UUID> \
-  --model omni-flash --duration 8 --aspect 16:9 --count 1 --project P --json
+  --model omni-1.2 --duration 8 --aspect 16:9 --count 1 --project P --json
 
 python clip_qa.py clips/
 
@@ -92,7 +92,7 @@ Two-speaker scenes use per-character entries rather than the single-speaker shor
 
 ```bash
 gflow video r2v "<opening beat>" --reference-entity <ID> --ref <PLATE> \
-  --model omni-flash --duration 8 --project P --json          # note the media_id
+  --model omni-1.2 --duration 8 --project P --json          # note the media_id
 
 gflow video extend <media_id> "<next beat>" "<beat after>" --project P --aspect 16:9
 
@@ -119,7 +119,7 @@ gflow image i2i "<close crop, the action's start state, stated exactly>" \
 
 # 3. animate the approved frame. No identity flag: the identity is in the pixels.
 gflow video i2v --initial-frame frame_approved.png "<what happens next>" \
-  --model omni-flash --duration 8 --aspect 16:9 --count 1 --project P --json
+  --model omni-1.2 --duration 8 --aspect 16:9 --count 1 --project P --json
 ```
 
 Use it for a mechanism-critical prop, a precise start state, or a shot that must match the previous clip's last frame. The cost is one extra free image and one human look.

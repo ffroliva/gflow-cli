@@ -145,9 +145,9 @@ exists.
 
 **Steps:**
 - [x] `cli_movie.py` template default moves to a model that is not leaving. Choose it from the movie path's needs (durations, cost) and record the choice in the decision log.
-- [ ] `mcp/resources.py`, `docs/USAGE.md`, `docs/MCP.md`, `README.md`, `docs/USER_GUIDE.md`, `skills/gflow-cli/SKILL.md`, `skills/video-production/SKILL.md` + `tasks.json`: examples use `veo-lite` / `omni-1.2`, and the retirement is noted once where models are listed.
+- [x] `mcp/resources.py`, `docs/USAGE.md`, `docs/MCP.md`, `README.md`, `docs/USER_GUIDE.md`, `skills/gflow-cli/SKILL.md`, `skills/video-production/SKILL.md` + `tasks.json`: examples use `veo-lite` / `omni-1.2`, and the retirement is noted once where models are listed.
 - [ ] Move the 12 e2e files to models that are not leaving, or skip them with a reason naming the retirement when the test is about a leaving model specifically (scenario 13). `pytest --collect-only -m e2e` stays clean.
-- [ ] `KNOWN_ISSUES.md`: add an entry for the retirement, and the alias follow-up (decision 1).
+- [x] `KNOWN_ISSUES.md`: add an entry for the retirement, and the alias follow-up (decision 1).
 
 ## Task 8 — Gates, e2e, docs, CHANGELOG
 
