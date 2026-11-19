@@ -121,9 +121,9 @@ exists.
 **What:** A generation that selects a leaving model emits `model.retiring` (`model`, `retires_on`) once per run, and is never refused because of the date.
 
 **Steps:**
-- [ ] Locate the one place every video generation passes, CLI and the MCP worker alike (candidates: the `GenerateVideoRequest` construction in the service layer, or `FlowApiClient`'s video entry). Grep every caller of the chosen point first.
-- [ ] Emit the structlog WARNING there. On the CLI it reaches stderr at the default level, and `--json` stdout is unchanged.
-- [ ] Unit tests for scenarios 3, 4, 11 and 12 (date injected).
+- [x] Locate the one place every video generation passes, CLI and the MCP worker alike (candidates: the `GenerateVideoRequest` construction in the service layer, or `FlowApiClient`'s video entry). Grep every caller of the chosen point first.
+- [x] Emit the structlog WARNING there. On the CLI it reaches stderr at the default level, and `--json` stdout is unchanged.
+- [x] Unit tests for scenarios 3, 4, 11 and 12 (date injected).
 
 ## Task 5 — CLI surface: `gflow models` + the exit-11 message
 
@@ -183,3 +183,4 @@ exists.
 | 2026-11-19 | Decision 1: `omni`/`flash`/`omni-flash` keep selecting Omni 1.1 until 5 Dec; repoint the short aliases to Omni 1.2 in the first release after | No silent model or price change while Omni 1.1 is still offered (4 s costs 12 credits on Omni 1.2 against 7 on Omni 1.1, per the 2026-11-19 capture) | Repointing now; never repointing |
 | 2026-11-19 | Decision 2: keep exit 11 for "not offered", with a message naming the retirement | No contract change for scripts | A new class on exit 22 |
 | 2026-11-19 | Decision 3: keep `veo-fast`, `veo-quality` and `omni-flash` accepted after 5 Dec; remove them in a later release once Flow has dropped them | Flow's live menu decides; a postponement keeps working | Removing them right after 5 Dec (Click usage error) |
+| 2026-11-19 | The warning sits in `FlowApiClient.generate_video`, before project creation and submit | Every video route reaches it: `cli_video.py:337`, `chain.py:257`, `cli_movie.py:882`, `worker/daemon.py:419`. `video chain` therefore warns once per clip, which is accurate and was accepted over a per-process dedupe that would silence a long-lived MCP server after its first job | Warning in each CLI command (four places, MCP missed); dedupe per process |

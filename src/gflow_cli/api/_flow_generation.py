@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import replace as _dataclass_replace
+from datetime import date
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -25,6 +26,7 @@ from gflow_cli.api.dto import (
     GenerationCheckpoint,
     GenerationCheckpointObserver,
 )
+from gflow_cli.api.model_catalog import warn_if_retiring
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import (
     raise_if_migrated,
@@ -70,6 +72,12 @@ from gflow_cli.api._flow_session import (
 from gflow_cli.api._flow_workspace import _MIGRATED_FLOW_HOST, WorkspaceSurface  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
+
+
+def _today() -> date:
+    """The local calendar day; tests patch it (#1375)."""
+    return date.today()
+
 
 # Floor for the outbound video status poll. The cheapest extend model takes ~110s,
 # so a short interval buys nothing and spends requests against a WAF-scored host.
@@ -745,6 +753,11 @@ class GenerationSurface(WorkspaceSurface):
             raise RuntimeError(
                 msg,
             )
+
+        if req.model is not None:
+            # #1375: every video route passes here, so this is the one place a model Flow is
+            # retiring gets its warning. It never refuses: Flow's menu decides (exit 11).
+            warn_if_retiring(req.model, today=_today())
 
         if project_id is None:
             # #864: as generate_image does. Leaving it to the transport meant the labs
