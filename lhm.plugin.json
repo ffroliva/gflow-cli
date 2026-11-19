@@ -4,18 +4,11 @@
   "version": "0.102.1",
   "author": "ffroliva",
   "authorUrl": "https://github.com/ffroliva",
-  "homepage": "https://github.com/ffroliva/gflow-cli",
+  "homepage": "https://ffroliva.github.io/gflow-cli/",
   "icon": "🎬",
   "category": "media-generate",
-  "description": "Drive Google Flow from Claude, Cursor, or CLI: generate Google Veo video and Imagen 3 images using your Google Flow subscription credits.",
-  "tags": [
-    "google-flow",
-    "veo",
-    "imagen",
-    "video-generation",
-    "image-generation",
-    "mcp"
-  ],
+  "description": "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex or the terminal, on your own Google account's Flow credits.",
+  "tags": ["google-flow", "veo", "omni", "nano-banana", "imagen", "video-generation", "image-generation", "mcp"],
   "tools": [
     {
       "name": "gflow_generate_image",
