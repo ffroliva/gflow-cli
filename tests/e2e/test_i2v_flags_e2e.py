@@ -25,11 +25,13 @@ Criteria covered:
                ``StartAndEndImage`` rather than a silently degraded
                ``StartImage`` (#626).
 
-Every test here passes ``--model omni-flash`` wherever it passes ``--duration``.
-That is not stylistic: since #451/#288 the Veo 3.1 models render no duration
-control at all, so ``--duration`` without that flag now fails before any browser
-work. These tests carried a bare ``--duration 4`` for months after that shipped
-and would all have failed — they never run in CI (opt-in, credit-bearing), so
+I2V-FLAG-1 to 3 pass neither ``--model`` nor ``--duration``: they run on the i2v
+default, ``veo-lite``, because the frame flags are their subject (#1375 moved them off
+omni-flash, which Flow retires on 2026-12-05). I2V-FLAG-4 is about omni-flash itself and
+skips from that day. Since #451/#288 the Veo 3.1 models render no duration control at
+all, so ``--duration`` without an Omni ``--model`` fails before any browser work. These
+tests once carried a bare ``--duration 4`` for months after that shipped and would all
+have failed — they never run in CI (opt-in, credit-bearing), so
 nothing noticed. If you add a case here, run it at least once.
 
 Note: ``--end-frame`` / ``--end-image`` interpolation is covered at the
@@ -50,7 +52,9 @@ import pytest
 import structlog
 from click.testing import CliRunner
 
+from gflow_cli.api.video import VideoModel
 from gflow_cli.cli_video import video
+from tests.e2e.conftest import until_retired
 
 # ---------------------------------------------------------------------------
 # Module-level marker — every test in this file is e2e + e2e_video (opt-in,
@@ -158,10 +162,6 @@ def test_e2e_i2v_initial_frame_flag(
             "9:16",
             "--out-dir",
             str(out_dir),
-            "--model",
-            "omni-flash",
-            "--duration",
-            "4",
             "--count",
             "1",
             "--profile",
@@ -207,10 +207,6 @@ def test_e2e_i2v_positional_back_compat(
             "9:16",
             "--out-dir",
             str(out_dir),
-            "--model",
-            "omni-flash",
-            "--duration",
-            "4",
             "--count",
             "1",
             "--profile",
@@ -256,10 +252,6 @@ def test_e2e_i2v_start_end_frame_flags(
             "16:9",
             "--out-dir",
             str(out_dir),
-            "--model",
-            "omni-flash",
-            "--duration",
-            "4",
             "--profile",
             profile_name,
         ],
@@ -275,6 +267,7 @@ def test_e2e_i2v_start_end_frame_flags(
     assert bound >= 2, f"expected at least 2 frame-bound events, got {bound}"
 
 
+@until_retired(VideoModel.OMNI_FLASH)
 def test_e2e_i2v_omni_flash_end_frame_max_duration(
     e2e_profile_dir: Path,
     unisolated_home: Path,

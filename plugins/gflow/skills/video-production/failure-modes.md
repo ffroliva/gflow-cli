@@ -8,8 +8,8 @@ Find your symptom in the left column first. Several of these present as somethin
 
 | Symptom | Real cause | Fix |
 |---|---|---|
-| Exit 2 naming the model | `--duration` passed with no `--model`. An omitted model is not "no model": it binds `veo-lite`, which renders no duration control **[CONSTRAINT]** | name the model explicitly whenever length matters; `omni-flash` for 10 s |
-| A reference is rejected or ignored | `--model veo-quality` accepts **zero** references **[CONSTRAINT]** | use omni-flash (7) or a veo-lite/fast variant (3) |
+| Exit 2 naming the model | `--duration` passed with no `--model`. An omitted model is not "no model": it binds `veo-lite`, which renders no duration control **[CONSTRAINT]** | name the model explicitly whenever length matters; `omni-1.2` for 10 s or more |
+| A reference is rejected or ignored | `--model veo-quality` accepts **zero** references **[CONSTRAINT]** | use omni-1.2 (7) or veo-lite (3) |
 | A reference silently stops applying | model selected *after* attaching **[CONSTRAINT]** | choose model, then attach — never the reverse |
 | HTTP 400 as `WireFormatError`, advice says "simplify the prompt" | two face-bearing references in one generation, **or** an age word in the prose **[CONSTRAINT]** | keep one face reference and carry others as role nouns; strip every age phrase |
 | The same refusal repeats no matter how the prose is rewritten | the diagnosis is wrong, not the wording **[CALIBRATED]** | after two identical failures stop rewriting and look one step upstream — the references, the casting, the beat itself |

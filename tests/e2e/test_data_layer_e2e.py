@@ -27,7 +27,7 @@ Doc:  ``docs/DATA_LAYER.md``
 # Spending
 
   - t2i: 1 image generation (zero credits)
-  - t2v: 1 Veo credit (omni-flash, 4s, count=1 — cheapest configuration)
+  - t2v: 1 Veo clip (veo-lite, count=1 — the cheapest model Flow keeps; #1375)
 
 Per the project's 5-layer verification ledger ([[verification-ledger-5-layer]])
 plus a 6th layer: data-layer row presence.
@@ -245,7 +245,7 @@ def test_t2i_records_full_provenance(e2e_env: dict[str, str]) -> None:
 @pytest.mark.e2e_video
 @pytest.mark.e2e_data
 def test_t2v_records_started_and_completed_lifecycle(e2e_env: dict[str, str]) -> None:
-    """Live t2v: 1 Veo credit (omni-flash, 4s, count=1). Asserts video lands
+    """Live t2v: 1 Veo clip (veo-lite, count=1). Asserts video lands
     AND DB shows the operation went through started → succeeded plus a
     video-kind asset and a local_files row.
 
@@ -266,9 +266,7 @@ def test_t2v_records_started_and_completed_lifecycle(e2e_env: dict[str, str]) ->
             "--aspect",
             "16:9",
             "--model",
-            "omni-flash",
-            "--duration",
-            "4",
+            "veo-lite",
             "--count",
             "1",
             "--profile",
@@ -299,7 +297,8 @@ def test_t2v_records_started_and_completed_lifecycle(e2e_env: dict[str, str]) ->
     try:
         # asset FIRST so we can cross-check flow_operation_id below.
         asset_rows = conn.execute(
-            "SELECT flow_media_id, flow_project_id, kind, status FROM assets WHERE kind='video'"
+            "SELECT flow_media_id, flow_project_id, flow_workflow_id, kind, status FROM assets "
+            "WHERE kind='video'"
         ).fetchall()
         assert len(asset_rows) == 1, (
             f"expected exactly 1 video asset, got {[dict(r) for r in asset_rows]}"
@@ -322,15 +321,16 @@ def test_t2v_records_started_and_completed_lifecycle(e2e_env: dict[str, str]) ->
         assert op["prompt"] == _VIDEO_PROMPT
         assert op["prompt_hash"] and len(op["prompt_hash"]) == 64
         assert op["completed_at"] is not None
-        # flow_operation_id is opportunistic — Flow's omni-flash response does
-        # not always carry operations[0].operation.name. Spec: store SEPARATELY
-        # from flow_media_id when present. If present, it currently equals
-        # flow_media_id (observation; subject to Flow API drift).
+        # flow_operation_id is opportunistic (omni-flash's response did not always
+        # carry one) and stored SEPARATELY from flow_media_id. When present it is the
+        # media id on labs, and Flow's workflow id on flow.google.com, where the
+        # migrated composer records `workflow_id` there (measured on veo-lite,
+        # 2026-11-19, #1375).
         if op["flow_operation_id"]:
-            assert op["flow_operation_id"] == asset["flow_media_id"], (
-                "When flow_operation_id is present, current Flow API surfaces "
-                f"it as the media id; got op={op['flow_operation_id']!r}, "
-                f"media={asset['flow_media_id']!r}"
+            assert op["flow_operation_id"] in (asset["flow_media_id"], asset["flow_workflow_id"]), (
+                "flow_operation_id must be the media id (labs) or the workflow id "
+                f"(flow.google.com); got op={op['flow_operation_id']!r}, "
+                f"media={asset['flow_media_id']!r}, workflow={asset['flow_workflow_id']!r}"
             )
         assert asset["flow_media_id"], "video asset has empty flow_media_id"
         assert asset["flow_project_id"], "video asset has empty flow_project_id"

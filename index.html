@@ -3,9 +3,52 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="gflow-cli — an independent, alpha CLI and MCP server that drives Google Flow (Veo + Imagen) from the terminal, or lets your AI assistant drive it. Batch generation with recurring characters, and runs that fail loudly instead of burning credits.">
+<meta name="description" content="Open-source MCP server and CLI for Google Flow: Veo 3.1, Omni and Nano Banana from Claude Code, Cursor, Codex or the terminal, on your own Flow credits.">
+<link rel="canonical" href="https://ffroliva.github.io/gflow-cli/">
+<meta name="google-site-verification" content="N-39d2HUgQFtHIR74IujGpie5UeqZ3izSIob2wUslyY">
+<meta property="og:type" content="website">
+<meta property="og:title" content="gflow-cli: MCP server and CLI for Google Flow (Veo 3.1, Omni, Nano Banana)">
+<meta property="og:description" content="Generate Google Flow video and images from Claude, Cursor, Codex or the terminal. Free, MIT, on PyPI.">
+<meta property="og:url" content="https://ffroliva.github.io/gflow-cli/">
+<meta property="og:image" content="https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/examples.webp">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E">
-<title>gflow-cli — drive Google Flow from your terminal</title>
+<title>gflow-cli: MCP server and CLI for Google Flow (Veo 3.1, Omni, Nano Banana)</title>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "gflow-cli",
+      "description": "Open-source MCP server and command-line tool that automates Google Flow: Veo 3.1 and Omni video, Nano Banana and Imagen images, from MCP clients such as Claude Code, Claude Desktop, Cursor and Codex, or from the terminal.",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "macOS, Windows, Linux",
+      "url": "https://ffroliva.github.io/gflow-cli/",
+      "downloadUrl": "https://pypi.org/project/gflow-cli/",
+      "installUrl": "https://pypi.org/project/gflow-cli/",
+      "sameAs": ["https://github.com/ffroliva/gflow-cli", "https://pypi.org/project/gflow-cli/"],
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+      "author": {"@type": "Person", "name": "Flavio Oliva", "url": "https://github.com/ffroliva"}
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {"@type": "Question", "name": "Is gflow-cli an official Google tool?",
+         "acceptedAnswer": {"@type": "Answer", "text": "No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session."}},
+        {"@type": "Question", "name": "Do I need a Gemini or Vertex AI API key?",
+         "acceptedAnswer": {"@type": "Answer", "text": "No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API."}},
+        {"@type": "Question", "name": "How do I connect Claude or Cursor to Google Flow?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Install with uv tool install gflow-cli, sign in once with gflow auth login --browser chrome, then run gflow mcp setup (Claude Desktop), gflow mcp setup --target cursor, or install the Claude Code plugin."}},
+        {"@type": "Question", "name": "Can an AI agent spend my Flow credits without asking?",
+         "acceptedAnswer": {"@type": "Answer", "text": "Not when the server runs as gflow mcp run --no-spend: the credit-spending tools are never registered. Image generation spends no credits (it counts against a daily image quota); only video spends credits."}}
+      ]
+    }
+  ]
+}
+</script>
 <style>
   :root{
     --ground:#0e1014; --surface:#161a21; --raised:#1c212a; --hair:#272d38;
@@ -162,9 +205,9 @@
 
 <main>
   <div class="wrap hero">
-    <p class="eyebrow">Independent · Alpha · MCP-native</p>
-    <h1>Drive Google Flow from your terminal.<br><span class="amber">Or let your AI assistant drive it.</span></h1>
-    <p class="lede">A command-line tool and MCP server for Google Flow — script Veo video and Imagen stills instead of clicking through the web UI. Point Claude, Cursor, or Copilot at it and the agent picks the models, prompt tooling, and settings for you.</p>
+    <p class="eyebrow">Open source · Beta · MCP-native</p>
+    <h1>The MCP server and CLI for Google Flow.<br><span class="amber">Drive it from your terminal, or let your AI assistant drive it.</span></h1>
+    <p class="lede">gflow-cli is an open-source MCP server and command-line tool for Google Flow: generate Veo 3.1 and Omni video and Nano Banana images instead of clicking through the web UI. Point Claude, Cursor, or Copilot at it and the agent picks the models, prompt tooling, and settings for you.</p>
 
     <div class="term" role="img" aria-label="Terminal: an agent runs gflow to generate a Veo clip">
       <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">claude — gflow mcp</span></div>
@@ -172,7 +215,7 @@
         <span class="ln"><span class="out"># you, to your assistant:</span></span>
         <span class="ln"><span class="cmd">"make a 9:16 clip of a lighthouse in a storm, moody, slow push-in"</span></span>
         <span class="ln" id="typed"><span class="prompt">gflow&nbsp;›</span> <span class="cmd" id="typetarget"></span><span class="cursor" id="cur"></span></span>
-        <span class="ln reveal" style="display:none"><span class="out">  ↳ tool: creative-director  ·  model: veo-3  ·  aspect: 9:16</span></span>
+        <span class="ln reveal" style="display:none"><span class="out">  ↳ tool: creative-director  ·  model: veo-fast  ·  aspect: 9:16</span></span>
         <span class="ln reveal" style="display:none"><span class="out">  ↳ paced batch · reusing project · no re-upload</span></span>
         <span class="ln reveal" style="display:none"><span class="ok">  ✓ lighthouse_storm.mp4  ·  8s  ·  1080×1920</span></span>
       </div>
@@ -201,7 +244,7 @@
           <p>gflow-cli ships an MCP server, so an AI assistant connects to it natively — no pasting docs, no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.</p>
           <ol class="steps">
             <li><span class="n">01</span><div><b>gflow mcp setup</b><br><span>One command writes the server entry into Claude Desktop, Cursor, or VS Code.</span></div></li>
-            <li><span class="n">02</span><div><b>Ask in plain language</b><br><span>The agent picks the Veo/Imagen model, aspect, and prompt tooling.</span></div></li>
+            <li><span class="n">02</span><div><b>Ask in plain language</b><br><span>The agent picks the Veo, Omni or Nano Banana model, the aspect and the prompt tooling.</span></div></li>
             <li><span class="n">03</span><div><b>Get files back</b><br><span>It runs the generation on your own Flow session and hands you the output.</span></div></li>
           </ol>
         </div>
@@ -209,7 +252,7 @@
           <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">~/.config — AGENTS.md</span></div>
           <div class="term-body">
 <span class="ln"><span class="out">$</span> <span class="cmd">gflow mcp run</span></span>
-<span class="ln"><span class="out">  serving 2 tools over stdio:</span></span>
+<span class="ln"><span class="out">  serving 20 tools over stdio, including:</span></span>
 <span class="ln"><span class="ok">  • gflow_generate_image</span></span>
 <span class="ln"><span class="ok">  • gflow_generate_video</span></span>
 <span class="ln"><span class="out">  ready — your assistant can drive Flow.</span></span>
@@ -231,7 +274,7 @@
         <div class="cell"><code>gflow instructions</code><h3>Instruction cards</h3><p>Persistent, credit-free brief cards that steer look and tone across every generation.</p></div>
         <div class="cell"><code>reuse by UUID</code><h3>Reference an asset, don't re-upload</h3><p>Chain a still into a video by its id — no duplicate uploads, no shuffling files.</p></div>
         <div class="cell"><code>gflow character create</code><h3>The same face, shot after shot</h3><p>Mint a Flow Character once and the same person carries across every generation — instead of re-rolling until the face matches.</p></div>
-        <div class="cell"><code>exit 23</code><h3>A broken run costs a message, not credits</h3><p>Every batch item is recorded locally <em>before</em> it is submitted, and a drifting UI aborts with a distinct exit code instead of resubmitting into a stale state. Nothing generated, nothing spent.</p></div>
+        <div class="cell"><code>exit 23</code><h3>A broken run costs a message, not credits</h3><p>A billed request is sent once and never retried automatically, and a drifting UI aborts with a distinct exit code instead of resubmitting into a stale state. Nothing generated, nothing spent.</p></div>
         <div class="cell"><code>nightly drift probe</code><h3>It notices when Flow moves</h3><p>A selector registry plus a nightly CI probe against the live UI, so breakage is caught by a scheduled run rather than by your batch job.</p></div>
         <div class="cell"><code>GFLOW_CLI_JITTER_RANGE</code><h3>Configurable batch pacing</h3><p>Tunable jitter between submissions so multi-prompt runs stop tripping rate limits.</p></div>
         <div class="cell"><code>movie.toml</code><h3>Multi-scene pipeline</h3><p>Direct a whole sequence from one manifest — chain clips, compose scenes, render.</p></div>
@@ -242,12 +285,12 @@
   <section class="honest" id="honest">
     <div class="wrap">
       <p class="eyebrow">Read this before you install</p>
-      <h2 class="sec-head" style="font-size:clamp(22px,3vw,28px)">Independent, alpha, and honest about it.</h2>
+      <h2 class="sec-head" style="font-size:clamp(22px,3vw,28px)">Independent, in beta, and honest about it.</h2>
       <ul>
         <li><span><strong>Not affiliated with Google.</strong> gflow-cli is an independent project. Flow, Veo, and Imagen are Google's.</span></li>
-        <li><span><strong>Reverse-engineered &amp; alpha.</strong> It drives Flow's private API; things break and change.</span></li>
+        <li><span><strong>Reverse-engineered.</strong> It drives Flow's private interfaces, so Google can change them without notice. Every release since v0.54.0 is live-verified against real Flow.</span></li>
         <li><span><strong>Runs a headed browser on your own Flow session.</strong> Treat it as your own account risk.</span></li>
-        <li><span><strong>Needs Google AI Ultra or Pro</strong> with Flow access. Every generation bills your own account.</span></li>
+        <li><span><strong>Needs a Google account with Flow access.</strong> Every video generation bills your own account's Flow credits; images spend none but count against a daily image quota.</span></li>
       </ul>
     </div>
   </section>
@@ -266,6 +309,20 @@
       <div class="cta-row" style="margin-top:34px">
         <span class="install"><span><span class="p">$</span> uv tool install gflow-cli</span><button id="copy2" aria-label="Copy install command">Copy</button></span>
         <a class="btn primary" href="docs/">Read the docs →</a>
+      </div>
+    </div>
+  </section>
+  <section id="faq">
+    <div class="wrap">
+      <div class="sec-head">
+        <p class="eyebrow">FAQ</p>
+        <h2>Common questions</h2>
+      </div>
+      <div class="grid">
+        <div class="cell"><h3>Is gflow-cli an official Google tool?</h3><p>No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.</p></div>
+        <div class="cell"><h3>Do I need a Gemini or Vertex AI API key?</h3><p>No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.</p></div>
+        <div class="cell"><h3>How do I connect Claude or Cursor to Google Flow?</h3><p>Install with uv tool install gflow-cli, sign in once with gflow auth login --browser chrome, then run gflow mcp setup (Claude Desktop), gflow mcp setup --target cursor, or install the Claude Code plugin.</p></div>
+        <div class="cell"><h3>Can an AI agent spend my Flow credits without asking?</h3><p>Not when the server runs as gflow mcp run --no-spend: the credit-spending tools are never registered. Image generation spends no credits (it counts against a daily image quota); only video spends credits.</p></div>
       </div>
     </div>
   </section>

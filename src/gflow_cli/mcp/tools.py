@@ -546,7 +546,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 )
                 if asset is not None:
                     failed["flow_project_id"] = asset.flow_project_id
-            return failed
+            return failed | codec.retirement_warnings(completed_task)
 
         # Resolve local file paths from the asset catalog.
         file_paths: list[str] = []
@@ -583,7 +583,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
         "flow_workflow_id": flow_workflow_id,
         "seed": seed,
         "files": file_paths,
-    }
+    } | codec.retirement_warnings(completed_task)
 
 
 async def _run_generation_task(
@@ -1282,7 +1282,7 @@ def _build_video_payload(
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
         "out_file, if given, must resolve inside the configured output directory. "
-        "Returns the local file path to the generated video."
+        "Returns the local file path; a model Flow is retiring adds model_retiring to warnings."
     ),
 )
 @_guarded
@@ -1579,9 +1579,9 @@ async def gflow_list_tools() -> dict[str, Any]:
 @server.tool(
     name="gflow_list_models",
     description=(
-        "List the image and video models the generate tools accept: name, Flow's menu "
-        "label (image), accepted aliases, reference cap, max duration (video), aspects "
-        "and tiers. Static catalog, the same as `gflow models --json`; no browser, no spend."
+        "List the image and video models the generate tools accept: name, Flow's menu label "
+        "(image), aliases, reference cap, max duration and retires_on (video; ISO date or null), "
+        "aspects and tiers. Static, the same as `gflow models --json`; no browser, no spend."
     ),
 )
 @_guarded

@@ -1,8 +1,23 @@
 # Project Status
 
 > Where gflow-cli is in its lifecycle, by release. Updated on every signed tag.
+>
+> **Status: beta** (PyPI classifier `Development Status :: 4 - Beta`) from the first release after v0.102.1. Each release entry below keeps the label it shipped with.
 
 ## Current release
+
+**v0.103.0 — beta.** The first beta release. gflow says which video models Google Flow is retiring: Flow retires Omni 1.1 Flash (`omni-flash`), Veo 3.1 Fast (`veo-fast`) and Veo 3.1 Quality (`veo-quality`) on 2026-12-05 (#1375).
+
+**Added.**
+- **Model retirement (#1375).** `gflow models` shows a `retires on` column, and `--json` / `gflow_list_models` carry `retires_on` on every video model. A run on a leaving model logs `model.retiring` on stderr; over MCP the reply carries a `warnings` entry. Nothing is refused on the date: once Flow's menu stops offering a model, the run stops before submit, and on flow.google.com's composer the exit-11 message names the date and the offered models.
+
+**Changed.**
+- The `gflow movie template` scenes, CLI help examples and the docs and skills use `omni-1.2` and `veo-lite` instead of the leaving models.
+- The PyPI classifier moves to `Development Status :: 4 - Beta`, and the README leads with what gflow-cli does.
+
+Full ledger: [LIVE_VERIFICATION_v0.103.0](LIVE_VERIFICATION_v0.103.0.md).
+
+<details><summary>v0.102.1 — agent-only video naming</summary>
 
 **v0.102.1 — alpha.** Patch release: `gflow video t2v` on the agent-only composer saves a clip whose page shows no media id, instead of timing out after Flow has billed and finished it (#1354).
 
@@ -10,6 +25,8 @@
 - **Agent-only video naming (#1354).** When the finished tile, its player and the chat option are all opaque `/asb/` URLs, gflow reads the project listing and takes the record whose poster carries the tile's token, finished, not on the page before the submit and created after it. A run that still cannot name its clip says where it stopped in its exit 9. CLI and MCP (`gflow_generate_video`, `mode="t2v"`) share the fix.
 
 Full ledger: [LIVE_VERIFICATION_v0.102.1](LIVE_VERIFICATION_v0.102.1.md).
+
+</details>
 
 <details><summary>v0.102.0 — reliability release</summary>
 
@@ -998,6 +1015,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Model retirement, slice 1: `retires_on`, a `model.retiring` warning on every video route (CLI and MCP), the exit-11 refusal naming the date, and defaults/docs/e2e moved off the leaving models (#1375) | ✅ done (v0.103.0) |
 | Agent-only video named from the project listing when the page shows only `/asb/` media (#1354) | ✅ done (v0.102.1) |
 | Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1332 #1333 #1334 #1335 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
 | patchright close hang fixed: the disabled-feature parse reads patchright 1.64's exclusion filter, and each launch site names its engine (#1324) | ✅ done (v0.101.2) |
@@ -1140,7 +1158,7 @@ For per-release deltas see [CHANGELOG.md](../CHANGELOG.md). Per-release evidence
 
 ## Lifecycle policy
 
-- **Alpha (`0.x.y`)** — current. APIs may change between minor versions; breaking changes are noted in the changelog.
+- **Beta (`0.x.y`)** — current. Every release since v0.54.0 is live-verified against Google Flow; APIs may still change between minor versions; breaking changes are noted in the changelog.
 - **`1.0.0`** — stable surface. Breaking changes require MAJOR bump + migration notes.
 - **Patch releases** — bug fixes, doc refreshes (like v0.8.1), and other backward-compatible changes.
 

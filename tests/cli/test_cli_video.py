@@ -205,6 +205,50 @@ def test_t2v_records_started_then_completed(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_a_retirement_warning_reaches_stderr_and_leaves_json_stdout_clean(
+    tmp_path: Path,
+) -> None:
+    """#1375: the warning the video chokepoint logs during a run goes to stderr through the
+    CLI's own logging set-up (``gflow`` main), and ``--json`` stdout stays one JSON document."""
+    import json as _json
+    from datetime import date
+
+    from gflow_cli.api.model_catalog import warn_if_retiring
+    from gflow_cli.api.video import VideoModel, VideoResult, VideoStatus
+    from gflow_cli.cli import main
+
+    saved = tmp_path / "m1.mp4"
+    saved.touch()
+
+    async def fake_generate_video(*, req, **_):
+        warn_if_retiring(VideoModel.VEO_3_1_FAST, today=date(2026, 12, 4))  # as the chokepoint does
+        return VideoResult(
+            status=VideoStatus(media_id="m1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=saved,
+            project_id="p1",
+        )
+
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.data.recorder.OperationRecorder.open", return_value=FakeVideoRecorder()),
+        patch("gflow_cli.api.client.FlowApiClient.__aenter__", new_callable=AsyncMock) as enter,
+        patch("gflow_cli.api.client.FlowApiClient.__aexit__", new_callable=AsyncMock),
+    ):
+        from gflow_cli.api.client import FlowApiClient
+
+        fake_client = MagicMock(spec=FlowApiClient)
+        fake_client.generate_video = fake_generate_video
+        enter.return_value = fake_client
+        result = runner.invoke(main, ["video", "t2v", "a sunset", "--model", "veo-fast", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert _json.loads(result.stdout)["media_id"] == "m1"  # one clean JSON document
+    assert "model.retiring" in result.stderr
+    assert "model.retiring" not in result.stdout
+
+
 def test_t2v_json_emits_clean_machine_readable_result(tmp_path: Path) -> None:
     """`gflow video t2v --json` emits a pure-JSON document on stdout (no
     progress chatter) when the generation succeeds."""

@@ -29,6 +29,9 @@ class TestVideoModelEnum:
 
     def test_from_cli_aliases(self) -> None:
         assert VideoModel.from_cli("omni-flash") is VideoModel.OMNI_FLASH
+        # #1375 decision 1: the short aliases stay on Omni 1.1 until #1379 repoints them.
+        assert VideoModel.from_cli("omni") is VideoModel.OMNI_FLASH
+        assert VideoModel.from_cli("flash") is VideoModel.OMNI_FLASH
         assert VideoModel.from_cli("veo-fast") is VideoModel.VEO_3_1_FAST
         assert VideoModel.from_cli("veo-quality") is VideoModel.VEO_3_1_QUALITY
         assert VideoModel.from_cli("veo-lite") is VideoModel.VEO_3_1_LITE

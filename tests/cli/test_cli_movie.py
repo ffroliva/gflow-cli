@@ -155,6 +155,18 @@ class TestMovieTemplate:
         assert m.title
         assert len(m.scenes) >= 1
 
+    def test_template_names_no_model_flow_is_retiring(self, tmp_path: Path) -> None:
+        """#1375 scenario 9: a copied template must keep working after Flow retires a model."""
+        from gflow_cli.api.model_catalog import retires_on
+        from gflow_cli.api.video import VideoModel
+
+        out = tmp_path / "movie.toml"
+        CliRunner().invoke(cli_main, ["movie", "template", str(out)])
+        models = [s.model for s in MovieManifest.from_toml_path(out).scenes if s.model]
+        assert models, "the template should show a per-scene model"
+        leaving = [m for m in models if retires_on(VideoModel.from_cli(m))]
+        assert leaving == []
+
 
 # ---------------------------------------------------------------------------
 # gflow movie run --dry-run

@@ -696,21 +696,21 @@ async def test_e2e_mcp_t2i_accepts_the_nano2_1_alias(
 
 @pytest.mark.asyncio
 @pytest.mark.e2e_video
-async def test_e2e_t2v_selects_a_resolution_on_omni_flash(
+async def test_e2e_t2v_selects_a_resolution_on_omni(
     e2e_profile_dir: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     install_log_capture: structlog.testing.LogCapture,
 ) -> None:
-    """Bills one clip. #787: `--resolution 720p` on omni_flash turns the radio
-    aria-checked before submit and the clip still lands."""
+    """Bills one clip. #787: `--resolution 720p` on Omni 1.2 (omni_flash before #1375)
+    turns the radio aria-checked before submit and the clip still lands."""
     project = _project_id()
     _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
     req = GenerateVideoRequest(
         prompt=_PROMPT,
         mode=Mode.T2V,
         aspect=Aspect.LANDSCAPE,
-        model=VideoModel.OMNI_FLASH,
+        model=VideoModel.OMNI_1_2_FLASH,
         resolution="720p",
     )
     transport = UiAutomationTransport()
@@ -745,7 +745,7 @@ async def test_e2e_mcp_t2v_carries_resolution_through_the_queue(
         prompt=_PROMPT,
         mode="t2v",
         aspect="16:9",
-        model="omni_flash",
+        model="omni_1_2_flash",
         resolution="360p",
         profile=os.environ["GFLOW_CLI_E2E_PROFILE"].strip(),
         project=project,

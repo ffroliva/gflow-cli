@@ -39,6 +39,20 @@ def test_models_json_lists_image_and_video() -> None:
     assert by_vid["veo_3_1_fast"]["max_duration"] == 8
 
 
+def test_catalog_video_entries_carry_retires_on() -> None:
+    """#1375: each video model says when Flow retires it (ISO date) or null; existing keys stay."""
+    by_name = {m["name"]: m for m in build_catalog()["video"]["models"]}
+    assert by_name["veo_3_1_fast"]["retires_on"] == "2026-12-05"
+    assert by_name["veo_3_1_quality"]["retires_on"] == "2026-12-05"
+    assert by_name["omni_flash"]["retires_on"] == "2026-12-05"
+    assert by_name["veo_3_1_lite"]["retires_on"] is None
+    assert by_name["omni_1_2_flash"]["retires_on"] is None
+    for entry in by_name.values():
+        assert {"name", "aliases", "ref_cap", "max_duration", "durations", "retires_on"} <= set(
+            entry
+        )
+
+
 def test_models_table_renders_without_json() -> None:
     runner = CliRunner()
     from gflow_cli.cli import main
@@ -278,3 +292,22 @@ def test_show_table_uses_list_labels_and_no_tiers() -> None:
     assert "tiers" not in video
     assert "Flow name" in image
     assert "True" not in image
+
+
+def test_list_table_shows_when_flow_retires_each_video_model() -> None:
+    """#1375 scenario 6: the table names the retirement date; a model staying shows none."""
+    out = _invoke("list").output
+    video = out[out.index("video models") :]
+
+    assert "retires on" in video
+    fast = next(line for line in video.splitlines() if "veo_3_1_fast" in line)
+    lite = next(line for line in video.splitlines() if "veo_3_1_lite" in line)
+    assert "2026-12-05" in fast
+    assert "2026-12-05" not in lite
+
+
+def test_show_table_says_retires_on_without_python_none() -> None:
+    assert "2026-12-05" in _invoke("show", "veo-fast").output
+    lite = _invoke("show", "veo-lite").output
+    assert "retires on" in lite
+    assert "None" not in lite

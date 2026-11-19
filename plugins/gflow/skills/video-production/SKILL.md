@@ -17,7 +17,7 @@ optimization_notes: |
   - `--ref` passed with `--model veo-quality`: that model's reference cap is 0, not 3
     ADDRESSED in epoch 1 — the doc banned it in two places and named the substitute
     in none, so a rollout recited "reference cap is 0" and still picked that model.
-    Step 4 now routes to omni-flash. Controlled A/B, one model: 0.00 -> 0.90.
+    Step 4 now routes to omni-flash (omni-1.2 since #1375). Controlled A/B, one model: 0.00 -> 0.90.
   - Multi-angle sets generated as N independent `t2i` calls, then drift accepted as unavoidable
   - "There is no `gflow project create`" — agents mint a project by burning a placeholder generation
   - `nano-pro` used for bulk image work; it is daily-capped, `nano2` is the batch model
@@ -271,7 +271,7 @@ Full method in **[`consistency.md`](consistency.md)**. The rest of the short for
 - **Locations and props** have no entity type **[CONSTRAINT]** — they are images attached per shot with `--ref`. Look.
 - **One face-bearing reference per generation [CONSTRAINT].** A second entity, or an entity plus a portrait, returns HTTP 400 reported as a wire-format error. Carry other people as role nouns in prose.
 - **Multi-angle locations must be chained, not generated in parallel [CALIBRATED]** — anchor angle by `t2i`, every other angle by `i2i --ref <anchor>`. Independent calls from the same paragraph produce different rooms.
-- **The reference count picks the model, before quality does [CONSTRAINT].** Caps are per model and the entity counts against the same pool: `omni-flash` and `omni-1.2-flash` 7, `veo-lite` / `veo-fast` / `veo-lite-lp` 3, **`veo-quality` 0 — it accepts no references at all**. So a shot carrying any `--ref` or entity cannot use `veo-quality` however much you want its quality. For a **single** generation needing references and quality together, that makes `omni-flash` the pick; a `veo-lite` variant when 3 refs is enough. **`video chain` is the exception [CONSTRAINT]** — it refuses `omni-flash` outright (its i2v is wire-verified for single generations only) and exits with a model/mode incompatibility, so chained links take a Veo 3.1 model and its cap of 3. Full table, image models included: [`consistency.md`](consistency.md).
+- **The reference count picks the model, before quality does [CONSTRAINT].** Caps are per model and the entity counts against the same pool: `omni-flash` and `omni-1.2-flash` 7, `veo-lite` / `veo-fast` / `veo-lite-lp` 3, **`veo-quality` 0 — it accepts no references at all**. So a shot carrying any `--ref` or entity cannot use `veo-quality` however much you want its quality. For a **single** generation needing references and quality together, that makes `omni-1.2` (`omni-1.2-flash`) the pick (`omni-flash`, `veo-fast` and `veo-quality` leave Flow on 2026-12-05, #1375; `gflow models` shows the date); a `veo-lite` variant when 3 refs is enough. **`video chain` is the exception [CONSTRAINT]** — it refuses both Omni models outright (its i2v is wire-verified for single generations only) and exits with a model/mode incompatibility, so chained links take a Veo 3.1 model and its cap of 3. Full table, image models included: [`consistency.md`](consistency.md).
 - Attaching by media UUID buys asset identity, never scene coherence.
 
 ## Step 5 — beat sheet
@@ -394,7 +394,7 @@ Ship a review page beside the cut: the final video, and every clip with its prom
 - A sign, poster, door or garment described as carrying words.
 - A film format in the style block.
 - Two `--reference-entity` flags, or `characters = [A, B]` on one manifest scene.
-- `--duration` with no `--model`; `--ref` with `veo-quality` (it takes 0 — reach for `omni-flash`).
+- `--duration` with no `--model`; `--ref` with `veo-quality` (it takes 0 — reach for `omni-1.2`).
 - A beat over 2.5 words per second, or a line shortened "to fit".
 - Angles of one location generated as independent `t2i` calls.
 - "Launch the rest in the background and check later."
