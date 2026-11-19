@@ -152,9 +152,9 @@ exists.
 ## Task 8 — Gates, e2e, docs, CHANGELOG
 
 **Steps:**
-- [ ] `/gflow:check` green, including `generate_website_docs.py --check` and `generate_plugin_skills.py --check` (the skills changed).
-- [ ] e2e: `tests/e2e/test_migrated_host_e2e.py` (and one migrated t2v) on the swept models, plus a $0 `gflow models list --json` check.
-- [ ] CHANGELOG `[Unreleased]`: Added `retires_on` and the warning. Changed the movie template default and the doc examples.
+- [x] `/gflow:check` green, including `generate_website_docs.py --check` and `generate_plugin_skills.py --check` (the skills changed).
+- [x] e2e: `tests/e2e/test_migrated_host_e2e.py` (and one migrated t2v) on the swept models, plus a $0 `gflow models list --json` check.
+- [x] CHANGELOG `[Unreleased]`: Added `retires_on` and the warning. Changed the movie template default and the doc examples.
 - [ ] Fresh `/code-review xhigh` + `/ponytail-review xhigh`, one fix round, then `/gflow:pr-council-review`.
 
 ## Follow-up (separate PR, first release after 5 Dec)
