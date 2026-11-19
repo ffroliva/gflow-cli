@@ -315,6 +315,7 @@ No sponsors yet. <a href="https://github.com/sponsors/ffroliva/sponsorships?freq
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Tests: TDD](https://img.shields.io/badge/tests-TDD-brightgreen.svg)](CONTRIBUTING.md)
 [![Platforms: macOS · Windows · Linux](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey.svg)](docs/CONFIGURATION.md)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ffroliva/gflow-cli)
 
 ### Star history
 
