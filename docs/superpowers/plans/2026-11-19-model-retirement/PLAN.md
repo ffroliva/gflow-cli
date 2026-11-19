@@ -128,9 +128,9 @@ exists.
 ## Task 5 — CLI surface: `gflow models` + the exit-11 message
 
 **Steps:**
-- [ ] `build_catalog()` adds `retires_on`, and the table output gains a column.
-- [ ] `_mc_settings_pane._select_model`'s "not offered" refusal (exit 11, `charged: no`): when `retires_on(model)` is past, the detail says Flow retired it on that date and lists the offered models. The exit code is unchanged (decision 2).
-- [ ] Unit tests for scenarios 2 and 6.
+- [x] `build_catalog()` adds `retires_on`, and the table output gains a column.
+- [x] `_mc_settings_pane._select_model`'s "not offered" refusal (exit 11, `charged: no`): when `retires_on(model)` is past, the detail says Flow retired it on that date and lists the offered models. The exit code is unchanged (decision 2).
+- [x] Unit tests for scenarios 2 and 6.
 
 ## Task 6 — MCP surface mirror (never optional)
 
@@ -184,3 +184,4 @@ exists.
 | 2026-11-19 | Decision 2: keep exit 11 for "not offered", with a message naming the retirement | No contract change for scripts | A new class on exit 22 |
 | 2026-11-19 | Decision 3: keep `veo-fast`, `veo-quality` and `omni-flash` accepted after 5 Dec; remove them in a later release once Flow has dropped them | Flow's live menu decides; a postponement keeps working | Removing them right after 5 Dec (Click usage error) |
 | 2026-11-19 | The warning sits in `FlowApiClient.generate_video`, before project creation and submit | Every video route reaches it: `cli_video.py:337`, `chain.py:257`, `cli_movie.py:882`, `worker/daemon.py:419`. `video chain` therefore warns once per clip, which is accurate and was accepted over a per-process dedupe that would silence a long-lived MCP server after its first job | Warning in each CLI command (four places, MCP missed); dedupe per process |
+| 2026-11-19 | The exit-11 "not offered" message names the retirement whenever `retires_on(model)` is set, not only once the day has passed | The refusal itself proves Flow no longer offers the model, and the date may move, so "Flow listed it as leaving on <date>" is true either side of it and needs no clock in the transport | A `today >= date` check in the settings pane (a second patchable clock) |

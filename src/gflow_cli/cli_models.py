@@ -213,10 +213,13 @@ _LABELS = {
     "default": "default",
     "max_duration": "max dur (s)",
     "durations": "durations (s)",
+    "retires_on": "retires on",
 }
 
 
 def _cell(value: Any) -> str:
+    if value is None:
+        return "-"
     if isinstance(value, bool):
         return "yes" if value else "no"
     if isinstance(value, list):
@@ -245,12 +248,13 @@ def _render_catalog(catalog: dict[str, Any]) -> None:
         table.add_column("ref cap", justify="right")
         if kind == "video":
             table.add_column("max dur (s)", justify="right")
+            table.add_column("retires on", no_wrap=True)
         for m in section["models"]:
             row = [m["name"], ", ".join(m["aliases"]), str(m["ref_cap"])]
             if kind == "image":
                 row.insert(1, m["label"])
             if kind == "video":
-                row.append(str(m["max_duration"]))
+                row += [str(m["max_duration"]), _cell(m["retires_on"])]
             table.add_row(*row)
         console.print(table)
         ratios = ", ".join(a["ratio"] for a in section["aspects"])
