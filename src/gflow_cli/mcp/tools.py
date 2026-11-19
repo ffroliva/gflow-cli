@@ -41,7 +41,8 @@ from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
-from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
+from gflow_cli.api.model_catalog import retires_on
+from gflow_cli.api.video import VIDEO_DURATION_CHOICES, VideoModel, is_media_uuid
 from gflow_cli.auth import verification
 from gflow_cli.cli_data import collect_usage_stats
 from gflow_cli.cli_image import lookup_project_in_catalog
@@ -68,7 +69,7 @@ from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker, run_counted
-from gflow_cli.worker.queue import QueueRepository, mark_interrupted
+from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 log = structlog.get_logger()
 
@@ -508,6 +509,24 @@ def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
         log.warning("mcp.task.settle_failed", task_id=task_id, error_class=type(exc).__name__)
 
 
+def _retirement_warnings(task: QueueTask) -> dict[str, Any]:
+    """#1375: ``{"warnings": [...]}`` for a video task on a model Flow is retiring, else ``{}``.
+
+    Read from the queued payload's ``model``, the value the worker generated with, so the
+    ``wait=true`` reply and ``tasks/get`` say the same thing.
+    """
+    alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
+    try:
+        model = VideoModel.from_cli(alias) if alias else None
+    except ValueError:  # a row an older gflow queued; the reply must still go out
+        return {}
+    when = retires_on(model) if model else None
+    if model is None or when is None:
+        return {}
+    warning = {"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}
+    return {"warnings": [warning]}
+
+
 def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
     """The tool reply for a finished task: what ``wait=true`` returns and ``tasks/get`` carries."""
     with DataStore.open(db_path) as store:
@@ -517,6 +536,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 "status": "error",
                 "error": f"Task {task_id!r} disappeared from queue after execution.",
             }
+        warnings = _retirement_warnings(completed_task)
 
         # Treat anything other than an explicit "completed" as a failure —
         # a row stuck in "processing"/"pending" must not be reported as a
@@ -546,7 +566,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 )
                 if asset is not None:
                     failed["flow_project_id"] = asset.flow_project_id
-            return failed
+            return failed | warnings
 
         # Resolve local file paths from the asset catalog.
         file_paths: list[str] = []
@@ -583,6 +603,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
         "flow_workflow_id": flow_workflow_id,
         "seed": seed,
         "files": file_paths,
+        **warnings,
     }
 
 
@@ -1282,7 +1303,9 @@ def _build_video_payload(
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
         "out_file, if given, must resolve inside the configured output directory. "
-        "Returns the local file path to the generated video."
+        "Returns the local file path to the generated video. On a model Flow is retiring "
+        "(see retires_on in gflow_list_models) the reply also carries "
+        '"warnings": [{"type": "model_retiring", "model", "retires_on"}]; it still runs.'
     ),
 )
 @_guarded
@@ -1580,8 +1603,9 @@ async def gflow_list_tools() -> dict[str, Any]:
     name="gflow_list_models",
     description=(
         "List the image and video models the generate tools accept: name, Flow's menu "
-        "label (image), accepted aliases, reference cap, max duration (video), aspects "
-        "and tiers. Static catalog, the same as `gflow models --json`; no browser, no spend."
+        "label (image), accepted aliases, reference cap, max duration (video), retires_on "
+        "(video: the ISO date Flow retires the model, or null), aspects and tiers. Static "
+        "catalog, the same as `gflow models --json`; no browser, no spend."
     ),
 )
 @_guarded

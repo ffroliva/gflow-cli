@@ -135,10 +135,10 @@ exists.
 ## Task 6 — MCP surface mirror (never optional)
 
 **Steps:**
-- [ ] `gflow_list_models`: the `description=` names `retires_on`; the entries come from `build_catalog()`, so the data is automatic.
-- [ ] `gflow_generate_video`: the direct result carries the warning (for example `"warnings": [{"type": "model_retiring", "model": …, "retires_on": …}]`). The queued path stores the same on the task result (`worker/codec.py`, worker daemon).
-- [ ] The mirror axes are in `skills/check/SKILL.md` step 1b. Run `tests/mcp/test_cli_parity.py` and `test_server.py`.
-- [ ] Unit tests for scenario 5, direct and queued.
+- [x] `gflow_list_models`: the `description=` names `retires_on`; the entries come from `build_catalog()`, so the data is automatic.
+- [x] `gflow_generate_video`: the direct result carries the warning (for example `"warnings": [{"type": "model_retiring", "model": …, "retires_on": …}]`). The queued path stores the same on the task result (`worker/codec.py`, worker daemon).
+- [x] The mirror axes are in `skills/check/SKILL.md` step 1b. Run `tests/mcp/test_cli_parity.py` and `test_server.py`.
+- [x] Unit tests for scenario 5, direct and queued.
 
 ## Task 7 — Sweep: defaults, examples, e2e
 
@@ -185,3 +185,4 @@ exists.
 | 2026-11-19 | Decision 3: keep `veo-fast`, `veo-quality` and `omni-flash` accepted after 5 Dec; remove them in a later release once Flow has dropped them | Flow's live menu decides; a postponement keeps working | Removing them right after 5 Dec (Click usage error) |
 | 2026-11-19 | The warning sits in `FlowApiClient.generate_video`, before project creation and submit | Every video route reaches it: `cli_video.py:337`, `chain.py:257`, `cli_movie.py:882`, `worker/daemon.py:419`. `video chain` therefore warns once per clip, which is accurate and was accepted over a per-process dedupe that would silence a long-lived MCP server after its first job | Warning in each CLI command (four places, MCP missed); dedupe per process |
 | 2026-11-19 | The exit-11 "not offered" message names the retirement whenever `retires_on(model)` is set, not only once the day has passed | The refusal itself proves Flow no longer offers the model, and the date may move, so "Flow listed it as leaving on <date>" is true either side of it and needs no clock in the transport | A `today >= date` check in the settings pane (a second patchable clock) |
+| 2026-11-19 | The MCP `warnings` field is derived in `task_payload()` from the queued payload's `model`, not stored by the worker | `wait=true` and `tasks/get` both reply through `task_payload()`, and the payload already holds the model the worker generated with; no new column, codec key or schema version | Storing the notice on the task row from the daemon (`worker/codec.py` + a queue schema change) |
