@@ -1543,7 +1543,7 @@ reloads (log event `migrated.agent_only_reload`, #1142).
   listing in a second tab and takes the record whose poster shares the new tile's `/asb/`
   token, finished, not on the page before the submit, and created after it (15 s are
   allowed for clock skew). A run whose clip it cannot match that way
-  still ends with exit 9 and `charged: "maybe"`.
+  still ends with exit 9 (exit 44 under `GFLOW_CLI_EXIT_CODES=2`) and `charged: "maybe"`.
   **Image** tiles also load an opaque `/asb/` src (a 512-px preview) but carry the media id on
   `img[data-media-id]`; gflow downloads the original size by rewriting the size spec to `=s0`.
 - The request text is English. Whether the agent honours it on a non-English account is

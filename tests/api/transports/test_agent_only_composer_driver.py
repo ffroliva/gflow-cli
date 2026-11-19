@@ -661,11 +661,45 @@ async def test_a_named_clip_is_not_looked_up_again_while_its_player_mounts_1354(
     monkeypatch.setattr(aoc.AgentOnlyComposer, "_hover_video_src", not_mounted)
     await _load(page, kind="video", readyMedia="asb", optionAsb=True)
     read = _listing(_listed("opaque-100", NEW_CLIP, created=time.time()))
+    seen: list[str] = []
     with pytest.raises(TransportTimeoutError):
         await aoc.AgentOnlyComposer().generate(
-            page, "x", kind="video", count=1, budget_s=4, read_listing=read
+            page,
+            "x",
+            kind="video",
+            count=1,
+            budget_s=4,
+            on_first_media=seen.append,
+            read_listing=read,
         )
     assert len(read.calls) == 1  # type: ignore[attr-defined]
+    # The billed clip is reported early even though the run then timed out on its player.
+    assert seen == [NEW_CLIP]
+
+
+@pytest.mark.asyncio
+async def test_a_head_that_changes_during_the_listing_read_is_not_paired_with_it_1354(
+    page: Page,
+) -> None:
+    """The read takes seconds; a tile that became newest meanwhile must not be downloaded
+    under the id the listing gave for the tile before it."""
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    record = _listed("opaque-100", NEW_CLIP, created=time.time())
+
+    async def read(budget_s: float) -> Any:
+        await page.evaluate(
+            """() => { const t = document.createElement('flow-video-tile');
+              t.innerHTML = '<img src="https://flow.google.com/asb/opaque-999">';
+              t.onmouseenter = () => { if (!t.querySelector('video'))
+                t.insertAdjacentHTML('beforeend', '<video src="https://flow.google.com/asb/opaque-999"></video>'); };
+              document.getElementById('grid').prepend(t); }"""
+        )
+        return [None, [[record]]]
+
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=3, read_listing=read
+        )
 
 
 def _run(**changes: Any) -> Any:

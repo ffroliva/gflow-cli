@@ -795,9 +795,13 @@ class AgentOnlyComposer:
                 started = True
                 await _maybe_await(on_first_media(named[0]))
             ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
+            # #1354: the listing may name the clip before its player mounts, or the run may
+            # time out waiting for it; the early report must not wait for the download.
+            listed = ready.uuid if ready is not None else (run.listed and run.listed[1])
+            if listed and not started and on_first_media is not None:
+                started = True
+                await _maybe_await(on_first_media(listed))
             if ready is not None:
-                if not started and on_first_media is not None:
-                    await _maybe_await(on_first_media(ready.uuid))  # #1354: named only now
                 return [ready]
             await asyncio.sleep(POLL_S)
 
@@ -822,6 +826,9 @@ class AgentOnlyComposer:
             uuid = _cdn_uuid(head["video"], "video") or named[-1]
         else:
             uuid = await self._listed_uuid(head, run, read_listing)
+            # The read takes seconds: the tile hovered below must still be the one it named.
+            if uuid is not None and not await _head_carries(page, asb_token(head["img"])):
+                return None
         if uuid is None:
             return None
         src = head["video"] or await self._hover_video_src(page)
@@ -941,6 +948,12 @@ class _Run:
     listing_after: float = 0.0
     #: (tile token, media id) the listing already named: kept while the hover player mounts.
     listed: tuple[str, str] | None = None
+
+
+async def _head_carries(page: Page, token: str | None) -> bool:
+    """Whether the newest finished video tile still shows the `/asb/` ``token`` (#1354)."""
+    finished = (await page.evaluate(_VIDEO_JS))["finished"]
+    return bool(finished) and asb_token(finished[0]["img"]) == token
 
 
 async def _maybe_await(value: object) -> None:
