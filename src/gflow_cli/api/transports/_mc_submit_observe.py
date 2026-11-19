@@ -589,45 +589,8 @@ class SubmitObserveMixin(MentionMixin):
                 log.debug("migrated.submit_unroute_failed", error=type(exc).__name__)
 
     async def _read_listing(self, page: Page, project_id: str, *, budget_s: float) -> Any | None:
-        """The project's ``Zzl0ze`` payload, read in a second tab; ``None`` if none came.
-
-        A second tab, because the generating page must not navigate mid-generation, and
-        its own first-load listing was not observed to answer (spike 2026-10-27)."""
-        got: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-
-        async def on_response(response: Any) -> None:
-            if got.done() or LISTING_RPC not in str(getattr(response, "url", "")):
-                return
-            try:
-                text = await response.text()
-            except Exception:  # noqa: BLE001 - a lost body leaves the fallback empty
-                return
-            for rid, payload in parse_frames(text):
-                if rid == LISTING_RPC and not got.done():
-                    got.set_result(payload)
-
-        end = time.monotonic() + budget_s
-        tab: Page | None = None
-        try:
-            tab = await page.context.new_page()
-            tab.on("response", on_response)
-            await tab.goto(
-                MIGRATED_PROJECT_URL.format(project_id=project_id),
-                wait_until="domcontentloaded",
-                timeout=budget_s * 1000,
-            )
-            return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
-        # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
-        # caller's exit 9, which names the project; this runs after Flow has billed.
-        except (TimeoutError, PlaywrightError) as exc:
-            log.warning(
-                "migrated.video_listing_unanswered", budget_s=budget_s, error=type(exc).__name__
-            )
-            return None
-        finally:
-            if tab is not None:
-                with contextlib.suppress(PlaywrightError):
-                    await tab.close()
+        """The project's ``Zzl0ze`` payload; see :func:`read_project_listing`."""
+        return await read_project_listing(page, project_id, budget_s=budget_s)
 
     async def _verify_submit_target(self, page: Page, submit: Locator) -> None:
         """Prove the submit button is visible and receives pointer events."""
@@ -954,3 +917,47 @@ class SubmitObserveMixin(MentionMixin):
         except TimeoutError:
             log.info("migrated.result_url_not_observed", grace_s=grace)
             return done_no_url.result()
+
+
+async def read_project_listing(page: Page, project_id: str, *, budget_s: float) -> Any | None:
+    """The project's ``Zzl0ze`` payload, read in a second tab; ``None`` if none came.
+
+    Module-level since #1354: the agent-only composer reads it too.
+
+    A second tab, because the generating page must not navigate mid-generation, and
+    its own first-load listing was not observed to answer (spike 2026-10-27)."""
+    got: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+
+    async def on_response(response: Any) -> None:
+        if got.done() or LISTING_RPC not in str(getattr(response, "url", "")):
+            return
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - a lost body leaves the fallback empty
+            return
+        for rid, payload in parse_frames(text):
+            if rid == LISTING_RPC and not got.done():
+                got.set_result(payload)
+
+    end = time.monotonic() + budget_s
+    tab: Page | None = None
+    try:
+        tab = await page.context.new_page()
+        tab.on("response", on_response)
+        await tab.goto(
+            MIGRATED_PROJECT_URL.format(project_id=project_id),
+            wait_until="domcontentloaded",
+            timeout=budget_s * 1000,
+        )
+        return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
+    # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
+    # caller's exit 9, which names the project; this runs after Flow has billed.
+    except (TimeoutError, PlaywrightError) as exc:
+        log.warning(
+            "migrated.video_listing_unanswered", budget_s=budget_s, error=type(exc).__name__
+        )
+        return None
+    finally:
+        if tab is not None:
+            with contextlib.suppress(PlaywrightError):
+                await tab.close()

@@ -1536,8 +1536,14 @@ reloads (log event `migrated.agent_only_reload`, #1142).
 - A run that dies between Save and restore can leave the account on the run's defaults; the
   `migrated.agent_only.defaults_restore_failed` log line names the originals.
 - Editing Agent settings in the browser *during* a run is overwritten by the restore.
-- Finished **video** tiles re-render to opaque `/asb/` media with no media id; the id comes
-  from the agent's reply instead, and the clip is fetched from the tile's hover player.
+- Finished **video** tiles re-render to opaque `/asb/` media with no media id, and the clip is
+  fetched from the tile's hover player. The id comes from the agent's reply when its poster
+  names one. When every URL on the page is `/asb/`, the reply's poster included
+  ([#1354](https://github.com/ffroliva/gflow-cli/issues/1354)), gflow reads the project's
+  listing in a second tab and takes the record whose poster shares the new tile's `/asb/`
+  token, finished, not on the page before the submit, and created after it (15 s are
+  allowed for clock skew). A run whose clip it cannot match that way
+  still ends with exit 9 (exit 44 under `GFLOW_CLI_EXIT_CODES=2`) and `charged: "maybe"`.
   **Image** tiles also load an opaque `/asb/` src (a 512-px preview) but carry the media id on
   `img[data-media-id]`; gflow downloads the original size by rewriting the size spec to `=s0`.
 - The request text is English. Whether the agent honours it on a non-English account is
