@@ -101,9 +101,9 @@ exists.
 **Files:** `tests/features/model_retirement.feature`, `tests/features/test_model_retirement_steps.py`
 
 **Steps:**
-- [ ] Copy the scenarios. Keep them untagged (no Flow surface).
-- [ ] Inject "today" through a clock argument, never `time.time()` in a parametrize (auto-memory `required-checks-wait-counts-passes`).
-- [ ] Commit red.
+- [x] Copy the scenarios. Keep them untagged (no Flow surface). Two scenarios were added beyond SCENARIO.md's three: a model past its date is still not refused, and a model Flow is not retiring gets no warning (decision 3 and scenario 12).
+- [x] Inject "today" through a clock argument, never `time.time()` in a parametrize (auto-memory `required-checks-wait-counts-passes`).
+- [x] Commit red.
 
 ## Task 3 — `api/model_catalog.py` + fixture recorder
 
