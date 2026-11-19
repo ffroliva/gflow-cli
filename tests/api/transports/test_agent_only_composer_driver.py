@@ -103,7 +103,8 @@ function videoTile(n) {
   setTimeout(() => { t.innerHTML = '<flow-pending-tile><div class="loading-percentage">40%</div></flow-pending-tile>'; }, S.delay);
   if (S.posterOnly) return;
   setTimeout(() => {
-    opt.querySelector('img').src = cdn('image', n);
+    // #1354 (reported 2026-11-19): the chat option's poster is opaque `/asb/` too.
+    opt.querySelector('img').src = S.optionAsb ? `https://flow.google.com/asb/opaque-opt-${n}` : cdn('image', n);
     if (S.readyMedia === 'asb') {
       const asb = `https://flow.google.com/asb/opaque-${n}`;
       t.innerHTML = `<img class="thumbnail" src="${asb}">`;
@@ -232,6 +233,7 @@ def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(aoc, "POLL_S", 0.05)
     monkeypatch.setattr(aoc, "IDLE_S", 0.8)
     monkeypatch.setattr(aoc, "GATE_SETTLE_S", 2.0)
+    monkeypatch.setattr(aoc, "LISTING_RETRY_S", 1.2)
 
 
 async def _load(page: Page, **scenario: Any) -> None:
@@ -548,6 +550,246 @@ async def test_a_finished_tile_whose_video_never_mounts_keeps_polling(page: Page
     await _load(page, kind="video", readyMedia="asb", noHoverVideo=True)
     with pytest.raises(TransportTimeoutError):
         await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=2)
+
+
+# --- #1354: every clip URL is opaque /asb/, so the project listing names the clip ------------
+
+NEW_CLIP = "aaaaaaaa-0000-4000-8000-000000000100"
+OLD_CLIP = "bbbbbbbb-0000-4000-8000-000000000001"
+
+
+def _listed(token: str, media: str, *, created: float, status: int = 3) -> list[Any]:
+    """A `Zzl0ze` generation record, reduced to the slots the lookup reads."""
+    details: list[Any] = [None] * 11
+    details[0] = [int(created)]
+    details[8] = [status]
+    details[10] = f"https://lh3.googleusercontent.com/asb/{token}=s512"
+    return [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        media,
+        None,
+        None,
+        details,
+    ]
+
+
+def _listing(*records: list[Any], answers: bool = True) -> Any:
+    calls: list[float] = []
+
+    async def read(budget_s: float) -> Any:
+        assert 1.0 <= budget_s <= aoc.LISTING_READ_BUDGET_S
+        calls.append(time.monotonic())
+        return [None, [list(records)]] if answers else None
+
+    read.calls = calls  # type: ignore[attr-defined]
+    return read
+
+
+@pytest.mark.asyncio
+async def test_an_all_asb_clip_is_named_by_its_listing_record_1354(page: Page) -> None:
+    """Reported 2026-11-19: tile, hover player and chat option all `/asb/`, no media id
+    anywhere; the run timed out on a clip Flow had billed and finished."""
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    read = _listing(
+        _listed("opaque-old", OLD_CLIP, created=time.time() - 3600),
+        _listed("opaque-100", NEW_CLIP, created=time.time()),
+    )
+    from structlog.testing import capture_logs
+
+    seen: list[str] = []
+    with capture_logs() as logs:
+        (media,) = await aoc.AgentOnlyComposer().generate(
+            page,
+            "x",
+            kind="video",
+            count=1,
+            budget_s=10,
+            on_first_media=seen.append,
+            read_listing=read,
+        )
+    assert "migrated.agent_only.video_named_by_listing" in [e["event"] for e in logs]
+    assert media.uuid == NEW_CLIP
+    assert media.src == "https://flow.google.com/asb/opaque-100"
+    assert seen == [NEW_CLIP]
+
+
+@pytest.mark.asyncio
+async def test_a_listing_record_older_than_the_submit_is_not_this_run_1354(page: Page) -> None:
+    """An idle agent that only re-renders the OLD tile to `/asb/` must not hand it back."""
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    read = _listing(_listed("opaque-100", OLD_CLIP, created=time.time() - 3600))
+    with pytest.raises(TransportTimeoutError) as exc_info:
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=2, read_listing=read
+        )
+    # The exit 9 says where the run stopped, not only that it did.
+    detail = str(exc_info.value.detail)
+    assert f"the listed record {OLD_CLIP} is unfinished or not this run's" in detail
+    assert "pending seen: True" in detail
+    assert "listing reads: " in detail
+
+
+@pytest.mark.asyncio
+async def test_an_unfinished_or_unlisted_record_keeps_polling_1354(page: Page) -> None:
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    running = _listing(_listed("opaque-100", NEW_CLIP, created=time.time(), status=2))
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=2, read_listing=running
+        )
+    # Re-read on a throttle, never once per poll: each read opens a tab.
+    assert 1 <= len(running.calls) <= 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_listing_that_does_not_answer_keeps_polling_1354(page: Page) -> None:
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    silent = _listing(answers=False)
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=2, read_listing=silent
+        )
+    assert silent.calls  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_named_clip_is_not_looked_up_again_while_its_player_mounts_1354(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The listing named the clip but the hover `<video>` never mounted: one read, not one
+    per throttle window (each opens a tab)."""
+
+    async def not_mounted(*_: Any) -> str:
+        return ""  # fast, so several throttle windows pass within the budget
+
+    monkeypatch.setattr(aoc.AgentOnlyComposer, "_hover_video_src", not_mounted)
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    read = _listing(_listed("opaque-100", NEW_CLIP, created=time.time()))
+    seen: list[str] = []
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page,
+            "x",
+            kind="video",
+            count=1,
+            budget_s=4,
+            on_first_media=seen.append,
+            read_listing=read,
+        )
+    assert len(read.calls) == 1  # type: ignore[attr-defined]
+    # The billed clip is reported early even though the run then timed out on its player.
+    assert seen == [NEW_CLIP]
+
+
+@pytest.mark.asyncio
+async def test_a_head_that_changes_during_the_listing_read_is_not_paired_with_it_1354(
+    page: Page,
+) -> None:
+    """The read takes seconds; a tile that became newest meanwhile must not be downloaded
+    under the id the listing gave for the tile before it."""
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    record = _listed("opaque-100", NEW_CLIP, created=time.time())
+
+    async def read(budget_s: float) -> Any:
+        await page.evaluate(
+            """() => { const t = document.createElement('flow-video-tile');
+              t.innerHTML = '<img src="https://flow.google.com/asb/opaque-999">';
+              t.onmouseenter = () => { if (!t.querySelector('video'))
+                t.insertAdjacentHTML('beforeend', '<video src="https://flow.google.com/asb/opaque-999"></video>'); };
+              document.getElementById('grid').prepend(t); }"""
+        )
+        return [None, [[record]]]
+
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(
+            page, "x", kind="video", count=1, budget_s=3, read_listing=read
+        )
+
+
+def _run(**changes: Any) -> Any:
+    run = aoc._Run("video", 60, time.monotonic() + 60, 0, 1, time.time())  # pyright: ignore[reportPrivateUsage]
+    run.saw_pending = True
+    for key, value in changes.items():
+        setattr(run, key, value)
+    return run
+
+
+_HEAD = {"video": "", "img": "https://flow.google.com/asb/opaque-100=s512-rw"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"saw_pending": False},  # the head changed before this run's clip ever queued
+        {"seen_before": frozenset({"opaque-100"})},  # that tile was on the page before
+    ],
+    ids=["never-pending", "token-before-submit"],
+)
+async def test_the_listing_is_not_read_for_a_tile_that_cannot_be_this_run_1354(
+    changes: dict[str, Any],
+) -> None:
+    read = _listing(_listed("opaque-100", NEW_CLIP, created=time.time()))
+    got = await aoc.AgentOnlyComposer._listed_uuid(_HEAD, _run(**changes), read)  # pyright: ignore[reportPrivateUsage]
+    assert got is None
+    assert read.calls == []  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_a_listed_clip_already_named_before_the_submit_is_not_this_run_1354() -> None:
+    """Clock-free guard: the record names a media id the page showed before the submit."""
+    read = _listing(_listed("opaque-100", OLD_CLIP, created=time.time()))
+    run = _run(seen_before=frozenset({OLD_CLIP}))
+    assert await aoc.AgentOnlyComposer._listed_uuid(_HEAD, run, read) is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_a_record_with_no_creation_time_is_not_this_run_1354() -> None:
+    record = _listed("opaque-100", NEW_CLIP, created=0)
+    record[5][0] = None
+    run = _run()
+    assert await aoc.AgentOnlyComposer._listed_uuid(_HEAD, run, _listing(record)) is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_without_a_listing_reader_an_all_asb_clip_still_times_out_1354(
+    page: Page,
+) -> None:
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    with pytest.raises(TransportTimeoutError):
+        await aoc.AgentOnlyComposer().generate(page, "x", kind="video", count=1, budget_s=2)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_video_reads_the_project_listing_for_an_all_asb_clip_1354(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_AGENT_CONFIRM", "account")
+    reset_settings()
+    asked: list[str] = []
+
+    async def read_project_listing(_page: Any, project_id: str, *, budget_s: float) -> Any:
+        asked.append(project_id)
+        return [None, [[_listed("opaque-100", NEW_CLIP, created=time.time())]]]
+
+    monkeypatch.setattr(aoc, "read_project_listing", read_project_listing)
+    await _load(page, kind="video", readyMedia="asb", optionAsb=True)
+    seen: list[str] = []
+    result = await aoc.run_agent_video(
+        page,
+        video_api.GenerateVideoRequest(prompt="x"),
+        project_id="p1",
+        save=AsyncMock(),
+        poll_timeout_s=10,
+        download=False,
+        on_started=lambda s: seen.append(s.media_id),
+    )
+    assert asked and set(asked) == {"p1"}
+    assert seen == [NEW_CLIP]
+    assert result.status.media_id == NEW_CLIP
 
 
 # --- download: the finished tile's src, redirects only to Google video hosts ----------------

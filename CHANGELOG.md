@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.102.1] — 2026-11-19
+
+### Fixed
+
+- **`gflow video t2v` on the agent-only composer finds a clip whose page names no media id ([#1354](https://github.com/ffroliva/gflow-cli/issues/1354)).** On some flow.google.com accounts, every URL that shows a finished clip, including the tile, its hover player and the chat option's poster, is an opaque `flow.google.com/asb/...` with no media id. gflow read the id only from a `flow-content.google/video/<uuid>` URL, so a clip Flow had billed and finished was never recognised: the run waited out its 600 s, exited 9 with `charged: "maybe"`, and saved nothing. When the new tile names no id, gflow now reads the project's listing in a second tab and takes the record whose poster carries the same `/asb/` token as the tile, provided that the record is finished, was not on the page before the submit, and was created after it (with 15 s allowed for clock skew). gflow reads the listing only after the clip has shown as pending. The early `VideoStarted` report fires once the id is known. A clip it cannot match that way still ends with exit 9 (exit 44 under `GFLOW_CLI_EXIT_CODES=2`), and the error's detail now names where the run stopped: the last poll's verdict, whether a pending clip was seen, and how often the listing was read. `gflow_generate_video` with `mode="t2v"` over MCP runs the same code and gets the same fix.
+
 ## [0.102.0] — 2026-11-18
 
 ### Added
@@ -7266,7 +7272,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.102.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.102.1...HEAD
+[0.102.1]: https://github.com/ffroliva/gflow-cli/compare/v0.102.0...v0.102.1
 [0.102.0]: https://github.com/ffroliva/gflow-cli/compare/v0.101.2...v0.102.0
 [0.101.2]: https://github.com/ffroliva/gflow-cli/compare/v0.101.1...v0.101.2
 [0.101.1]: https://github.com/ffroliva/gflow-cli/compare/v0.101.0...v0.101.1
