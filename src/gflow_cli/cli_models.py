@@ -19,6 +19,7 @@ from rich.table import Table
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import output_format_option, spends_credits
 from gflow_cli.api import image as image_api
+from gflow_cli.api import model_catalog
 from gflow_cli.api import video as video_api
 from gflow_cli.docs_catalog import closest_matches
 from gflow_cli.image_batch import ALLOWED_MODELS as _IMAGE_CLI_MODELS
@@ -74,6 +75,8 @@ def build_catalog() -> dict[str, Any]:
             "ref_cap": video_api.reference_cap_for(m),  # applies to r2v
             "max_duration": video_api.max_duration_for(m),
             "durations": list(video_api.duration_choices_for(m)),
+            # #1375: the day Flow retires this model (ISO date), or null.
+            "retires_on": (day.isoformat() if (day := model_catalog.retires_on(m)) else None),
         }
         for m in video_api.VideoModel
     ]
