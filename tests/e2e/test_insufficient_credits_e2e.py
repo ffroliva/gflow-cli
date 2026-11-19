@@ -63,7 +63,10 @@ def _drained() -> tuple[str, str]:
     return profile, project
 
 
-@until_retired(VideoModel.VEO_3_1_QUALITY)  # needs the costliest model to stay $0
+# #1375: gated, not re-pointed. A cheaper tier (Omni 1.2 at 10 s is about a third of
+# veo-quality's 100) would submit and BILL on a part-drained profile such as the 50-credit
+# ci-probe above. Re-point only after measuring the costliest tier Flow keeps (see #1379).
+@until_retired(VideoModel.VEO_3_1_QUALITY)
 async def test_a_drained_account_reports_insufficient_credits_not_drift() -> None:
     profile, project = _drained()
 

@@ -1,5 +1,5 @@
 {
- "_comment": "Flow's HTrJv model catalog, trimmed to model families: [display_name, [[usage_key], ...], enabled, family_key, alias, unknown, retirement_date]. Recorded 2026-11-19 from flow.google.com (en-GB, one account) by scripts/dev/spike_htrjv_direct_read.py; regenerate with scripts/dev/record_htrjv_fixture.py. Usage entries keep only their key: costs, durations and limits are not asserted (#1375).",
+ "_comment": "Flow's HTrJv model catalog, trimmed to model families: [display_name, [[usage_key], ...], enabled, family_key, alias, unknown, retirement_date]. Recorded 2026-11-19 from flow.google.com (en-GB, one account); regenerate with scripts/dev/record_htrjv_fixture.py. Usage entries keep only their key: costs, durations and limits are not asserted (#1375).",
  "recorded": "2026-11-19",
  "families": [
   [

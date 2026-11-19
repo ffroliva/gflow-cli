@@ -791,8 +791,10 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > **Leaving models (#1375).** Flow retires `omni-flash` (Omni 1.1 Flash), `veo-fast` and
 > `veo-quality` on 2026-12-05. `gflow models` shows the date in its `retires on` column, and a
 > run on one of them logs a `model.retiring` warning on stderr (MCP: a `warnings` entry). gflow
-> keeps accepting them: once Flow's menu stops offering one, the run stops before submit with
-> exit 11, charged nothing. Use `veo-lite` or `omni-1.2` instead.
+> keeps accepting them: once Flow's menu stops offering one, the run stops before submit,
+> charged nothing (on flow.google.com's composer, exit 11 with a message naming the date). Use
+> `veo-lite` or `omni-1.2` instead.
+>
 > **`--duration` support across models**: Flow's settings
 > popover is model- and cohort-conditional: `omni-flash` renders a `4s/6s/8s/10s` row,
 > while Veo 3.1 models accept `4s/6s/8s` where the current Flow account/cohort exposes
