@@ -6,7 +6,7 @@ is the orchestration layer on top of `gflow character` (entity creation) and
 `gflow video` (R2V generation).
 
 > Status: shipped (since v0.14.0) and evolving. The CLI surface below is
-> release-stable per SemVer; alpha (`0.x`) minor versions may still extend or
+> release-stable per SemVer; pre-1.0 (`0.x`) minor versions may still extend or
 > adjust it, with changes noted in the CHANGELOG.
 
 ## Quick start

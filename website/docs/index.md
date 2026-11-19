@@ -2,10 +2,10 @@
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ffroliva/gflow-cli/badge)](https://scorecard.dev/viewer/?uri=github.com/ffroliva/gflow-cli)
 
-**gflow-cli** is a CLI and MCP server for [Google Flow](https://labs.google/fx/tools/flow) — it scripts **Veo** video and **Imagen** image generation from the terminal instead of clicking through the web UI. And because it ships an MCP server, you can point an AI assistant at it and let the agent drive the generations for you.
+**gflow-cli** is an open-source MCP server and CLI for [Google Flow](https://labs.google/fx/tools/flow): it generates **Veo 3.1** and **Omni** video and **Nano Banana** and **Imagen** images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or the terminal, instead of clicking through the web UI. And because it ships an MCP server, you can point an AI assistant at it and let the agent drive the generations for you.
 
 !!! warning "Read this before you install"
-    gflow-cli is **alpha and reverse-engineered — not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk. It works with any Google account that has Flow access, and every generation bills your account.
+    gflow-cli is an **independent project, not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk. It works with any Google account that has Flow access, and every generation bills your account.
 
 ## Why it exists
 

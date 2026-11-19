@@ -1,7 +1,7 @@
 [project]
 name = "gflow-cli"
 version = "0.102.0"
-description = "CLI and MCP server for Google Flow — drive Veo text-to-video, image-to-video and Imagen image generation from the terminal."
+description = "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude, Cursor, Codex or the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -22,6 +22,12 @@ keywords = [
     "video-generation",
     "ai-video",
     "generative-ai",
+    "veo-3",
+    "omni",
+    "nano-banana",
+    "google-flow-automation",
+    "claude-code",
+    "cursor",
     "ai",
     "cli",
     "google",
@@ -32,10 +38,10 @@ keywords = [
     "windows",
 ]
 # Every entry is checked against the official trove list; an invented classifier
-# fails the upload outright. Keep "Development Status :: 3 - Alpha" in step with
+# fails the upload outright. Keep "Development Status :: 4 - Beta" in step with
 # how the README describes the project.
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Framework :: AsyncIO",
     "Framework :: Pydantic :: 2",
