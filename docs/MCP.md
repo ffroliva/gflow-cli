@@ -1,5 +1,7 @@
 # Model Context Protocol (MCP) Server for gflow-cli
 
+The gflow-cli MCP server connects Claude Code, Claude Desktop, Cursor, VS Code, Codex and any other MCP client to Google Flow. Its tools generate Veo 3.1 and Omni video and Nano Banana and Imagen images, manage reusable Characters, upscale, download, and read the Flow credit balance, over stdio (`gflow mcp run`) or Streamable HTTP (`gflow serve`). `gflow mcp run --no-spend` registers no credit-spending tool. Quick setup: `uv tool install gflow-cli`, `gflow auth login --browser chrome`, then `gflow mcp setup` (Claude Desktop) or the Claude Code plugin ([§ 4](#4-setup-instructions)).
+
 This document describes the design, configuration, security model, and developer setup for the `gflow-cli` MCP server.
 
 ---

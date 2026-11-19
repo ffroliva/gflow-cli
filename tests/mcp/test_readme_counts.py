@@ -1,4 +1,4 @@
-"""README and the landing page quote the MCP tool count; keep it equal to the server's."""
+"""Published pages quote the MCP tool count; keep it equal to the server's."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ _ROOT = Path(__file__).resolve().parents[2]
     [
         ("README.md", r"\*\*(\d+) MCP tools\*\*"),
         ("index.html", r"serving (\d+) tools"),
+        ("llms.txt", r"MCP server with (\d+) tools"),
     ],
 )
 def test_published_mcp_tool_count_matches_the_server(
