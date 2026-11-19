@@ -158,9 +158,9 @@ When a shot carries several references, order and budget matter.
 3. **Props last**, as budget allows; demote the rest to prose.
 4. **Preserve the order you wrote.** Do not sort the reference list.
 
-Caps are per model, and the entity counts against the same pool as the images: omni-flash 7, veo-lite / veo-fast / veo-lite-lp 3, **veo-quality 0 — it accepts no references at all [CONSTRAINT]**. On the image side nano2 and nano-pro take 10, imagen4 3.
+Caps are per model, and the entity counts against the same pool as the images: omni-1.2-flash and omni-flash 7, veo-lite / veo-fast / veo-lite-lp 3, **veo-quality 0 — it accepts no references at all [CONSTRAINT]**. On the image side nano2 and nano-pro take 10, imagen4 3.
 
-So a referenced shot cannot be `veo-quality`, whatever the quality target: take **omni-flash** for a single generation needing more than 3 references or the best quality with any reference at all, and a veo-lite variant when 3 is enough. **`video chain` refuses omni-flash [CONSTRAINT]** — its i2v is verified for single generations only — so chained links take a Veo 3.1 model and its cap of 3.
+So a referenced shot cannot be `veo-quality`, whatever the quality target: take **omni-1.2** for a single generation needing more than 3 references or the best quality with any reference at all, and a veo-lite variant when 3 is enough. **`video chain` refuses both Omni models [CONSTRAINT]** — its i2v is verified for single generations only — so chained links take a Veo 3.1 model and its cap of 3.
 
 **Select the model before attaching references [CONSTRAINT].** Switching model afterwards invalidates what was attached.
 

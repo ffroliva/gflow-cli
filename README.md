@@ -120,14 +120,14 @@ For the full 10-minute walkthrough with troubleshooting and multi-account setup,
 
 ## Which Google Flow models does gflow-cli support?
 
-`gflow models list` prints the full list from the installed version (including `veo-lite-lp`, a lower-priority Veo 3.1 Lite), with no call to Flow.
+`gflow models list` prints the full list from the installed version (including `veo-lite-lp`, a lower-priority Veo 3.1 Lite), with no call to Flow. Its `retires on` column shows the models Flow has said it will retire.
 
 | Kind | Model | Alias | Max length / refs |
 |---|---|---|---|
 | Video | Omni 1.2 Flash | `omni-1.2` | 15 s, 7 reference images |
-| Video | Omni Flash | `omni-flash` | 10 s, 7 reference images |
-| Video | Veo 3.1 Quality | `veo-quality` | 8 s |
-| Video | Veo 3.1 Fast | `veo-fast` | 8 s, 3 reference images |
+| Video | Omni Flash (1.1) | `omni-flash` | 10 s, 7 reference images; Flow retires it on 2026-12-05 |
+| Video | Veo 3.1 Quality | `veo-quality` | 8 s; Flow retires it on 2026-12-05 |
+| Video | Veo 3.1 Fast | `veo-fast` | 8 s, 3 reference images; Flow retires it on 2026-12-05 |
 | Video | Veo 3.1 Lite | `veo-lite` | 8 s, 3 reference images |
 | Image | Nano Banana 2.1 | `nano2` | 10 reference images |
 | Image | Nano Banana Pro | `nano-pro` | 10 reference images |

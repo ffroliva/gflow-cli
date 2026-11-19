@@ -34,11 +34,14 @@ import shutil
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
+from datetime import date
 from pathlib import Path
 from typing import ParamSpec
 
 import pytest
 
+from gflow_cli.api.model_catalog import retires_on
+from gflow_cli.api.video import VideoModel
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.errors import FlowHostMigratedError, WireFormatError
 
@@ -200,6 +203,20 @@ def skip_on_migrated_host(
             pytest.skip("labs RPC not ported to flow.google.com yet; Flow refused it")
 
     return wrapper
+
+
+def until_retired(model: VideoModel) -> pytest.MarkDecorator:
+    """Run a test that depends on ``model`` only while Flow still offers it (#1375).
+
+    From the day Flow listed it as leaving, it skips with a reason naming that date, so a
+    test that needs the model never fails, or bills, against its absence. The date is
+    static: if Flow postpones, update ``model_catalog.RETIRES_ON`` and the tests resume.
+    """
+    when = retires_on(model)
+    return pytest.mark.skipif(
+        when is not None and date.today() >= when,
+        reason=f"#1375: Flow listed {model.value} as leaving on {when}; this test depends on it",
+    )
 
 
 def skip_labs_composer_check(entries: list[dict[str, object]], check: str) -> None:

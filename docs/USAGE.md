@@ -787,6 +787,14 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > when `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
 > `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+>
+> **Leaving models (#1375).** Flow retires `omni-flash` (Omni 1.1 Flash), `veo-fast` and
+> `veo-quality` on 2026-12-05. `gflow models` shows the date in its `retires on` column, and a
+> run on one of them logs a `model.retiring` warning on stderr (MCP: a `warnings` entry). gflow
+> keeps accepting them: once Flow's menu stops offering one, the run stops before submit,
+> charged nothing (on flow.google.com's composer, exit 11 with a message naming the date). Use
+> `veo-lite` or `omni-1.2` instead.
+>
 > **`--duration` support across models**: Flow's settings
 > popover is model- and cohort-conditional: `omni-flash` renders a `4s/6s/8s/10s` row,
 > while Veo 3.1 models accept `4s/6s/8s` where the current Flow account/cohort exposes
@@ -872,7 +880,7 @@ Options:
 ```bash
 gflow video t2v "Slow cinematic push-in toward a candle flame"
 gflow video t2v "Aerial shot of a coastline at sunset" --aspect 16:9 --out-dir ./out
-gflow video t2v "A neon city timelapse" --model omni-flash --duration 10 --count 2
+gflow video t2v "A neon city timelapse" --model omni-1.2 --duration 10 --count 2
 # Apply the creative-director tool (cinematic style) before generating
 gflow video t2v "a dog surfing" --tool creative-director:style=cinematic
 ```
@@ -934,7 +942,7 @@ Options:
 
 ```bash
 gflow video i2v --initial-frame ./hero.png "Slow camera arc, soft golden light"
-gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-quality
+gflow video i2v --initial-frame ./first.png --end-frame ./last.png "morph between scenes" --model veo-lite
 # Reference an existing in-project asset by media UUID (picker-selected via its
 # catalog display name + exact-UUID tile since v0.58.0/#529; no re-upload):
 gflow video i2v --initial-frame d6f1927a-3eae-4626-bc90-9a6ea7637bab "pan left" --project f6caf027-...
@@ -974,7 +982,7 @@ Options:
 
 ```bash
 gflow video r2v "a knight in this armor walks forward" --ref armor.png
-gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model omni-flash
+gflow video r2v "blend these worlds" --ref a.png --ref b.png --ref c.png --model omni-1.2
 ```
 
 > **On Flow's migrated `flow.google.com` host (#639)** — a moved account, or
@@ -1330,7 +1338,7 @@ concatenate them server-side.** Chain does not auto-concat: see the
 gflow video chain story.jsonl --dry-run
 
 # Generate the chain (one pending video operation per link), no confirmation prompt
-gflow video chain story.jsonl --model veo-fast --aspect 16:9 --yes
+gflow video chain story.jsonl --model veo-lite --aspect 16:9 --yes
 
 # Resume a chain that died partway — already-completed links are skipped
 gflow video chain story.jsonl --resume-from 1f2e3d4c-...
@@ -2162,7 +2170,7 @@ gflow models
 gflow models --json
 
 # One model's limits: aliases, ref cap, durations (video) or Flow name (image), aspects
-gflow models show omni-flash
+gflow models show omni-1.2
 
 # The same object gflow_list_models carries for that model (#1196)
 gflow models show NARWHAL --json

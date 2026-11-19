@@ -57,7 +57,7 @@ characters = ["Stickman"]         # which characters appear (drives R2V reuse)
 speaker = "Stickman"
 line = "We finally made it to the top!"
 aspect = "9:16"
-model = "omni-flash"              # 4/6/8/10s; omni-1.2-flash 3–15; Veo 3.1 4/6/8
+model = "omni-1.2"                # 3–15s; Veo 3.1 4/6/8
 duration = 8
 
 [[scenes]]
@@ -139,7 +139,7 @@ no stored prompt are never re-run automatically.
 > fidelity is Flow's Veo R2V model, which may reinterpret minimalist or
 > hand-drawn references (e.g. a single round body can render as stacked
 > circles). For tighter results, use clearer/richer reference images and a
-> higher-tier model (`veo-quality`/`veo-fast` rather than `veo-lite`) — the same
+> higher-tier model (`omni-1.2` rather than `veo-lite`; it also takes up to 7 references) — the same
 > trade-offs you would hit driving Flow's UI by hand.
 
 ## Run lifecycle — keep the browser open

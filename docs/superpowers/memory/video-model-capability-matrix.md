@@ -16,6 +16,14 @@ project `5ee3e625-…`; evidence doc
 | `veo_3_1_quality` | **NONE** | x1–x4 | 100 | **REJECTED** |
 | `veo_3_1_lite_lower_priority` | picker MISS — **absence, not a broken selector; settled 2026-09-05, see the end of this file** | | | |
 
+**Update 2026-11-19 (#1375): three of these rows are leaving.** Flow's own catalog
+(`HTrJv`) lists `omni_flash` (Omni 1.1), `veo_3_1_fast` and `veo_3_1_quality` as retiring
+on 2026-12-05; `api/model_catalog.py` holds the dates (`retires_on`), and the menu shows
+the older Omni with a retirement suffix. From that day, the duration control continues on
+`omni_1_2_flash` (slider, below), and `veo-quality`'s ingredient rejection stops mattering.
+Treat the rows above as history for those three models. Also measured that day on
+flow.google.com: `flow_operation_id` is Flow's workflow id there, not the media id.
+
 **Update 2026-11-07 (#1167/#1168, $0, flow.google.com):** Omni 1.2 Flash
 (`omni_1_2_flash`) sits beside Omni 1.1 in the model menu and replaces the duration
 radios with a range slider (`flow-duration-slider`, index 0..N = 3..N+3 s). The

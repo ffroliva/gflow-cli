@@ -22,11 +22,13 @@ import pytest
 from gflow_cli.api.transports.migrated_composer import RADIO, MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
+from tests.e2e.conftest import until_retired
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
 
 @pytest.mark.asyncio
+@until_retired(VideoModel.OMNI_FLASH)  # the duration radio is Omni 1.1's
 async def test_e2e_duration_binds_in_a_vietnamese_pane(e2e_profile_dir: Path) -> None:
     project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
     if not project:

@@ -179,7 +179,7 @@ def test_t2v_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
 
     result = _run_gflow(
         # t2v ignores GFLOW_CLI_OUTPUT_DIR — pass --out-dir explicitly. Cheapest
-        # config: omni-flash / 4s / 1 output.
+        # model Flow keeps (#1375): veo-lite / 1 output.
         [
             "video",
             "t2v",
@@ -187,9 +187,7 @@ def test_t2v_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
             "--aspect",
             "16:9",
             "--model",
-            "omni-flash",
-            "--duration",
-            "4",
+            "veo-lite",
             "--count",
             "1",
             "--tool",

@@ -158,7 +158,7 @@ test, not a mocked proxy — the Bug Lane's step 5.
 | `GFLOW_CLI_E2E_RUN_TELEMETRY_UPLOAD` | `"0"` | Set to `"1"` to run the usage telemetry upload e2e against the live Cloudflare endpoint (requires `CLOUDFLARE_ACCOUNT_ID` and `npx wrangler`). |
 | `GFLOW_CLI_E2E_RUN_VIDEO` | `"0"` | Set to `"1"` to include video generation in the data-layer e2e run. Video is opt-in because Veo credits are the most expensive. |
 | `GFLOW_CLI_E2E_VIDEO_ASPECT` | `"landscape"` | Aspect ratio for video e2e: `landscape` or `portrait`. |
-| `GFLOW_CLI_E2E_VIDEO_MODEL` | `"omni-flash"` | Veo model for i2v tests: `omni-flash` or `veo-fast`. |
+| `GFLOW_CLI_E2E_VIDEO_MODEL` | `"veo-lite"` | Video model for the chain and transport i2v tests: a Veo 3.1 alias such as `veo-lite` (chains refuse Omni models). |
 | `GFLOW_CLI_E2E_VIDEO_DURATION` | `"4"` | Seconds of video to generate in i2v tests (minimum credit unit). |
 | `GFLOW_CLI_E2E_RUN_REFUSAL` | `"0"` | Set to `"1"` to run the migrated refusal e2e (`e2e_image`): one image submit goes out with its reCAPTCHA token corrupted so Flow refuses it, proving the refusal is reported as `WafRejectionError`. Zero credits, but a refused token can raise the profile's WAF score for hours, so run it **alone** and on a probe profile, never before other image tests in the same session. |
 | `GFLOW_CLI_E2E_RUN_SLOW_LINK` | `"0"` | Set to `"1"` to run the slow-link project-create e2e (#1037, `e2e_auth`, `tests/e2e/test_project_create_slow_link_e2e.py`): it holds back Flow's create reply and checks that gflow returns the project it made, or exits 7 (not retryable) when it cannot tell. Zero credits; opt-in because each test leaves one empty project (`e2e-1037-*`, one untitled) and there is no delete route. |
@@ -540,7 +540,7 @@ All fixtures live in `tests/e2e/conftest.py` unless noted.
 ## Cost minimization patterns
 
 1. **Single model, minimum parameters** — always use `--model narwhal`, `--count 1`
-   for image tests; `--model omni-flash`, `--duration 4`, `--count 1` for video.
+   for image tests; `--model veo-lite`, `--count 1` and no `--duration` for video (omitting it keeps the editor's current length, which is not always the shortest; where the account shows a duration control, `--duration 4` is cheapest. a test about one model's own behaviour pins that model instead, and a test about a model Flow retires skips from that date with `until_retired`, #1375).
 2. **Video is always opt-in** — `GFLOW_CLI_E2E_RUN_VIDEO` defaults to `"0"`. A
    developer running `pytest -m e2e` will not burn Veo credits by accident.
 3. **Shared project for batch** — `--same-project` (always-on in the batch runner)

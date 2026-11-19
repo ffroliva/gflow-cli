@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from gflow_cli.api.image import Model as ImageModel
+from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.transports._mc_common import (
     ASPECT_LIGATURE,
     FRAMES_LIGATURE,
@@ -454,10 +455,13 @@ class SettingsPaneMixin(EditorGateMixin):
         hits = [i for i, text in enumerate(offered) if matcher.matches(text)]
         if not hits:
             await page.keyboard.press("Escape")
+            # #1375: stated whatever today's date is, since Flow may move the day.
+            when = retires_on(model)
+            leaving = f"; Flow listed it as leaving on {when.isoformat()}" if when else ""
             raise ConfigurationError(
                 detail=(
                     f"model '{model.value}' is not offered on this account's migrated Flow "
-                    f"host; offered: {', '.join(offered)}"
+                    f"host{leaving}; offered: {', '.join(offered)}"
                 ),
                 remediation_hint="Pass --model with one of the offered names, or omit it.",
             )

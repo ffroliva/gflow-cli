@@ -99,16 +99,17 @@ def test_e2e_models_list_and_show_json() -> None:
             check=False,
         )
 
-    bare, listed, shown = run("--json"), run("list", "--json"), run("show", "omni-flash", "--json")
+    bare, listed, shown = run("--json"), run("list", "--json"), run("show", "omni-1.2", "--json")
     for proc in (bare, listed, shown):
         assert proc.returncode == 0, proc.stderr[-400:]
     assert json.loads(listed.stdout) == json.loads(bare.stdout)
-    entry = next(m for m in json.loads(bare.stdout)["video"]["models"] if m["name"] == "omni_flash")
+    videos = json.loads(bare.stdout)["video"]["models"]
+    entry = next(m for m in videos if m["name"] == "omni_1_2_flash")
     assert json.loads(shown.stdout) == entry
 
-    unknown = run("show", "omni-flsh")
+    unknown = run("show", "omni-1.2-flsh")
     assert unknown.returncode == 2
-    assert "omni-flash" in unknown.stderr
+    assert "omni-1.2-flash" in unknown.stderr
 
 
 @pytest.mark.e2e_image

@@ -64,7 +64,8 @@ Browse the local project catalog.
 List available gflow prompt tools (name, title, description, category).
 
 ### gflow_list_models
-List the models `model` accepts, with aliases, reference caps and durations.
+List the models `model` accepts, with aliases, reference caps, durations and `retires_on`
+(the date Flow retires a video model, or null). Prefer a model whose `retires_on` is null.
 
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow ...` via the terminal.
@@ -103,7 +104,8 @@ Browse the local project catalog.
 List available gflow prompt tools (name, title, description, category).
 
 ### gflow_list_models
-List the models `model` accepts, with aliases, reference caps and durations.
+List the models `model` accepts, with aliases, reference caps, durations and `retires_on`
+(the date Flow retires a video model, or null). Prefer a model whose `retires_on` is null.
 
 ## Important Rules
 1. **Use tools, not shell commands.** Do NOT run `gflow image t2i ...` via the terminal.
