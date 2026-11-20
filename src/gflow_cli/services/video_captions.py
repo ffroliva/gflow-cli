@@ -198,6 +198,21 @@ def resolve_video_source(file_or_id: str, *, profile: str | None, route: str) ->
         )
 
 
+def _srt_destination(source: Path, out_file: Path | None) -> Path:
+    return (out_file or source.with_suffix(".srt")).expanduser().resolve()
+
+
+def _prepare_output_parent(destination: Path) -> None:
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ConfigurationError(
+            detail=f"Could not prepare output directory for {destination.name!r}.",
+            charged="no",
+            remediation_hint="Choose an --out-file path inside a writable directory.",
+        ) from exc
+
+
 def _srt_exists_error(destination: Path) -> ConfigurationError:
     return ConfigurationError(
         detail=f"SRT output already exists: {destination.name}.",
@@ -207,10 +222,19 @@ def _srt_exists_error(destination: Path) -> ConfigurationError:
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as f:
-        temporary = Path(f.name)
-        f.write(data)
+    _prepare_output_parent(path)
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as f:
+            temporary = Path(f.name)
+            f.write(data)
+    except OSError as exc:
+        raise ConfigurationError(
+            detail=f"Could not write SubRip file {path.name!r}.",
+            charged="no",
+            remediation_hint="Choose an --out-file path inside a writable directory.",
+        ) from exc
     try:
         try:
             os.link(temporary, path)
@@ -311,13 +335,14 @@ def transcribe_video(
     _require_chain_extra()
     active_transcriber = transcriber or make_transcriber()
     source = _source or resolve_video_source(file_or_id, profile=profile, route="video.transcribe")
-    destination = (out_file or source.with_suffix(".srt")).expanduser().resolve()
+    destination = _srt_destination(source, out_file)
     if destination == source.resolve():
         raise ConfigurationError(
             detail="SRT output must not overwrite the input video.",
             charged="no",
             remediation_hint="Choose a separate --out-file path for the SRT.",
         )
+    _prepare_output_parent(destination)
     if destination.exists():
         raise _srt_exists_error(destination)
     audio, duration = extract_wav_bytes(source)
@@ -350,16 +375,20 @@ def caption_video(
     destination = (
         (out_file or source.with_name(f"{source.stem}-captions.mp4")).expanduser().resolve()
     )
-    if destination in {
-        source.resolve(),
-        *(path.expanduser().resolve() for path in (srt_path, srt_out_file) if path is not None),
-    }:
+    planned_srt = (
+        srt_path.expanduser().resolve()
+        if srt_path is not None
+        else _srt_destination(source, srt_out_file)
+    )
+    if destination in {source.resolve(), planned_srt}:
         raise ConfigurationError(
             detail="Caption output must not overwrite an input file.",
             charged="no",
             remediation_hint="Choose a distinct --out-file path for the captioned video.",
         )
+    _prepare_output_parent(destination)
     if srt_path is None:
+        _prepare_output_parent(planned_srt)
         transcribed = transcribe_video(
             file_or_id,
             out_file=srt_out_file,
@@ -370,7 +399,7 @@ def caption_video(
         )
         caption_path, entries = transcribed.srt_file, list(transcribed.segments)
     else:
-        caption_path = srt_path.expanduser().resolve()
+        caption_path = planned_srt
         try:
             entries = parse_srt(
                 caption_path.read_text(encoding="utf-8-sig"), source_name=caption_path.name
@@ -382,13 +411,6 @@ def caption_video(
                 remediation_hint="Save the SubRip file as UTF-8 and retry.",
             ) from exc
     av, (_, image_draw, image_font) = _require_chain_extra()
-    if destination in {source.resolve(), caption_path.resolve()}:
-        raise ConfigurationError(
-            detail="Caption output must not overwrite an input file.",
-            charged="no",
-            remediation_hint="Choose a distinct --out-file path for the captioned video.",
-        )
-    destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
     try:
         frames, burned, duration = _render_video(

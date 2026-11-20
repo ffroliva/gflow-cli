@@ -214,6 +214,44 @@ def test_captions_without_srt_refuses_existing_default_srt_before_network(
     assert srt.read_text(encoding="utf-8") == "preserve"
 
 
+def test_outputs_and_parents_validated_before_transcriber(
+    media_files: tuple[Path, Path], tmp_path: Path
+) -> None:
+    source, _ = media_files
+    regular_file = tmp_path / "not_a_dir"
+    regular_file.write_text("file", encoding="utf-8")
+
+    class ForbiddenTranscriber:
+        def transcribe(self, _request: TranscriptionRequest) -> Transcript:
+            pytest.fail("transcriber should not be called when output paths are invalid")
+
+    # 1. Parent is a regular file (transcribe_video and caption_video)
+    with pytest.raises(ConfigurationError) as exc_transcribe_parent:
+        transcribe_video(
+            str(source),
+            out_file=regular_file / "out.srt",
+            transcriber=ForbiddenTranscriber(),
+        )
+    assert exc_transcribe_parent.value.charged == "no"
+
+    with pytest.raises(ConfigurationError) as exc_caption_parent:
+        caption_video(
+            str(source),
+            out_file=regular_file / "out.mp4",
+            transcriber=ForbiddenTranscriber(),
+        )
+    assert exc_caption_parent.value.charged == "no"
+
+    # 2. --out-file equal to the would-be generated SRT path when --srt is absent
+    with pytest.raises(ConfigurationError, match="must not overwrite") as exc_collide:
+        caption_video(
+            str(source),
+            out_file=source.with_suffix(".srt"),
+            transcriber=ForbiddenTranscriber(),
+        )
+    assert exc_collide.value.charged == "no"
+
+
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
     with pytest.raises(ConfigurationError, match="audio"):
         transcribe_video(str(media_files[1]))
