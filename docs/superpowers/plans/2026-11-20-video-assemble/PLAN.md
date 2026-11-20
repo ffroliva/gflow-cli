@@ -99,8 +99,8 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Exercise installed CLI and MCP with real local media.
 **Files:** `tests/e2e/test_video_assemble_e2e.py`.
 **Steps:**
-- [ ] Use real Flow-generated mp4s from checkout `out/` if available; otherwise synthetic fixtures.
-- [ ] Run CLI and MCP twin. Local-only: use `@pytest.mark.e2e` with no Flow cost marker, following `docs/E2E_TESTING.md`.
+- [x] Use synthetic fixtures because this checkout has no Flow-generated mp4s.
+- [x] Run the installed wheel's CLI and MCP stdio twin, including success and structured failure. Local-only: use `@pytest.mark.e2e` with no Flow cost marker; documented in `docs/E2E_TESTING.md`.
 
 ## Task 9 — Gates and review
 - [ ] Run `/gflow:check`, doc gates, and verify e2e output.

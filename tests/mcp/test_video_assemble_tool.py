@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from gflow_cli.mcp import tools
+from gflow_cli.mcp import video_assembly as assembly_tool
 
 
 def _clip(path: Path) -> None:
@@ -37,7 +38,7 @@ async def test_direct_tool_returns_assembly_result_and_keeps_no_spend_available(
     monkeypatch.setattr(
         tools, "get_settings", lambda: SimpleNamespace(output_dir=tmp_path, storage_uri=None)
     )
-    monkeypatch.setattr(tools, "resolve_assembly_input", lambda value, **_: source)
+    monkeypatch.setattr(assembly_tool, "resolve_assembly_input", lambda value, **_: source)
 
     result = await tools.gflow_video_assemble(clips=[str(source)], out_file="joined")
 
@@ -56,7 +57,7 @@ async def test_direct_tool_maps_local_failure_to_problem_details(
     monkeypatch.setattr(
         tools, "get_settings", lambda: SimpleNamespace(output_dir=tmp_path, storage_uri=None)
     )
-    monkeypatch.setattr(tools, "resolve_assembly_input", lambda value, **_: source)
+    monkeypatch.setattr(assembly_tool, "resolve_assembly_input", lambda value, **_: source)
 
     result = await tools.gflow_video_assemble(clips=[str(source)], out_file="clip.mp4")
 

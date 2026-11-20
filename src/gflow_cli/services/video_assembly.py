@@ -10,8 +10,6 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.data.models import AssetKind
 from gflow_cli.data.repository import verified_local_path
@@ -35,6 +33,16 @@ class AssemblyResult:
     height: int
     frame_rate: float
     bytes: int
+
+
+@dataclass(frozen=True)
+class _VideoLayout:
+    size: tuple[int, int]
+    frame_rate: float
+    frame_counts: list[int]
+    normalized_counts: list[int]
+    total_frames: int
+    total_samples: int
 
 
 def assembly_result_payload(result: AssemblyResult) -> dict[str, Any]:
@@ -83,6 +91,8 @@ def resolve_assembly_input(value: str, *, profile: str | None = None) -> Path:
 
 def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: Any | None = None) -> Path:
     """Decode one audio stream to bounded, normalized float PCM on disk."""
+    import numpy as np
+
     descriptor, name = tempfile.mkstemp(suffix=".f32le")
     os.close(descriptor)
     spool = Path(name)
@@ -162,23 +172,15 @@ def _make_audio(
         raise
 
 
-def assemble_videos(
+def _validate_assembly(
     clips: list[Path],
     output: Path,
-    *,
     music: Path | None = None,
     voiceover: Path | None = None,
     clip_volume: float = 1.0,
     music_volume: float = 0.3,
     voiceover_volume: float = 1.0,
-    duck: bool = True,
-) -> AssemblyResult:
-    """Join clips, normalize to the first clip, and mix optional audio locally."""
-    try:
-        import av
-    except ImportError as exc:
-        raise FrameExtractionError(detail=str(exc), route="video.assemble") from exc
-
+) -> list[Path]:
     if not clips:
         raise VideoAssemblyError(detail="At least one clip is required.", route="video.assemble")
     if any(not 0 <= value <= 1 for value in (clip_volume, music_volume, voiceover_volume)):
@@ -204,173 +206,316 @@ def assemble_videos(
         raise VideoAssemblyError(
             detail="Every input must be an existing local file.", route="video.assemble"
         )
+    return sources
 
-    spools: list[Path] = []
+
+def _inspect_videos(clips: list[Path], av: Any) -> _VideoLayout:
+    """Read video metadata and calculate the first clip's normalized timeline."""
+    info: list[tuple[int, float]] = []
+    frame_counts: list[int] = []
+    first_size: tuple[int, int] | None = None
+    first_rate: float | None = None
+    for path in clips:
+        with av.open(str(path)) as source:
+            stream = next(iter(source.streams.video), None)
+            if stream is None:
+                raise ValueError(f"No video stream in {path}")
+            rate = float(stream.average_rate or stream.base_rate or 25)
+            first_size = first_size or (stream.width, stream.height)
+            first_rate = first_rate or rate
+            count = sum(1 for _ in source.decode(stream))
+            if not count:
+                raise ValueError(f"No video frames in {path}")
+            frame_counts.append(count)
+            info.append((count, rate))
+    assert first_size is not None and first_rate is not None
+    normalized = [max(1, round(count * first_rate / rate)) for count, rate in info]
+    total_frames = sum(normalized)
+    return _VideoLayout(
+        first_size,
+        first_rate,
+        frame_counts,
+        normalized,
+        total_frames,
+        round(total_frames / first_rate * _SAMPLE_RATE),
+    )
+
+
+def _encode_clip(
+    target: Any,
+    stream_out: Any,
+    path: Path,
+    *,
+    size: tuple[int, int],
+    source_count: int,
+    target_count: int,
+    frame_rate: float,
+    pts: int,
+    av: Any,
+) -> int:
+    """Encode one clip at the output geometry/rate, returning the next output PTS."""
+    with av.open(str(path)) as source:
+        stream = source.streams.video[0]
+        frames = source.decode(stream)
+        source_index = 0
+        frame = next(frames, None)
+        source_rate = float(stream.average_rate or frame_rate)
+        for index in range(target_count):
+            wanted = min(round(index * source_rate / frame_rate), source_count - 1)
+            while source_index < wanted:
+                frame = next(frames, None)
+                source_index += 1
+            if frame is None:
+                break
+            normalized = frame.reformat(width=size[0], height=size[1], format="yuv420p")
+            normalized.pts = pts
+            normalized.time_base = stream_out.time_base
+            pts += 1
+            for packet in stream_out.encode(normalized):
+                target.mux(packet)
+    return pts
+
+
+def _encode_video(target: Any, clips: list[Path], layout: _VideoLayout, av: Any) -> Any:
+    """Add output streams and encode normalized video clips in order."""
+    fps = Fraction(layout.frame_rate).limit_denominator(1000)
+    video_out = target.add_stream("libx264", rate=fps)
+    video_out.time_base = Fraction(1, 1) / fps
+    video_out.width, video_out.height = layout.size
+    video_out.pix_fmt = "yuv420p"
+    audio_out = target.add_stream("aac", rate=_SAMPLE_RATE)
+    audio_out.format = "fltp"
+    audio_out.layout = "stereo"
+    pts = 0
+    for path, target_count, source_count in zip(
+        clips, layout.normalized_counts, layout.frame_counts, strict=True
+    ):
+        pts = _encode_clip(
+            target,
+            video_out,
+            path,
+            size=layout.size,
+            source_count=source_count,
+            target_count=target_count,
+            frame_rate=layout.frame_rate,
+            pts=pts,
+            av=av,
+        )
+    for packet in video_out.encode():
+        target.mux(packet)
+    return audio_out
+
+
+def _audio_graph(
+    av: Any,
+    *,
+    clip_volume: float,
+    music_volume: float,
+    voiceover_volume: float,
+    duck: bool,
+    music: Path | None,
+    voiceover: Path | None,
+) -> tuple[Any, tuple[Any, Any, Any], Any]:
+    """Build the gain, optional sidechain and mix filters for three synchronized tracks."""
+    graph = av.filter.Graph()
+    clip_in = graph.add_abuffer(
+        sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
+    )
+    music_in = graph.add_abuffer(
+        sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
+    )
+    voice_in = graph.add_abuffer(
+        sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
+    )
+    inputs = (clip_in, music_in, voice_in)
+    clip_vol = graph.add("volume", str(clip_volume))
+    music_vol = graph.add("volume", str(music_volume))
+    voice_vol = graph.add("volume", str(voiceover_volume))
+    music_input: Any = music_vol
+    voice_input: Any = voice_vol
+    voice_pad = 0
+    if duck and voiceover is not None and music is not None:
+        split = graph.add("asplit")
+        compressor = graph.add("sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300")
+        voice_vol.link_to(split)
+        music_vol.link_to(compressor, 0, 0)
+        split.link_to(compressor, 0, 1)
+        music_input, voice_input, voice_pad = compressor, split, 1
+    mixer = graph.add("amix", "inputs=3:duration=first:dropout_transition=0")
+    sink = graph.add("abuffersink")
+    clip_in.link_to(clip_vol)
+    music_in.link_to(music_vol)
+    voice_in.link_to(voice_vol)
+    clip_vol.link_to(mixer, 0, 0)
+    music_input.link_to(mixer, 0, 1)
+    voice_input.link_to(mixer, voice_pad, 2)
+    mixer.link_to(sink)
+    graph.configure()
+    return graph, inputs, sink
+
+
+def _drain_audio(target: Any, stream: Any, sink: Any, av: Any) -> None:
+    """Encode every currently available filtered audio frame."""
+    while True:
+        try:
+            for packet in stream.encode(sink.pull()):
+                target.mux(packet)
+        except (av.error.BlockingIOError, av.error.EOFError):
+            return
+
+
+def _push_audio_chunk(
+    inputs: tuple[Any, Any, Any],
+    files: list[Any],
+    *,
+    offset: int,
+    count: int,
+    av: Any,
+    numpy: Any,
+) -> None:
+    """Read one bounded PCM chunk from each spool and push synchronized frames."""
+    for input_filter, file in zip(inputs, files, strict=True):
+        raw = file.read(count * _CHANNELS * 4)
+        samples = numpy.frombuffer(raw, dtype=numpy.float32).reshape(-1, _CHANNELS).T.copy()
+        if samples.shape[1] < _CHUNK:
+            samples = numpy.pad(samples, ((0, 0), (0, _CHUNK - samples.shape[1])))
+        frame = av.AudioFrame.from_ndarray(samples, format="fltp", layout="stereo")
+        frame.sample_rate = _SAMPLE_RATE
+        frame.pts = offset
+        input_filter.push(frame)
+
+
+def _encode_audio(
+    target: Any,
+    stream: Any,
+    inputs: tuple[Any, Any, Any],
+    sink: Any,
+    spools: list[Path],
+    *,
+    total_samples: int,
+    av: Any,
+    numpy: Any,
+) -> None:
+    """Mix and encode PCM spools in fixed-size chunks without buffering a whole track."""
+    files = [spool.open("rb") for spool in spools]
     try:
-        video_info: list[tuple[int, float]] = []
-        first_size: tuple[int, int] | None = None
-        first_rate: float | None = None
-        frame_counts: list[int] = []
-        for path in clips:
-            with av.open(str(path)) as source:
-                stream = next(iter(source.streams.video), None)
-                if stream is None:
-                    raise ValueError(f"No video stream in {path}")
-                rate = float(stream.average_rate or stream.base_rate or 25)
-                first_size = first_size or (stream.width, stream.height)
-                first_rate = first_rate or rate
-                count = 0
-                for _ in source.decode(stream):
-                    count += 1
-                if count == 0:
-                    raise ValueError(f"No video frames in {path}")
-                frame_counts.append(count)
-                video_info.append((count, rate))
+        for offset in range(0, total_samples, _CHUNK):
+            _push_audio_chunk(
+                inputs,
+                files,
+                offset=offset,
+                count=min(_CHUNK, total_samples - offset),
+                av=av,
+                numpy=numpy,
+            )
+            _drain_audio(target, stream, sink, av)
+        for input_filter in inputs:
+            input_filter.push(None)
+        _drain_audio(target, stream, sink, av)
+    finally:
+        for file in files:
+            file.close()
+    for packet in stream.encode():
+        target.mux(packet)
 
-        assert first_size is not None and first_rate is not None
-        normalized_counts = [round(count * first_rate / rate) for count, rate in video_info]
-        total_frames = sum(normalized_counts)
-        total_samples = round(total_frames / first_rate * _SAMPLE_RATE)
+
+def _write_output(
+    clips: list[Path],
+    output: Path,
+    layout: _VideoLayout,
+    spools: list[Path],
+    *,
+    clip_volume: float,
+    music_volume: float,
+    voiceover_volume: float,
+    duck: bool,
+    music: Path | None,
+    voiceover: Path | None,
+    av: Any,
+    numpy: Any,
+) -> None:
+    """Create the MP4 container and write normalized video plus the mixed audio bed."""
+    with av.open(str(output), "w", format="mp4") as target:
+        audio_out = _encode_video(target, clips, layout, av)
+        _graph, inputs, sink = _audio_graph(
+            av,
+            clip_volume=clip_volume,
+            music_volume=music_volume,
+            voiceover_volume=voiceover_volume,
+            duck=duck,
+            music=music,
+            voiceover=voiceover,
+        )
+        _encode_audio(
+            target,
+            audio_out,
+            inputs,
+            sink,
+            spools,
+            total_samples=layout.total_samples,
+            av=av,
+            numpy=numpy,
+        )
+
+
+def assemble_videos(
+    clips: list[Path],
+    output: Path,
+    *,
+    music: Path | None = None,
+    voiceover: Path | None = None,
+    clip_volume: float = 1.0,
+    music_volume: float = 0.3,
+    voiceover_volume: float = 1.0,
+    duck: bool = True,
+) -> AssemblyResult:
+    """Join clips, normalize to the first clip, and mix optional audio locally."""
+    try:
+        import av
+        import numpy
+    except ImportError as exc:
+        raise FrameExtractionError(detail=str(exc), route="video.assemble") from exc
+    _av: Any = av
+    _numpy: Any = numpy
+    _validate_assembly(clips, output, music, voiceover, clip_volume, music_volume, voiceover_volume)
+    audio_spools: list[Path] = []
+    try:
+        layout = _inspect_videos(clips, _av)
         audio_spools = _make_audio(
             output,
             [
-                (clip, round(normalized * _SAMPLE_RATE / first_rate))
-                for clip, normalized in zip(clips, normalized_counts, strict=True)
+                (clip, round(normalized * _SAMPLE_RATE / layout.frame_rate))
+                for clip, normalized in zip(clips, layout.normalized_counts, strict=True)
             ],
             music,
             voiceover,
-            total_samples,
-            av,
+            layout.total_samples,
+            _av,
         )
-        spools.extend(audio_spools)
-
-        with av.open(str(output), "w", format="mp4") as target:
-            video_out = target.add_stream(
-                "libx264", rate=Fraction(first_rate).limit_denominator(1000)
-            )
-            video_out.time_base = Fraction(1, 1) / Fraction(first_rate).limit_denominator(1000)
-            video_out.width, video_out.height = first_size
-            video_out.pix_fmt = "yuv420p"
-            audio_out = target.add_stream("aac", rate=_SAMPLE_RATE)
-            audio_out.format = "fltp"
-            audio_out.layout = "stereo"
-
-            pts = 0
-            for path, target_count, source_count in zip(
-                clips, normalized_counts, frame_counts, strict=True
-            ):
-                with av.open(str(path)) as source:
-                    stream = source.streams.video[0]
-                    frames = source.decode(stream)
-                    source_index = 0
-                    frame = next(frames, None)
-                    for index in range(target_count):
-                        wanted_index = min(
-                            round(index * float(stream.average_rate or first_rate) / first_rate),
-                            source_count - 1,
-                        )
-                        while source_index < wanted_index:
-                            frame = next(frames, None)
-                            source_index += 1
-                        if frame is None:
-                            break
-                        normalized = frame.reformat(
-                            width=first_size[0], height=first_size[1], format="yuv420p"
-                        )
-                        normalized.pts = pts
-                        normalized.time_base = video_out.time_base
-                        pts += 1
-                        for packet in video_out.encode(normalized):
-                            target.mux(packet)
-            for packet in video_out.encode():
-                target.mux(packet)
-
-            graph = av.filter.Graph()
-            clip_in = graph.add_abuffer(
-                sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
-            )
-            music_in = graph.add_abuffer(
-                sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
-            )
-            voice_in = graph.add_abuffer(
-                sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
-            )
-            clip_vol = graph.add("volume", str(clip_volume))
-            music_vol = graph.add("volume", str(music_volume))
-            voice_vol = graph.add("volume", str(voiceover_volume))
-            if duck and voiceover is not None and music is not None:
-                split = graph.add("asplit")
-                compressor = graph.add(
-                    "sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300"
-                )
-                voice_vol.link_to(split)
-                music_vol.link_to(compressor, 0, 0)
-                split.link_to(compressor, 0, 1)
-                music_input = compressor
-                voice_input = split
-                voice_pad = 1
-            else:
-                music_input = music_vol
-                voice_input = voice_vol
-                voice_pad = 0
-            mixer = graph.add("amix", "inputs=3:duration=first:dropout_transition=0")
-            sink = graph.add("abuffersink")
-            clip_in.link_to(clip_vol)
-            music_in.link_to(music_vol)
-            voice_in.link_to(voice_vol)
-            clip_vol.link_to(mixer, 0, 0)
-            music_input.link_to(mixer, 0, 1)
-            voice_input.link_to(mixer, voice_pad, 2)
-            mixer.link_to(sink)
-            graph.configure()
-
-            files = [spool.open("rb") for spool in audio_spools]
-            try:
-                for offset in range(0, total_samples, _CHUNK):
-                    count = min(_CHUNK, total_samples - offset)
-                    for input_filter, file in zip(
-                        (clip_in, music_in, voice_in), files, strict=True
-                    ):
-                        raw = file.read(count * _CHANNELS * 4)
-                        samples = (
-                            np.frombuffer(raw, dtype=np.float32).reshape(-1, _CHANNELS).T.copy()
-                        )
-                        if samples.shape[1] < _CHUNK:
-                            samples = np.pad(samples, ((0, 0), (0, _CHUNK - samples.shape[1])))
-                        audio = av.AudioFrame.from_ndarray(samples, format="fltp", layout="stereo")
-                        audio.sample_rate = _SAMPLE_RATE
-                        audio.pts = offset
-                        input_filter.push(audio)
-                    while True:
-                        try:
-                            for packet in audio_out.encode(sink.pull()):
-                                target.mux(packet)
-                        except (av.error.BlockingIOError, av.error.EOFError):
-                            break
-                for input_filter in (clip_in, music_in, voice_in):
-                    input_filter.push(None)
-                while True:
-                    try:
-                        for packet in audio_out.encode(sink.pull()):
-                            target.mux(packet)
-                    except (av.error.BlockingIOError, av.error.EOFError):
-                        break
-            finally:
-                for file in files:
-                    file.close()
-            for packet in audio_out.encode():
-                target.mux(packet)
-
+        _write_output(
+            clips,
+            output,
+            layout,
+            audio_spools,
+            clip_volume=clip_volume,
+            music_volume=music_volume,
+            voiceover_volume=voiceover_volume,
+            duck=duck,
+            music=music,
+            voiceover=voiceover,
+            av=_av,
+            numpy=_numpy,
+        )
         return AssemblyResult(
             output_file=output,
-            duration_seconds=total_frames / first_rate,
+            duration_seconds=layout.total_frames / layout.frame_rate,
             clips_count=len(clips),
             has_music=music is not None,
             has_voiceover=voiceover is not None,
             ducking_applied=duck and music is not None and voiceover is not None,
-            width=first_size[0],
-            height=first_size[1],
-            frame_rate=first_rate,
+            width=layout.size[0],
+            height=layout.size[1],
+            frame_rate=layout.frame_rate,
             bytes=output.stat().st_size,
         )
     except VideoAssemblyError:
@@ -380,5 +525,5 @@ def assemble_videos(
         output.unlink(missing_ok=True)
         raise VideoAssemblyError(detail=str(exc), route="video.assemble") from exc
     finally:
-        for spool in spools:
+        for spool in audio_spools:
             spool.unlink(missing_ok=True)

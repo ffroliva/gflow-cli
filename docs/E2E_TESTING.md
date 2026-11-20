@@ -41,6 +41,12 @@ author forgets the `pytestmark` declaration.
 
 Tests in `tests/smoke/` carry `pytest.mark.smoke`.
 
+Installed-surface tests that use synthetic local data and never contact Flow may
+carry only `pytest.mark.e2e`; they have no Flow cost tier. For example,
+`tests/e2e/test_video_assemble_e2e.py` builds and installs the wheel, then runs
+the CLI and MCP stdio tool against generated media files. It needs no profile,
+browser or Flow credits.
+
 ### Cost sub-markers (Layer 4)
 
 Each e2e test also carries **one or more cost sub-markers** so you can run
