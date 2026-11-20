@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import av
@@ -36,15 +38,18 @@ async def test_direct_tool_returns_assembly_result_and_keeps_no_spend_available(
     source = tmp_path / "clip.mp4"
     _clip(source)
     monkeypatch.setattr(
-        tools, "get_settings", lambda: SimpleNamespace(output_dir=tmp_path, storage_uri=None)
+        tools,
+        "get_settings",
+        lambda: SimpleNamespace(output_dir=tmp_path, storage_uri="gs://bucket/path"),
     )
     monkeypatch.setattr(assembly_tool, "resolve_assembly_input", lambda value, **_: source)
 
-    result = await tools.gflow_video_assemble(clips=[str(source)], out_file="joined")
+    result = await tools.gflow_video_assemble(clips=[str(source)], out_file="nested/joined")
 
     assert result["status"] == "succeeded"
     assert result["clips_count"] == 1
     assert Path(result["output_file"]).is_file()
+    assert (tmp_path / "nested").is_dir()
     assert result["video_stream"]["width"] == 64
 
 
@@ -55,7 +60,9 @@ async def test_direct_tool_maps_local_failure_to_problem_details(
     source = tmp_path / "clip.mp4"
     _clip(source)
     monkeypatch.setattr(
-        tools, "get_settings", lambda: SimpleNamespace(output_dir=tmp_path, storage_uri=None)
+        tools,
+        "get_settings",
+        lambda: SimpleNamespace(output_dir=tmp_path, storage_uri="gs://bucket/path"),
     )
     monkeypatch.setattr(assembly_tool, "resolve_assembly_input", lambda value, **_: source)
 
@@ -64,3 +71,14 @@ async def test_direct_tool_maps_local_failure_to_problem_details(
     assert result["status"] == "error"
     assert result["error"]["type"] == "https://gflow-cli.dev/errors/video-assembly"
     assert result["error"]["charged"] == "no"
+
+
+def test_video_assembly_adapter_imports_first_in_fresh_interpreter() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import gflow_cli.mcp.video_assembly"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
