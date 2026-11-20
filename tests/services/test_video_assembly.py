@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import builtins
 from pathlib import Path
 
 import av
-import builtins
-
 import numpy as np
 import pytest
 
