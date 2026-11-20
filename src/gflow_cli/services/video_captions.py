@@ -28,6 +28,7 @@ from gflow_cli.errors import (
     FrameExtractionError,
     NetworkError,
     RateLimitError,
+    VideoProcessingError,
     nothing_submitted,
 )
 from gflow_cli.services.media_recovery import resolve_asset
@@ -384,12 +385,15 @@ def caption_video(
             av, source, temporary, entries, image_draw, image_font
         )
         temporary.replace(destination)
-    except Exception as exc:
+    except ConfigurationError:
         temporary.unlink(missing_ok=True)
-        if isinstance(exc, ConfigurationError):
-            raise
-        raise FrameExtractionError(
-            detail="Could not render captions into the video.", charged="no"
+        raise
+    except (av.error.FFmpegError, OSError, ValueError) as exc:
+        temporary.unlink(missing_ok=True)
+        raise VideoProcessingError(
+            detail="Could not process the video while rendering captions.",
+            charged="no",
+            remediation_hint="Check that the local video is readable and its codecs are supported.",
         ) from exc
     return CaptionsResult(
         source, destination, caption_path, duration, frames, burned, destination.stat().st_size

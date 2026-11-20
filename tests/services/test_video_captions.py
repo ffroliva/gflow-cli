@@ -18,6 +18,7 @@ from gflow_cli.errors import (
     FrameExtractionError,
     NetworkError,
     RateLimitError,
+    VideoProcessingError,
 )
 from gflow_cli.services.video_captions import (
     CaptionEntry,
@@ -370,6 +371,22 @@ def test_caption_video_refuses_non_utf8_srt_with_clear_error(
     with pytest.raises(ConfigurationError, match="UTF-8") as caught:
         caption_video(str(media_files[0]), srt_path=srt)
     assert caught.value.charged == "no"
+
+
+def test_caption_video_maps_local_render_failure_to_processing_error(
+    media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello", encoding="utf-8")
+    monkeypatch.setattr(
+        service, "_render_video", lambda *_: (_ for _ in ()).throw(ValueError("decode"))
+    )
+    with pytest.raises(VideoProcessingError, match="Could not process the video") as caught:
+        caption_video(str(media_files[0]), srt_path=srt)
+    assert caught.value.charged == "no"
+    assert isinstance(caught.value.__cause__, ValueError)
 
 
 def test_caption_video_transcribes_first_and_writes_both_outputs(
