@@ -296,3 +296,32 @@ def test_rejects_missing_non_uuid_path() -> None:
         resolve_assembly_input("missing/../missing.mp4")
 
 
+def test_unexpected_service_exception_is_not_recast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clip = tmp_path / "clip.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
+
+    def fail(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("unexpected implementation failure")
+
+    monkeypatch.setattr(video_assembly, "_inspect_videos", fail)
+    with pytest.raises(RuntimeError, match="unexpected implementation failure"):
+        assemble_videos([clip], tmp_path / "out.mp4")
+
+
+def test_missing_pyav_error_is_uncharged_and_names_extra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_import = builtins.__import__
+
+    def without_av(name: str, *args: object, **kwargs: object) -> object:
+        if name == "av":
+            raise ImportError("PyAV blocked")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_av)
+    with pytest.raises(VideoAssemblyError) as captured:
+        assemble_videos([tmp_path / "unused.mp4"], tmp_path / "out.mp4")
+    assert captured.value.charged == "no"
+    assert "gflow-cli[chain]" in captured.value.detail
+
+
