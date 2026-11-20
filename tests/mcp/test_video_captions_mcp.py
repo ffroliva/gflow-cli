@@ -11,7 +11,7 @@ import pytest
 
 from gflow_cli.config import reset_settings
 from gflow_cli.mcp.server import server
-from gflow_cli.mcp.tools import gflow_video_captions, gflow_video_transcribe
+from gflow_cli.mcp.video_captions_tools import gflow_video_captions, gflow_video_transcribe
 
 
 def test_caption_tools_are_registered_with_expected_parameters() -> None:

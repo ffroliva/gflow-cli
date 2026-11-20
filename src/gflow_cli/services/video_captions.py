@@ -360,30 +360,33 @@ def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntr
     parsed = cast(dict[str, Any], payload)
     raw = parsed.get("segments")
     if isinstance(raw, list):
-        raw_segments = cast(list[object], raw)
-        entries: list[CaptionEntry] = []
-        for seg in raw_segments:
-            if not isinstance(seg, dict):
-                continue
-            segment = cast(dict[str, Any], seg)
-            try:
-                start, end = float(segment["start"]), float(segment["end"])
-                text = str(segment["text"]).strip()
-            except (KeyError, TypeError, ValueError):
-                continue
-            if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
-                entries.append(CaptionEntry(len(entries) + 1, start, end, text))
-        if entries:
-            return tuple(entries)
-        raise ConfigurationError(
-            detail="Transcription completed but no speech found.",
-            charged="no",
-            remediation_hint="Use a clip with speech and retry.",
-        )
+        return _parse_transcription_segments(cast(list[object], raw))
     raise ConfigurationError(
         detail="Transcription response has no timed segments; request verbose_json.",
         charged="no",
         remediation_hint="Configure the transcription endpoint to return verbose_json segments.",
+    )
+
+
+def _parse_transcription_segments(raw_segments: list[object]) -> tuple[CaptionEntry, ...]:
+    entries: list[CaptionEntry] = []
+    for seg in raw_segments:
+        if not isinstance(seg, dict):
+            continue
+        segment = cast(dict[str, Any], seg)
+        try:
+            start, end = float(segment["start"]), float(segment["end"])
+            text = str(segment["text"]).strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
+            entries.append(CaptionEntry(len(entries) + 1, start, end, text))
+    if entries:
+        return tuple(entries)
+    raise ConfigurationError(
+        detail="Transcription completed but no speech found.",
+        charged="no",
+        remediation_hint="Use a clip with speech and retry.",
     )
 
 

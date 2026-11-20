@@ -247,7 +247,7 @@ def call_mcp(
     file: str = "speech.mp4",
     out_file: str = "captioned/final.mp4",
 ) -> None:
-    from gflow_cli.mcp.tools import gflow_video_captions
+    from gflow_cli.mcp.video_captions_tools import gflow_video_captions
 
     monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(video_case["root"] / "out"))
     config.reset_settings()

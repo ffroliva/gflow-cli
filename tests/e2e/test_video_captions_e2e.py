@@ -6,8 +6,10 @@ import json
 import os
 import subprocess
 import sys
+import wave
 from collections.abc import Iterator
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 
 import numpy as np
@@ -69,19 +71,30 @@ def clip_files(tmp_path: Path) -> tuple[Path, Path]:
     with av.open(str(clip), mode="w", format="matroska") as output:
         video = output.add_stream("libx264", rate=10)
         video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
-        audio = output.add_stream("pcm_s16le", rate=16000)
-        audio.layout = "mono"
-        for index in range(20):
-            frame = av.VideoFrame(160, 90, "rgb24")
-            frame.pts = index
-            for packet in video.encode(frame):
+        speech = Path(__file__).resolve().parents[1] / "fixtures" / "video_captions_speech.wav"
+        with wave.open(str(speech), "rb") as source_audio:
+            sample_rate = source_audio.getframerate()
+            audio = output.add_stream("pcm_s16le", rate=sample_rate)
+            audio.layout = "mono"
+            for index in range(90):
+                frame = av.VideoFrame(160, 90, "rgb24")
+                frame.pts = index
+                for packet in video.encode(frame):
+                    output.mux(packet)
+            for packet in video.encode():
                 output.mux(packet)
-        for packet in video.encode():
-            output.mux(packet)
-        sample = av.AudioFrame(format="s16", layout="mono", samples=1600)
-        sample.sample_rate, sample.pts = 16000, 0
-        for packet in audio.encode(sample):
-            output.mux(packet)
+            sample_offset = 0
+            while raw := source_audio.readframes(2048):
+                frame = av.AudioFrame(format="s16", layout="mono", samples=len(raw) // 2)
+                frame.sample_rate = sample_rate
+                frame.pts = sample_offset
+                frame.time_base = Fraction(1, sample_rate)
+                frame.planes[0].update(raw)
+                sample_offset += frame.samples
+                for packet in audio.encode(frame):
+                    output.mux(packet)
+            for packet in audio.encode():
+                output.mux(packet)
     srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nHello captions\n", encoding="utf-8")
     return clip, srt
 
@@ -124,7 +137,7 @@ async def test_mcp_tool_burns_srt_inside_output_directory(
     clip_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gflow_cli.config import reset_settings
-    from gflow_cli.mcp.tools import gflow_video_captions
+    from gflow_cli.mcp.video_captions_tools import gflow_video_captions
 
     clip, srt = clip_files
     output_dir = tmp_path / "mcp-output"
@@ -146,7 +159,7 @@ async def test_default_endpoint_error_reaches_cli_and_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gflow_cli.config import reset_settings
-    from gflow_cli.mcp.tools import gflow_video_transcribe
+    from gflow_cli.mcp.video_captions_tools import gflow_video_transcribe
 
     clip, _ = clip_files
     env = {**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")}
@@ -202,7 +215,7 @@ async def test_installed_cli_and_mcp_transcribe_with_configured_whisper_endpoint
     assert srt_file.is_file() and srt_file.read_text(encoding="utf-8").strip()
 
     from gflow_cli.config import reset_settings
-    from gflow_cli.mcp.tools import gflow_video_transcribe
+    from gflow_cli.mcp.video_captions_tools import gflow_video_transcribe
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", endpoint)

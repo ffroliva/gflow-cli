@@ -2664,14 +2664,6 @@ async def gflow_instructions_apply(
     )
 
 
-def __getattr__(name: str) -> Any:
-    if name in {"gflow_video_transcribe", "gflow_video_captions"}:
-        from gflow_cli.mcp import video_captions_tools
-
-        return getattr(video_captions_tools, name)
-    raise AttributeError(name)
-
-
 # Re-export Path so tests that import it directly still work
 __all__ = [
     "gflow_generate_image",
@@ -2690,8 +2682,6 @@ __all__ = [
     "gflow_instructions_rm",
     "gflow_instructions_toggle_mode",
     "gflow_instructions_apply",
-    "gflow_video_transcribe",  # noqa: F822 — lazily re-exported by __getattr__
-    "gflow_video_captions",  # noqa: F822 — lazily re-exported by __getattr__
     "_TokenBucket",
     "_adapt_tools",
     "_format_mcp_error",

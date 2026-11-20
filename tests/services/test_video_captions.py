@@ -156,6 +156,26 @@ def test_transcribe_refuses_existing_srt_before_network(
     assert existing.read_text(encoding="utf-8") == "keep me"
 
 
+def test_captions_without_srt_refuses_existing_default_srt_before_network(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    source, _ = media_files
+    srt = source.with_suffix(".srt")
+    srt.write_text("preserve", encoding="utf-8")
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    config.reset_settings()
+    monkeypatch.setattr(service, "_request_segments", lambda *_: pytest.fail("network called"))
+    try:
+        with pytest.raises(ConfigurationError, match="already exists") as caught:
+            caption_video(str(source))
+    finally:
+        config.reset_settings()
+    assert caught.value.charged == "no"
+    assert srt.read_text(encoding="utf-8") == "preserve"
+
+
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
     with pytest.raises(ConfigurationError, match="audio"):
         transcribe_video(str(media_files[1]))
@@ -294,6 +314,44 @@ def test_transcription_refuses_empty_or_invalid_segments(segments: list[Any]) ->
     with pytest.raises(ConfigurationError, match="no speech found") as caught:
         _parse_transcription_response(response)
     assert caught.value.charged == "no"
+
+
+def test_silent_transcription_does_not_write_srt(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    source, _ = media_files
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    config.reset_settings()
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict[str, Any]:
+            return {"segments": []}
+
+    class Client:
+        def __init__(self, **_: Any) -> None: ...
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def post(self, *_: Any, **__: Any) -> Response:
+            return Response()
+
+    monkeypatch.setattr(service.httpx, "Client", Client)
+    try:
+        with pytest.raises(ConfigurationError, match="no speech found") as caught:
+            transcribe_video(str(source))
+    finally:
+        config.reset_settings()
+    assert caught.value.charged == "no"
+    assert not source.with_suffix(".srt").exists()
 
 
 def test_transcription_requires_verbose_json_segments() -> None:
