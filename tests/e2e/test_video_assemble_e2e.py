@@ -209,9 +209,12 @@ async def test_catalog_media_ids_assemble_in_cli_and_mcp(
             if local_path is None:
                 continue
             with av.open(str(local_path)) as container:
-                duration = float(container.duration or 0) / av.time_base
                 stream = container.streams.video[0]
                 ratio = stream.width / stream.height
+                rate = stream.average_rate
+                frames = sum(1 for _ in container.decode(video=0))
+            # The video timeline (frames / rate), not container metadata, is what is joined.
+            duration = float(frames / rate) if rate else 0.0
             # The command refuses a clip whose aspect ratio differs from the first one's.
             if usable and abs(ratio - first_ratio) > 0.01 * first_ratio:
                 continue

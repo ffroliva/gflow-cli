@@ -250,6 +250,29 @@ def test_refuses_destination_created_during_render(
     assert output.read_bytes() == b"another assembly won"
 
 
+def test_fallback_publish_removes_its_reservation_when_replace_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"rendered")
+    output = tmp_path / "joined.mp4"
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    def replace_denied(*_args: object) -> None:
+        raise PermissionError("replace denied")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    monkeypatch.setattr(video_assembly.os, "replace", replace_denied)
+
+    with pytest.raises(PermissionError):
+        video_assembly._publish_output(temp_output, output)
+
+    assert not output.exists()
+    assert temp_output.read_bytes() == b"rendered"
+
+
 def test_keyboard_interrupt_cleans_audio_spools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

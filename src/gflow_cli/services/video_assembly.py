@@ -499,7 +499,12 @@ def _publish_output(temp_output: Path, output: Path) -> None:
                 detail=f"Output already exists: {output}", route="video.assemble"
             ) from exc
         os.close(descriptor)
-        os.replace(temp_output, output)
+        try:
+            os.replace(temp_output, output)
+        except BaseException:
+            # The empty reservation is ours; never leave it behind as a fake output.
+            output.unlink(missing_ok=True)
+            raise
     else:
         temp_output.unlink()
 
