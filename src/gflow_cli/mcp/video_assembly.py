@@ -32,8 +32,9 @@ def _guarded(fn: Any) -> Any:
     name="gflow_video_assemble",
     description=(
         "Join local video files or locally available catalog video IDs with optional music "
-        "and voiceover. This is local, credit-free processing; out_file must be inside the "
-        "configured output directory. Geometry and frame rate follow the first clip."
+        "and voiceover. Ducking lowers music and clip audio under voiceover by default. This "
+        "is local, credit-free processing; out_file must be inside the configured output "
+        "directory. Geometry and frame rate follow the first clip."
     ),
 )
 @_guarded
@@ -58,7 +59,7 @@ async def gflow_video_assemble(
         clip_volume: Clip audio gain, from 0 to 1 (default 1).
         music_volume: Music gain, from 0 to 1 (default 0.3).
         voiceover_volume: Voiceover gain, from 0 to 1 (default 1).
-        duck: Reduce music while voiceover is present (default true).
+        duck: Reduce music and clip audio while voiceover is present (default true).
         profile: Optional catalog profile to disambiguate media IDs.
     """
     from gflow_cli.mcp.tools import (

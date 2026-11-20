@@ -1120,7 +1120,10 @@ def video() -> None:
 @click.option("--music-volume", type=click.FloatRange(0.0, 1.0), default=0.3, show_default=True)
 @click.option("--voiceover-volume", type=click.FloatRange(0.0, 1.0), default=1.0, show_default=True)
 @click.option(
-    "--duck/--no-duck", default=True, show_default=True, help="Duck music under voiceover."
+    "--duck/--no-duck",
+    default=True,
+    show_default=True,
+    help="Duck music and clip audio under voiceover.",
 )
 @click.option(
     "--out-file",
@@ -1143,7 +1146,7 @@ def assemble(
     as_json: bool,
     output_format: str = "table",
 ) -> None:
-    """Assemble local CLIPS into one MP4 with optional music and voiceover."""
+    """Assemble local CLIPS into one MP4 with optional music and voiceover ducking."""
 
     async def _run() -> None:
         output_path = out_file.expanduser()

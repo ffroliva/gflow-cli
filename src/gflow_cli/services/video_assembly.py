@@ -319,6 +319,7 @@ def _audio_graph(
     clip_vol = graph.add("volume", str(clip_volume))
     clip_in.link_to(clip_vol)
     tracks = [(clip_vol, 0)]
+    clip_voice = None
     if music is not None:
         music_in = graph.add_abuffer(
             sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
@@ -327,23 +328,23 @@ def _audio_graph(
         music_vol = graph.add("volume", str(music_volume))
         music_in.link_to(music_vol)
         if duck and voiceover is not None:
-            voice_vol = graph.add("volume", str(voiceover_volume))
             voice_in = graph.add_abuffer(
                 sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
             )
             inputs.append(voice_in)
+            voice_vol = graph.add("volume", str(voiceover_volume))
             voice_in.link_to(voice_vol)
             split = graph.add("asplit")
+            voice_vol.link_to(split)
             compressor = graph.add(
                 "sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300"
             )
-            voice_vol.link_to(split)
             music_vol.link_to(compressor, 0, 0)
             split.link_to(compressor, 0, 1)
             tracks.extend([(compressor, 0), (split, 1)])
         else:
             tracks.append((music_vol, 0))
-    if voiceover is not None and not (duck and music is not None):
+    if voiceover is not None and not duck:
         voice_in = graph.add_abuffer(
             sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
         )
@@ -351,6 +352,15 @@ def _audio_graph(
         voice_vol = graph.add("volume", str(voiceover_volume))
         voice_in.link_to(voice_vol)
         tracks.append((voice_vol, 0))
+    if duck and voiceover is not None:
+        clip_voice = graph.add_abuffer(
+            sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
+        )
+        inputs.append(clip_voice)
+        compressor = graph.add("sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300")
+        clip_vol.link_to(compressor, 0, 0)
+        clip_voice.link_to(compressor, 0, 1)
+        tracks[0] = (compressor, 0)
     mixer = graph.add(
         "amix", f"inputs={len(tracks)}:duration=first:dropout_transition=0:normalize=0"
     )
@@ -405,6 +415,7 @@ def _encode_audio(
 ) -> None:
     """Mix and encode PCM spools in fixed-size chunks without buffering a whole track."""
     files = [spool.open("rb") for spool in spools]
+    files.extend(spools[-1].open("rb") for _ in range(len(inputs) - len(files)))
     try:
         for offset in range(0, total_samples, _CHUNK):
             _push_audio_chunk(
@@ -523,7 +534,7 @@ def assemble_videos(
             clips_count=len(clips),
             has_music=music is not None,
             has_voiceover=voiceover is not None,
-            ducking_applied=duck and music is not None and voiceover is not None,
+            ducking_applied=duck and voiceover is not None,
             width=layout.size[0],
             height=layout.size[1],
             frame_rate=layout.frame_rate,

@@ -46,9 +46,7 @@ def _clip(
                 tone = (
                     np.zeros(len(samples), dtype=np.float32)
                     if audio_frequency is None
-                    else (0.3 * np.sin(2 * np.pi * audio_frequency * samples)).astype(
-                        np.float32
-                    )
+                    else (0.3 * np.sin(2 * np.pi * audio_frequency * samples)).astype(np.float32)
                 )
                 sample = av.AudioFrame.from_ndarray(
                     np.vstack([tone, tone]), format="fltp", layout="stereo"
@@ -330,6 +328,21 @@ def test_ducking_reduces_music_during_voiceover_bursts(
     burst = _band_rms(output, 220, 0.1, 0.4)
     gap = _band_rms(output, 220, 0.6, 0.9)
     assert 20 * np.log10(burst / gap) <= -6
+
+
+@pytest.mark.parametrize("duck", [True, False])
+def test_ducking_reduces_clip_audio_only_when_enabled(
+    assembly_media: dict[str, Path], tmp_path: Path, duck: bool
+) -> None:
+    output = tmp_path / f"clip-duck-{duck}.mp4"
+    assemble_videos([assembly_media["clip"]], output, voiceover=assembly_media["voice"], duck=duck)
+
+    burst = _band_rms(output, 440, 0.1, 0.4)
+    gap = _band_rms(output, 440, 0.6, 0.9)
+    change_db = 20 * np.log10(burst / gap)
+    assert change_db <= -6 if duck else abs(change_db) <= 1.5, (
+        f"clip audio changed {change_db:.1f} dB"
+    )
 
 
 def test_assembly_does_not_import_numpy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

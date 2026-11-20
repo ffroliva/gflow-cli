@@ -1426,7 +1426,7 @@ Options:
   --clip-volume FLOAT         Clip audio gain, 0–1 (default 1).
   --music-volume FLOAT        Music gain, 0–1 (default 0.3).
   --voiceover-volume FLOAT    Voiceover gain, 0–1 (default 1).
-  --duck / --no-duck          Duck music under voiceover (default on).
+  --duck / --no-duck          Duck music and clip audio under voiceover (default on).
   --profile NAME              Profile to resolve catalog IDs.
   --out-file PATH             Required output path; existing files are refused.
   --json                      Emit the result as JSON.
