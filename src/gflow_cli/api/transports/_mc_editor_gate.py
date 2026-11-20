@@ -360,7 +360,18 @@ class EditorGateMixin(MediaMixin):
         try:
             if not await panel.is_visible():
                 return False, None
-            await page.locator(AGENT_PANEL_CLOSE).first.click(timeout=5000)
+            # #1273's rule: several matches is a miss, never a `.first` guess. A wrong click
+            # here could remove an attachment or press an unrelated control.
+            close = page.locator(AGENT_PANEL_CLOSE)
+            matches = await close.count()
+            if matches != 1:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the agent panel's close button ({AGENT_PANEL_CLOSE}) "
+                        f"matched {matches} elements, so none was clicked (host=migrated)"
+                    )
+                )
+            await close.click(timeout=5000)
             await panel.wait_for(state="hidden", timeout=int(AGENT_PANEL_SETTLE_S * 1000))
         except Exception as e:  # noqa: BLE001 - the caller reports it as drift
             log.warning("migrated.agent_panel_close_failed", error=str(e)[:200])

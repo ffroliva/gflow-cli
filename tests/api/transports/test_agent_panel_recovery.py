@@ -84,6 +84,7 @@ function render() {
     html = `<flow-prompt-box>${agentBox(false)}</flow-prompt-box>`;
   } else {
     const head = S.build === 'new' ? ['forum', 'settings_2', 'right_panel_close'] : ['menu', 'edit_square', 'close'];
+    if (S.extraClose) head.unshift('close');  // a second close outside the prompt box
     // The prompt box (with its decoy `close`) comes BEFORE the header here, the reverse of
     // Flow's order, so a close anchor that relied on DOM order would hit the decoy.
     html = `<mat-sidenav-content><flow-agent-panel>${agentBox(true)}`
@@ -220,6 +221,16 @@ async def test_old_build_agent_only_page_does_not_wait_for_a_toggle_that_never_c
     kind, _, _ = await _run(page, build="old", agent=True, panel=True, classicArm=False)
     assert kind == "agent_only"
     assert time.monotonic() - t0 < 2.5
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_panel_close_is_not_clicked(page: Page) -> None:
+    """#1273's rule: a match on several elements is a miss, never a `.first` click. With
+    two `close` buttons outside the prompt box, the gate clicks neither and reports drift."""
+    with pytest.raises(UiSelectorDriftError):
+        await _run(page, build="old", agent=True, panel=True, classicArm=True, extraClose=True)
+    clicks: list[str] = await page.evaluate("window.CLICKS")
+    assert clicks == []
 
 
 # --- decoys --------------------------------------------------------------------------------

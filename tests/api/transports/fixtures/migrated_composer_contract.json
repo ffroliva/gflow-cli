@@ -7,7 +7,7 @@
     "_blocking_overlays": "function (self, page: 'Page') -> 'Any' sha=540479d84dc4297b",
     "_caret_to_end": "function (self, page: 'Page') -> 'list[dict[str, str]]' sha=fa8e8fa6a30d89e4",
     "_click": "function (self, page: 'Page', locator: 'Any', *, named: 'str', timeout: 'int') -> 'None' sha=29565192380b05c1",
-    "_close_agent_panel": "staticmethod (page: 'Page') -> 'tuple[bool, Exception | None]' sha=a044020c7a53a37d",
+    "_close_agent_panel": "staticmethod (page: 'Page') -> 'tuple[bool, Exception | None]' sha=3c352bcc2a505927",
     "_close_pane": "function (self, page: 'Page', *, strict: 'bool' = True) -> 'None' sha=99fd4631b8e5238e",
     "_dismiss_cookie_bar": "function (self, page: 'Page') -> 'None' sha=a8fde4def0aaa52c",
     "_dismiss_dialog": "staticmethod (page: 'Page') -> 'None' sha=63c5af67e45b4529",

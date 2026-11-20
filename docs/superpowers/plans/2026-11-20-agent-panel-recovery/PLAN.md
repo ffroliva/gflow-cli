@@ -194,8 +194,7 @@ The MCP door reaches the same gate.
 - [ ] `/code-review xhigh` and `ponytail-review xhigh` by fresh agents, then one fix round
 - [ ] e2e: task 2's feature, task 7's tests, and `tests/e2e/test_agent_only_composer_bdd.py`
       (expected to skip: no agent-only project); live profile restored to classic afterwards
-- [ ] Draft PR `Closes #1384`, `Refs #1374`. On 2026-11-20 both reachable profiles (ffroliva,
-      denon82) were served the new switch build, so #1374's old-build symptom is covered
+- [ ] Draft PR `Closes #1384`, `Refs #1374`. On 2026-11-20 both reachable profiles were served the new switch build, so #1374's old-build symptom is covered
       offline only. File follow-up issues for:
   - #1374's doctor ask;
   - the new-build agent-only driver (blocked: no account with no classic arm).
@@ -223,7 +222,7 @@ The MCP door reaches the same gate.
 | 2026-11-20 | After a close with no toggle, keep today's agent-only check rather than raising drift | #799's account rendered the panel; preserving the surface's existing answer is the issue-resolve rule when it cannot be re-measured | "no toggle after close = drift" (would turn working agent-only t2i/t2v into exit 23) |
 | 2026-11-20 | Keep `AGENT_ONLY_ANCHOR` on `tune` | the new build's `settings_2` gear also appears on recoverable pages (C1/C4) and on the library header; widening it would weaken the discriminator and point the agent-only driver at an unobserved button | widening to `settings_2` (Architect suggested prompt-box only; Devil's Advocate and UX: drop) |
 | 2026-11-20 | Doctor composer verdict deferred | needs a browser, a project and a lease; carries an MCP twin of its own | bundling it here (Architect, UX, Devil's Advocate) |
-| 2026-11-20 | No per-profile lock | re-reading the trigger before "blocked" covers the observed race; a lock is unmeasured complexity | `asyncio.Lock` per profile (Performance) |
+| 2026-11-20 | No per-profile lock | re-reading the trigger before "blocked" covers the race (modelled offline, not observed live); a lock is unmeasured complexity | `asyncio.Lock` per profile (Performance) |
 | 2026-11-20 | The 2026-11-20 canary's two red `test_project_create_e2e` video tests are out of scope | re-run on a live profile the same evening: 2 passed in 106 s on develop's code, so not this root | folding them into task 7 |
 | 2026-11-20 | The offline "never agent-only" scenarios are plain tests, not a second feature file | the real-CSS module (`test_agent_panel_recovery.py`) and the fake-page tests cover scenarios 6–9, 12, 13 directly; a Gherkin layer over them would add a binding and no evidence | `tests/features/agent_panel_never_agent_only.feature` |
 | 2026-11-20 | `test_click_attribution_bdd.py` keeps its old-chip markup | it serves synthetic markup, and the old chip still matches the both-build union; the live `test_migrated_host_e2e.py` arm was the one that would silently skip on the new build, and was updated | rewriting a synthetic page that is still valid |

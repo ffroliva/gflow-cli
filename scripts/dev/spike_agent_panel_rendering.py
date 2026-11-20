@@ -41,7 +41,7 @@ Pre-registered readings (written before the first run):
 | a single run | one observation per profile; it settles the question for that profile on that day only |
 
 Added 2026-11-20 after the first observe run, before any `--cycle` run: the classic page on
-ffroliva had no `button.agent-mode-chip`. Its Agent toggle is now
+the probed account had no `button.agent-mode-chip`. Its Agent toggle is now
 `flow-agent-mode-switch > button.switch[aria-pressed]` carrying `spark_off`. The cycle drives
 whichever toggle exists (`AGENT_TOGGLE`).
 
