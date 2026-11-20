@@ -324,6 +324,16 @@ def test_caption_video_burns_frames_and_keeps_audio(
         assert output.streams.audio
 
 
+def test_caption_video_refuses_non_utf8_srt_with_clear_error(
+    media_files: tuple[Path, Path], tmp_path: Path
+) -> None:
+    srt = tmp_path / "broken.srt"
+    srt.write_bytes(b"\xff\xfe invalid")
+    with pytest.raises(ConfigurationError, match="UTF-8") as caught:
+        caption_video(str(media_files[0]), srt_path=srt)
+    assert caught.value.charged == "no"
+
+
 def test_caption_video_transcribes_first_and_writes_both_outputs(
     media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

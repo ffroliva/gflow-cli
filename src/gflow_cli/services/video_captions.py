@@ -353,9 +353,11 @@ def caption_video(
             entries = parse_srt(
                 caption_path.read_text(encoding="utf-8-sig"), source_name=caption_path.name
             )
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             raise ConfigurationError(
-                detail=f"Could not read SubRip file {caption_path.name!r}.", charged="no"
+                detail=f"Could not read SubRip file {caption_path.name!r} as UTF-8.",
+                charged="no",
+                remediation_hint="Save the SubRip file as UTF-8 and retry.",
             ) from exc
     if destination in {source.resolve(), caption_path.resolve()}:
         raise ConfigurationError(
