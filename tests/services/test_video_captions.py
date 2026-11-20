@@ -116,6 +116,19 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
     assert rendered is not None and rendered != tofu
 
 
+@pytest.mark.parametrize("size", [(1280, 720), (720, 1280)])
+def test_long_caption_wraps_within_frame(size: tuple[int, int]) -> None:
+    from PIL import ImageDraw, ImageFont
+    from gflow_cli.services.video_captions import _wrap_caption
+
+    image = __import__("PIL").Image.new("RGB", size)
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=30)
+    lines = _wrap_caption("word " * 21, font, draw, size[0] * 0.9)
+    assert 1 < len(lines) <= 3
+    assert all(draw.textlength(line, font=font) <= size[0] * 0.9 for line in lines)
+
+
 def test_resolve_video_source_accepts_local_and_verified_catalog_video(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

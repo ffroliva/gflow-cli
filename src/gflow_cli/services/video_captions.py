@@ -409,7 +409,10 @@ def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module:
     image = frame.to_image().convert("RGBA")
     draw = draw_module.Draw(image, "RGBA")
     font = _load_caption_font(frame.height, font_module)
-    lines = text.splitlines()
+    lines = _wrap_caption(text, font, draw, frame.width * 0.9)
+    if len(lines) > 3:
+        font = _load_caption_font(max(12, round(frame.height * 0.04)), font_module)
+        lines = _wrap_caption(text, font, draw, frame.width * 0.9)
     box = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, align="center", spacing=2)
     x = max(8, (frame.width - (box[2] - box[0])) // 2)
     y = max(8, frame.height - (box[3] - box[1]) - 28)
@@ -422,6 +425,21 @@ def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module:
     result = av.VideoFrame.from_image(image.convert("RGB"))
     result.pts, result.time_base = original_pts, original_time_base
     return result
+
+
+def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str]:
+    lines: list[str] = []
+    for paragraph in text.splitlines() or [text]:
+        line = ""
+        for word in paragraph.split():
+            candidate = f"{line} {word}".strip()
+            if line and draw.textlength(candidate, font=font) > max_width:
+                lines.append(line)
+                line = word
+            else:
+                line = candidate
+        lines.append(line)
+    return lines
 
 
 def _load_caption_font(height: int, font_module: Any | None = None) -> Any:
