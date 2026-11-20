@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
@@ -13,7 +12,7 @@ from typing import Any
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.data.models import AssetKind
 from gflow_cli.data.repository import verified_local_path
-from gflow_cli.errors import DataStoreError, FrameExtractionError, VideoAssemblyError
+from gflow_cli.errors import DataStoreError, VideoAssemblyError
 from gflow_cli.services.media_recovery import resolve_asset
 
 _SAMPLE_RATE = 44100
@@ -89,16 +88,14 @@ def resolve_assembly_input(value: str, *, profile: str | None = None) -> Path:
     )
 
 
-def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: Any | None = None) -> Path:
+def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: bool = True) -> Path:
     """Decode one audio stream to bounded, normalized float PCM on disk."""
-    import numpy as np
-
     descriptor, name = tempfile.mkstemp(suffix=".f32le")
     os.close(descriptor)
     spool = Path(name)
     try:
         with spool.open("wb") as target:
-            if audio_stream is None:
+            if not audio_stream:
                 target.truncate(samples * _CHANNELS * 4)
             else:
                 resampler = av.AudioResampler(format="fltp", layout="stereo", rate=_SAMPLE_RATE)
@@ -107,10 +104,9 @@ def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: Any | None = 
                     stream = source.streams.audio[0]
                     for decoded in source.decode(stream):
                         for frame in resampler.resample(decoded):
-                            pcm = frame.to_ndarray().astype(np.float32, copy=False)
-                            pcm = pcm[:, : samples - written]
-                            target.write(pcm.T.tobytes())
-                            written += pcm.shape[1]
+                            count = min(frame.samples, samples - written)
+                            target.write(bytes(frame.planes[0])[: count * _CHANNELS * 4])
+                            written += count
                             if written >= samples:
                                 break
                         if written >= samples:
@@ -124,7 +120,6 @@ def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: Any | None = 
 
 
 def _make_audio(
-    path: Path,
     clips: list[tuple[Path, int]],
     music: Path | None,
     voiceover: Path | None,
@@ -139,14 +134,10 @@ def _make_audio(
     try:
         with clip_spool.open("wb") as target:
             for clip, samples in clips:
-                with av.open(str(clip)) as source:
-                    stream = source.streams.audio[0] if source.streams.audio else None
-                part = _pcm_spool(clip, samples=samples, av=av, audio_stream=stream)
-                try:
-                    with part.open("rb") as audio:
-                        shutil.copyfileobj(audio, target)
-                finally:
-                    part.unlink(missing_ok=True)
+                part = _pcm_spool(clip, samples=samples, av=av, audio_stream=True)
+                with part.open("rb") as audio:
+                    target.write(audio.read())
+                part.unlink(missing_ok=True)
         if music is not None:
             spools.append(_pcm_spool(music, samples=total_samples, av=av, audio_stream=True))
         else:
@@ -206,7 +197,6 @@ def _validate_assembly(
         raise VideoAssemblyError(
             detail="Every input must be an existing local file.", route="video.assemble"
         )
-    return sources
 
 
 def _inspect_videos(clips: list[Path], av: Any) -> _VideoLayout:
@@ -221,7 +211,14 @@ def _inspect_videos(clips: list[Path], av: Any) -> _VideoLayout:
             if stream is None:
                 raise ValueError(f"No video stream in {path}")
             rate = float(stream.average_rate or stream.base_rate or 25)
-            first_size = first_size or (stream.width, stream.height)
+        ratio = stream.width / stream.height
+        if first_size is None:
+            first_size = (stream.width, stream.height)
+        elif abs(ratio / (first_size[0] / first_size[1]) - 1) > 0.01:
+            raise VideoAssemblyError(
+                detail=f"Clip {path} aspect ratio {ratio:.4f} differs from first clip ratio {first_size[0] / first_size[1]:.4f}.",
+                route="video.assemble",
+            )
             first_rate = first_rate or rate
             count = sum(1 for _ in source.decode(stream))
             if not count:
@@ -232,7 +229,7 @@ def _inspect_videos(clips: list[Path], av: Any) -> _VideoLayout:
     normalized = [max(1, round(count * first_rate / rate)) for count, rate in info]
     total_frames = sum(normalized)
     return _VideoLayout(
-        first_size,
+        (first_size[0] // 2 * 2, first_size[1] // 2 * 2),
         first_rate,
         frame_counts,
         normalized,
@@ -269,7 +266,7 @@ def _encode_clip(
                 break
             normalized = frame.reformat(width=size[0], height=size[1], format="yuv420p")
             normalized.pts = pts
-            normalized.time_base = stream_out.time_base
+            normalized.time_base = Fraction(1, 1) / Fraction(frame_rate).limit_denominator(1000)
             pts += 1
             for packet in stream_out.encode(normalized):
                 target.mux(packet)
@@ -341,7 +338,7 @@ def _audio_graph(
         music_vol.link_to(compressor, 0, 0)
         split.link_to(compressor, 0, 1)
         music_input, voice_input, voice_pad = compressor, split, 1
-    mixer = graph.add("amix", "inputs=3:duration=first:dropout_transition=0")
+    mixer = graph.add("amix", "inputs=3:duration=first:dropout_transition=0:normalize=0")
     sink = graph.add("abuffersink")
     clip_in.link_to(clip_vol)
     music_in.link_to(music_vol)
@@ -376,10 +373,9 @@ def _push_audio_chunk(
     """Read one bounded PCM chunk from each spool and push synchronized frames."""
     for input_filter, file in zip(inputs, files, strict=True):
         raw = file.read(count * _CHANNELS * 4)
-        samples = numpy.frombuffer(raw, dtype=numpy.float32).reshape(-1, _CHANNELS).T.copy()
-        if samples.shape[1] < _CHUNK:
-            samples = numpy.pad(samples, ((0, 0), (0, _CHUNK - samples.shape[1])))
-        frame = av.AudioFrame.from_ndarray(samples, format="fltp", layout="stereo")
+        raw += bytes(max(0, _CHUNK - len(raw) // (_CHANNELS * 4)) * _CHANNELS * 4)
+        frame = av.AudioFrame(format="flt", layout="stereo", samples=_CHUNK)
+        frame.planes[0].update(raw)
         frame.sample_rate = _SAMPLE_RATE
         frame.pts = offset
         input_filter.push(frame)
@@ -472,17 +468,18 @@ def assemble_videos(
     """Join clips, normalize to the first clip, and mix optional audio locally."""
     try:
         import av
-        import numpy
     except ImportError as exc:
-        raise FrameExtractionError(detail=str(exc), route="video.assemble") from exc
+        raise VideoAssemblyError(
+            detail="Video assembly requires PyAV. Install with `pip install gflow-cli[chain]`.",
+            route="video.assemble",
+            charged="no",
+        ) from exc
     _av: Any = av
-    _numpy: Any = numpy
     _validate_assembly(clips, output, music, voiceover, clip_volume, music_volume, voiceover_volume)
     audio_spools: list[Path] = []
     try:
         layout = _inspect_videos(clips, _av)
         audio_spools = _make_audio(
-            output,
             [
                 (clip, round(normalized * _SAMPLE_RATE / layout.frame_rate))
                 for clip, normalized in zip(clips, layout.normalized_counts, strict=True)
@@ -504,7 +501,6 @@ def assemble_videos(
             music=music,
             voiceover=voiceover,
             av=_av,
-            numpy=_numpy,
         )
         return AssemblyResult(
             output_file=output,
@@ -521,8 +517,7 @@ def assemble_videos(
     except VideoAssemblyError:
         output.unlink(missing_ok=True)
         raise
-    except Exception as exc:
-        output.unlink(missing_ok=True)
+    except (_av.error.FFmpegError, OSError, ValueError) as exc:
         raise VideoAssemblyError(detail=str(exc), route="video.assemble") from exc
     finally:
         for spool in audio_spools:
