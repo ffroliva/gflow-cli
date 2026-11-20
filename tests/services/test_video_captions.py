@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -60,6 +61,37 @@ def media_files(tmp_path: Path) -> tuple[Path, Path]:
                 for packet in audio.encode(audio_frame):
                     output.mux(packet)
     return audio_video, silent_video
+
+
+@pytest.fixture(scope="session")
+def realistic_media(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    av = pytest.importorskip("av")
+    path = tmp_path_factory.mktemp("realistic-video") / "clip.mp4"
+    with av.open(str(path), mode="w") as output:
+        video = output.add_stream("libx264", rate=24)
+        video.width, video.height, video.pix_fmt = 1280, 720, "yuv420p"
+        audio = output.add_stream("aac", rate=48000)
+        audio.layout = "stereo"
+        for index in range(96):
+            frame = av.VideoFrame(1280, 720, "yuv420p")
+            frame.pts = index
+            frame.time_base = Fraction(1, 24)
+            for packet in video.encode(frame):
+                output.mux(packet)
+        for index in range(188):
+            frame = av.AudioFrame(format="fltp", layout="stereo", samples=1024)
+            frame.sample_rate = 48000
+            frame.pts = index * 1024
+            frame.time_base = Fraction(1, 48000)
+            for plane in frame.planes:
+                plane.update(bytes(plane.buffer_size))
+            for packet in audio.encode(frame):
+                output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
+        for packet in audio.encode():
+            output.mux(packet)
+    return path
 
 
 def test_parse_and_format_srt_roundtrip() -> None:
@@ -368,6 +400,30 @@ def test_caption_video_burns_frames_and_keeps_audio(
     assert result.frames_burned > 0
     with av.open(str(result.output_file)) as output:
         assert output.streams.audio
+
+
+def test_realistic_video_transcription_decode_and_burn_preserve_media(
+    realistic_media: Path, tmp_path: Path
+) -> None:
+    av = pytest.importorskip("av")
+    from gflow_cli.services.video_captions import extract_wav_bytes
+
+    wav, source_duration = extract_wav_bytes(realistic_media)
+    import wave
+
+    with wave.open(io.BytesIO(wav)) as decoded:
+        assert decoded.getnframes() / decoded.getframerate() == pytest.approx(4.0, abs=0.1)
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nA caption", encoding="utf-8")
+    rendered = caption_video(str(realistic_media), srt_path=srt)
+    with av.open(str(realistic_media)) as source, av.open(str(rendered.output_file)) as output:
+        assert len(list(source.decode(video=0))) == rendered.total_frames == 96
+        source_audio = list(source.demux(audio=0))
+        output_audio = list(output.demux(audio=0))
+        assert sum(packet.size > 0 for packet in output_audio) >= sum(
+            packet.size > 0 for packet in source_audio
+        )
+        assert output.duration / av.time_base == pytest.approx(source_duration, abs=0.1)
 
 
 def test_local_caption_burnin_works_with_cloud_storage_configured(
