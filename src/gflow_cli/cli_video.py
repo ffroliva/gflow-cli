@@ -1146,8 +1146,6 @@ def assemble(
 
     async def _run() -> None:
         output_path = out_file.expanduser()
-        if output_path.suffix.lower() != ".mp4":
-            output_path = output_path.with_suffix(".mp4")
         paths = [resolve_assembly_input(value, profile=profile) for value in clips]
         result = assemble_videos(
             paths,

@@ -58,8 +58,6 @@ async def gflow_video_assemble(
     if destination is None:
         return _bad_param("Missing Output", "'out_file' is required.")
     output = Path(destination)
-    if output.suffix.lower() != ".mp4":
-        output = output.with_suffix(".mp4")
     paths = [resolve_assembly_input(value, profile=profile) for value in clips]
     music_path = Path(music).expanduser() if music is not None else None
     voice_path = Path(voiceover).expanduser() if voiceover is not None else None
