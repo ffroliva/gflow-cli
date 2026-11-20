@@ -662,6 +662,45 @@ def test_caption_video_maps_local_render_failure_to_processing_error(
     assert isinstance(caught.value.__cause__, ValueError)
 
 
+def test_caption_video_uses_unique_temp_file_and_preserves_dot_tmp_source(
+    media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_bytes = media_files[0].read_bytes()
+    tricky_source = tmp_path / ".out.tmp.mp4"
+    tricky_source.write_bytes(source_bytes)
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:00,200 --> 00:00:00,800\nhello", encoding="utf-8")
+    destination = tmp_path / "out.mp4"
+
+    seen_temps: list[Path] = []
+    sibling_temp = tmp_path / ".out.other.mp4"
+    sibling_temp.write_bytes(b"in-flight run")
+
+    def fake_render(_av: Any, src: Path, temp_dest: Path, *_args: Any) -> tuple[int, int, float]:
+        seen_temps.append(temp_dest)
+        assert temp_dest != src
+        assert temp_dest.parent == destination.parent
+        assert temp_dest.suffix == ".mp4"
+        if len(seen_temps) == 1:
+            raise ValueError("first run fails")
+        temp_dest.write_bytes(b"rendered-mp4")
+        return 20, 5, 2.0
+
+    monkeypatch.setattr(service, "_render_video", fake_render)
+    with pytest.raises(VideoProcessingError):
+        caption_video(str(tricky_source), srt_path=srt, out_file=destination)
+    assert tricky_source.exists() and tricky_source.read_bytes() == source_bytes
+    assert sibling_temp.read_bytes() == b"in-flight run"
+    assert not seen_temps[0].exists()
+
+    result = caption_video(str(tricky_source), srt_path=srt, out_file=destination)
+    assert len(seen_temps) == 2
+    assert seen_temps[0] != seen_temps[1]
+    assert result.output_file == destination
+    assert tricky_source.read_bytes() == source_bytes
+    assert sibling_temp.read_bytes() == b"in-flight run"
+
+
 def test_caption_video_transcribes_first_and_writes_both_outputs(
     media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

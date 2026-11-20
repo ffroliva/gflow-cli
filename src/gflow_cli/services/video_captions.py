@@ -411,22 +411,30 @@ def caption_video(
                 remediation_hint="Save the SubRip file as UTF-8 and retry.",
             ) from exc
     av, (_, image_draw, image_font) = _require_chain_extra()
-    temporary = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
+    temporary: Path | None = None
     try:
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=f".{destination.stem}.",
+            suffix=".mp4",
+            dir=destination.parent,
+        )
+        os.close(descriptor)
+        temporary = Path(temp_name)
         frames, burned, duration = _render_video(
             av, source, temporary, entries, image_draw, image_font
         )
         temporary.replace(destination)
     except ConfigurationError:
-        temporary.unlink(missing_ok=True)
         raise
     except (av.error.FFmpegError, OSError, ValueError) as exc:
-        temporary.unlink(missing_ok=True)
         raise VideoProcessingError(
             detail="Could not process the video while rendering captions.",
             charged="no",
             remediation_hint="Check that the local video is readable and its codecs are supported.",
         ) from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return CaptionsResult(
         source, destination, caption_path, duration, frames, burned, destination.stat().st_size
     )
