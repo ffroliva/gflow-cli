@@ -150,8 +150,6 @@ s3 = [
 # `video chain` at all (#813).
 chain = [
     "av>=12",
-    # Local audio-track normalization serializes PyAV frames through NumPy.
-    "numpy>=1.24",
     "pillow>=13.0.0",
 ]
 # Patchright engine extra — opt-in, drop-in patched Playwright (Chromium) that

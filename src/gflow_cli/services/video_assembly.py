@@ -376,7 +376,6 @@ def _push_audio_chunk(
     offset: int,
     count: int,
     av: Any,
-    numpy: Any,
 ) -> None:
     """Read one bounded PCM chunk from each spool and push synchronized frames."""
     for input_filter, file in zip(inputs, files, strict=True):
@@ -398,7 +397,6 @@ def _encode_audio(
     *,
     total_samples: int,
     av: Any,
-    numpy: Any,
 ) -> None:
     """Mix and encode PCM spools in fixed-size chunks without buffering a whole track."""
     files = [spool.open("rb") for spool in spools]
@@ -410,7 +408,6 @@ def _encode_audio(
                 offset=offset,
                 count=min(_CHUNK, total_samples - offset),
                 av=av,
-                numpy=numpy,
             )
             _drain_audio(target, stream, sink, av)
         for input_filter in inputs:
@@ -436,7 +433,6 @@ def _write_output(
     music: Path | None,
     voiceover: Path | None,
     av: Any,
-    numpy: Any,
 ) -> None:
     """Create the MP4 container and write normalized video plus the mixed audio bed."""
     with av.open(str(output), "w", format="mp4") as target:
@@ -458,7 +454,6 @@ def _write_output(
             spools,
             total_samples=layout.total_samples,
             av=av,
-            numpy=numpy,
         )
 
 
@@ -476,7 +471,6 @@ def assemble_videos(
     """Join clips, normalize to the first clip, and mix optional audio locally."""
     try:
         import av
-        import numpy
     except ImportError as exc:
         raise VideoAssemblyError(
             detail="Video assembly requires PyAV. Install with `pip install gflow-cli[chain]`.",
@@ -484,7 +478,6 @@ def assemble_videos(
             charged="no",
         ) from exc
     _av: Any = av
-    _numpy: Any = numpy
     _validate_assembly(clips, output, music, voiceover, clip_volume, music_volume, voiceover_volume)
     audio_spools: list[Path] = []
     temp_output: Path | None = None
@@ -517,7 +510,6 @@ def assemble_videos(
             music=music,
             voiceover=voiceover,
             av=_av,
-            numpy=_numpy,
         )
         os.replace(temp_output, output)
         return AssemblyResult(

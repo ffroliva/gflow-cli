@@ -682,7 +682,6 @@ def _assert_names_the_chain_extra(text: str) -> None:
     flat = _plain(text)
     assert "gflow-cli[chain]" in flat, f"remediation must name the extra: {flat!r}"
     assert re.search(r"\bav\b", flat, re.IGNORECASE), f"remediation must name av: {flat!r}"
-    assert "numpy" in flat.lower(), f"remediation must name numpy: {flat!r}"
     assert "pillow" in flat.lower(), f"remediation must name pillow: {flat!r}"
 
 
@@ -838,10 +837,7 @@ def test_chain_extra_declares_pillow_alongside_av() -> None:
     requirements = {Requirement(raw).name.lower(): Requirement(raw) for raw in extra}
 
     assert "av" in requirements, f"the chain extra must keep av: {extra}"
-    assert "numpy" in requirements, (
-        "local audio assembly converts PyAV audio frames with NumPy, so `gflow-cli[chain]` "
-        f"must install it; the extra declares only {sorted(requirements)}"
-    )
+    assert "numpy" not in requirements
     assert "pillow" in requirements, (
         "media.py imports PIL at module level, so `gflow-cli[chain]` must install "
         f"pillow; the extra declares only {sorted(requirements)} (#813)"
