@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_media]
 
 
 def _assert_caption_pixels(source: Path, output: Path) -> None:

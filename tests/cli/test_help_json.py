@@ -106,6 +106,8 @@ EXPECTED_TREE: dict[str, bool] = {
     "mcp run": False,
     "mcp setup": False,
     "serve": False,
+    "video transcribe": False,
+    "video captions": False,
 }
 
 
