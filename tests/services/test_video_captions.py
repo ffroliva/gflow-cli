@@ -24,6 +24,7 @@ from gflow_cli.services.video_captions import (
     TranscribeResult,
     caption_video,
     format_srt,
+    extract_wav_bytes,
     parse_srt,
     resolve_video_source,
     transcribe_video,
@@ -94,6 +95,15 @@ def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Pat
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
     with pytest.raises(ConfigurationError, match="audio"):
         transcribe_video(str(media_files[1]))
+
+
+def test_audio_decode_does_not_require_numpy(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    av = pytest.importorskip("av")
+    monkeypatch.setattr(av.AudioFrame, "to_ndarray", lambda *_: pytest.fail("NumPy path used"))
+    wav, _ = extract_wav_bytes(media_files[0])
+    assert wav.startswith(b"RIFF")
 
 
 def test_resolve_video_source_accepts_local_and_verified_catalog_video(

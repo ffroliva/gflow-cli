@@ -179,7 +179,7 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
             duration = float(container.duration or 0) / av.time_base
             for frame in container.decode(stream):
                 for converted in resampler.resample(frame):
-                    samples.append(converted.to_ndarray().tobytes())
+                    samples.append(bytes(converted.planes[0])[: converted.samples * 2])
             if not samples:
                 raise ConfigurationError(
                     detail="Video audio track contains no decodable audio.", charged="no"
