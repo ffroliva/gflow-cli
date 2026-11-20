@@ -80,6 +80,17 @@ def test_assembles_varied_clips_and_missing_audio_as_silence(tmp_path: Path) -> 
     assert result.duration_seconds == pytest.approx(2, abs=0.2)
 
 
+def test_assembles_more_than_one_second_without_timestamp_regression(tmp_path: Path) -> None:
+    clip = tmp_path / "long.mp4"
+    output = tmp_path / "long-joined.mp4"
+    _clip(clip, size=(64, 48), rate=24, frames=96, audio=True)
+
+    result = assemble_videos([clip], output)
+
+    assert result.duration_seconds == pytest.approx(4, abs=0.1)
+    with av.open(str(output)) as container:
+        assert len(list(container.decode(video=0))) == 96
+
 def test_rejects_output_alias_and_corrupt_input_without_partial_output(tmp_path: Path) -> None:
     clip = tmp_path / "clip.mp4"
     _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)

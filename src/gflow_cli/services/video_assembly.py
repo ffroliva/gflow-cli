@@ -98,7 +98,7 @@ def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: bool = True) 
             if not audio_stream:
                 target.truncate(samples * _CHANNELS * 4)
             else:
-                resampler = av.AudioResampler(format="fltp", layout="stereo", rate=_SAMPLE_RATE)
+                resampler = av.AudioResampler(format="flt", layout="stereo", rate=_SAMPLE_RATE)
                 written = 0
                 with av.open(str(path)) as source:
                     stream = source.streams.audio[0]
@@ -211,14 +211,17 @@ def _inspect_videos(clips: list[Path], av: Any) -> _VideoLayout:
             if stream is None:
                 raise ValueError(f"No video stream in {path}")
             rate = float(stream.average_rate or stream.base_rate or 25)
-        ratio = stream.width / stream.height
-        if first_size is None:
-            first_size = (stream.width, stream.height)
-        elif abs(ratio / (first_size[0] / first_size[1]) - 1) > 0.01:
-            raise VideoAssemblyError(
-                detail=f"Clip {path} aspect ratio {ratio:.4f} differs from first clip ratio {first_size[0] / first_size[1]:.4f}.",
-                route="video.assemble",
-            )
+            ratio = stream.width / stream.height
+            if first_size is None:
+                first_size = (stream.width, stream.height)
+            elif abs(ratio / (first_size[0] / first_size[1]) - 1) > 0.01:
+                raise VideoAssemblyError(
+                    detail=(
+                        f"Clip {path} aspect ratio {ratio:.4f} differs from first clip "
+                        f"ratio {first_size[0] / first_size[1]:.4f}."
+                    ),
+                    route="video.assemble",
+                )
             first_rate = first_rate or rate
             count = sum(1 for _ in source.decode(stream))
             if not count:
@@ -316,13 +319,13 @@ def _audio_graph(
     """Build the gain, optional sidechain and mix filters for three synchronized tracks."""
     graph = av.filter.Graph()
     clip_in = graph.add_abuffer(
-        sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
+        sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
     )
     music_in = graph.add_abuffer(
-        sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
+        sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
     )
     voice_in = graph.add_abuffer(
-        sample_rate=_SAMPLE_RATE, format="fltp", layout="stereo", time_base="1/44100"
+        sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
     )
     inputs = (clip_in, music_in, voice_in)
     clip_vol = graph.add("volume", str(clip_volume))
@@ -468,6 +471,7 @@ def assemble_videos(
     """Join clips, normalize to the first clip, and mix optional audio locally."""
     try:
         import av
+        import numpy
     except ImportError as exc:
         raise VideoAssemblyError(
             detail="Video assembly requires PyAV. Install with `pip install gflow-cli[chain]`.",
@@ -475,6 +479,7 @@ def assemble_videos(
             charged="no",
         ) from exc
     _av: Any = av
+    _numpy: Any = numpy
     _validate_assembly(clips, output, music, voiceover, clip_volume, music_volume, voiceover_volume)
     audio_spools: list[Path] = []
     try:
@@ -501,6 +506,7 @@ def assemble_videos(
             music=music,
             voiceover=voiceover,
             av=_av,
+            numpy=_numpy,
         )
         return AssemblyResult(
             output_file=output,
