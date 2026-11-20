@@ -473,6 +473,27 @@ def _write_output(
         )
 
 
+def _publish_output(temp_output: Path, output: Path) -> None:
+    """Atomically publish the completed file without replacing another writer's output."""
+    try:
+        os.link(temp_output, output)
+    except FileExistsError as exc:
+        raise VideoAssemblyError(
+            detail=f"Output already exists: {output}", route="video.assemble"
+        ) from exc
+    except OSError:
+        try:
+            descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+        except FileExistsError as exc:
+            raise VideoAssemblyError(
+                detail=f"Output already exists: {output}", route="video.assemble"
+            ) from exc
+        os.close(descriptor)
+        os.replace(temp_output, output)
+    else:
+        temp_output.unlink()
+
+
 def assemble_videos(
     clips: list[Path],
     output: Path,
@@ -527,7 +548,7 @@ def assemble_videos(
             voiceover=voiceover,
             av=_av,
         )
-        os.replace(temp_output, output)
+        _publish_output(temp_output, output)
         return AssemblyResult(
             output_file=output,
             duration_seconds=layout.total_frames / layout.frame_rate,

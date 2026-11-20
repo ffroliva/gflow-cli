@@ -210,6 +210,26 @@ def test_keyboard_interrupt_removes_partial_output_and_temp_file(
     assert not list(tmp_path.glob(".joined.*.mp4"))
 
 
+def test_refuses_destination_created_during_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
+    original_write = video_assembly._write_output
+
+    def create_destination(*args: object, **kwargs: object) -> None:
+        original_write(*args, **kwargs)
+        output.write_bytes(b"another assembly won")
+
+    monkeypatch.setattr(video_assembly, "_write_output", create_destination)
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        assemble_videos([clip], output)
+
+    assert output.read_bytes() == b"another assembly won"
+
+
 def test_rejects_music_file_without_audio_stream(tmp_path: Path) -> None:
     clip = tmp_path / "clip.mp4"
     music = tmp_path / "silent-video.mp4"
