@@ -103,8 +103,8 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 - [x] Run the installed wheel's CLI and MCP stdio twin, including success and structured failure. Local-only: use `@pytest.mark.e2e` with no Flow cost marker; documented in `docs/E2E_TESTING.md`.
 
 ## Task 9 — Gates and review
-- [ ] Run `/gflow:check`, doc gates, and verify e2e output.
-- [ ] Record docs and parity review; no live Flow verification required for local-only processing.
+- [x] Run the requested gates and installed E2E. Ruff, Pyright, docs, size and E2E passed; the broad suite had one failure because `tests/mcp/test_readme_counts.py` still expects the README's 20-tool count to match the new 21-tool registry.
+- [x] Record docs and six-axis parity review; no live Flow verification is required for this local-only operation.
 
 ## Definition of done
 - [ ] All tasks complete; critical/high scenarios covered.
@@ -117,3 +117,4 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 |---|---|---|---|
 | 2026-11-20 | Normalize heterogeneous clips; keep assembly local | Flow inputs vary; PyAV spike confirms local codec/filter path | Refuse mixed formats, which blocks ordinary clips |
 | 2026-11-20 | Use synthetic fixtures if checkout has no generated mp4s | E2E is local-only and should not require account/credits | Browser/Flow-dependent test |
+| 2026-11-20 | Leave README MCP count unchanged | The user limited README edits to the “Join clips” cell; `test_readme_counts` therefore remains red at 20 vs 21 | Updating another README row without authorization |
