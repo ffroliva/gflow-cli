@@ -443,11 +443,13 @@ def _render_video(
         audio_stream = input_container.streams.audio[0] if input_container.streams.audio else None
         encoded = output.add_stream("libx264", rate=video.average_rate or 25)
         encoded.width, encoded.height, encoded.pix_fmt = video.width, video.height, "yuv420p"
-        audio_output = (
-            output.add_stream(audio_stream.codec_context.name, template=audio_stream)
-            if audio_stream
-            else None
-        )
+        audio_output = None
+        if audio_stream:
+            audio_output = (
+                output.add_stream_from_template(audio_stream)
+                if hasattr(output, "add_stream_from_template")
+                else output.add_stream(audio_stream.codec_context.name, template=audio_stream)
+            )
         duration = float(input_container.duration or 0) / av.time_base
         for frame in input_container.decode(video):
             frames += 1
