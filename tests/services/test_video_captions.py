@@ -348,6 +348,20 @@ def test_caption_video_burns_frames_and_keeps_audio(
         assert output.streams.audio
 
 
+def test_local_caption_burnin_works_with_cloud_storage_configured(
+    media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_STORAGE_URI", "s3://bucket/output")
+    config.reset_settings()
+    srt = tmp_path / "captions.srt"
+    srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nhello", encoding="utf-8")
+    try:
+        result = caption_video(str(media_files[0]), srt_path=srt)
+    finally:
+        config.reset_settings()
+    assert result.output_file.is_file()
+
+
 def test_caption_video_refuses_non_utf8_srt_with_clear_error(
     media_files: tuple[Path, Path], tmp_path: Path
 ) -> None:

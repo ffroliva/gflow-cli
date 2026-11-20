@@ -31,7 +31,6 @@ from gflow_cli.errors import (
     nothing_submitted,
 )
 from gflow_cli.services.media_recovery import resolve_asset
-from gflow_cli.storage import refuse_cloud_storage_for_local_file
 
 log = structlog.get_logger(__name__)
 _TIMESTAMP = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
@@ -210,7 +209,6 @@ def transcribe_video(
 ) -> TranscribeResult:
     _require_chain_extra()
     settings = get_settings()
-    refuse_cloud_storage_for_local_file(settings.storage_uri, "Video transcription")
     base_url = (settings.llm_base_url or DEFAULT_LLM_BASE_URL).rstrip("/")
     if base_url == DEFAULT_LLM_BASE_URL.rstrip("/"):
         raise ConfigurationError(
@@ -341,7 +339,6 @@ def caption_video(
 ) -> CaptionsResult:
     av, (_, image_draw, image_font) = _require_chain_extra()
     settings = get_settings()
-    refuse_cloud_storage_for_local_file(settings.storage_uri, "Video caption burn-in")
     source = resolve_video_source(file_or_id, profile=profile, route="video.captions")
     destination = (
         (out_file or source.with_name(f"{source.stem}-captions.mp4")).expanduser().resolve()
