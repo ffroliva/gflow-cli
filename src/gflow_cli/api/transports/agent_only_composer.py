@@ -326,12 +326,14 @@ def gate_quoted_credits(title: str) -> int | None:
     return parse_credit_quote(title[: count.start()] + title[count.end() :]) if count else None
 
 
-def _unapproved_media_cap_error(max_credits: int, media_id: str) -> CreditCapExceededError:
+def _unapproved_media_cap_error(
+    max_credits: int, media_id: str | None = None
+) -> CreditCapExceededError:
     error = CreditCapExceededError(
         quoted=None,
         max_credits=max_credits,
         route="agent-only composer without an approved quote",
-        completed_media_ids=[media_id],
+        completed_media_ids=[media_id] if media_id else None,
     )
     error.charged, error.next_action = "maybe", "reconcile"
     error.remediation_hint = (
@@ -880,20 +882,22 @@ class AgentOnlyComposer:
                     retryable=False,
                     remediation_hint=_AFTER_SUBMIT_HINT,
                 )
-            if named and not started and on_first_media is not None:
+            if named and not started:
                 started = True
-                await _maybe_await(on_first_media(named[0]))
-                if run.max_credits is not None and not run.approvals:
-                    raise _unapproved_media_cap_error(run.max_credits, named[0])
+                if on_first_media is not None:
+                    await _maybe_await(on_first_media(named[0]))
+            if (named or state["pending"]) and run.max_credits is not None and not run.approvals:
+                raise _unapproved_media_cap_error(run.max_credits, named[0] if named else None)
             ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
             # #1354: the listing may name the clip before its player mounts, or the run may
             # time out waiting for it; the early report must not wait for the download.
             listed = ready.uuid if ready is not None else (run.listed and run.listed[1])
-            if listed and not started and on_first_media is not None:
+            if listed and not started:
                 started = True
-                await _maybe_await(on_first_media(listed))
-                if run.max_credits is not None and not run.approvals:
-                    raise _unapproved_media_cap_error(run.max_credits, listed)
+                if on_first_media is not None:
+                    await _maybe_await(on_first_media(listed))
+            if listed and run.max_credits is not None and not run.approvals:
+                raise _unapproved_media_cap_error(run.max_credits, listed)
             if ready is not None:
                 return [ready]
             await asyncio.sleep(POLL_S)

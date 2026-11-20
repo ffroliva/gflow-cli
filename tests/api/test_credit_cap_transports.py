@@ -326,7 +326,31 @@ async def test_agent_video_with_media_but_no_approved_gate_is_maybe_charged(
     run = agent._Run("video", 60, 1e20, 0, 1, 0, max_credits=10)
 
     with pytest.raises(CreditCapExceededError) as caught:
-        await composer._await_video(page, run, 1, set(), None, AsyncMock(), None)
+        await composer._await_video(page, run, 1, set(), None, None, None)
     assert caught.value.charged == "maybe"
     assert caught.value.next_action == "reconcile"
     assert caught.value.completed_media_ids == ["orphan-media"]
+
+
+@pytest.mark.asyncio
+async def test_agent_video_with_pending_clip_but_no_approved_gate_stops_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.api.transports import agent_only_composer as agent
+    from gflow_cli.errors import CreditCapExceededError
+
+    composer = agent.AgentOnlyComposer()
+    monkeypatch.setattr(agent, "_video_uuids", lambda _state: [])
+    monkeypatch.setattr(composer, "_gate_turn", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        composer, "_ready_video", AsyncMock(side_effect=AssertionError("pending cap check skipped"))
+    )
+    page = type("Page", (), {"evaluate": AsyncMock(return_value={"pending": 1})})()
+    run = agent._Run("video", 60, 1e20, 0, 1, 0, max_credits=10)
+
+    with pytest.raises(CreditCapExceededError) as caught:
+        await composer._await_video(page, run, 1, set(), None, AsyncMock(), None)
+    assert caught.value.charged == "maybe"
+    assert caught.value.next_action == "reconcile"

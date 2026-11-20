@@ -575,7 +575,6 @@ async def _run_one_scene(
             project_id=manifest.project,
             max_credits=budget.max_credits,
         )
-        budget.record_spend(video_result.quoted_credits)
         if run_media_ids is not None:
             run_media_ids.append(video_result.status.media_id)
         local_path_str = (
@@ -591,6 +590,11 @@ async def _run_one_scene(
             style_hash=resume_hash(prompt),
         )
         state.save(state_path)
+        try:
+            budget.record_spend(video_result.quoted_credits)
+        except CreditCapExceededError as exc:
+            exc.completed_media_ids = [video_result.status.media_id]
+            raise
         console.print(f"    saved: {video_result.local_path}")
         return video_result.local_path
 

@@ -43,8 +43,11 @@ def test_credit_budget_tracks_spend_and_rejects_unknown_quote() -> None:
     budget.record_spend(4)
     assert budget.remaining == 2
     assert budget.max_credits == 2
-    with pytest.raises(CreditCapExceededError):
+    with pytest.raises(CreditCapExceededError) as caught:
         budget.record_spend(None)
+    assert budget.remaining == 0
+    assert caught.value.charged == "maybe"
+    assert caught.value.next_action == "reconcile"
 
 
 def test_generate_video_request_rejects_negative_cap() -> None:

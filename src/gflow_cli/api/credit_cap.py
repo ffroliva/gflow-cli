@@ -46,6 +46,11 @@ class CreditBudget:
         """Deduct a completed submission's quote; unknown cost fails closed."""
         if self.remaining is None:
             return
-        enforce_credit_cap(quoted=quoted, max_credits=self.remaining)
-        assert quoted is not None
+        if quoted is None or quoted > self.remaining:
+            limit = self.remaining
+            self.remaining = 0 if quoted is None else max(0, self.remaining - quoted)
+            error = CreditCapExceededError(quoted=quoted, max_credits=limit)
+            error.charged, error.next_action = "maybe", "reconcile"
+            error.retryable = False
+            raise error
         self.remaining -= quoted

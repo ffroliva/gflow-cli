@@ -183,6 +183,42 @@ async def test_chain_persists_a_started_but_unresolved_link_for_resume(
     assert not pending.local_path.exists()
 
 
+@pytest.mark.asyncio
+async def test_chain_records_completed_link_when_billed_submit_returns_no_quote(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli.errors import CreditCapExceededError
+
+    clip = tmp_path / "m0.mp4"
+    clip.write_bytes(b"mp4")
+    client = MagicMock(name="FlowApiClient")
+    client.generate_video = AsyncMock(
+        return_value=VideoResult(
+            status=VideoStatus(media_id="m0", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=clip,
+            quoted_credits=None,
+        )
+    )
+    recorder = MagicMock()
+
+    with pytest.raises(CreditCapExceededError) as caught:
+        await run_chain(
+            client=client,
+            links=_two_link_specs(),
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            recorder=recorder,
+            extractor=_fake_extractor([tmp_path / "f0.jpg"]),
+            max_credits=4,
+        )
+
+    assert caught.value.charged == "maybe"
+    assert caught.value.next_action == "reconcile"
+    assert caught.value.completed_media_ids == ["m0"]
+    recorder.record_chain_link.assert_called_once()
+    assert recorder.record_chain_link.call_args.args[0].media_id == "m0"
+
+
 async def test_links_run_strictly_sequentially(tmp_path: Path) -> None:
     """generate_video is awaited exactly once per link, in link order."""
     results = [

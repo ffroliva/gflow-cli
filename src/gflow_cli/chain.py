@@ -534,7 +534,6 @@ async def run_chain(
                     is_last=index == last_index,
                 )
             raise
-        budget.record_spend(result.quoted_credits)
         if relocate is not None:  # a missing clip is left as is and refused just below
             result = await _relocate_guarded(relocate, index, result)
 
@@ -570,6 +569,14 @@ async def run_chain(
         if on_link_completed is not None:
             on_link_completed(req, result)
 
+        results.append(link_result)
+        completed_paths.append(result.local_path)
+        try:
+            budget.record_spend(result.quoted_credits)
+        except CreditCapExceededError as exc:
+            exc.completed_media_ids = [r.media_id for r in results]
+            raise
+
         if link_result.frame_path is not None:
             prev_frame = await asyncio.to_thread(
                 extractor,
@@ -577,9 +584,6 @@ async def run_chain(
                 dst=link_result.frame_path,
                 offset_ms=seed_offset_ms,
             )
-
-        results.append(link_result)
-        completed_paths.append(result.local_path)
         _log.info(
             "chain_link_completed",
             index=index,

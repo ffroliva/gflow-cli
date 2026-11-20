@@ -307,6 +307,55 @@ async def test_movie_persists_media_id_when_cap_gate_appears_after_submit(
     assert caught.value.next_action == "reconcile"
 
 
+@pytest.mark.asyncio
+async def test_movie_records_completed_scene_when_billed_submit_returns_no_quote(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gflow_cli import cli_movie
+    from gflow_cli.api.credit_cap import CreditBudget
+    from gflow_cli.api.video import VideoResult, VideoStatus
+    from gflow_cli.errors import CreditCapExceededError
+    from gflow_cli.movie_manifest import MovieManifest, MovieState
+
+    async def no_instructions(**_: object) -> None:
+        return None
+
+    monkeypatch.setattr(cli_movie, "_sync_scene_instructions", no_instructions)
+    manifest = MovieManifest.from_toml_path(_manifest_file(tmp_path))
+    state, client = MovieState(title="T", project="project"), MagicMock()
+    client.generate_video = AsyncMock(
+        return_value=VideoResult(
+            status=VideoStatus(
+                media_id="media-unquoted", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"
+            ),
+            local_path=None,
+            quoted_credits=None,
+        )
+    )
+    with pytest.raises(CreditCapExceededError) as caught:
+        await cli_movie._run_one_scene(
+            client=client,
+            recorder=MagicMock(),
+            scene=manifest.scenes[0],
+            manifest=manifest,
+            state=state,
+            state_path=tmp_path / "state.json",
+            profile_name="test",
+            profile_dir=tmp_path,
+            out_dir=tmp_path,
+            generated_any=False,
+            run_media_ids=[],
+            continue_on_error=True,
+            brief_cache=MagicMock(),
+            budget=CreditBudget(10),
+        )
+    assert state.scenes[manifest.scenes[0].id].media_id == "media-unquoted"
+    assert state.scenes[manifest.scenes[0].id].status == "completed"
+    assert caught.value.charged == "maybe"
+    assert caught.value.next_action == "reconcile"
+    assert caught.value.completed_media_ids == ["media-unquoted"]
+
+
 def _manifest_file(tmp_path: Path) -> Path:
     path = tmp_path / "movie.toml"
     path.write_text(
