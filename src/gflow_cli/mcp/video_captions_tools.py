@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 from gflow_cli.api.video import is_media_uuid
-from gflow_cli.config import get_settings
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.server import server
@@ -22,12 +21,9 @@ def _profile(file: str, profile: str | None) -> str | None | dict[str, Any]:
 
 def _output(out_file: str | None, default_name: str) -> str | dict[str, Any]:
     path = common._resolve_out_file(out_file, local_only=True)  # pyright: ignore[reportPrivateUsage]
-    if isinstance(path, dict):
-        return path
     if path is not None:
         return path
-    settings = get_settings()
-    return str((settings.output_dir / default_name).resolve())
+    return common._confined_output_file(default_name)  # pyright: ignore[reportPrivateUsage]
 
 
 def _result(result: Any) -> dict[str, Any]:
@@ -86,8 +82,12 @@ async def gflow_video_captions(
     output = _output(out_file, f"{Path(file).stem}-captions.mp4")
     if isinstance(output, dict):
         return output
-    settings = get_settings()
-    srt_output = None if srt else (settings.output_dir / f"{Path(file).stem}.srt").resolve()
+    srt_output: Path | None = None
+    if not srt:
+        resolved_srt = _output(None, f"{Path(file).stem}.srt")
+        if isinstance(resolved_srt, dict):
+            return resolved_srt
+        srt_output = Path(resolved_srt)
     result = await asyncio.to_thread(
         caption_video,
         file,

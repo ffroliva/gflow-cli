@@ -32,6 +32,64 @@ async def test_mcp_rejects_output_escape(tmp_path: Path, monkeypatch: pytest.Mon
     reset_settings()
 
 
+def _plant_symlink(link: Path, target: Path) -> None:
+    link.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        link.symlink_to(target)
+        return
+    except (OSError, NotImplementedError) as exc:
+        if sys.platform == "win32":
+            import _winapi
+
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _winapi.CreateJunction(str(target.parent), str(link))
+            return
+        pytest.skip(f"symlink creation not permitted: {exc}")
+
+
+def _remove_reparse_point(link: Path) -> None:
+    try:
+        link.unlink()
+    except OSError:
+        link.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_mcp_rejects_default_output_symlink_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.mcp import video_captions_tools as tools
+
+    output = tmp_path / "out"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(output))
+    reset_settings()
+    dispatched: list[str] = []
+    monkeypatch.setattr(
+        tools, "transcribe_video", lambda *_a, **_k: dispatched.append("transcribe")
+    )
+    monkeypatch.setattr(tools, "caption_video", lambda *_a, **_k: dispatched.append("captions"))
+    try:
+        _plant_symlink(output / "clip.srt", outside / "stolen.srt")
+        transcribe_res = await gflow_video_transcribe("clip.mp4")
+        assert transcribe_res["status"] == "error"
+        assert transcribe_res["error"]["title"] == "Invalid Output"
+
+        explicit_out_auto_srt_res = await gflow_video_captions("clip.mp4", out_file="safe.mp4")
+        assert explicit_out_auto_srt_res["status"] == "error"
+        assert explicit_out_auto_srt_res["error"]["title"] == "Invalid Output"
+        _remove_reparse_point(output / "clip.srt")
+
+        _plant_symlink(output / "clip-captions.mp4", outside / "stolen.mp4")
+        captions_res = await gflow_video_captions("clip.mp4", srt=str(tmp_path / "authored.srt"))
+        assert captions_res["status"] == "error"
+        assert captions_res["error"]["title"] == "Invalid Output"
+        assert dispatched == []
+    finally:
+        reset_settings()
+
+
 @pytest.mark.asyncio
 async def test_mcp_default_outputs_stay_under_output_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
