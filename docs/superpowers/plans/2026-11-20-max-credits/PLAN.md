@@ -346,7 +346,7 @@ In `_mc_settings_pane.py`:
 - In `src/gflow_cli/api/transports/migrated_extend.py::run_extend` and `src/gflow_cli/api/_flow_media_edit.py::extend_video_migrated`: accept `max_credits: int | None = None` and call `enforce_credit_cap(None, max_credits, route="flow.google.com video extend")` before opening the menu.
 - In `src/gflow_cli/api/_flow_media_edit.py::extend_video`: accept `max_credits: int | None = None`, and after `resolve_extend_model`, call `enforce_credit_cap(resolved.unit_cost, max_credits, route="video extend")` before minting reCAPTCHA.
 
-- [ ] **Step 6: Run unit and offline BDD tests (Green)**
+- [x] **Step 6: Run unit and offline BDD tests (Green)**
 
 Run: `uv run python -m pytest tests/api/test_credit_cap.py tests/features/test_credit_cap_steps.py -q`
 
@@ -401,7 +401,7 @@ Run: `uv run python -m pytest tests/test_cli_video_credit_cap.py tests/test_cli_
 - Modify: `src/gflow_cli/worker/daemon.py`
 - Modify: `tests/mcp/test_server.py`
 
-- [ ] **Step 1: Add MCP & worker codec tests in `tests/mcp/test_server.py` and `tests/features/test_credit_cap_steps.py` (Red)**
+- [x] **Step 1: Add MCP & worker codec tests in `tests/mcp/test_server.py` and `tests/features/test_credit_cap_steps.py` (Red)**
 
 Assert:
 1. `gflow_generate_video` tool schema exposes `max_credits` (`integer | null`).
@@ -410,17 +410,17 @@ Assert:
 4. `worker/daemon.py` applies `resolve_max_credits(request.max_credits, settings.max_credits)` before calling `client.generate_video(request)`.
 5. `tests/mcp/test_cli_parity.py` (`test_every_cli_leaf_has_an_mcp_decision` and `test_every_cli_option_reaches_its_mcp_tool`) passes.
 
-- [ ] **Step 2: Update `src/gflow_cli/mcp/tools.py` while shrinking line count and C901**
+- [x] **Step 2: Update `src/gflow_cli/mcp/tools.py` while shrinking line count and C901**
 
 - Compact `_build_video_payload` (`src/gflow_cli/mcp/tools.py:165-198`) by replacing the eight `if x is not None: payload[...] = x` blocks with a `for key, val in (...):` loop that includes `("max_credits", max_credits)`. This drops `_build_video_payload`'s C901 from 11 to 4 and saves ~10 lines in `mcp/tools.py` (keeping it well under the 2691-line ceiling).
 - Add `max_credits: int | None = None` to `gflow_generate_video` (`src/gflow_cli/mcp/tools.py:1149`) and pass `max_credits=max_credits` to `_build_video_payload`. Update the docstring to document `max_credits`.
 
-- [ ] **Step 3: Update `src/gflow_cli/worker/codec.py` and `src/gflow_cli/worker/daemon.py`**
+- [x] **Step 3: Update `src/gflow_cli/worker/codec.py` and `src/gflow_cli/worker/daemon.py`**
 
 - In `src/gflow_cli/worker/codec.py::build_video_request`: extract `raw_max_credits = payload.get("max_credits")`, validate non-bool `int >= 0` when present (raising `QueueSchemaError` on invalid type/value), and pass `max_credits=raw_max_credits` to `GenerateVideoRequest`.
 - In `src/gflow_cli/worker/daemon.py`: when `request.max_credits is None` and `settings.max_credits is not None`, replace `request` with `dataclasses.replace(request, max_credits=settings.max_credits)` before calling `client.generate_video`.
 
-- [ ] **Step 4: Run MCP parity, server, BDD, and size checks (Green)**
+- [x] **Step 4: Run MCP parity, server, BDD, and size checks (Green)**
 
 Run:
 ```bash

@@ -54,6 +54,18 @@ def test_video_payload_decodes_to_typed_request() -> None:
     assert decoded.request.prompt == "a river flows"
 
 
+def test_video_payload_round_trips_max_credits() -> None:
+    decoded = decode_payload("t2v", {"prompt": "cat", "max_credits": 12})
+    assert isinstance(decoded.request, GenerateVideoRequest)
+    assert decoded.request.max_credits == 12
+
+
+@pytest.mark.parametrize("value", [True, "12", -1])
+def test_video_payload_rejects_invalid_max_credits(value: object) -> None:
+    with pytest.raises(QueueSchemaError):
+        decode_payload("t2v", {"prompt": "cat", "max_credits": value})
+
+
 def test_i2v_uuid_picker_metadata_decodes_to_typed_request() -> None:
     decoded = decode_payload(
         "i2v",

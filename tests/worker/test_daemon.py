@@ -274,6 +274,31 @@ async def test_worker_process_t2v(temp_db: DataStore) -> None:
 
 
 @pytest.mark.asyncio
+async def test_worker_falls_back_to_configured_video_cap(
+    monkeypatch: pytest.MonkeyPatch, temp_db: DataStore
+) -> None:
+    from gflow_cli.config import Settings
+    from gflow_cli.worker import daemon
+
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-t2v-credit-cap",
+        profile_name="default",
+        task_type="t2v",
+        payload={"prompt": "cat"},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    client = FakeFlowApiClient()
+    client.generate_video.return_value = _completed_video_result()
+    monkeypatch.setattr(daemon, "get_settings", lambda: Settings(max_credits=6))
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=client):
+        await worker.process_task(task)
+    request = client.generate_video.await_args.kwargs["req"]
+    assert request.max_credits == 6
+    worker.close()
+
+
+@pytest.mark.asyncio
 async def test_worker_passes_cached_settings_to_image_client(temp_db: DataStore) -> None:
     """The client must reuse the worker's cached settings object.
 
