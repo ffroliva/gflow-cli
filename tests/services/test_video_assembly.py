@@ -230,6 +230,26 @@ def test_refuses_destination_created_during_render(
     assert output.read_bytes() == b"another assembly won"
 
 
+def test_keyboard_interrupt_cleans_audio_spools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_mkstemp = video_assembly.tempfile.mkstemp
+
+    def in_temp_dir(*args: object, **kwargs: object) -> tuple[int, str]:
+        return original_mkstemp(*args, dir=tmp_path, **kwargs)
+
+    def interrupt(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(video_assembly.tempfile, "mkstemp", in_temp_dir)
+    monkeypatch.setattr(video_assembly, "_write_audio_pcm", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        video_assembly._make_audio([(tmp_path / "clip.mp4", 100)], None, None, 100, av)
+
+    assert not list(tmp_path.glob("*.f32le"))
+
+
 def test_rejects_music_file_without_audio_stream(tmp_path: Path) -> None:
     clip = tmp_path / "clip.mp4"
     music = tmp_path / "silent-video.mp4"

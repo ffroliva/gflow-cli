@@ -124,7 +124,7 @@ def _pcm_spool(path: Path, *, samples: int, av: Any) -> Path:
         with spool.open("wb") as target:
             _write_audio_pcm(path, target, samples=samples, av=av, allow_silence=False)
         return spool
-    except Exception:
+    except BaseException:
         spool.unlink(missing_ok=True)
         raise
 
@@ -150,7 +150,7 @@ def _make_audio(
         if voiceover is not None:
             spools.append(_pcm_spool(voiceover, samples=total_samples, av=av))
         return spools
-    except Exception:
+    except BaseException:
         for spool in spools:
             spool.unlink(missing_ok=True)
         raise
