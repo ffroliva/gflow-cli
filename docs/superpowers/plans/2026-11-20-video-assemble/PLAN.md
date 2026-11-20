@@ -51,8 +51,8 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Bind CLI behavior scenarios offline.
 **Files:** `tests/features/video_assemble.feature`, step bindings.
 **Steps:**
-- [ ] Bind successful mixed assembly and collision refusal.
-- [ ] Keep feature untagged: local code only, no browser/Flow account.
+- [x] Bind successful mixed assembly and collision refusal.
+- [x] Keep feature untagged: local code only, no browser/Flow account.
 
 ## Task 3 — Service implementation
 **What:** Implement streaming PyAV assembly and track mixing.
