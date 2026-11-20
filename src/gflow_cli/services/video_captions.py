@@ -124,6 +124,38 @@ def format_srt(entries: Sequence[CaptionEntry]) -> str:
     )
 
 
+def result_payload(result: TranscribeResult | CaptionsResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": "ok",
+        "source_file": str(result.source_file),
+        "srt_file": str(result.srt_file),
+    }
+    if isinstance(result, TranscribeResult):
+        payload.update(
+            language=result.language,
+            duration_seconds=result.duration_seconds,
+            segments_count=len(result.segments),
+            segments=[
+                {
+                    "index": item.index,
+                    "start_s": item.start_s,
+                    "end_s": item.end_s,
+                    "text": item.text,
+                }
+                for item in result.segments
+            ],
+        )
+    else:
+        payload.update(
+            output_file=str(result.output_file),
+            duration_seconds=result.duration_seconds,
+            total_frames=result.total_frames,
+            frames_burned=result.frames_burned,
+            bytes=result.bytes,
+        )
+    return payload
+
+
 def _require_chain_extra() -> tuple[Any, Any]:
     try:
         import av
@@ -222,6 +254,7 @@ def transcribe_video(
     out_file: Path | None = None,
     language: str | None = None,
     profile: str | None = None,
+    _source: Path | None = None,
 ) -> TranscribeResult:
     _require_chain_extra()
     settings = get_settings()
@@ -240,7 +273,7 @@ def transcribe_video(
                 "or pass --srt to video captions."
             ),
         )
-    source = resolve_video_source(file_or_id, profile=profile, route="video.transcribe")
+    source = _source or resolve_video_source(file_or_id, profile=profile, route="video.transcribe")
     destination = (out_file or source.with_suffix(".srt")).expanduser().resolve()
     if destination == source.resolve():
         raise ConfigurationError(
@@ -294,7 +327,6 @@ def _request_segments(
             charged="no",
             remediation_hint="Configure the endpoint to return valid verbose_json segments or SRT.",
         ) from exc
-    raise AssertionError("unreachable")
 
 
 def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntry, ...]:
@@ -360,15 +392,15 @@ def caption_video(
     language: str | None = None,
     profile: str | None = None,
 ) -> CaptionsResult:
-    av, (_, image_draw, image_font) = _require_chain_extra()
-    settings = get_settings()
+    if srt_path is not None:
+        _require_chain_extra()
     source = resolve_video_source(file_or_id, profile=profile, route="video.captions")
     destination = (
         (out_file or source.with_name(f"{source.stem}-captions.mp4")).expanduser().resolve()
     )
     if destination in {
         source.resolve(),
-        (srt_path or srt_out_file or Path()).expanduser().resolve(),
+        *(path.expanduser().resolve() for path in (srt_path, srt_out_file) if path is not None),
     }:
         raise ConfigurationError(
             detail="Caption output must not overwrite an input file.",
@@ -383,7 +415,7 @@ def caption_video(
         )
     if srt_path is None:
         transcribed = transcribe_video(
-            file_or_id, out_file=srt_out_file, language=language, profile=profile
+            file_or_id, out_file=srt_out_file, language=language, profile=profile, _source=source
         )
         caption_path, entries = transcribed.srt_file, list(transcribed.segments)
     else:
@@ -398,6 +430,7 @@ def caption_video(
                 charged="no",
                 remediation_hint="Save the SubRip file as UTF-8 and retry.",
             ) from exc
+    av, (_, image_draw, image_font) = _require_chain_extra()
     if destination in {source.resolve(), caption_path.resolve()}:
         raise ConfigurationError(
             detail="Caption output must not overwrite an input file.",

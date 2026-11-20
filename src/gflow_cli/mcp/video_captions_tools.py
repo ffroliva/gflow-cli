@@ -11,7 +11,7 @@ from gflow_cli.config import get_settings
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.server import server
-from gflow_cli.services.video_captions import caption_video, transcribe_video
+from gflow_cli.services.video_captions import caption_video, result_payload, transcribe_video
 
 
 def _profile(file: str, profile: str | None) -> str | None | dict[str, Any]:
@@ -30,36 +30,8 @@ def _output(out_file: str | None, default_name: str) -> str | dict[str, Any]:
     return str((settings.output_dir / default_name).resolve())
 
 
-def _result(result: Any, *, transcribing: bool) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "status": "ok",
-        "source_file": str(result.source_file),
-        "srt_file": str(result.srt_file),
-    }
-    if transcribing:
-        payload.update(
-            language=result.language,
-            duration_seconds=result.duration_seconds,
-            segments_count=len(result.segments),
-            segments=[
-                {
-                    "index": item.index,
-                    "start_s": item.start_s,
-                    "end_s": item.end_s,
-                    "text": item.text,
-                }
-                for item in result.segments
-            ],
-        )
-    else:
-        payload.update(
-            output_file=str(result.output_file),
-            duration_seconds=result.duration_seconds,
-            total_frames=result.total_frames,
-            frames_burned=result.frames_burned,
-            bytes=result.bytes,
-        )
-    return payload
+def _result(result: Any) -> dict[str, Any]:
+    return result_payload(result)
 
 
 @server.tool(
@@ -88,7 +60,7 @@ async def gflow_video_transcribe(
     result = await asyncio.to_thread(
         transcribe_video, file, out_file=Path(output), language=language, profile=resolved_profile
     )
-    return _result(result, transcribing=True)
+    return _result(result)
 
 
 @server.tool(
@@ -125,4 +97,4 @@ async def gflow_video_captions(
         language=language,
         profile=resolved_profile,
     )
-    return _result(result, transcribing=False)
+    return _result(result)

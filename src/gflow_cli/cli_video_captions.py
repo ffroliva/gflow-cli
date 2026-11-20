@@ -20,41 +20,14 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     spends_credits,
 )
-from gflow_cli.services.video_captions import caption_video, transcribe_video
+from gflow_cli.services.video_captions import caption_video, result_payload, transcribe_video
 
 console = Console()
 log = structlog.get_logger(__name__)
 
 
 def _payload(result: Any) -> dict[str, Any]:
-    if hasattr(result, "segments"):
-        return {
-            "status": "ok",
-            "source_file": str(result.source_file),
-            "srt_file": str(result.srt_file),
-            "language": result.language,
-            "duration_seconds": result.duration_seconds,
-            "segments_count": len(result.segments),
-            "segments": [
-                {
-                    "index": segment.index,
-                    "start_s": segment.start_s,
-                    "end_s": segment.end_s,
-                    "text": segment.text,
-                }
-                for segment in result.segments
-            ],
-        }
-    return {
-        "status": "ok",
-        "source_file": str(result.source_file),
-        "output_file": str(result.output_file),
-        "srt_file": str(result.srt_file),
-        "duration_seconds": result.duration_seconds,
-        "total_frames": result.total_frames,
-        "frames_burned": result.frames_burned,
-        "bytes": result.bytes,
-    }
+    return result_payload(result)
 
 
 def _emit(result: Any, *, as_json: bool, output_format: str) -> None:

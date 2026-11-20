@@ -24,8 +24,8 @@ from gflow_cli.services.video_captions import (
     CaptionEntry,
     TranscribeResult,
     caption_video,
-    format_srt,
     extract_wav_bytes,
+    format_srt,
     parse_srt,
     resolve_video_source,
     transcribe_video,
@@ -139,8 +139,9 @@ def test_audio_decode_does_not_require_numpy(
 
 
 def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
-    from gflow_cli.services.video_captions import _load_caption_font
     from PIL import ImageFont
+
+    from gflow_cli.services.video_captions import _load_caption_font
 
     font = _load_caption_font(720)
     rendered = font.getmask("Ação café naïve Привет").getbbox()
@@ -151,6 +152,7 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
 def test_caption_background_is_translucent_on_rgb_frame() -> None:
     av = pytest.importorskip("av")
     from PIL import Image, ImageDraw, ImageFont
+
     from gflow_cli.services.video_captions import _draw_caption
 
     frame = av.VideoFrame.from_image(Image.new("RGB", (320, 180), (160, 160, 160)))
@@ -163,6 +165,7 @@ def test_caption_background_is_translucent_on_rgb_frame() -> None:
 @pytest.mark.parametrize("size", [(1280, 720), (720, 1280)])
 def test_long_caption_wraps_within_frame(size: tuple[int, int]) -> None:
     from PIL import ImageDraw, ImageFont
+
     from gflow_cli.services.video_captions import _wrap_caption
 
     image = __import__("PIL").Image.new("RGB", size)
