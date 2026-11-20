@@ -151,7 +151,7 @@ def test_caption_background_is_translucent_on_rgb_frame() -> None:
     frame = av.VideoFrame.from_image(Image.new("RGB", (320, 180), (160, 160, 160)))
     frame.time_base = Fraction(1, 25)
     result = _draw_caption(av, frame, "X", ImageDraw, ImageFont)
-    pixel = result.to_image().getpixel((160, 130))
+    pixel = result.to_image().getpixel((145, 145))
     assert pixel[0] not in (0, 160)
 
 
