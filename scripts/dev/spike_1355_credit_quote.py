@@ -181,6 +181,7 @@ async def dom_quotes(page: Page) -> dict[str, Any]:
 async def main(profile: str, locales: list[str], out: Path) -> int:
     verified_session(profile)
     before = credits(profile)
+    print(f"credits before={before}", flush=True)
     report: dict[str, Any] = {
         "profile": profile,
         "credits_before": before,
@@ -249,7 +250,10 @@ async def main(profile: str, locales: list[str], out: Path) -> int:
                     return
                 await route.continue_()
 
-            await page.route("**/*", guard)
+            # Only the two carriers a billed submit can use; a catch-all route made the
+            # driver fail `Route.continue_` on unrelated requests (measured 2026-11-20).
+            await page.route("**/batchexecute**", guard)
+            await page.route("https://aisandbox-pa.googleapis.com/**", guard)
             for locale in locales:
                 locale_result: dict[str, Any] = {"locale": locale, "models": {}}
                 language = "pt-BR,pt;q=0.9" if locale.lower() == "pt-br" else "en-US,en;q=0.9"
@@ -286,7 +290,7 @@ async def main(profile: str, locales: list[str], out: Path) -> int:
                             key = f"{duration}s_x{count}"
                             try:
                                 req = GenerateVideoRequest(
-                                    prompt="", model=model, duration=duration, count=count
+                                    prompt="probe", model=model, duration=duration, count=count
                                 )
                                 phase[0] = f"settings:{locale}:{model_name}:{key}"
                                 await pane_driver.apply_video_settings(page, req)
@@ -302,13 +306,18 @@ async def main(profile: str, locales: list[str], out: Path) -> int:
                                 }
                     locale_result["models"][model_name] = model_result
                 phase[0] = f"settings:{locale}:image"
-                await pane_driver.apply_image_settings(
-                    page, GenerateImageRequest(prompt="", model=ImageModel.NARWHAL)
-                )
-                await pane_driver._open_pane(page)  # noqa: SLF001
-                locale_result["image"] = await dom_quotes(page)
-                await pane_driver._close_pane(page, strict=False)  # noqa: SLF001
+                try:
+                    # The prompt is never typed; the request type only requires one.
+                    await pane_driver.apply_image_settings(
+                        page, GenerateImageRequest(prompt="probe", model=ImageModel.NARWHAL)
+                    )
+                    await pane_driver._open_pane(page)  # noqa: SLF001
+                    locale_result["image"] = await dom_quotes(page)
+                    await pane_driver._close_pane(page, strict=False)  # noqa: SLF001
+                except Exception as exc:  # noqa: BLE001 - record miss, do not infer
+                    locale_result["image"] = {"error": type(exc).__name__, "verdict": "unmeasured"}
                 report["locale_runs"].append(locale_result)
+                (out / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
                 if pending:
                     await asyncio.gather(*pending, return_exceptions=True)
                 (out / "summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
