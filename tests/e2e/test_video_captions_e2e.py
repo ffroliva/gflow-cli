@@ -55,6 +55,10 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Installe
         check=True,
         timeout=900,
     )
+    numpy = subprocess.run(
+        [str(python), "-c", "import numpy"], capture_output=True, check=False, timeout=30
+    )
+    assert numpy.returncode != 0, "the installed chain extra must not depend on NumPy"
     yield InstalledCli(python)
 
 
@@ -183,6 +187,7 @@ async def test_installed_cli_and_mcp_transcribe_with_configured_whisper_endpoint
     env = {
         **os.environ,
         "GFLOW_CLI_LLM_BASE_URL": endpoint,
+        "GFLOW_CLI_TRANSCRIBE_MODEL": os.environ.get("GFLOW_CLI_TRANSCRIBE_MODEL", "whisper-1"),
         "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out"),
     }
     result = subprocess.run(
@@ -201,6 +206,7 @@ async def test_installed_cli_and_mcp_transcribe_with_configured_whisper_endpoint
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", endpoint)
+    monkeypatch.setenv("GFLOW_CLI_TRANSCRIBE_MODEL", env["GFLOW_CLI_TRANSCRIBE_MODEL"])
     monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "mcp-out"))
     reset_settings()
     mcp_result = await gflow_video_transcribe(str(clip))
