@@ -9,6 +9,7 @@ from typing import Any
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli import json_output
@@ -69,7 +70,7 @@ def _emit(result: Any, *, as_json: bool, output_format: str) -> None:
         )
         for key, value in payload.items():
             if key != "segments":
-                table.add_row(key.replace("_", " ").title(), str(value))
+                table.add_row(key.replace("_", " ").title(), escape(str(value)))
         console.print(table)
 
 

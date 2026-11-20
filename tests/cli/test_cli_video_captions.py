@@ -35,3 +35,15 @@ def test_transcribe_reports_srt_path_for_id_output(tmp_path: Path) -> None:
 def test_video_caption_commands_are_credit_free() -> None:
     assert "transcribe" in video.commands
     assert "captions" in video.commands
+
+
+def test_video_captions_table_escapes_bracketed_output_paths(tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    source = tmp_path / "clip.mp4"
+    srt = tmp_path / "[/x].srt"
+    result = TranscribeResult(source, srt, None, 1.0, ())
+    with patch("gflow_cli.cli_video_captions.transcribe_video", return_value=result):
+        output = CliRunner().invoke(video, ["transcribe", str(source)])
+    assert output.exit_code == 0, output.exception
+    assert "[/x].srt" in output.output
