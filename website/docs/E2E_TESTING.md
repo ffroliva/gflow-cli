@@ -42,10 +42,11 @@ author forgets the `pytestmark` declaration.
 Tests in `tests/smoke/` carry `pytest.mark.smoke`.
 
 Installed-surface tests that use synthetic local data and never contact Flow may
-carry only `pytest.mark.e2e`; they have no Flow cost tier. For example,
-`tests/e2e/test_video_assemble_e2e.py` builds and installs the wheel, then runs
-the CLI and MCP stdio tool against generated media files. It needs no profile,
-browser or Flow credits.
+carry a cost sub-marker. Local-media tests must carry `pytest.mark.e2e_media`;
+select them with `pytest -m e2e_media` (`pytest -m e2e` alone does not select
+them). For example, `tests/e2e/test_video_assemble_e2e.py` builds and installs
+the wheel, then runs the CLI and MCP stdio tool against generated media files.
+It needs no profile, browser or Flow credits.
 
 ### Cost sub-markers (Layer 4)
 
