@@ -482,6 +482,7 @@ def assemble_videos(
     _numpy: Any = numpy
     _validate_assembly(clips, output, music, voiceover, clip_volume, music_volume, voiceover_volume)
     audio_spools: list[Path] = []
+    temp_output: Path | None = None
     try:
         layout = _inspect_videos(clips, _av)
         audio_spools = _make_audio(
@@ -494,9 +495,14 @@ def assemble_videos(
             layout.total_samples,
             _av,
         )
+        descriptor, temp_name = tempfile.mkstemp(
+            prefix=f".{output.stem}.", suffix=output.suffix, dir=output.parent
+        )
+        os.close(descriptor)
+        temp_output = Path(temp_name)
         _write_output(
             clips,
-            output,
+            temp_output,
             layout,
             audio_spools,
             clip_volume=clip_volume,
@@ -508,6 +514,7 @@ def assemble_videos(
             av=_av,
             numpy=_numpy,
         )
+        os.replace(temp_output, output)
         return AssemblyResult(
             output_file=output,
             duration_seconds=layout.total_frames / layout.frame_rate,
@@ -521,10 +528,11 @@ def assemble_videos(
             bytes=output.stat().st_size,
         )
     except VideoAssemblyError:
-        output.unlink(missing_ok=True)
         raise
     except (_av.error.FFmpegError, OSError, ValueError) as exc:
         raise VideoAssemblyError(detail=str(exc), route="video.assemble") from exc
     finally:
+        if temp_output is not None:
+            temp_output.unlink(missing_ok=True)
         for spool in audio_spools:
             spool.unlink(missing_ok=True)

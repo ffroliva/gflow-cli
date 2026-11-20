@@ -10,6 +10,7 @@ import pytest
 
 from gflow_cli.data.models import AssetKind
 from gflow_cli.errors import DataStoreError, VideoAssemblyError
+from gflow_cli.services import video_assembly
 from gflow_cli.services.video_assembly import assemble_videos, resolve_assembly_input
 
 
@@ -91,6 +92,7 @@ def test_assembles_more_than_one_second_without_timestamp_regression(tmp_path: P
     with av.open(str(output)) as container:
         assert len(list(container.decode(video=0))) == 96
 
+
 def test_rejects_output_alias_and_corrupt_input_without_partial_output(tmp_path: Path) -> None:
     clip = tmp_path / "clip.mp4"
     _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
@@ -104,6 +106,25 @@ def test_rejects_output_alias_and_corrupt_input_without_partial_output(tmp_path:
         assemble_videos([corrupt], output)
     assert not output.exists()
     assert clip.exists()
+
+
+def test_keyboard_interrupt_removes_partial_output_and_temp_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=2, audio=True)
+
+    def interrupt(*args: object, **kwargs: object) -> None:
+        Path(args[1]).write_bytes(b"partial")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(video_assembly, "_write_output", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        assemble_videos([clip], output)
+
+    assert not output.exists()
+    assert not list(tmp_path.glob(".joined.*.mp4"))
 
 
 def test_resolves_catalog_uuid_only_through_verified_video_path(
