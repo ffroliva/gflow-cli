@@ -79,3 +79,9 @@ def test_video_captions_adapter_imports_in_fresh_interpreter() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_mcp_catalog_lookup_leaves_profile_unscoped_by_default() -> None:
+    from gflow_cli.mcp.video_captions_tools import _profile
+
+    assert _profile("11111111-2222-3333-4444-555555555555", None) is None

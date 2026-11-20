@@ -14,8 +14,8 @@ from gflow_cli.mcp.server import server
 from gflow_cli.services.video_captions import caption_video, transcribe_video
 
 
-def _profile(file: str, profile: str) -> str | None | dict[str, Any]:
-    if not is_media_uuid(file):
+def _profile(file: str, profile: str | None) -> str | None | dict[str, Any]:
+    if not is_media_uuid(file) or profile is None:
         return None
     return common._resolve_and_validate_profile(profile)  # pyright: ignore[reportPrivateUsage]
 
@@ -76,7 +76,7 @@ async def gflow_video_transcribe(
     file: str,
     out_file: OutFileParam = None,
     language: str | None = None,
-    profile: str = common._DEFAULT_PROFILE,  # pyright: ignore[reportPrivateUsage]
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Transcribe FILE and return the SRT path and timed segments."""
     resolved_profile = _profile(file, profile)
@@ -105,7 +105,7 @@ async def gflow_video_captions(
     srt: str | None = None,
     language: str | None = None,
     out_file: OutFileParam = None,
-    profile: str = common._DEFAULT_PROFILE,  # pyright: ignore[reportPrivateUsage]
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Burn SRT captions into FILE, optionally transcribing first."""
     resolved_profile = _profile(file, profile)
