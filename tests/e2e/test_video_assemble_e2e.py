@@ -251,6 +251,10 @@ async def test_catalog_media_ids_assemble_in_cli_and_mcp(
     assert cli.returncode == 0, cli.stderr
     cli_result = json.loads(cli.stdout)
     assert cli_result["duration_seconds"] == pytest.approx(expected_duration, abs=0.2)
+    with av.open(str(cli_output)) as container:
+        assert float(container.duration or 0) / av.time_base == pytest.approx(
+            expected_duration, abs=0.2
+        )
 
     params = StdioServerParameters(
         command=str(installed_chain_gflow.gflow),
@@ -271,3 +275,7 @@ async def test_catalog_media_ids_assemble_in_cli_and_mcp(
             assert not result.is_error, result.content
             mcp_result = json.loads(result.content[0].text)
             assert mcp_result["duration_seconds"] == pytest.approx(expected_duration, abs=0.2)
+            with av.open(str(tmp_path / "catalog-mcp.mp4")) as container:
+                assert float(container.duration or 0) / av.time_base == pytest.approx(
+                    expected_duration, abs=0.2
+                )
