@@ -152,22 +152,8 @@ def _make_audio(
                 part.unlink(missing_ok=True)
         if music is not None:
             spools.append(_pcm_spool(music, samples=total_samples, av=av, audio_stream=True))
-        else:
-            descriptor, name = tempfile.mkstemp(suffix=".f32le")
-            os.close(descriptor)
-            silence = Path(name)
-            with silence.open("wb") as target:
-                target.truncate(total_samples * _CHANNELS * 4)
-            spools.append(silence)
         if voiceover is not None:
             spools.append(_pcm_spool(voiceover, samples=total_samples, av=av, audio_stream=True))
-        else:
-            descriptor, name = tempfile.mkstemp(suffix=".f32le")
-            os.close(descriptor)
-            silence = Path(name)
-            with silence.open("wb") as target:
-                target.truncate(total_samples * _CHANNELS * 4)
-            spools.append(silence)
         return spools
     except Exception:
         for spool in spools:
@@ -328,41 +314,53 @@ def _audio_graph(
     duck: bool,
     music: Path | None,
     voiceover: Path | None,
-) -> tuple[Any, tuple[Any, Any, Any], Any]:
-    """Build the gain, optional sidechain and mix filters for three synchronized tracks."""
+) -> tuple[Any, list[Any], Any]:
+    """Build the gain, optional sidechain and limited mix for available tracks."""
     graph = av.filter.Graph()
     clip_in = graph.add_abuffer(
         sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
     )
-    music_in = graph.add_abuffer(
-        sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
-    )
-    voice_in = graph.add_abuffer(
-        sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
-    )
-    inputs = (clip_in, music_in, voice_in)
+    inputs = [clip_in]
     clip_vol = graph.add("volume", str(clip_volume))
-    music_vol = graph.add("volume", str(music_volume))
-    voice_vol = graph.add("volume", str(voiceover_volume))
-    music_input: Any = music_vol
-    voice_input: Any = voice_vol
-    voice_pad = 0
-    if duck and voiceover is not None and music is not None:
-        split = graph.add("asplit")
-        compressor = graph.add("sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300")
-        voice_vol.link_to(split)
-        music_vol.link_to(compressor, 0, 0)
-        split.link_to(compressor, 0, 1)
-        music_input, voice_input, voice_pad = compressor, split, 1
-    mixer = graph.add("amix", "inputs=3:duration=first:dropout_transition=0:normalize=0")
-    sink = graph.add("abuffersink")
     clip_in.link_to(clip_vol)
-    music_in.link_to(music_vol)
-    voice_in.link_to(voice_vol)
-    clip_vol.link_to(mixer, 0, 0)
-    music_input.link_to(mixer, 0, 1)
-    voice_input.link_to(mixer, voice_pad, 2)
-    mixer.link_to(sink)
+    tracks = [(clip_vol, 0)]
+    if music is not None:
+        music_in = graph.add_abuffer(
+            sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
+        )
+        inputs.append(music_in)
+        music_vol = graph.add("volume", str(music_volume))
+        music_in.link_to(music_vol)
+        if duck and voiceover is not None:
+            voice_vol = graph.add("volume", str(voiceover_volume))
+            voice_in = graph.add_abuffer(
+                sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
+            )
+            inputs.append(voice_in)
+            voice_in.link_to(voice_vol)
+            split = graph.add("asplit")
+            compressor = graph.add("sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300")
+            voice_vol.link_to(split)
+            music_vol.link_to(compressor, 0, 0)
+            split.link_to(compressor, 0, 1)
+            tracks.extend([(compressor, 0), (split, 1)])
+        else:
+            tracks.append((music_vol, 0))
+    if voiceover is not None and not (duck and music is not None):
+        voice_in = graph.add_abuffer(
+            sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
+        )
+        inputs.append(voice_in)
+        voice_vol = graph.add("volume", str(voiceover_volume))
+        voice_in.link_to(voice_vol)
+        tracks.append((voice_vol, 0))
+    mixer = graph.add("amix", f"inputs={len(tracks)}:duration=first:dropout_transition=0:normalize=0")
+    for index, (track, output_pad) in enumerate(tracks):
+        track.link_to(mixer, output_pad, index)
+    limiter = graph.add("alimiter", "limit=1:level=disabled")
+    sink = graph.add("abuffersink")
+    mixer.link_to(limiter)
+    limiter.link_to(sink)
     graph.configure()
     return graph, inputs, sink
 
@@ -378,7 +376,7 @@ def _drain_audio(target: Any, stream: Any, sink: Any, av: Any) -> None:
 
 
 def _push_audio_chunk(
-    inputs: tuple[Any, Any, Any],
+    inputs: list[Any],
     files: list[Any],
     *,
     offset: int,
@@ -399,7 +397,7 @@ def _push_audio_chunk(
 def _encode_audio(
     target: Any,
     stream: Any,
-    inputs: tuple[Any, Any, Any],
+    inputs: list[Any],
     sink: Any,
     spools: list[Path],
     *,

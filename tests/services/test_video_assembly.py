@@ -229,6 +229,50 @@ def test_mixes_music_and_voiceover_with_ducking(tmp_path: Path) -> None:
     assert max(float(np.abs(frame.to_ndarray()).max()) for frame in decoded) > 0.1
 
 
+def _band_rms(path: Path, frequency: int, start: float = 0, end: float = 4) -> float:
+    with av.open(str(path)) as container:
+        audio = np.concatenate([frame.to_ndarray().astype(np.float32) for frame in container.decode(audio=0)], axis=1)
+    signal = audio.mean(axis=0)
+    segment = signal[int(start * 44100):int(end * 44100)]
+    spectrum = np.fft.rfft(segment)
+    bins = np.fft.rfftfreq(len(segment), 1 / 44100)
+    selected = np.abs(spectrum[np.argmin(np.abs(bins - frequency))])
+    return float(selected * 2 / len(segment) / np.sqrt(2))
+
+
+def test_clip_only_preserves_gain_and_limiter_caps_peak(
+    assembly_media: dict[str, Path], tmp_path: Path
+) -> None:
+    output = tmp_path / "clip-only.mp4"
+    assemble_videos([assembly_media["clip"]], output, clip_volume=1)
+    source_rms = _band_rms(assembly_media["clip"], 440)
+    output_rms = _band_rms(output, 440)
+    with av.open(str(output)) as container:
+        peak = max(float(np.abs(frame.to_ndarray()).max()) for frame in container.decode(audio=0))
+    assert 20 * np.log10(output_rms / source_rms) == pytest.approx(0, abs=1)
+    assert peak <= 1.0
+
+
+def test_music_gain_without_voiceover(assembly_media: dict[str, Path], tmp_path: Path) -> None:
+    output = tmp_path / "music.mp4"
+    assemble_videos([assembly_media["clip"]], output, music=assembly_media["music"], music_volume=0.3)
+    measured = _band_rms(output, 220) / _band_rms(assembly_media["music"], 220)
+    assert 20 * np.log10(measured / 0.3) == pytest.approx(0, abs=1.5)
+
+
+def test_ducking_reduces_music_during_voiceover_bursts(
+    assembly_media: dict[str, Path], tmp_path: Path
+) -> None:
+    output = tmp_path / "ducked.mp4"
+    assemble_videos(
+        [assembly_media["clip"]], output, music=assembly_media["music"],
+        voiceover=assembly_media["voice"], duck=True,
+    )
+    burst = _band_rms(output, 220, 0.1, 0.4)
+    gap = _band_rms(output, 220, 0.6, 0.9)
+    assert 20 * np.log10(burst / gap) <= -6
+
+
 def test_assembly_does_not_import_numpy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     clip = tmp_path / "clip.mp4"
     output = tmp_path / "joined.mp4"
@@ -250,3 +294,5 @@ def test_assembly_does_not_import_numpy(tmp_path: Path, monkeypatch: pytest.Monk
 def test_rejects_missing_non_uuid_path() -> None:
     with pytest.raises(VideoAssemblyError, match="Input file does not exist"):
         resolve_assembly_input("missing/../missing.mp4")
+
+
