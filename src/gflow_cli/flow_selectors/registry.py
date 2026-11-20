@@ -76,7 +76,11 @@ SELECTORS: tuple[Selector, ...] = (
         candidates=(migrated_composer.AGENT_MODE_CHIP_ANY,),
         mode=UiMode.CLASSIC,
         expect_unique=True,
-        note="#749/#799: present on the classic composer, absent on the agent-only one.",
+        note=(
+            "#749/#799/#1384: the Agent chip (2026-11-19) or switch (2026-11-20). Present on "
+            "the classic composer; absent while the agent panel is open, and on the "
+            "agent-only composer."
+        ),
     ),
     Selector(
         key="migrated.project_title",

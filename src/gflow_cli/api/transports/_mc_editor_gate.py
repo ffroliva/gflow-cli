@@ -27,6 +27,9 @@ from gflow_cli.api.transports._mc_common import (
     AGENT_ONLY_RELOAD_WAIT_S,
     AGENT_ONLY_RELOADS,
     AGENT_ONLY_SETTLE_S,
+    AGENT_PANEL,
+    AGENT_PANEL_CLOSE,
+    AGENT_PANEL_SETTLE_S,
     AGENT_RECOVERY_S,
     COOKIE_BAR,
     COOKIE_BAR_ACCEPT,
@@ -38,7 +41,6 @@ from gflow_cli.api.transports._mc_common import (
     READY_ANCHOR,
     AgentModeExit,
     ComposerKind,
-    _ligature,
     _recovery_detail,
     is_at,
 )
@@ -51,6 +53,14 @@ if TYPE_CHECKING:
 
 
 log = structlog.get_logger(__name__)
+
+
+async def _visible_now(locator: Locator) -> bool:
+    """One visibility read that never raises: an unreadable page is not a visible one."""
+    try:
+        return await locator.is_visible()
+    except Exception:  # noqa: BLE001 - the caller treats "unknown" as "not visible"
+        return False
 
 
 class EditorGateMixin(MediaMixin):
@@ -142,6 +152,12 @@ class EditorGateMixin(MediaMixin):
                     page, project_id, trigger, timeout_s=timeout_s, early_s=early_s, error=e
                 )
             if state == "blocked":
+                # Another page on this profile may have turned agent mode off between our
+                # read and our click: the toggle is gone, and the trigger is back (#1374).
+                if await _visible_now(trigger):
+                    log.info("migrated.agent_mode_left_elsewhere", issue_ref="#1374")
+                    log.info("migrated.editor_ready", url=safe_page_url(page.url))
+                    return "classic"
                 # Nothing was toggled, so the trigger cannot have changed — spending
                 # AGENT_RECOVERY_S here buys a verdict already in hand. The click's own
                 # exception IS the message: a modal eating the click is a different bug
@@ -149,11 +165,11 @@ class EditorGateMixin(MediaMixin):
                 raise UiSelectorDriftError(
                     detail=(
                         f"migrated host: the account is in Flow's agent mode, which hides "
-                        f"the settings trigger, and the chip ({AGENT_MODE_CHIP}) could not "
-                        f"be clicked on {safe_page_url(page.url)} after {timeout_s:.0f}s "
-                        f"(host=migrated) — "
-                        f"something is covering it; turn the Agent chip off in a browser and "
-                        f"re-run. Readiness gate: {e}. Chip click: {click_error}"
+                        f"the settings trigger, and the agent panel close or the Agent "
+                        f"switch ({AGENT_MODE_CHIP}) could not be clicked on "
+                        f"{safe_page_url(page.url)} after {timeout_s:.0f}s (host=migrated) — "
+                        f"something is covering it; close the agent panel, switch Agent off "
+                        f"in a browser and re-run. Readiness gate: {e}. Click: {click_error}"
                     ),
                 ) from click_error
             try:
@@ -289,30 +305,60 @@ class EditorGateMixin(MediaMixin):
         ``"absent"`` means the mode was not the problem. ``"blocked"`` carries the click's
         own exception, so the caller can chain it instead of truncating it into a warning
         nobody reads.
+
+        The agent panel comes first (#1374, #1384): while it is open the toggle is not in
+        the page at all, on both of Flow's builds, so looking for the toggle first read a
+        recoverable page as #799's agent-only composer, or as drift. The panel is only
+        open in agent mode, so closing it cannot push a healthy composer INTO agent mode;
+        and this runs only after the readiness gate has failed. A close that does not
+        land is ``"blocked"``. A close that lands but brings no toggle back leaves the
+        verdict to the checks that follow, unchanged.
         """
+        closed, close_error = await cls._close_agent_panel(page)
+        if close_error is not None:
+            return "blocked", close_error
+        if closed:
+            try:
+                await page.locator(AGENT_MODE_CHIP).first.wait_for(
+                    state="visible", timeout=int(AGENT_PANEL_SETTLE_S * 1000)
+                )
+            except Exception as e:  # noqa: BLE001 - the read below decides, not the wait
+                log.info("migrated.agent_toggle_not_back", error=str(e)[:200])
+
         if not await cls._agent_chip_pressed(page):
             return "absent", None
-
-        # Some accounts leave the Agent panel expanded over the chip. Close only the
-        # structural panel close button; the pressed-state chip has already been
-        # confirmed above, so this cannot click a healthy composer into agent mode.
-        panel_close = (
-            page.locator("flow-agent-panel button").filter(has=_ligature(page, "close")).first
-        )
-        try:
-            if await panel_close.count() and await panel_close.is_visible():
-                await panel_close.click(timeout=5000)
-                await asyncio.sleep(0.2)
-        except Exception as e:  # noqa: BLE001 - best-effort panel cleanup
-            log.warning("migrated.agent_panel_close_failed", error=str(e)[:200])
 
         try:
             await page.locator(AGENT_MODE_CHIP).first.click(timeout=5000)
         except Exception as e:  # noqa: BLE001 - the caller decides what it means
             log.warning("migrated.agent_mode_exit_failed", error=str(e)[:200])
             return "blocked", e
-        log.info("migrated.agent_mode_exited", issue_ref="#749")
+        # A warning, not info: gflow just changed a setting Flow remembers for the account.
+        log.warning(
+            "migrated.agent_mode_exited",
+            issue_ref="#749",
+            note="Flow remembers this for the account: agent mode stays off until switched on",
+        )
         return "clicked", None
+
+    @staticmethod
+    async def _close_agent_panel(page: Page) -> tuple[bool, Exception | None]:
+        """Close Flow's agent panel if it is open: ``(closed, error)``.
+
+        One click per call, and only when the panel is visible: once closed it stays
+        closed, so a re-entry of the gate does not click again.
+        """
+        panel = page.locator(AGENT_PANEL).first
+        try:
+            if not await panel.is_visible():
+                return False, None
+            await page.locator(AGENT_PANEL_CLOSE).first.click(timeout=5000)
+            await panel.wait_for(state="hidden", timeout=int(AGENT_PANEL_SETTLE_S * 1000))
+        except Exception as e:  # noqa: BLE001 - the caller reports it as drift
+            log.warning("migrated.agent_panel_close_failed", error=str(e)[:200])
+            return False, e
+        log.info("migrated.agent_panel_closed", issue_ref="#1374")
+        return True, None
 
     @staticmethod
     async def _dismiss_dialog(page: Page) -> None:
@@ -393,8 +439,8 @@ class EditorGateMixin(MediaMixin):
         # pointer-events nor the hit-test — so nothing else below would notice it.
         if await self._agent_chip_pressed(page):
             seen.append(
-                "the account is in Flow's agent mode, which hides it — turn the Agent "
-                "chip off in a browser and re-run"
+                "the account is in Flow's agent mode, which hides it — close the agent "
+                "panel and switch Agent off in a browser, then re-run"
             )
         # One chain, because these are competing readings of the SAME question — can a
         # pointer reach it — ordered most specific first. The JS only hit-tests

@@ -378,8 +378,6 @@ class FakeLocator:
         elif self.kind == "cookie_accept":
             dom.cookie_bar_visible = False
             dom.events.append("cookie_bar_accepted")
-        elif self.kind == "agent_close":
-            dom.agent_panel_expanded = False
         elif self.kind == "agent_panel_close":
             dom.agent_panel_close_clicks += 1
             if dom.agent_panel_close_raises:
@@ -692,9 +690,6 @@ class FakePage:
         if css == migrated_composer.AGENT_ONLY_ANCHOR:
             # The agent composer's own settings button: rendered on the agent panel.
             return FakeLocator(self, "agent_settings", ["tune"] if dom.agent_mode else [])
-        if css == "flow-agent-panel button":
-            buttons = [Radio("close", "Close")] if dom.agent_panel_expanded else []
-            return FakeLocator(self, "agent_close", buttons)
         if css == TOOLBAR_ADD_XPATH:
             return FakeLocator(self, "toolbar_add", ["add"] if dom.add_button_present else [])
         if css == ".cdk-overlay-pane [role='menuitem']:has(mat-icon:text-is('upload'))":
@@ -3345,12 +3340,12 @@ async def test_a_panel_that_will_not_close_is_drift_after_one_close() -> None:
 async def test_an_unreadable_toggle_after_the_panel_close_is_drift(
     install_log_capture,
 ) -> None:
-    """Guard (also drift before the fix): unknown is not absent. The first probe answers,
-    then the page goes dark."""
+    """Guard (also drift before the fix): unknown is not absent. The panel closes, and then
+    no toggle probe answers at all."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     page = _panel_open()
-    page.dom.agent_chip_probe_raises_from = 1
+    page.dom.agent_chip_probe_raises_from = 0
     with pytest.raises(UiSelectorDriftError) as exc:
         await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
     assert "agent-only" not in str(exc.value).casefold()
@@ -3368,6 +3363,34 @@ async def test_a_toggle_another_page_already_turned_off_is_classic_not_blocked()
     page.dom.agent_mode_left_elsewhere = True
     assert await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0) == "classic"
     assert page.dom.agent_chip_clicks == 1
+
+
+async def test_leaving_agent_mode_is_a_warning_that_flow_remembers_it(install_log_capture) -> None:
+    """gflow changes a setting Flow keeps for the account; the user has to be able to see
+    that without turning on debug logs (#1374)."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _panel_open()
+    await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0)
+    exited = [e for e in install_log_capture.entries if e["event"] == "migrated.agent_mode_exited"]
+    assert exited, "no agent_mode_exited event"
+    assert exited[0]["log_level"] == "warning"
+    assert "remembers" in exited[0]["note"]
+
+
+async def test_a_blocked_recovery_tells_the_user_what_to_do_on_either_build() -> None:
+    """The old message named a chip, which the 2026-11-20 build no longer has, and could not
+    be followed while the panel was open."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _panel_open()
+    page.dom.agent_panel_close_raises = True
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    message = str(exc.value)
+    assert "close the agent panel" in message
+    assert "switch Agent off" in message
+    assert "Agent chip" not in message
 
 
 async def test_ensure_editor_reports_classic_on_a_healthy_composer() -> None:

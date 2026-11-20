@@ -187,8 +187,8 @@ class SettingsPaneMixin(EditorGateMixin):
             await trigger.wait_for(state="visible", timeout=5000)
         except Exception as e:
             why = (
-                " — the account is in Flow's agent mode, which hides it; turn the Agent "
-                "chip off in a browser and re-run"
+                " — the account is in Flow's agent mode, which hides it; close the agent "
+                "panel and switch Agent off in a browser, then re-run"
                 if await self._agent_chip_pressed(page)
                 else ""
             )

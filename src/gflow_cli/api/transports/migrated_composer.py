@@ -89,6 +89,12 @@ from gflow_cli.api.transports._mc_common import (
     AGENT_ONLY_RELOADS as AGENT_ONLY_RELOADS,
 )
 from gflow_cli.api.transports._mc_common import (
+    AGENT_PANEL as AGENT_PANEL,
+)
+from gflow_cli.api.transports._mc_common import (
+    AGENT_PANEL_CLOSE as AGENT_PANEL_CLOSE,
+)
+from gflow_cli.api.transports._mc_common import (
     ANCHOR_TIMEOUT_S as ANCHOR_TIMEOUT_S,
 )
 from gflow_cli.api.transports._mc_common import (

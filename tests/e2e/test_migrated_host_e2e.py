@@ -232,9 +232,14 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
         composer = MigratedComposer()
         await composer.ensure_editor(page, project, timeout_s=45.0)
 
-        # Into agent mode, through the chip a user would click. `aria-pressed='false'`
-        # is the same control before it is pressed.
-        chip = page.locator("button.agent-mode-chip[aria-pressed='false']").first
+        # Into agent mode, through the toggle a user would click. `aria-pressed='false'`
+        # is the same control before it is pressed. Both builds: the chip (2026-11-19) and
+        # the switch (2026-11-20, #1384); literals, so the restore below does not depend
+        # on the constants under test.
+        chip = page.locator(
+            "button.agent-mode-chip[aria-pressed='false'], "
+            "flow-agent-mode-switch button.switch[aria-pressed='false']"
+        ).first
         if not await chip.count():
             pytest.skip("this account's composer renders no agent-mode chip")
         await chip.click(timeout=10_000)
@@ -270,7 +275,10 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
             # covering the chip, this click times out too, and an exception here would
             # replace the real assertion failure with a cleanup one.
             try:
-                pressed = page.locator("button.agent-mode-chip[aria-pressed='true']").first
+                pressed = page.locator(
+                    "button.agent-mode-chip[aria-pressed='true'], "
+                    "flow-agent-mode-switch button.switch[aria-pressed='true']"
+                ).first
                 if await pressed.count():
                     await pressed.click(timeout=10_000)
             except Exception as cleanup_error:  # noqa: BLE001 - never mask the verdict
