@@ -68,6 +68,11 @@ def test_parse_and_format_srt_roundtrip() -> None:
     assert parse_srt(format_srt(entries)) == entries
 
 
+def test_usage_documents_caption_commands_once() -> None:
+    usage = Path("docs/USAGE.md").read_text(encoding="utf-8")
+    assert usage.count("## `gflow video transcribe` and `gflow video captions`") == 1
+
+
 def test_parse_srt_skips_empty_cue_without_merging_next() -> None:
     content = "1\n00:00:00,000 --> 00:00:01,000\n\n2\n00:00:01,000 --> 00:00:02,000\nkept"
     assert [entry.text for entry in parse_srt(content)] == ["kept"]
