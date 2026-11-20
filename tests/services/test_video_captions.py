@@ -143,6 +143,18 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
     assert rendered is not None and rendered != tofu
 
 
+def test_caption_background_is_translucent_on_rgb_frame() -> None:
+    av = pytest.importorskip("av")
+    from PIL import Image, ImageDraw, ImageFont
+    from gflow_cli.services.video_captions import _draw_caption
+
+    frame = av.VideoFrame.from_image(Image.new("RGB", (320, 180), (160, 160, 160)))
+    frame.time_base = Fraction(1, 25)
+    result = _draw_caption(av, frame, "X", ImageDraw, ImageFont)
+    pixel = result.to_image().getpixel((160, 130))
+    assert pixel[0] not in (0, 160)
+
+
 @pytest.mark.parametrize("size", [(1280, 720), (720, 1280)])
 def test_long_caption_wraps_within_frame(size: tuple[int, int]) -> None:
     from PIL import ImageDraw, ImageFont

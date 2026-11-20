@@ -471,7 +471,7 @@ def _render_video(
 
 def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module: Any) -> Any:
     original_pts, original_time_base = frame.pts, frame.time_base
-    image = frame.to_image().convert("RGBA")
+    image = frame.to_image()
     draw = draw_module.Draw(image, "RGBA")
     font = _load_caption_font(frame.height, font_module)
     lines = _wrap_caption(text, font, draw, frame.width * 0.9)
@@ -487,7 +487,7 @@ def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module:
     draw.multiline_text(
         (x, y), "\n".join(lines), font=font, fill=(255, 255, 255, 255), align="center", spacing=2
     )
-    result = av.VideoFrame.from_image(image.convert("RGB"))
+    result = av.VideoFrame.from_image(image)
     result.pts, result.time_base = original_pts, original_time_base
     return result
 
