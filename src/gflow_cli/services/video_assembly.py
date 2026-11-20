@@ -88,41 +88,40 @@ def resolve_assembly_input(value: str, *, profile: str | None = None) -> Path:
     )
 
 
-def _pcm_spool(
-    path: Path, *, samples: int, av: Any, audio_stream: bool = True, allow_silence: bool = False
-) -> Path:
-    """Decode one audio stream to bounded, normalized float PCM on disk."""
+def _write_audio_pcm(
+    path: Path, target: Any, *, samples: int, av: Any, allow_silence: bool
+) -> None:
+    """Decode one stream to normalized float PCM, padding or trimming to its timeline."""
+    written = 0
+    start = target.tell()
+    with av.open(str(path)) as source:
+        if not source.streams.audio:
+            if not allow_silence:
+                raise VideoAssemblyError(
+                    detail=f"Audio input has no audio stream: {path}", route="video.assemble"
+                )
+        else:
+            resampler = av.AudioResampler(format="flt", layout="stereo", rate=_SAMPLE_RATE)
+            for decoded in source.decode(source.streams.audio[0]):
+                for frame in resampler.resample(decoded):
+                    count = min(frame.samples, samples - written)
+                    target.write(bytes(frame.planes[0])[: count * _CHANNELS * 4])
+                    written += count
+                    if written >= samples:
+                        break
+                if written >= samples:
+                    break
+    target.truncate(start + samples * _CHANNELS * 4)
+
+
+def _pcm_spool(path: Path, *, samples: int, av: Any) -> Path:
+    """Decode one required audio track to a bounded float PCM spool."""
     descriptor, name = tempfile.mkstemp(suffix=".f32le")
     os.close(descriptor)
     spool = Path(name)
     try:
         with spool.open("wb") as target:
-            if not audio_stream:
-                target.truncate(samples * _CHANNELS * 4)
-            else:
-                resampler = av.AudioResampler(format="flt", layout="stereo", rate=_SAMPLE_RATE)
-                written = 0
-                with av.open(str(path)) as source:
-                    if not source.streams.audio:
-                        if not allow_silence:
-                            raise VideoAssemblyError(
-                                detail=f"Audio input has no audio stream: {path}",
-                                route="video.assemble",
-                            )
-                        target.truncate(samples * _CHANNELS * 4)
-                        return spool
-                    stream = source.streams.audio[0]
-                    for decoded in source.decode(stream):
-                        for frame in resampler.resample(decoded):
-                            count = min(frame.samples, samples - written)
-                            target.write(bytes(frame.planes[0])[: count * _CHANNELS * 4])
-                            written += count
-                            if written >= samples:
-                                break
-                        if written >= samples:
-                            break
-                if written < samples:
-                    target.truncate(samples * _CHANNELS * 4)
+            _write_audio_pcm(path, target, samples=samples, av=av, allow_silence=False)
         return spool
     except Exception:
         spool.unlink(missing_ok=True)
@@ -144,16 +143,11 @@ def _make_audio(
     try:
         with clip_spool.open("wb") as target:
             for clip, samples in clips:
-                part = _pcm_spool(
-                    clip, samples=samples, av=av, audio_stream=True, allow_silence=True
-                )
-                with part.open("rb") as audio:
-                    target.write(audio.read())
-                part.unlink(missing_ok=True)
+                _write_audio_pcm(clip, target, samples=samples, av=av, allow_silence=True)
         if music is not None:
-            spools.append(_pcm_spool(music, samples=total_samples, av=av, audio_stream=True))
+            spools.append(_pcm_spool(music, samples=total_samples, av=av))
         if voiceover is not None:
-            spools.append(_pcm_spool(voiceover, samples=total_samples, av=av, audio_stream=True))
+            spools.append(_pcm_spool(voiceover, samples=total_samples, av=av))
         return spools
     except Exception:
         for spool in spools:
@@ -339,7 +333,9 @@ def _audio_graph(
             inputs.append(voice_in)
             voice_in.link_to(voice_vol)
             split = graph.add("asplit")
-            compressor = graph.add("sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300")
+            compressor = graph.add(
+                "sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300"
+            )
             voice_vol.link_to(split)
             music_vol.link_to(compressor, 0, 0)
             split.link_to(compressor, 0, 1)
@@ -354,7 +350,9 @@ def _audio_graph(
         voice_vol = graph.add("volume", str(voiceover_volume))
         voice_in.link_to(voice_vol)
         tracks.append((voice_vol, 0))
-    mixer = graph.add("amix", f"inputs={len(tracks)}:duration=first:dropout_transition=0:normalize=0")
+    mixer = graph.add(
+        "amix", f"inputs={len(tracks)}:duration=first:dropout_transition=0:normalize=0"
+    )
     for index, (track, output_pad) in enumerate(tracks):
         track.link_to(mixer, output_pad, index)
     limiter = graph.add("alimiter", "limit=1:level=disabled")
