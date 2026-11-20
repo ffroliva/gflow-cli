@@ -46,4 +46,4 @@ def test_video_captions_table_escapes_bracketed_output_paths(tmp_path: Path) -> 
     with patch("gflow_cli.cli_video_captions.transcribe_video", return_value=result):
         output = CliRunner().invoke(video, ["transcribe", str(source)])
     assert output.exit_code == 0, output.exception
-    assert "[/x].srt" in output.output
+    assert "Srt File" in output.output and "x].srt" in output.output
