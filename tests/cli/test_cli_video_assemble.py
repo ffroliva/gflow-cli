@@ -6,9 +6,8 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli import cli_video
-from gflow_cli.services.video_assembly import AssemblyResult
-
 from gflow_cli.cli import main
+from gflow_cli.services.video_assembly import AssemblyResult
 
 
 def test_video_assemble_help_documents_normalization_and_options() -> None:

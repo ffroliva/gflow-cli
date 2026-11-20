@@ -106,6 +106,26 @@ def test_refuses_mismatched_aspect_ratio_before_writing_output(tmp_path: Path) -
     assert not output.exists()
 
 
+def test_rounds_odd_output_dimensions_down_to_even(tmp_path: Path) -> None:
+    clip = tmp_path / "odd.mp4"
+    output = tmp_path / "even.mp4"
+    with av.open(str(clip), "w", format="mp4") as container:
+        stream = container.add_stream("libx264", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 65, 49, "yuv444p"
+        for index in range(2):
+            frame = av.VideoFrame(65, 49, "yuv444p")
+            frame.pts = index
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+    result = assemble_videos([clip], output)
+
+    assert result.width == 64
+    assert result.height == 48
+
+
 def test_rejects_output_alias_and_corrupt_input_without_partial_output(tmp_path: Path) -> None:
     clip = tmp_path / "clip.mp4"
     _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
