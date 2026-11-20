@@ -66,7 +66,10 @@ stale. Documentation-only changes in the same range (#1376) touch no Flow surfac
 
 ## Post-tag evidence
 
-_Filled in after the tag is pushed._
+- **Signed tag** `v0.103.1` on `a0c97c1e` (SSH signature present).
+- **`Release` workflow** run 44809926268: `build-and-publish` success, `mcp-registry / publish` success.
+- **PyPI:** `gflow-cli 0.103.1` is the latest version, with `gflow_cli-0.103.1-py3-none-any.whl` (20:17:27Z) and `gflow_cli-0.103.1.tar.gz` (20:17:30Z).
+- **GitHub Release:** https://github.com/ffroliva/gflow-cli/releases/tag/v0.103.1, not a prerelease.
 
 ### What these runs do not prove
 
