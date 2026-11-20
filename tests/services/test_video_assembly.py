@@ -82,6 +82,20 @@ def test_assembles_varied_clips_and_missing_audio_as_silence(tmp_path: Path) -> 
     assert result.duration_seconds == pytest.approx(2, abs=0.2)
 
 
+def test_realistic_clips_preserve_duration_frames_and_streams(
+    tmp_path: Path, assembly_media: dict[str, Path]
+) -> None:
+    clips = [assembly_media["clip"], assembly_media["clip"]]
+    output = tmp_path / "realistic.mp4"
+
+    result = assemble_videos(clips, output)
+
+    with av.open(str(output)) as container:
+        assert len(container.streams.video) == len(container.streams.audio) == 1
+        assert len(list(container.decode(video=0))) == 192
+    assert result.duration_seconds == pytest.approx(8, abs=0.1)
+
+
 def test_assembles_more_than_one_second_without_timestamp_regression(tmp_path: Path) -> None:
     clip = tmp_path / "long.mp4"
     output = tmp_path / "long-joined.mp4"

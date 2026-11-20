@@ -90,10 +90,12 @@ async def test_installed_cli_and_mcp_assemble_local_media(
     _, base_env = clean_home_data
     clip_a, clip_b = tmp_path / "a.mp4", tmp_path / "b.mp4"
     music, voice = tmp_path / "music.m4a", tmp_path / "voice.m4a"
-    _clip(clip_a, size=(64, 48))
-    _clip(clip_b, size=(80, 60))
-    _audio(music, frequency=220)
-    _audio(voice, frequency=1000)
+    realistic = request.getfixturevalue("assembly_media")
+    assert isinstance(realistic, dict)
+    clip_a.write_bytes(realistic["clip"].read_bytes())
+    clip_b.write_bytes(realistic["clip"].read_bytes())
+    music.write_bytes(realistic["music"].read_bytes())
+    voice.write_bytes(realistic["voice"].read_bytes())
 
     cli_output = tmp_path / "cli.mp4"
     cli = subprocess.run(
