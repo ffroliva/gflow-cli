@@ -231,6 +231,12 @@ def transcribe_video(
         raise ConfigurationError(
             detail="SRT output must not overwrite the input video.", charged="no"
         )
+    if destination.exists():
+        raise ConfigurationError(
+            detail=f"SRT output already exists: {destination.name}.",
+            charged="no",
+            remediation_hint="Pass --srt to video captions to reuse it, or remove the existing file.",
+        )
     audio, duration = extract_wav_bytes(source)
     segments = _request_segments(base_url, settings, audio, language)
     _atomic_write(destination, format_srt(segments).encode("utf-8"))
@@ -320,6 +326,22 @@ def caption_video(
     settings = get_settings()
     refuse_cloud_storage_for_local_file(settings.storage_uri, "Video caption burn-in")
     source = resolve_video_source(file_or_id, profile=profile, route="video.captions")
+    destination = (
+        (out_file or source.with_name(f"{source.stem}-captions.mp4")).expanduser().resolve()
+    )
+    if destination in {
+        source.resolve(),
+        (srt_path or srt_out_file or Path()).expanduser().resolve(),
+    }:
+        raise ConfigurationError(
+            detail="Caption output must not overwrite an input file.", charged="no"
+        )
+    if destination.exists():
+        raise ConfigurationError(
+            detail=f"Caption output already exists: {destination.name}.",
+            charged="no",
+            remediation_hint="Choose another --out path or remove the existing file.",
+        )
     if srt_path is None:
         transcribed = transcribe_video(
             file_or_id, out_file=srt_out_file, language=language, profile=profile
@@ -335,9 +357,6 @@ def caption_video(
             raise ConfigurationError(
                 detail=f"Could not read SubRip file {caption_path.name!r}.", charged="no"
             ) from exc
-    destination = (
-        (out_file or source.with_name(f"{source.stem}-captions.mp4")).expanduser().resolve()
-    )
     if destination in {source.resolve(), caption_path.resolve()}:
         raise ConfigurationError(
             detail="Caption output must not overwrite an input file.", charged="no"

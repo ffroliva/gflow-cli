@@ -92,6 +92,26 @@ def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Pat
         transcribe_video(str(media_files[0]))
 
 
+def test_transcribe_refuses_existing_srt_before_network(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    config.reset_settings()
+    existing = media_files[0].with_suffix(".srt")
+    existing.write_text("keep me", encoding="utf-8")
+    monkeypatch.setattr(service, "_request_segments", lambda *_: pytest.fail("network called"))
+    try:
+        with pytest.raises(ConfigurationError, match="already exists") as caught:
+            transcribe_video(str(media_files[0]))
+    finally:
+        config.reset_settings()
+    assert caught.value.charged == "no"
+    assert "--srt" in caught.value.remediation_hint
+    assert existing.read_text(encoding="utf-8") == "keep me"
+
+
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
     with pytest.raises(ConfigurationError, match="audio"):
         transcribe_video(str(media_files[1]))
