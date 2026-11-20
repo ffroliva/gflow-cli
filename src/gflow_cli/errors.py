@@ -625,14 +625,6 @@ class ConfigurationError(GFlowError):
     )
 
 
-class VideoProcessingError(ConfigurationError):
-    """Raised when local video decoding or caption rendering fails."""
-
-    problem_type = "https://gflow-cli.dev/errors/video-processing"
-    title = "Video processing failed"
-    _default_remediation = "Check that the local video is readable and its codecs are supported."
-
-
 class ProfileAccessError(ConfigurationError):
     """Raised when Chrome cannot write its persistent profile directory."""
 
@@ -1617,6 +1609,13 @@ class VideoAssemblyError(GFlowError):
     _default_remediation = (
         "Check that the local media files are readable and the output path is writable."
     )
+class VideoProcessingError(FrameExtractionError):
+    """Raised when local video decoding or caption rendering fails."""
+
+    problem_type = "https://gflow-cli.dev/errors/video-processing"
+    title = "Video processing failed"
+    charged = "no"
+    _default_remediation = "Check that the local video is readable and its codecs are supported."
 
 
 class ChainPartialError(GFlowError):

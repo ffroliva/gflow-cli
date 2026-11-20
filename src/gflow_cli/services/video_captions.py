@@ -242,8 +242,8 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
         return buffer.getvalue(), duration
     except ConfigurationError:
         raise
-    except Exception as exc:
-        raise FrameExtractionError(
+    except (av.error.FFmpegError, OSError, ValueError) as exc:
+        raise VideoProcessingError(
             detail="Could not decode the video's audio track.", charged="no"
         ) from exc
 
@@ -285,7 +285,9 @@ def transcribe_video(
         raise ConfigurationError(
             detail=f"SRT output already exists: {destination.name}.",
             charged="no",
-            remediation_hint="Pass --srt to video captions to reuse it, or remove the existing file.",
+            remediation_hint=(
+                "Pass --srt to video captions to reuse it, or remove the existing file."
+            ),
         )
     audio, duration = extract_wav_bytes(source)
     segments = _request_segments(base_url, settings, audio, language)
@@ -484,6 +486,7 @@ def _render_video(
                 else output.add_stream(audio_stream.codec_context.name, template=audio_stream)
             )
         duration = float(input_container.duration or 0) / av.time_base
+        overlays: dict[str, tuple[Any, int]] = {}
         for frame in input_container.decode(video):
             frames += 1
             seconds = (
@@ -494,7 +497,11 @@ def _render_video(
             text = next((e.text for e in entries if e.start_s <= seconds <= e.end_s), None)
             if text:
                 burned += 1
-                frame = _draw_caption(av, frame, text, draw_module, font_module)
+                if text not in overlays:
+                    overlays[text] = _caption_overlay(
+                        frame.width, frame.height, text, draw_module, font_module
+                    )
+                frame = _blend_caption(av, frame, *overlays[text])
             for packet in encoded.encode(frame):
                 output.mux(packet)
         for packet in encoded.encode():
@@ -510,22 +517,53 @@ def _render_video(
 
 def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module: Any) -> Any:
     original_pts, original_time_base = frame.pts, frame.time_base
-    image = frame.to_image()
-    draw = draw_module.Draw(image, "RGBA")
-    font = _load_caption_font(frame.height, font_module)
-    lines = _wrap_caption(text, font, draw, frame.width * 0.9)
+    return _blend_caption(
+        av,
+        frame,
+        *_caption_overlay(frame.width, frame.height, text, draw_module, font_module),
+        original_pts=original_pts,
+        original_time_base=original_time_base,
+    )
+
+
+def _caption_overlay(
+    width: int, height: int, text: str, draw_module: Any, font_module: Any
+) -> tuple[Any, int]:
+    font = _load_caption_font(height, font_module)
+    band_height = min(height, max(round(height * 0.25), round(font.size * 4.5) + 40))
+    from PIL import Image
+
+    overlay = Image.new("RGBA", (width, band_height), (0, 0, 0, 0))
+    draw = draw_module.Draw(overlay, "RGBA")
+    lines = _wrap_caption(text, font, draw, width * 0.9)
     if len(lines) > 3:
-        font = _load_caption_font(max(12, round(frame.height * 0.04)), font_module)
-        lines = _wrap_caption(text, font, draw, frame.width * 0.9)
+        font = _load_caption_font(max(12, round(height * 0.04)), font_module)
+        lines = _wrap_caption(text, font, draw, width * 0.9)
     box = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, align="center", spacing=2)
-    x = max(8, (frame.width - (box[2] - box[0])) // 2)
-    y = max(8, frame.height - (box[3] - box[1]) - 28)
+    x = max(8, (width - (box[2] - box[0])) // 2)
+    y = max(8, band_height - (box[3] - box[1]) - 28)
     draw.rounded_rectangle(
         (x - 10, y - 6, x + box[2] - box[0] + 10, y + box[3] - box[1] + 6), 8, fill=(0, 0, 0, 180)
     )
     draw.multiline_text(
         (x, y), "\n".join(lines), font=font, fill=(255, 255, 255, 255), align="center", spacing=2
     )
+    return overlay, height - band_height
+
+
+def _blend_caption(
+    av: Any,
+    frame: Any,
+    overlay: Any,
+    top: int,
+    *,
+    original_pts: int | None = None,
+    original_time_base: Any = None,
+) -> Any:
+    if original_pts is None:
+        original_pts, original_time_base = frame.pts, frame.time_base
+    image = frame.to_image()
+    image.paste(overlay, (0, top), overlay)
     result = av.VideoFrame.from_image(image)
     result.pts, result.time_base = original_pts, original_time_base
     return result
@@ -546,9 +584,11 @@ def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str
     return lines
 
 
-def _load_caption_font(height: int, font_module: Any | None = None) -> Any:
-    if font_module is None:
-        from PIL import ImageFont as font_module
+def _load_caption_font(height: int, image_font_module: Any | None = None) -> Any:
+    if image_font_module is None:
+        from PIL import ImageFont
+
+        image_font_module = ImageFont
 
     size = max(14, round(height * 0.045))
     candidates = (
@@ -565,7 +605,7 @@ def _load_caption_font(height: int, font_module: Any | None = None) -> Any:
     for candidate in candidates:
         if Path(candidate).is_file():
             try:
-                return font_module.truetype(candidate, size=size)
+                return image_font_module.truetype(candidate, size=size)
             except OSError:
                 continue
-    return font_module.load_default(size=size)
+    return image_font_module.load_default(size=size)

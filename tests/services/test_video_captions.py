@@ -170,15 +170,27 @@ def test_audio_decode_does_not_require_numpy(
     assert wav.startswith(b"RIFF")
 
 
+def test_audio_decode_failure_has_media_processing_error(tmp_path: Path) -> None:
+    from gflow_cli.services.video_captions import extract_wav_bytes
+
+    broken = tmp_path / "broken.mp4"
+    broken.write_bytes(b"not a video")
+    with pytest.raises(VideoProcessingError, match="Could not decode") as caught:
+        extract_wav_bytes(broken)
+    assert caught.value.charged == "no"
+    assert caught.value.__cause__ is not None
+
+
 def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
-    from PIL import ImageFont
 
     from gflow_cli.services.video_captions import _load_caption_font
 
     font = _load_caption_font(720)
-    rendered = font.getmask("Ação café naïve Привет").getbbox()
-    tofu = ImageFont.load_default(size=font.size).getmask("\ufffd").getbbox()
-    assert rendered is not None and rendered != tofu
+    tofu = font.getmask("\U0010ffff").getbbox()
+    glyphs = [
+        font.getmask(char).getbbox() for char in "Ação café naïve Привет" if not char.isspace()
+    ]
+    assert sum(glyph is not None and glyph != tofu for glyph in glyphs) >= 15
 
 
 def test_caption_background_is_translucent_on_rgb_frame() -> None:
@@ -390,14 +402,26 @@ def test_transcribe_maps_http_errors_without_exposing_response_text(
 
 
 def test_caption_video_burns_frames_and_keeps_audio(
-    media_files: tuple[Path, Path], tmp_path: Path
+    media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     av = pytest.importorskip("av")
+    from gflow_cli.services import video_captions as service
+
     source, _ = media_files
+    overlays = 0
+    original_overlay = service._caption_overlay
+
+    def count_overlay(*args: Any) -> Any:
+        nonlocal overlays
+        overlays += 1
+        return original_overlay(*args)
+
+    monkeypatch.setattr(service, "_caption_overlay", count_overlay)
     srt = tmp_path / "sample.srt"
     srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nA caption\n", encoding="utf-8")
     result = caption_video(str(source), srt_path=srt)
     assert result.frames_burned > 0
+    assert overlays == 1
     with av.open(str(result.output_file)) as output:
         assert output.streams.audio
 
