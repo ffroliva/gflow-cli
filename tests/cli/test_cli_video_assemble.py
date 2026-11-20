@@ -16,6 +16,7 @@ def test_video_assemble_help_documents_normalization_and_options() -> None:
 
     assert result.exit_code == 0
     assert "first clip's dimensions and frame rate" in result.output
+    assert "same-ratio clips can be resized" in result.output
     for option in ("--music", "--voiceover", "--clip-volume", "--music-volume", "--duck"):
         assert option in result.output
 

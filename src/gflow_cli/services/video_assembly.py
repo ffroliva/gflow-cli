@@ -88,7 +88,9 @@ def resolve_assembly_input(value: str, *, profile: str | None = None) -> Path:
     )
 
 
-def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: bool = True) -> Path:
+def _pcm_spool(
+    path: Path, *, samples: int, av: Any, audio_stream: bool = True, allow_silence: bool = False
+) -> Path:
     """Decode one audio stream to bounded, normalized float PCM on disk."""
     descriptor, name = tempfile.mkstemp(suffix=".f32le")
     os.close(descriptor)
@@ -102,10 +104,13 @@ def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: bool = True) 
                 written = 0
                 with av.open(str(path)) as source:
                     if not source.streams.audio:
-                        raise VideoAssemblyError(
-                            detail=f"Audio input has no audio stream: {path}",
-                            route="video.assemble",
-                        )
+                        if not allow_silence:
+                            raise VideoAssemblyError(
+                                detail=f"Audio input has no audio stream: {path}",
+                                route="video.assemble",
+                            )
+                        target.truncate(samples * _CHANNELS * 4)
+                        return spool
                     stream = source.streams.audio[0]
                     for decoded in source.decode(stream):
                         for frame in resampler.resample(decoded):
@@ -139,7 +144,9 @@ def _make_audio(
     try:
         with clip_spool.open("wb") as target:
             for clip, samples in clips:
-                part = _pcm_spool(clip, samples=samples, av=av, audio_stream=True)
+                part = _pcm_spool(
+                    clip, samples=samples, av=av, audio_stream=True, allow_silence=True
+                )
                 with part.open("rb") as audio:
                     target.write(audio.read())
                 part.unlink(missing_ok=True)

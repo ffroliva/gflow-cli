@@ -1109,7 +1109,7 @@ def video() -> None:
     short_help="Join local or catalog clips with optional audio tracks (credit-free).",
     help=(
         "Join local video files or catalog media IDs without contacting Flow. Output uses "
-        "the first clip's dimensions and frame rate. Existing output files are refused."
+        "the first clip's dimensions and frame rate. Clips with aspect ratios differing by more than 1% are refused; same-ratio clips can be resized. Existing output files are refused."
     ),
 )
 @click.argument("clips", nargs=-1, required=True)

@@ -67,7 +67,7 @@ def test_assembles_varied_clips_and_missing_audio_as_silence(tmp_path: Path) -> 
     second = tmp_path / "second.mp4"
     output = tmp_path / "joined.mp4"
     _clip(first, size=(64, 48), rate=10, frames=10, audio=True)
-    _clip(second, size=(96, 64), rate=15, frames=15, audio=False)
+    _clip(second, size=(96, 72), rate=15, frames=15, audio=False)
 
     result = assemble_videos([first, second], output)
 
@@ -91,6 +91,19 @@ def test_assembles_more_than_one_second_without_timestamp_regression(tmp_path: P
     assert result.duration_seconds == pytest.approx(4, abs=0.1)
     with av.open(str(output)) as container:
         assert len(list(container.decode(video=0))) == 96
+
+
+def test_refuses_mismatched_aspect_ratio_before_writing_output(tmp_path: Path) -> None:
+    landscape = tmp_path / "landscape.mp4"
+    portrait = tmp_path / "portrait.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(landscape, size=(64, 48), rate=10, frames=2, audio=True)
+    _clip(portrait, size=(48, 64), rate=10, frames=2, audio=True)
+
+    with pytest.raises(VideoAssemblyError, match="portrait.mp4 aspect ratio.*first clip ratio"):
+        assemble_videos([landscape, portrait], output)
+
+    assert not output.exists()
 
 
 def test_rejects_output_alias_and_corrupt_input_without_partial_output(tmp_path: Path) -> None:
