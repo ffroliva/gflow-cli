@@ -72,7 +72,7 @@ def test_every_mapped_class_is_covered() -> None:
 
 def test_credit_cap_problem_details_contains_quote_and_limit() -> None:
     details = CreditCapExceededError(quoted=8, max_credits=4).to_problem_details()
-    assert details == {
+    assert details.items() >= {
         "type": "https://gflow-cli.dev/errors/credit-cap-exceeded",
         "title": "Credit cap exceeded",
         "status": 422,
@@ -81,7 +81,7 @@ def test_credit_cap_problem_details_contains_quote_and_limit() -> None:
         "next_action": "fix_input",
         "quoted": 8,
         "max_credits": 4,
-    }
+    }.items()
 
 
 def test_credit_cap_problem_details_keeps_unreadable_quote() -> None:

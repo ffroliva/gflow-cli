@@ -183,7 +183,7 @@ Run: `uv run python -m pytest tests/features/test_credit_cap_steps.py -q`
 - Modify: `.env.template`
 - Modify: `src/gflow_cli/api/video.py`
 
-- [ ] **Step 1: Add `CreditCapExceededError` and `ProblemDetails` extensions in `src/gflow_cli/errors.py`**
+- [x] **Step 1: Add `CreditCapExceededError` and `ProblemDetails` extensions in `src/gflow_cli/errors.py`**
 
 1. On `ProblemDetails` (`src/gflow_cli/errors.py:92`), add:
    ```python
@@ -242,7 +242,7 @@ Run: `uv run python -m pytest tests/features/test_credit_cap_steps.py -q`
    ```
 4. Register `CreditCapExceededError: 45` in `EXIT_CODE_MAP` (`src/gflow_cli/errors.py:1817`). Export `CreditCapExceededError` in `__all__` if present.
 
-- [ ] **Step 2: Add `max_credits` setting to `src/gflow_cli/config.py` and `.env.template`**
+- [x] **Step 2: Add `max_credits` setting to `src/gflow_cli/config.py` and `.env.template`**
 
 In `Settings` (`src/gflow_cli/config.py`):
 ```python
@@ -254,7 +254,7 @@ max_credits: int | None = Field(
 ```
 Document `# GFLOW_CLI_MAX_CREDITS=` in `.env.template`.
 
-- [ ] **Step 3: Add `max_credits` to `GenerateVideoRequest` and `quoted_credits` to `VideoResult` in `src/gflow_cli/api/video.py`**
+- [x] **Step 3: Add `max_credits` to `GenerateVideoRequest` and `quoted_credits` to `VideoResult` in `src/gflow_cli/api/video.py`**
 
 In `GenerateVideoRequest`:
 ```python
@@ -272,7 +272,7 @@ In `VideoResult`:
 quoted_credits: int | None = None
 ```
 
-- [ ] **Step 4: Create `src/gflow_cli/api/credit_cap.py`**
+- [x] **Step 4: Create `src/gflow_cli/api/credit_cap.py`**
 
 Implement:
 - `parse_credit_quote(text: str | None) -> int | None`: extracts digits via `re.findall(r"\d+", text)`; returns `int(matches[0])` only when `len(matches) == 1`, otherwise `None`.
@@ -280,7 +280,7 @@ Implement:
 - `resolve_max_credits(explicit: int | None, configured: int | None) -> int | None`: returns `explicit if explicit is not None else configured`.
 - `CreditBudget`: small stateful helper for multi-step commands (`chain`, `movie run`) tracking `initial_cap: int | None` and `spent: int = 0`, providing `remaining() -> int | None` and `record_step(quoted: int | None, *, route: str) -> None`.
 
-- [ ] **Step 5: Run unit tests from Task 1 and confirms they pass**
+- [x] **Step 5: Run unit tests from Task 1 and confirms they pass**
 
 Run: `uv run python -m pytest tests/api/test_credit_cap.py tests/test_errors_classification.py tests/test_problem_details_extensions.py -q`
 

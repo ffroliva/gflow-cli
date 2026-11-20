@@ -1,0 +1,50 @@
+"""Pure credit quote parsing and per-command budget enforcement."""
+
+from __future__ import annotations
+
+import re
+
+from gflow_cli.errors import CreditCapExceededError
+
+_INTEGER = re.compile(r"(?<!\d)\d+(?!\d)")
+
+
+def parse_credit_quote(label: str) -> int | None:
+    """Return the sole integer token in Flow's credit label, or None if ambiguous."""
+    matches = _INTEGER.findall(label)
+    return int(matches[0]) if len(matches) == 1 else None
+
+
+def enforce_credit_cap(
+    *, quoted: int | None, max_credits: int | None, route: str = ""
+) -> int | None:
+    """Fail closed for an unreadable quote when a cap is active."""
+    if max_credits is None:
+        return quoted
+    if max_credits < 0:
+        raise ValueError("max_credits must be >= 0")
+    if quoted is None or quoted > max_credits:
+        raise CreditCapExceededError(quoted=quoted, max_credits=max_credits, route=route)
+    return quoted
+
+
+class CreditBudget:
+    """Mutable remaining credits for a multi-submit command."""
+
+    def __init__(self, max_credits: int | None) -> None:
+        if max_credits is not None and max_credits < 0:
+            raise ValueError("max_credits must be >= 0")
+        self.remaining = max_credits
+
+    @property
+    def max_credits(self) -> int | None:
+        """Cap to pass to the next submission."""
+        return self.remaining
+
+    def record_spend(self, quoted: int | None) -> None:
+        """Deduct a completed submission's quote; unknown cost fails closed."""
+        if self.remaining is None:
+            return
+        enforce_credit_cap(quoted=quoted, max_credits=self.remaining)
+        assert quoted is not None
+        self.remaining -= quoted

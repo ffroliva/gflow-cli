@@ -199,6 +199,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/insufficient-credits` | `InsufficientCreditsError` | 37 | `no` | `wait` |
 | `https://gflow-cli.dev/errors/flow-account-chooser` | `FlowAccountChooserError` | 38 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/flow-access-unavailable` | `FlowAccessUnavailableError` | 39 | `no` | `none` |
+| `https://gflow-cli.dev/errors/credit-cap-exceeded` | `CreditCapExceededError` | 45 | `no` | `fix_input` |
 
 ### Envelopes built without an error class
 

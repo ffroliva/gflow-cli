@@ -367,6 +367,12 @@ class Settings(BaseSettings):
         ),
     )
 
+    max_credits: int | None = Field(
+        default=None,
+        ge=0,
+        description="Default per-command video credit cap; overridden by --max-credits.",
+    )
+
     # --- cloud storage ----------------------------------------------------
     storage_uri: str | None = Field(
         default=None,
