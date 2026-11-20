@@ -73,13 +73,13 @@ def _emit(result: Any, *, as_json: bool, output_format: str) -> None:
         console.print(table)
 
 
+@spends_credits(False)
 @click.command("transcribe")
 @click.argument("file")
 @out_file_option(help="Explicit output .srt file path (defaults to <name>.srt).")
 @click.option("--language", default=None, help="ISO-639-1 language hint for transcription.")
 @click.option("--profile", default=None, help="Profile name when FILE is a catalog media UUID.")
 @output_format_option(has_out_file=True)
-@spends_credits(False)
 def transcribe(
     file: str,
     output_file: Path | None,
@@ -102,11 +102,12 @@ def transcribe(
     )
 
 
+@spends_credits(False)
 @click.command("captions")
 @click.argument("file")
 @click.option(
     "--srt",
-    "srt_path",
+    "srt",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None,
     help="Existing .srt subtitle file. Omit to transcribe FILE first.",
@@ -117,10 +118,9 @@ def transcribe(
 @out_file_option(help="Explicit output .mp4 file path (defaults to <name>-captions.mp4).")
 @click.option("--profile", default=None, help="Profile name when FILE is a catalog media UUID.")
 @output_format_option(has_out_file=True)
-@spends_credits(False)
 def captions(
     file: str,
-    srt_path: Path | None,
+    srt: Path | None,
     language: str | None,
     output_file: Path | None,
     profile: str | None,
@@ -134,7 +134,7 @@ def captions(
         result = await asyncio.to_thread(
             caption_video,
             file,
-            srt_path=srt_path,
+            srt_path=srt,
             out_file=output_file,
             language=language,
             profile=profile,

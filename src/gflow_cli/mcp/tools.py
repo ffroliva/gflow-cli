@@ -2272,12 +2272,6 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
     }
 
 
-# gflow_list_characters was removed in #499: it was a stub that always
-# answered {"status": "ok", "characters": []} — an agent reads that as "the
-# user has no characters" and acts on the lie. Re-add only when it can
-# return real Flow-side data (needs project_id + a browser session).
-
-
 # ---------------------------------------------------------------------------
 # Instructions — persistent Agent-Mode brief cards (CLI parity: `gflow instructions`)
 # ---------------------------------------------------------------------------
@@ -2664,6 +2658,8 @@ async def gflow_instructions_apply(
     )
 
 
+from gflow_cli.mcp.video_captions_tools import gflow_video_captions, gflow_video_transcribe
+
 # Re-export Path so tests that import it directly still work
 __all__ = [
     "gflow_generate_image",
@@ -2682,6 +2678,8 @@ __all__ = [
     "gflow_instructions_rm",
     "gflow_instructions_toggle_mode",
     "gflow_instructions_apply",
+    "gflow_video_transcribe",
+    "gflow_video_captions",
     "_TokenBucket",
     "_adapt_tools",
     "_format_mcp_error",

@@ -350,16 +350,16 @@ keep `src/gflow_cli/mcp/tools.py` within its 2,691-line `check_size.py` ratchet.
 - `tests/mcp/test_video_captions_mcp.py` — MCP unit tests for both tools
 
 **Steps:**
-- [ ] Write failing MCP tests in `tests/mcp/test_video_captions_mcp.py` asserting tool registration, schema descriptions, output-directory confinement on both explicit `out_file` and omitted `out_file` (when `file` is outside `GFLOW_CLI_OUTPUT_DIR`), RFC 9457 error envelopes (`charged: "no"`), and availability under `GFLOW_MCP_NO_SPEND=1`.
-- [ ] Implement `src/gflow_cli/mcp/video_captions_tools.py`:
+- [x] Write failing MCP tests in `tests/mcp/test_video_captions_mcp.py` asserting tool registration, schema descriptions, output-directory confinement on both explicit `out_file` and omitted `out_file` (when `file` is outside `GFLOW_CLI_OUTPUT_DIR`), RFC 9457 error envelopes (`charged: "no"`), and availability under `GFLOW_MCP_NO_SPEND=1`.
+- [x] Implement `src/gflow_cli/mcp/video_captions_tools.py`:
   - `gflow_video_transcribe(file: str, out_file: OutFileParam = None, language: str | None = None, profile: str = _DEFAULT_PROFILE) -> dict[str, Any]`
   - `gflow_video_captions(file: str, srt: str | None = None, language: str | None = None, out_file: OutFileParam = None, profile: str = _DEFAULT_PROFILE) -> dict[str, Any]`
   - Both decorated with `@server.tool(...)` and `@_guarded`.
   - Resolve `out_file` via `_resolve_out_file(out_file, local_only=True)`; when `out_file` is `None`, confine default output paths (`<output_dir>/<stem>.srt` and `<output_dir>/<stem>-captions.mp4`) inside `get_settings().output_dir.resolve()`.
   - When `file` is a catalog media UUID, resolve `profile` via `_resolve_and_validate_profile(profile)` (when `file` is a local path, no profile is required).
   - Run `transcribe_video` / `caption_video` via `await asyncio.to_thread(...)`.
-- [ ] Re-export `gflow_video_transcribe` and `gflow_video_captions` in `src/gflow_cli/mcp/tools.py` and update `CLI_TO_MCP` in `tests/mcp/test_cli_parity.py`.
-- [ ] Run `uv run pytest tests/mcp/test_cli_parity.py tests/mcp/test_server.py tests/mcp/test_video_captions_mcp.py tests/features/test_video_captions_steps.py` and `uv run python scripts/ci/check_size.py` — all green.
+- [x] Re-export `gflow_video_transcribe` and `gflow_video_captions` in `src/gflow_cli/mcp/tools.py` and update `CLI_TO_MCP` in `tests/mcp/test_cli_parity.py`.
+- [x] Run `uv run pytest tests/mcp/test_cli_parity.py tests/mcp/test_server.py tests/mcp/test_video_captions_mcp.py tests/features/test_video_captions_steps.py` and `uv run python scripts/ci/check_size.py` — all green.
 
 ---
 

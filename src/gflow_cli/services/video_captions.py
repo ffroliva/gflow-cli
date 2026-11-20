@@ -228,6 +228,15 @@ def transcribe_video(
             detail="SRT output must not overwrite the input video.", charged="no"
         )
     audio, duration = extract_wav_bytes(source)
+    segments = _request_segments(base_url, settings, audio, language)
+    _atomic_write(destination, format_srt(segments).encode("utf-8"))
+    log.info("video.transcribe.completed", segments=len(segments), host=urlsplit(base_url).hostname)
+    return TranscribeResult(source, destination, language, duration, segments)
+
+
+def _request_segments(
+    base_url: str, settings: Any, audio: bytes, language: str | None
+) -> tuple[CaptionEntry, ...]:
     headers = {}
     if settings.llm_api_key:
         headers["Authorization"] = f"Bearer {settings.llm_api_key.get_secret_value()}"
@@ -245,38 +254,7 @@ def transcribe_video(
                 data=data,
                 files={"file": ("audio.wav", audio, "audio/wav")},
             )
-        if 300 <= response.status_code < 400:
-            raise ConfigurationError(
-                detail="Transcription endpoint redirected; request refused.", charged="no"
-            )
-        if response.status_code == 429:
-            raise RateLimitError(
-                detail="Transcription endpoint rate limit reached.", retry_after=None
-            )
-        if response.status_code >= 500:
-            raise NetworkError(
-                detail=f"Transcription endpoint failed: {redact_error_detail(response.text)}",
-                charged="no",
-            )
-        if response.status_code >= 400:
-            raise ConfigurationError(
-                detail=f"Transcription request rejected: {redact_error_detail(response.text)}",
-                charged="no",
-            )
-        try:
-            payload = response.json()
-        except ValueError:
-            payload = None
-        if isinstance(payload, dict) and isinstance(payload.get("segments"), list):
-            segments = tuple(
-                CaptionEntry(i, float(seg["start"]), float(seg["end"]), str(seg["text"]).strip())
-                for i, seg in enumerate(payload["segments"], 1)
-                if str(seg.get("text", "")).strip()
-            )
-        elif isinstance(payload, dict) and payload.get("text"):
-            segments = tuple(parse_srt(str(payload["text"]), source_name="transcription response"))
-        else:
-            segments = tuple(parse_srt(response.text, source_name="transcription response"))
+        return _parse_transcription_response(response)
     except (ConfigurationError, RateLimitError, NetworkError):
         raise
     except httpx.HTTPError as exc:
@@ -287,25 +265,57 @@ def transcribe_video(
         raise ConfigurationError(
             detail="Transcription endpoint returned an invalid response.", charged="no"
         ) from exc
-    _atomic_write(destination, format_srt(segments).encode("utf-8"))
-    log.info("video.transcribe.completed", segments=len(segments), host=urlsplit(base_url).hostname)
-    return TranscribeResult(source, destination, language, duration, segments)
+    raise AssertionError("unreachable")
+
+
+def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntry, ...]:
+    if 300 <= response.status_code < 400:
+        raise ConfigurationError(
+            detail="Transcription endpoint redirected; request refused.", charged="no"
+        )
+    if response.status_code == 429:
+        raise RateLimitError(detail="Transcription endpoint rate limit reached.", retry_after=None)
+    if response.status_code >= 500:
+        raise NetworkError(
+            detail=f"Transcription endpoint failed: {redact_error_detail(response.text)}",
+            charged="no",
+        )
+    if response.status_code >= 400:
+        raise ConfigurationError(
+            detail=f"Transcription request rejected: {redact_error_detail(response.text)}",
+            charged="no",
+        )
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("segments"), list):
+        return tuple(
+            CaptionEntry(i, float(seg["start"]), float(seg["end"]), str(seg["text"]).strip())
+            for i, seg in enumerate(payload["segments"], 1)
+            if str(seg.get("text", "")).strip()
+        )
+    text = payload.get("text") if isinstance(payload, dict) else response.text
+    return tuple(parse_srt(str(text), source_name="transcription response"))
 
 
 def caption_video(
     file_or_id: str,
     *,
     srt_path: Path | None = None,
+    srt_out_file: Path | None = None,
     out_file: Path | None = None,
     language: str | None = None,
     profile: str | None = None,
 ) -> CaptionsResult:
-    av, (Image, ImageDraw, ImageFont) = _require_chain_extra()
+    av, (_, ImageDraw, ImageFont) = _require_chain_extra()
     settings = get_settings()
     refuse_cloud_storage_for_local_file(settings.storage_uri, "Video caption burn-in")
     source = resolve_video_source(file_or_id, profile=profile, route="video.captions")
     if srt_path is None:
-        transcribed = transcribe_video(file_or_id, language=language, profile=profile)
+        transcribed = transcribe_video(
+            file_or_id, out_file=srt_out_file, language=language, profile=profile
+        )
         caption_path, entries = transcribed.srt_file, list(transcribed.segments)
     else:
         caption_path = srt_path.expanduser().resolve()
@@ -326,69 +336,10 @@ def caption_video(
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
-    frames = burned = 0
     try:
-        with (
-            av.open(str(source)) as input_container,
-            av.open(str(temporary), mode="w", format="mp4") as output,
-        ):
-            video = input_container.streams.video[0]
-            audio_stream = (
-                input_container.streams.audio[0] if input_container.streams.audio else None
-            )
-            fps = video.average_rate or 25
-            encoded = output.add_stream("libx264", rate=fps)
-            encoded.width, encoded.height, encoded.pix_fmt = video.width, video.height, "yuv420p"
-            audio_output = output.add_stream_from_template(audio_stream) if audio_stream else None
-            time_base = video.time_base
-            for frame in input_container.decode(video):
-                frames += 1
-                at = (
-                    float(frame.pts * time_base)
-                    if frame.pts is not None
-                    else (frames - 1) / float(fps)
-                )
-                active = next(
-                    (entry.text for entry in entries if entry.start_s <= at <= entry.end_s), None
-                )
-                if active:
-                    burned += 1
-                    original_pts, original_time_base = frame.pts, frame.time_base
-                    image = frame.to_image().convert("RGBA")
-                    draw = ImageDraw.Draw(image, "RGBA")
-                    font = ImageFont.load_default(size=max(14, round(frame.height * 0.045)))
-                    lines = active.splitlines()
-                    box = draw.multiline_textbbox(
-                        (0, 0), "\n".join(lines), font=font, align="center", spacing=2
-                    )
-                    x = max(8, (frame.width - (box[2] - box[0])) // 2)
-                    y = max(8, frame.height - (box[3] - box[1]) - 28)
-                    draw.rounded_rectangle(
-                        (x - 10, y - 6, x + box[2] - box[0] + 10, y + box[3] - box[1] + 6),
-                        8,
-                        fill=(0, 0, 0, 180),
-                    )
-                    draw.multiline_text(
-                        (x, y),
-                        "\n".join(lines),
-                        font=font,
-                        fill=(255, 255, 255, 255),
-                        align="center",
-                        spacing=2,
-                    )
-                    frame = av.VideoFrame.from_image(image.convert("RGB"))
-                    frame.pts = original_pts
-                    frame.time_base = original_time_base
-                for packet in encoded.encode(frame):
-                    output.mux(packet)
-            for packet in encoded.encode():
-                output.mux(packet)
-            if audio_stream and audio_output:
-                input_container.seek(0)
-                for packet in input_container.demux(audio_stream):
-                    if packet.dts is not None:
-                        packet.stream = audio_output
-                        output.mux(packet)
+        frames, burned, duration = _render_video(
+            av, source, temporary, entries, ImageDraw, ImageFont
+        )
         temporary.replace(destination)
     except Exception as exc:
         temporary.unlink(missing_ok=True)
@@ -398,5 +349,68 @@ def caption_video(
             detail="Could not render captions into the video.", charged="no"
         ) from exc
     return CaptionsResult(
-        source, destination, caption_path, 0.0, frames, burned, destination.stat().st_size
+        source, destination, caption_path, duration, frames, burned, destination.stat().st_size
     )
+
+
+def _render_video(
+    av: Any,
+    source: Path,
+    destination: Path,
+    entries: list[CaptionEntry],
+    draw_module: Any,
+    font_module: Any,
+) -> tuple[int, int, float]:
+    frames = burned = 0
+    with (
+        av.open(str(source)) as input_container,
+        av.open(str(destination), mode="w", format="mp4") as output,
+    ):
+        video = input_container.streams.video[0]
+        audio_stream = input_container.streams.audio[0] if input_container.streams.audio else None
+        encoded = output.add_stream("libx264", rate=video.average_rate or 25)
+        encoded.width, encoded.height, encoded.pix_fmt = video.width, video.height, "yuv420p"
+        audio_output = output.add_stream_from_template(audio_stream) if audio_stream else None
+        duration = float(input_container.duration or 0) / av.time_base
+        for frame in input_container.decode(video):
+            frames += 1
+            seconds = (
+                float(frame.pts * video.time_base)
+                if frame.pts is not None
+                else (frames - 1) / float(video.average_rate or 25)
+            )
+            text = next((e.text for e in entries if e.start_s <= seconds <= e.end_s), None)
+            if text:
+                burned += 1
+                frame = _draw_caption(av, frame, text, draw_module, font_module)
+            for packet in encoded.encode(frame):
+                output.mux(packet)
+        for packet in encoded.encode():
+            output.mux(packet)
+        if audio_stream and audio_output:
+            input_container.seek(0)
+            for packet in input_container.demux(audio_stream):
+                if packet.dts is not None:
+                    packet.stream = audio_output
+                    output.mux(packet)
+    return frames, burned, duration
+
+
+def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module: Any) -> Any:
+    original_pts, original_time_base = frame.pts, frame.time_base
+    image = frame.to_image().convert("RGBA")
+    draw = draw_module.Draw(image, "RGBA")
+    font = font_module.load_default(size=max(14, round(frame.height * 0.045)))
+    lines = text.splitlines()
+    box = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, align="center", spacing=2)
+    x = max(8, (frame.width - (box[2] - box[0])) // 2)
+    y = max(8, frame.height - (box[3] - box[1]) - 28)
+    draw.rounded_rectangle(
+        (x - 10, y - 6, x + box[2] - box[0] + 10, y + box[3] - box[1] + 6), 8, fill=(0, 0, 0, 180)
+    )
+    draw.multiline_text(
+        (x, y), "\n".join(lines), font=font, fill=(255, 255, 255, 255), align="center", spacing=2
+    )
+    result = av.VideoFrame.from_image(image.convert("RGB"))
+    result.pts, result.time_base = original_pts, original_time_base
+    return result
