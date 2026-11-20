@@ -41,6 +41,7 @@ def test_video_caption_commands_are_credit_free() -> None:
 def test_video_captions_table_escapes_bracketed_output_paths(tmp_path: Path) -> None:
     from click.testing import CliRunner
 
+    source = tmp_path / "clip.mp4"
     result = SimpleNamespace(
         source_file=tmp_path / "clip.mp4",
         srt_file="[/x].srt",
