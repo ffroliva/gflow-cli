@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The landing page meets WCAG AA contrast in both themes.**
+  - The light theme's amber, grey and red text measured 2.4:1 to 4.0:1, and the primary button's hover state 3.7:1. Every text colour now measures at least 4.5:1 on the backgrounds it is used on.
+  - The light theme's background is a neutral light grey instead of cream, and on the darker amber the primary button's text is white.
+  - In the dark theme, the faint text (the terminal titles and the footer note) now passes 4.5:1 too.
+  - On phones the hero section has side margins again: its padding had removed the page gutters, so the headline touched the screen edge.
+  - The small uppercase labels above section headings are removed; the hero's "beta" status moved into the opening paragraph.
 - **The README's models table renders as one table again.** A note about the 2026-12-05 retirements sat between its rows, so Veo 3.1 Lite and every image model lost the table header.
 - **The README comparison table adds kodelyx/flow-agent**, with two rows where it goes further than gflow-cli: an OpenAI-compatible API and credit pooling across Google accounts. `llms.txt` now claims only what still holds with it counted: gflow-cli is the only tool in that table that installs from PyPI and is listed in the official MCP Registry.
 - **The README, `llms.txt` and the landing page say which gflow-cli this is.** Other projects use the name, including Node.js packages on npm and JSR; this one is the Python package on PyPI.
