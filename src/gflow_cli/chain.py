@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import asyncio
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
+from gflow_cli.api.credit_cap import CreditBudget
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
@@ -46,6 +47,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     ChainPartialError,
+    CreditCapExceededError,
     GFlowError,
     ModelModeIncompatibilityError,
     WafRejectionError,
@@ -268,6 +270,8 @@ async def _generate_link(
                 exc.retryable = False
                 if not exc.operation_id:  # an in-flight link's own id is the better handle
                     exc.operation_id = completed_media_ids[-1]
+                if isinstance(exc, CreditCapExceededError):
+                    exc.completed_media_ids = list(completed_media_ids)
             raise
         _log.warning(
             "chain_link_aborted",
@@ -382,6 +386,7 @@ async def run_chain(
     relocate: Callable[[int, VideoResult], VideoResult] | None = None,
     start_index: int = 0,
     seed_clip: Path | None = None,
+    max_credits: int | None = None,
 ) -> list[ChainLinkResult]:
     """Render ``links`` as a sequential last-frame I2V chain.
 
@@ -438,6 +443,7 @@ async def run_chain(
     reject_unusable_links(model=model, links=links)
 
     results: list[ChainLinkResult] = []
+    budget = CreditBudget(max_credits)
     completed_paths: list[Path] = []
     prev_frame = await _resume_seed(
         extractor,
@@ -456,6 +462,7 @@ async def run_chain(
         req = _build_link_request(
             spec=spec, index=index, model=model, aspect=aspect, prev_frame=prev_frame
         )
+        req = replace(req, max_credits=budget.max_credits)
 
         result = await _generate_link(
             client=client,
@@ -466,6 +473,7 @@ async def run_chain(
             on_link_started=on_link_started,
             on_link_failed=on_link_failed,
         )
+        budget.record_spend(result.quoted_credits)
         if relocate is not None:  # a missing clip is left as is and refused just below
             result = await _relocate_guarded(relocate, index, result)
 

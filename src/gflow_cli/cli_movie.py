@@ -41,6 +41,7 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.credit_cap import CreditBudget, resolve_max_credits
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
 from gflow_cli.composition import (
@@ -56,7 +57,12 @@ from gflow_cli.composition import (
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
-from gflow_cli.errors import ConfigurationError, DataStoreError, WireFormatError
+from gflow_cli.errors import (
+    ConfigurationError,
+    CreditCapExceededError,
+    DataStoreError,
+    WireFormatError,
+)
 from gflow_cli.movie_manifest import (
     CharacterState,
     MovieManifest,
@@ -175,6 +181,12 @@ def template(output: Path, force: bool) -> None:
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
 @click.option(
+    "--max-credits",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Refuse before submit if Flow's quote exceeds this per-command cap.",
+)
+@click.option(
     "--out-dir",
     "out_dir_override",
     default=None,
@@ -213,6 +225,7 @@ def run(
     dry_run: bool,
     continue_on_error: bool,
     stitch: bool,
+    max_credits: int | None,
 ) -> None:
     """Execute a movie.toml — compose prompts and generate every scene.
 
@@ -237,6 +250,7 @@ def run(
         sys.exit(11)
 
     settings = get_settings()
+    effective_max_credits = resolve_max_credits(max_credits, settings.max_credits)
     out_dir = resolve_batch_output_dir(
         cli_override=out_dir_override,
         config_value=manifest.output_dir,
@@ -249,7 +263,7 @@ def run(
     _print_header(manifest, out_dir=out_dir, dry_run=dry_run)
 
     if dry_run:
-        _print_plan(manifest, state)
+        _print_plan(manifest, state, max_credits=effective_max_credits)
         return
 
     profile_name = _resolve_profile(profile)
@@ -264,6 +278,7 @@ def run(
             out_dir=out_dir,
             continue_on_error=continue_on_error,
             stitch=stitch,
+            max_credits=effective_max_credits,
         ),
         cli_command="movie run",
     )
@@ -311,7 +326,9 @@ def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool) -
     return f"    \\[{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}{style_tag}  {status}"
 
 
-def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
+def _print_plan(
+    manifest: MovieManifest, state: MovieState, *, max_credits: int | None = None
+) -> None:
     console.print("\n[bold]Plan:[/bold]")
 
     # Characters (text identity only in P1)
@@ -338,6 +355,8 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
 
     operation_noun = "operation" if pending_operations == 1 else "operations"
     console.print(f"\n  {pending_operations} pending video {operation_noun}")
+    if max_credits is not None:
+        console.print(f"  max credits: {max_credits}")
     console.print(
         "  Video operations may consume credits. Current cost varies by model, duration, "
         "account tier, and Flow policy; check Google Flow before submitting."
@@ -444,6 +463,24 @@ async def _sync_scene_instructions(
     cache.signature = desired_sig
 
 
+def _preserve_movie_cap_partials(
+    exc: Exception, manifest: MovieManifest, state: MovieState
+) -> None:
+    if isinstance(exc, CreditCapExceededError):
+        completed = [
+            state.scenes[scene.id].media_id
+            for scene in manifest.scenes
+            if scene.id in state.scenes
+            and state.scenes[scene.id].status == "completed"
+            and state.scenes[scene.id].media_id
+        ]
+        if completed:
+            exc.charged = "yes"
+            exc.next_action = "reconcile"
+            exc.retryable = False
+            exc.completed_media_ids = completed
+
+
 async def _run_one_scene(
     *,
     client: FlowApiClient,
@@ -458,6 +495,7 @@ async def _run_one_scene(
     generated_any: bool,
     continue_on_error: bool,
     brief_cache: _BriefSyncCache,
+    budget: CreditBudget,
 ) -> Path | None:
     """Generate one scene clip and persist its state.
 
@@ -511,7 +549,9 @@ async def _run_one_scene(
             profile_dir=profile_dir,
             out_dir=out_dir,
             project_id=manifest.project,
+            max_credits=budget.max_credits,
         )
+        budget.record_spend(video_result.quoted_credits)
         local_path_str = (
             str(video_result.local_path) if video_result.local_path is not None else None
         )
@@ -529,6 +569,7 @@ async def _run_one_scene(
         return video_result.local_path
 
     except Exception as exc:
+        _preserve_movie_cap_partials(exc, manifest, state)
         log.error(
             "movie.scene_failed",
             scene_id=scene.id,
@@ -552,7 +593,7 @@ async def _run_one_scene(
             style_hash=resume_hash(prompt),
         )
         state.save(state_path)
-        if continue_on_error:
+        if continue_on_error and not isinstance(exc, CreditCapExceededError):
             console.print(f"    [red]Scene failed:[/red] {escape(str(exc))}")
             return None
         raise
@@ -583,6 +624,7 @@ async def _run_movie(
     out_dir: Path,
     continue_on_error: bool,
     stitch: bool = False,
+    max_credits: int | None = None,
 ) -> None:
     settings = get_settings()
     if stitch:
@@ -590,6 +632,7 @@ async def _run_movie(
         refuse_cloud_storage_for_local_file(settings.storage_uri, "movie run --stitch")
     recorder = OperationRecorder.open(settings)
     include_prompts = getattr(settings, "history_prompts", "store") == "store"
+    budget = CreditBudget(max_credits)
 
     completed_local_paths: list[Path] = []
 
@@ -662,6 +705,7 @@ async def _run_movie(
                     generated_any=generated_any,
                     continue_on_error=continue_on_error,
                     brief_cache=brief_cache,
+                    budget=budget,
                 )
                 if local_path is not None:
                     completed_local_paths.append(local_path)
@@ -835,6 +879,7 @@ async def _generate_scene(
     profile_dir: Path,
     out_dir: Path,
     project_id: str | None = None,
+    max_credits: int | None = None,
 ) -> Any:
     """Generate one clip for *scene* using the pre-composed *prompt*.
 
@@ -862,6 +907,7 @@ async def _generate_scene(
         count=scene.count,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
+        max_credits=max_credits,
     )
 
     started_media_ids: list[str] = []

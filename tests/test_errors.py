@@ -641,7 +641,7 @@ def test_problem_details_without_ref_has_no_incident_key() -> None:
 
 def test_all_domain_errors_provide_remediation_hint() -> None:
     """Assert to_problem_details() returns remediation_hint for all domain error classes."""
-    from gflow_cli.errors import GFlowError
+    from gflow_cli.errors import CreditCapExceededError, GFlowError
 
     def get_subclasses(c: type[GFlowError]) -> set[type[GFlowError]]:
         subs = set(c.__subclasses__())
@@ -653,13 +653,16 @@ def test_all_domain_errors_provide_remediation_hint() -> None:
     assert len(domain_classes) >= 30
 
     for exc_cls in domain_classes:
-        try:
-            exc = exc_cls()
-        except TypeError:
+        if exc_cls is CreditCapExceededError:
+            exc = CreditCapExceededError(quoted=None, max_credits=0)
+        else:
             try:
-                exc = exc_cls("test detail")
+                exc = exc_cls()
             except TypeError:
-                exc = exc_cls(requested="classic")
+                try:
+                    exc = exc_cls("test detail")
+                except TypeError:
+                    exc = exc_cls(requested="classic")
 
         pd = exc.to_problem_details()
         hint = pd.get("remediation_hint", "")

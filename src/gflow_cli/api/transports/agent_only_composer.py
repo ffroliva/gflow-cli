@@ -1280,5 +1280,5 @@ async def run_agent_video(
         status=VideoStatus(media_id=media.uuid, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=local_path,
         project_id=project_id,
-        quoted_credits=composer.quoted_credits,
+        quoted_credits=getattr(composer, "quoted_credits", None),
     )

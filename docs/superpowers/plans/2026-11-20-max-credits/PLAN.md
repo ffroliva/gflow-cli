@@ -361,7 +361,7 @@ Run: `uv run python -m pytest tests/api/test_credit_cap.py tests/features/test_c
 - Create: `tests/test_cli_video_credit_cap.py`
 - Create: `tests/test_cli_movie_credit_cap.py`
 
-- [ ] **Step 1: Write failing CLI tests in `tests/test_cli_video_credit_cap.py` and `tests/test_cli_movie_credit_cap.py` (Red)**
+- [x] **Step 1: Write failing CLI tests in `tests/test_cli_video_credit_cap.py` and `tests/test_cli_movie_credit_cap.py` (Red)**
 
 Cover:
 1. `--max-credits 4` on `gflow video t2v`, `i2v`, `r2v`, and `generate` populates `GenerateVideoRequest.max_credits == 4`.
@@ -373,21 +373,21 @@ Cover:
 7. `gflow movie run --max-credits 6 --continue-on-error` with two 4-credit scenes completes scene 1, refuses scene 2 with `CreditCapExceededError`, writes handoff state for scene 1, and exits **45** immediately without attempting a third scene.
 8. `--dry-run --max-credits 12` on `video chain`, `video extend`, and `movie run` includes `"max_credits": 12` in JSON/table dry-run output and exits 0 without opening a browser.
 
-- [ ] **Step 2: Wire `--max-credits` across `src/gflow_cli/cli_video.py` and `src/gflow_cli/chain.py`**
+- [x] **Step 2: Wire `--max-credits` across `src/gflow_cli/cli_video.py` and `src/gflow_cli/chain.py`**
 
 - Add `--max-credits` (`type=click.IntRange(min=0), default=None, help="Refuse before submit if Flow's credit quote exceeds this cap (default: GFLOW_CLI_MAX_CREDITS)."`) to `_shared_video_options` (automatically inherited by `t2v`, `i2v`, `r2v`, `chain`, and bridged to `video generate` via `cli_gen.py::bridge_params`) and to `extend`.
 - In `_run_video_generation`, resolve `effective_max_credits = resolve_max_credits(max_credits, settings.max_credits)` and pass `max_credits=effective_max_credits` to `GenerateVideoRequest`.
 - In `chain.py::run_chain` / `_execute_chain_links`, accept `max_credits: int | None = None`, instantiate `budget = CreditBudget(max_credits)`, set each link's `request = dataclasses.replace(request, max_credits=budget.remaining())`, and after `client.generate_video(request)` call `budget.record_step(result.quoted_credits, route="video chain")`. Note: `chain.py:264` already catches `GflowError` after `completed_ids` is non-empty and sets `exc.charged = "yes"`, `exc.next_action = "reconcile"`, `exc.completed_media_ids = list(completed_ids)`!
 - In `cli_video.py::_extend_session` (which is at `C901 = 26, PLR0915 = 102`), extract cost resolution + `enforce_credit_cap(total_cost, effective_max_credits, route="video extend")` into a module-level helper `_resolve_and_check_extend_cost(...)` so `_extend_session`'s complexity and statement count decrease rather than increase. Also pass `max_credits=effective_max_credits` to `_extend_migrated_session`.
 
-- [ ] **Step 3: Wire `--max-credits` in `src/gflow_cli/cli_movie.py`**
+- [x] **Step 3: Wire `--max-credits` in `src/gflow_cli/cli_movie.py`**
 
 - Add `--max-credits` (`type=click.IntRange(min=0), default=None`) to `movie run`.
 - Resolve `effective_max_credits = resolve_max_credits(max_credits, settings.max_credits)`.
 - Track `budget = CreditBudget(effective_max_credits)` across scenes in `_run_movie`, passing `max_credits=budget.remaining()` into `_execute_scene` -> `GenerateVideoRequest` and calling `budget.record_step(result.quoted_credits, route="movie run")`.
 - If `_execute_scene` raises `CreditCapExceededError`, record the failed scene, write handoff/state artifacts if any scene completed, and re-raise immediately even when `continue_on_error` is True.
 
-- [ ] **Step 4: Run CLI tests (Green)**
+- [x] **Step 4: Run CLI tests (Green)**
 
 Run: `uv run python -m pytest tests/test_cli_video_credit_cap.py tests/test_cli_movie_credit_cap.py -q`
 

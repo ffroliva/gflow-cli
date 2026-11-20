@@ -33,6 +33,10 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.credit_cap import (
+    enforce_total_credit_cap,
+    resolve_max_credits,
+)
 from gflow_cli.api.extend_chain import run_extend_chain
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.api.transports._common import migrated_route
@@ -51,6 +55,7 @@ from gflow_cli.cli_video_reporting import (
     _free_rerender_hint,
     _print_chain_plan,
     _print_extend_plan,
+    _report_chain_dry_run,
     _report_migrated_extend,
 )
 from gflow_cli.config import UiMode, get_settings
@@ -124,6 +129,15 @@ _resolution_option = click.option(
     ),
 )
 
+_max_credits_option = click.option(
+    "--max-credits",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "Refuse before submit if Flow's quote exceeds this cap (default: GFLOW_CLI_MAX_CREDITS)."
+    ),
+)
+
 
 def _warn_persistence_failed_after_success(
     *,
@@ -155,6 +169,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
     for opt in reversed(
         (
             click.option("--profile", default=None, help="Profile name (overrides default)."),
+            _max_credits_option,
             tool_option,
             _project_option,
             _project_name_option,
@@ -413,6 +428,7 @@ async def _run_t2v(
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
     ui_mode: UiMode | None = None,
+    max_credits: int | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -430,6 +446,7 @@ async def _run_t2v(
         original_prompt=original_prompt,
         tool=tool,
         ui_mode=ui_mode,
+        max_credits=resolve_max_credits(max_credits, get_settings().max_credits),
     )
 
     await _generate_and_report(
@@ -484,6 +501,7 @@ class _I2VParams:
     reference_entity_names: tuple[str, ...] = ()
     # Requested Flow UI arm (#299); agentic is rejected at the CLI edge.
     ui_mode: UiMode | None = None
+    max_credits: int | None = None
 
 
 def _media_picker_metadata(
@@ -581,6 +599,7 @@ async def _run_i2v(
         original_prompt=params.original_prompt,
         tool=params.tool,
         ui_mode=params.ui_mode,
+        max_credits=resolve_max_credits(params.max_credits, get_settings().max_credits),
     )
     await _generate_and_report(
         request,
@@ -618,6 +637,7 @@ async def _run_r2v(
     project_id: str | None = None,
     project_name: str | None = None,
     tool_specs: tuple[str, ...] = (),
+    max_credits: int | None = None,
 ) -> None:
     from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 
@@ -635,6 +655,7 @@ async def _run_r2v(
         reference_entity_names=reference_entity_names,
         original_prompt=original_prompt,
         tool=tool,
+        max_credits=resolve_max_credits(max_credits, get_settings().max_credits),
     )
 
     await _generate_and_report(
@@ -744,6 +765,7 @@ class _ChainExecConfig:
     jitter: float
     chain_id: str
     as_json: bool
+    max_credits: int | None = None
     relocate: Callable[[int, VideoResult], VideoResult] | None = None
     start_index: int = 0
     seed_clip: Path | None = None
@@ -859,6 +881,7 @@ async def _execute_chain_links(
             relocate=cfg.relocate,
             start_index=cfg.start_index,
             seed_clip=cfg.seed_clip,
+            max_credits=cfg.max_credits,
         )
         return results, False, completed_paths
     except ChainPartialError as exc:
@@ -931,6 +954,7 @@ async def _run_chain(
     as_json: bool,
     output_format: str = "table",
     tool_specs: tuple[str, ...] = (),
+    max_credits: int | None = None,
 ) -> None:
     """Drive a sequential last-frame I2V chain from a JSONL manifest.
 
@@ -979,7 +1003,9 @@ async def _run_chain(
         )
         raise ChainManifestError(msg)
 
-    settings = get_settings()
+    effective_max_credits = resolve_max_credits(
+        max_credits, (settings := get_settings()).max_credits
+    )
     # ffmpeg reads each link's clip from disk to seed the next one (#1008).
     refuse_cloud_storage_for_local_file(settings.storage_uri, "video chain")
 
@@ -1003,14 +1029,17 @@ async def _run_chain(
     pending_operations = len(remaining_links)
 
     if dry_run:
-        _print_chain_plan(
+        _report_chain_dry_run(
             links=links,
             model=resolved_model,
             aspect=aspect,
             skipped=skipped,
             chain_id=chain_id,
+            max_credits=effective_max_credits,
+            pending_links=pending_operations,
+            as_json=as_json or output_format == OutputFormat.JSON.value,
+            console=console,
         )
-        console.print("[dim]--dry-run: no video operations submitted, no clips generated.[/dim]")
         return
 
     quiet_output = as_json or output_format in (
@@ -1024,6 +1053,7 @@ async def _run_chain(
             aspect=aspect,
             skipped=skipped,
             chain_id=chain_id,
+            max_credits=effective_max_credits,
         )
 
     if not yes:
@@ -1077,6 +1107,7 @@ async def _run_chain(
                     relocate=chain_clip_relocator(output_file),
                     start_index=skipped,
                     seed_clip=seed_clip,
+                    max_credits=effective_max_credits,
                 ),
             )
     finally:
@@ -1173,6 +1204,7 @@ def t2v(
     resolution: str | None,
     count: int,
     ui_mode: str | None,
+    max_credits: int | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
@@ -1213,6 +1245,7 @@ def t2v(
             project_name=project_name,
             tool_specs=tool_specs,
             ui_mode=UiMode(ui_mode) if ui_mode else None,
+            max_credits=max_credits,
         ),
         cli_command="video t2v",
         as_json=is_json,
@@ -1374,6 +1407,7 @@ def i2v(  # NOSONAR
     resolution: str | None,
     count: int,
     ui_mode: str | None,
+    max_credits: int | None,
     profile: str | None,
     tool_specs: tuple[str, ...],
     project_id: str | None,
@@ -1441,6 +1475,7 @@ def i2v(  # NOSONAR
         image_ref_local_sha256=start_local[1] if start_local else "",
         end_frame_ref_local_sha256=end_local[1] if end_local else "",
         ui_mode=UiMode(ui_mode) if ui_mode else None,
+        max_credits=max_credits,
     )
     run_with_handlers(
         lambda: _run_i2v(
@@ -1545,6 +1580,7 @@ def i2v(  # NOSONAR
     type=click.Path(file_okay=False, path_type=Path),
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
+@_max_credits_option
 @output_format_option(has_out_file=True)
 def r2v(
     prompt: str,
@@ -1560,6 +1596,7 @@ def r2v(
     project_name: str | None,
     reference_entities: tuple[str, ...],
     reference_entity_names: tuple[str, ...],
+    max_credits: int | None,
     output_file: Path | None,
     out_dir: Path | None,
     as_json: bool,
@@ -1614,6 +1651,7 @@ def r2v(
             project_id=project_id,
             project_name=project_name,
             tool_specs=tool_specs,
+            max_credits=max_credits,
         ),
         cli_command="video r2v",
         as_json=is_json,
@@ -1668,6 +1706,7 @@ def r2v(
     type=click.IntRange(1, None),
     help="Cap the number of links; error (exit 11) if the manifest has more.",
 )
+@_max_credits_option
 @click.option(
     "--yes",
     "-y",
@@ -1726,6 +1765,7 @@ def chain(
     manifest: str,
     model: str | None,
     max_links: int | None,
+    max_credits: int | None,
     yes: bool,
     dry_run: bool,
     resume_from: str | None,
@@ -1758,6 +1798,7 @@ def chain(
             out_dir=out_dir,
             output_file=output_file,
             max_links=max_links,
+            max_credits=max_credits,
             resume_from=resume_from,
             jitter=jitter,
             seed_offset=seed_offset,
@@ -1804,8 +1845,10 @@ async def _run_extend(  # noqa: PLR0913
     as_json: bool,
     output_format: str = "table",
     migrated: bool = False,
+    max_credits: int | None = None,
 ) -> None:
     """Submit N chained extends, then optionally render them to one file."""
+    max_credits = resolve_max_credits(max_credits, get_settings().max_credits)
     if not project_id:
         msg = "--project is required: extend must know which project owns MEDIA_ID"
         raise ConfigurationError(msg)
@@ -1839,6 +1882,7 @@ async def _run_extend(  # noqa: PLR0913
                 as_json=as_json,
                 output_format=output_format,
                 recorder=recorder,
+                max_credits=max_credits,
             )
             return
         await _extend_session(
@@ -1856,6 +1900,7 @@ async def _run_extend(  # noqa: PLR0913
             as_json=as_json,
             output_format=output_format,
             recorder=recorder,
+            max_credits=max_credits,
         )
     finally:
         # Leaks on every exit path otherwise, and on Windows a stray handle
@@ -1876,6 +1921,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
     as_json: bool,
     output_format: str = "table",
     recorder: OperationRecorder | None,
+    max_credits: int | None = None,
 ) -> None:
     """One segment on flow.google.com: Flow's own extend UI, downloaded to a file.
 
@@ -1893,6 +1939,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
             project_id=project_id,
             prompt=prompt,
             aspect=aspect,
+            max_credits=max_credits,
             out_path=out_path,
             on_started=_migrated_extend_on_started(
                 profile_name=profile_name,
@@ -1970,6 +2017,7 @@ async def _extend_session(  # noqa: PLR0913
     as_json: bool,
     output_format: str = "table",
     recorder: OperationRecorder | None,
+    max_credits: int | None = None,
 ) -> None:
     """The browser-bound half of `_run_extend`, split out so the caller can own
     the DataStore lifetime with a plain try/finally."""
@@ -1989,7 +2037,12 @@ async def _extend_session(  # noqa: PLR0913
         # Pre-flight balance check for the WHOLE run. `chain` never knew prices
         # so it could not do this; stopping here beats stopping at segment 6
         # holding a half-length video and a spent balance.
-        total_cost = unit * segments
+        total_cost = enforce_total_credit_cap(
+            unit_cost=unit,
+            count=segments,
+            max_credits=max_credits,
+            route="video extend",
+        )
         # `balance` is the only unknown here — the resolver cannot return a model
         # without also returning its cost.
         if balance is not None and balance < total_cost:
@@ -2093,6 +2146,7 @@ async def _extend_session(  # noqa: PLR0913
             aspect=aspect,
             seed=seed,
             jitter_range=jitter_range,
+            max_credits=max_credits,
             on_submitted=_on_submitted,
         )
         set_interrupt_context(
@@ -2241,6 +2295,7 @@ async def _extend_session(  # noqa: PLR0913
 @click.option("--yes", is_flag=True, help="Skip the cost confirmation.")
 @click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
 @click.option("--profile", default=None, help="Auth profile to use.")
+@_max_credits_option
 @output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
     media_id: str,
@@ -2256,6 +2311,7 @@ def extend(  # noqa: PLR0913
     yes: bool,
     dry_run: bool,
     profile: str | None,
+    max_credits: int | None,
     as_json: bool,
     output_format: str = "table",
 ) -> None:
@@ -2278,6 +2334,7 @@ def extend(  # noqa: PLR0913
         == "migrated"
     )
     is_json = as_json or output_format == OutputFormat.JSON.value
+    effective_max_credits = resolve_max_credits(max_credits, get_settings().max_credits)
     if migrated and refusal is not None:
 
         async def _refuse() -> None:
@@ -2300,8 +2357,18 @@ def extend(  # noqa: PLR0913
             aspect=aspect or ("the source clip's" if migrated else _LABS_EXTEND_DEFAULT_ASPECT),
             segments=count,
             migrated=migrated,
+            max_credits=effective_max_credits,
         )
     if dry_run:
+        if is_json:
+            json_output.emit(
+                {
+                    "status": "dry_run",
+                    "command": _EXTEND_COMMAND,
+                    "segments": count,
+                    "max_credits": effective_max_credits,
+                }
+            )
         return
     if not yes:
         click.confirm(f"Submit {count} extend segment(s)?", abort=True)
@@ -2324,6 +2391,7 @@ def extend(  # noqa: PLR0913
             as_json=as_json,
             output_format=output_format,
             migrated=migrated,
+            max_credits=effective_max_credits,
         ),
         cli_command=_EXTEND_COMMAND,
         as_json=is_json,

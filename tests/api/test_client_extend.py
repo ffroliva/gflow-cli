@@ -91,6 +91,24 @@ async def test_credit_cap_refuses_before_recaptcha_mint(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_migrated_extend_cap_refuses_before_page_checkout(tmp_path: Path) -> None:
+    c = _client(tmp_path)
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+    with pytest.raises(CreditCapExceededError) as caught:
+        await c.extend_video_migrated(
+            media_id=MEDIA,
+            project_id=PROJECT,
+            prompt="continue",
+            aspect=None,
+            out_path=tmp_path / "out.mp4",
+            max_credits=15,
+        )
+    assert caught.value.quoted is None
+    assert caught.value.max_credits == 15
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
 async def test_sends_the_resolved_key_not_a_pinned_one(tmp_path: Path) -> None:
     c = _client(tmp_path)
     await c.extend_video(media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="p")

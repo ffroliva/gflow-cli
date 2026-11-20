@@ -29,6 +29,7 @@ __all__ = [
     "_free_rerender_hint",
     "_migrated_extend_payload",
     "_print_chain_plan",
+    "_report_chain_dry_run",
     "_print_extend_plan",
     "_report_migrated_extend",
 ]
@@ -328,6 +329,7 @@ def _print_chain_plan(
     model: Any,
     links: Sequence[Any],
     skipped: int = 0,
+    max_credits: int | None = None,
     console: Console | None = None,
 ) -> None:
     """Print human-readable chain plan before execution."""
@@ -340,6 +342,8 @@ def _print_chain_plan(
         + (f" — {skipped} already completed, {remaining} to generate" if skipped else "")
     )
     c.print(f"  [yellow]{remaining} pending video {operation_noun}[/yellow]")
+    if max_credits is not None:
+        c.print(f"  max credits : {max_credits}")
     c.print(
         "  Video operations may consume credits. Current cost varies by model, duration, "
         "account tier, and Flow policy; check Google Flow before submitting."
@@ -351,6 +355,40 @@ def _print_chain_plan(
         c.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
 
 
+def _report_chain_dry_run(
+    *,
+    links: Sequence[Any],
+    model: Any,
+    aspect: str,
+    skipped: int,
+    chain_id: str,
+    max_credits: int | None,
+    pending_links: int,
+    as_json: bool,
+    console: Console,
+) -> None:
+    """Emit a chain dry-run plan in its selected output format."""
+    if as_json:
+        json_output.emit(
+            {
+                "status": "dry_run",
+                "command": "video chain",
+                "pending_links": pending_links,
+                "max_credits": max_credits,
+            }
+        )
+        return
+    _print_chain_plan(
+        links=links,
+        model=model,
+        aspect=aspect,
+        skipped=skipped,
+        chain_id=chain_id,
+        max_credits=max_credits,
+    )
+    console.print("[dim]--dry-run: no video operations submitted, no clips generated.[/dim]")
+
+
 def _print_extend_plan(
     *,
     media_id: str,
@@ -358,6 +396,7 @@ def _print_extend_plan(
     aspect: str,
     segments: int,
     migrated: bool = False,
+    max_credits: int | None = None,
     console: Console | None = None,
 ) -> None:
     """Show what will be submitted BEFORE a client exists."""
@@ -366,6 +405,8 @@ def _print_extend_plan(
     c.print(f"  source clip : {media_id}")
     c.print(f"  prompt      : {prompt}")
     c.print(f"  aspect      : {aspect}")
+    if max_credits is not None:
+        c.print(f"  max credits : {max_credits}")
     if migrated:
         c.print(
             "  cost        : spends credits — flow.google.com does not report the price "

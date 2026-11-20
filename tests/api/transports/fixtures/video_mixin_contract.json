@@ -29,7 +29,7 @@
     "_exit_agent_mode": "staticmethod (page: 'Page', *, out_dir: 'Path | None' = None, allow_reload: 'bool' = False) -> 'bool' sha=bffa022183059783",
     "_find_picker_entity_tile": "staticmethod (page: 'Page', entity_id: 'str') -> 'Locator' sha=50dfee4e21d45de2",
     "_fire_on_started": "staticmethod (on_started: 'VideoStartedCallback', started: 'VideoStarted') -> 'None' sha=b124424a0d13e5e9",
-    "_generate_video_locked": "function (self, request: 'GenerateVideoRequest', *, project_id: 'str | None' = None, out_dir: 'Path | None', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None', name_resolver: 'Callable[[str], str | None] | None' = None) -> 'VideoResult' sha=41c53bdb039a886c",
+    "_generate_video_locked": "function (self, request: 'GenerateVideoRequest', *, project_id: 'str | None' = None, out_dir: 'Path | None', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None', name_resolver: 'Callable[[str], str | None] | None' = None) -> 'VideoResult' sha=80b8a1c2d7a7390b",
     "_intercept_reference_entities": "function (self, page: 'Page', expected_entities: 'set[str]') -> 'AsyncGenerator[None, None]' sha=6458727ffdc32712",
     "_is_flow_app_crash": "staticmethod (page: 'Page') -> 'bool' sha=ac434f6c0ab983f4",
     "_match_project_option": "staticmethod (page: 'Page', match_args: 'dict[str, str | None]') -> 'tuple[bool, str | None, int]' sha=eaff5b3f39c2a1e2",

@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
-from gflow_cli.errors import RETRY_ACTIONS, GFlowError
+from gflow_cli.errors import RETRY_ACTIONS, CreditCapExceededError, GFlowError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
@@ -58,6 +58,7 @@ class _ExtendCapable(Protocol):
         prompt: str,
         aspect: str = ...,
         seed: int | None = ...,
+        max_credits: int | None = ...,
     ) -> ExtendStarted: ...
 
     async def poll_video_status(self, media_id: str, *, project_id: str) -> Any: ...
@@ -84,6 +85,14 @@ class ExtendChainResult:
         return self.error is not None
 
 
+def _preserve_cap_partials(exc: BaseException, completed: list[str]) -> None:
+    if isinstance(exc, CreditCapExceededError) and completed:
+        exc.charged = "yes"
+        exc.next_action = "reconcile"
+        exc.retryable = False
+        exc.completed_media_ids = list(completed)
+
+
 async def run_extend_chain(  # noqa: PLR0913
     client: _ExtendCapable,
     *,
@@ -95,6 +104,7 @@ async def run_extend_chain(  # noqa: PLR0913
     aspect: str = "9:16",
     seed: int | None = None,
     jitter_range: tuple[float, float] = (0.0, 0.0),
+    max_credits: int | None = None,
     start_position: int = 1,
     on_submitted: Callable[[ExtendStarted], None] | None = None,
     sleep: Callable[[float], Coroutine[Any, Any, None]] | None = None,
@@ -143,6 +153,7 @@ async def run_extend_chain(  # noqa: PLR0913
                 prompt=prompt,
                 aspect=aspect,
                 seed=seed,
+                max_credits=(max_credits - spent if max_credits is not None else None),
             )
         except (GFlowError, ValueError) as exc:
             # ValueError is in here on purpose: media_name_from_generate_response
@@ -151,6 +162,7 @@ async def run_extend_chain(  # noqa: PLR0913
             # partial-preservation path entirely — the exact "paid for, invisible"
             # outcome this module's docstring says it prevents.
             # No retry, by design. Hand back everything already paid for.
+            _preserve_cap_partials(exc, completed)
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,

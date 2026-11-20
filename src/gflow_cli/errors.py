@@ -917,7 +917,14 @@ class CreditCapExceededError(GFlowError):
     quoted: int | None = None
     max_credits: int = 0
 
-    def __init__(self, *, quoted: int | None, max_credits: int, route: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        quoted: int | None,
+        max_credits: int,
+        route: str = "",
+        completed_media_ids: list[str] | None = None,
+    ) -> None:
         if max_credits < 0:
             raise ValueError("max_credits must be >= 0")
         detail = (
@@ -928,11 +935,14 @@ class CreditCapExceededError(GFlowError):
         super().__init__(detail, status=422, route=route, charged="no", next_action="fix_input")
         self.quoted = quoted
         self.max_credits = max_credits
+        self.completed_media_ids = completed_media_ids or []
 
     def to_problem_details(self) -> ProblemDetails:
         out = super().to_problem_details()
         out["quoted"] = self.quoted
         out["max_credits"] = self.max_credits
+        if self.completed_media_ids:
+            out["completed_media_ids"] = self.completed_media_ids
         return out
 
 
