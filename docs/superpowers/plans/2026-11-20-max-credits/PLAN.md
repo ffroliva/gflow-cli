@@ -157,7 +157,7 @@ Expected: `ImportError` / `AttributeError` for `gflow_cli.api.credit_cap` and `C
 - Create: `tests/features/credit_cap.feature`
 - Create: `tests/features/test_credit_cap_steps.py`
 
-- [ ] **Step 1: Create `tests/features/credit_cap.feature` with the 5 offline scenarios from [`SCENARIO.md`](SCENARIO.md)**
+- [x] **Step 1: Create `tests/features/credit_cap.feature` with the 5 offline scenarios from [`SCENARIO.md`](SCENARIO.md)**
 
 Include:
 - `Scenario Outline: Settings-pane credit quote parser extracts the integer across locales`
@@ -166,9 +166,9 @@ Include:
 - `Scenario: Multi-link video chain deducts each link's quote from the per-command budget`
 - `Scenario: MCP video payload codec round-trips max_credits to GenerateVideoRequest`
 
-- [ ] **Step 2: Create `tests/features/test_credit_cap_steps.py` binding `credit_cap.feature`**
+- [x] **Step 2: Create `tests/features/test_credit_cap_steps.py` binding `credit_cap.feature`**
 
-- [ ] **Step 3: Run pytest on `tests/features/test_credit_cap_steps.py` and confirm it fails (Red)**
+- [x] **Step 3: Run pytest on `tests/features/test_credit_cap_steps.py` and confirm it fails (Red)**
 
 Run: `uv run python -m pytest tests/features/test_credit_cap_steps.py -q`
 
