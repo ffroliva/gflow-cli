@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from gflow_cli.api.transports import _mc_editor_gate
+from gflow_cli.api.transports import _mc_agent_mode, _mc_editor_gate
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.errors import UiSelectorDriftError
 
@@ -115,8 +115,8 @@ DECOYS = ("flow-creative-agent-prompt-box:close", "flow-tile-view-header:setting
 def _fast_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shrink the gate's waits. These pages either settle at once or never will."""
     monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_EARLY_S", 0.5)
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_SETTLE_S", 0.2)
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 0.3)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_ONLY_SETTLE_S", 0.2)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_PANEL_SETTLE_S", 0.3)
 
 
 async def _run(page: Page, **scenario: Any) -> tuple[str, list[str], dict[str, Any]]:
@@ -216,7 +216,7 @@ async def test_old_build_agent_only_page_does_not_wait_for_a_toggle_that_never_c
     settle for a toggle it will never render would tax every such run."""
     import time
 
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 3.0)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_PANEL_SETTLE_S", 3.0)
     t0 = time.monotonic()
     kind, _, _ = await _run(page, build="old", agent=True, panel=True, classicArm=False)
     assert kind == "agent_only"

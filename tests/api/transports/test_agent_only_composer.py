@@ -163,9 +163,9 @@ async def test_a_chip_that_mounts_late_is_not_called_agent_only(
 ) -> None:
     """Review: both facts are absences, so a slow classic mount (hidden trigger now, chip a
     second later) passed as agent-only and would have had account defaults written to it."""
-    from gflow_cli.api.transports import _mc_editor_gate
+    from gflow_cli.api.transports import _mc_agent_mode
 
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_SETTLE_S", 0.6)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_ONLY_SETTLE_S", 0.6)
     late_chip = AGENT_ONLY + (
         "<script>setTimeout(() => document.body.insertAdjacentHTML('beforeend',"
         ' \'<button class="agent-mode-chip" aria-pressed="true"></button>\'), 200)</script>'
