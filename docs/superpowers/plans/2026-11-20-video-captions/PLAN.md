@@ -273,8 +273,8 @@ from `tests/features/test_video_captions_steps.py`.
 - `tests/features/test_video_captions_steps.py` — step definitions driving the CLI runner and MCP tools with a fake transcription transport
 
 **Steps:**
-- [ ] Write `tests/features/test_video_captions_steps.py` calling `scenarios("video_captions.feature")`.
-- [ ] Run `uv run pytest tests/features/test_video_captions_steps.py tests/features/test_e2e_binding_guard.py` and verify `test_e2e_binding_guard.py` is green while the 7 BDD scenarios fail red awaiting Task 3–5 implementations.
+- [x] Write `tests/features/test_video_captions_steps.py` calling `scenarios("video_captions.feature")`.
+- [x] Run `uv run pytest tests/features/test_video_captions_steps.py tests/features/test_e2e_binding_guard.py` and verify `test_e2e_binding_guard.py` is green while the 7 BDD scenarios fail red awaiting Task 3–5 implementations.
 
 **Tests created (red):**
 - [ ] `test_burning_an_authored_srt_file_into_a_local_video_clip_runs_offline` (SCENARIO #6)
