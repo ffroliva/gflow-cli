@@ -42,6 +42,7 @@ _COST_SUB_MARKERS: frozenset[str] = frozenset(
         "e2e_character",
         "e2e_telemetry",
         "e2e_update",
+        "e2e_media",
     }
 )
 

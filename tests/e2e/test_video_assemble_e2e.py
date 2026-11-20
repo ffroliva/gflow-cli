@@ -14,7 +14,7 @@ from tests.e2e.test_telemetry_local_e2e import InstalledGFlow
 from tests.e2e.test_telemetry_local_e2e import clean_home as _clean_home_fixture  # noqa: F401
 from tests.e2e.test_telemetry_local_e2e import installed_gflow as _installed_gflow_fixture  # noqa: F401
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_media]
 
 
 def _clip(path: Path, *, size: tuple[int, int]) -> None:
