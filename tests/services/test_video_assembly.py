@@ -17,6 +17,10 @@ def _clip(path: Path, *, size: tuple[int, int], rate: int, frames: int, audio: b
         video = output.add_stream("mpeg4", rate=rate)
         video.width, video.height = size
         video.pix_fmt = "yuv420p"
+        sound = output.add_stream("aac", rate=44100) if audio else None
+        if sound is not None:
+            sound.layout = "stereo"
+            sound.format = "fltp"
         for index in range(frames):
             pixels = np.zeros((size[1], size[0], 3), dtype=np.uint8)
             frame = av.VideoFrame.from_ndarray(pixels, format="rgb24")
@@ -25,14 +29,12 @@ def _clip(path: Path, *, size: tuple[int, int], rate: int, frames: int, audio: b
                 output.mux(packet)
         for packet in video.encode():
             output.mux(packet)
-        if audio:
-            sound = output.add_stream("aac", rate=44100)
-            sound.layout = "stereo"
-            sound.format = "fltp"
+        if sound is not None:
             sample = av.AudioFrame.from_ndarray(
                 np.zeros((2, 1024), dtype=np.float32), format="fltp", layout="stereo"
             )
             sample.sample_rate = 44100
+            sample.pts = 0
             for packet in sound.encode(sample):
                 output.mux(packet)
             for packet in sound.encode():
@@ -53,6 +55,7 @@ def test_assembles_varied_clips_and_missing_audio_as_silence(tmp_path: Path) -> 
         assert (stream.width, stream.height) == (64, 48)
         assert stream.average_rate == 10
         assert len(list(container.decode(stream))) == 20
+        assert container.streams.audio
     assert result.clips_count == 2
     assert result.duration_seconds == pytest.approx(2, abs=0.2)
 

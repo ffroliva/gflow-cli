@@ -4,7 +4,7 @@
 
 **Goal:** Join local or catalog video clips with optional music and voiceover, entirely locally and without Flow credits.
 
-**Architecture:** Put decoding, normalization, mixing and encoding in `services/video_assembly.py`, reusing PyAV conventions in `media.py`; keep Click and MCP as thin adapters. Resolve catalog IDs through `media_recovery` and verify paths through `verified_local_path`. Use `SceneConcatError` (19) for processing failures; reuse the chain-extra missing-dependency error and install hint.
+**Architecture:** Put decoding, normalization, mixing and encoding in `services/video_assembly.py`, reusing PyAV conventions in `media.py`; keep Click and MCP as thin adapters. Resolve catalog IDs through `media_recovery` and verify paths through `verified_local_path`. Use a local `VideoAssemblyError` because `SceneConcatError` specifically means a failed Flow server-side job; reuse the chain-extra missing-dependency error and install hint.
 
 **Predict verdict:** GO — confidence 8/10.
 
@@ -58,10 +58,10 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Implement streaming PyAV assembly and track mixing.
 **Files:** `src/gflow_cli/services/video_assembly.py`, `errors.py` only if no reusable error fits.
 **Steps:**
-- [ ] Normalize video to first clip dimensions and fixed documented frame rate.
-- [ ] Treat absent clip audio as silence; mix optional tracks and duck music when requested.
-- [ ] Validate volumes, inputs and output; clean partial output on failure.
-- [ ] Reuse typed missing-chain-extra error; use `SceneConcatError` for media processing.
+- [x] Normalize video to first clip dimensions and the first clip's frame rate.
+- [x] Treat absent clip audio as silence; mix optional tracks and duck music when requested.
+- [x] Validate volumes, inputs and output; clean partial output on failure.
+- [x] Reuse typed missing-chain-extra error; use `VideoAssemblyError` for media processing because `SceneConcatError` is reserved for Flow's server-side job.
 
 ## Task 4 — Catalog resolution
 **What:** Resolve each argument as local path or catalog ID.

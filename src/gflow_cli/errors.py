@@ -69,6 +69,7 @@ __all__ = [
     "UiSelectorDriftError",
     "UpscaleUnavailableError",
     "VideoModelSelectionError",
+    "VideoAssemblyError",
     "WafRejectionError",
     "WireFormatError",
     "active_exit_code",
@@ -1595,6 +1596,18 @@ class FrameExtractionError(GFlowError):
         "Verify input video file is readable and non-corrupt. Ensure the "
         "gflow-cli[chain] extra and both packages it carries (av, pillow) are "
         "installed: pip install 'gflow-cli[chain]'"
+    )
+
+
+class VideoAssemblyError(GFlowError):
+    """Raised when local video or audio inputs cannot be assembled."""
+
+    problem_type = "https://gflow-cli.dev/errors/video-assembly"
+    charged = "no"
+    next_action = "fix_input"
+    title = "Local video assembly failed"
+    _default_remediation = (
+        "Check that the local media files are readable and the output path is writable."
     )
 
 
