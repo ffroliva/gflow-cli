@@ -319,7 +319,7 @@ burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio s
 
 Transcription sends only extracted 16 kHz mono WAV audio to the configured
 `GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional
-`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_LLM_MODEL` (`whisper-1` when unset). gflow refuses
+`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_TRANSCRIBE_MODEL` (`whisper-1` when unset). gflow refuses
 before extracting or sending audio while the built-in Google Gemini endpoint is configured;
 set the base URL to an OpenAI, Groq, or local Whisper-compatible server. The response must
 provide timed segments for SRT output.
@@ -354,7 +354,7 @@ burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio s
 
 Transcription sends only extracted 16 kHz mono WAV audio to the configured
 `GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional
-`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_LLM_MODEL` (`whisper-1` when unset). gflow refuses
+`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_TRANSCRIBE_MODEL` (`whisper-1` when unset). gflow refuses
 before extracting or sending audio while the built-in Google Gemini endpoint is configured;
 set the base URL to an OpenAI, Groq, or local Whisper-compatible server. The response must
 provide timed segments for SRT output.

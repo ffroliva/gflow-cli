@@ -244,6 +244,7 @@ def test_transcribe_posts_wav_and_writes_timed_json_segments(
     from gflow_cli.services import video_captions as service
 
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    monkeypatch.setenv("GFLOW_CLI_TRANSCRIBE_MODEL", "test-whisper")
     config.reset_settings()
     captured: dict[str, Any] = {}
 
@@ -277,7 +278,7 @@ def test_transcribe_posts_wav_and_writes_timed_json_segments(
     assert captured["url"].endswith("/audio/transcriptions")
     assert captured["client_options"]["follow_redirects"] is False
     assert captured["data"] == {
-        "model": "whisper-1",
+        "model": "test-whisper",
         "response_format": "verbose_json",
         "language": "en",
     }

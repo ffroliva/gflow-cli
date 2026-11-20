@@ -252,7 +252,7 @@ def _request_segments(
     if settings.llm_api_key:
         headers["Authorization"] = f"Bearer {settings.llm_api_key.get_secret_value()}"
     data: dict[str, str] = {
-        "model": settings.llm_model or "whisper-1",
+        "model": settings.transcribe_model,
         "response_format": "verbose_json",
     }
     if language:
