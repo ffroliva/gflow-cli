@@ -126,9 +126,18 @@ def _parse_json_segments(raw: list[object]) -> tuple[TranscriptSegment, ...]:
         try:
             start = float(parsed["start"])
             end = float(parsed["end"])
-            text = str(parsed["text"]).strip()
+            raw_text = parsed["text"]
         except (KeyError, TypeError, ValueError):
             continue
+        if not isinstance(raw_text, str):
+            raise ConfigurationError(
+                detail="Transcription endpoint returned an invalid response.",
+                charged="no",
+                remediation_hint=(
+                    "Configure the endpoint to return valid verbose_json segments or SRT."
+                ),
+            )
+        text = raw_text.strip()
         if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
             entries.append(TranscriptSegment(start, end, text))
     if entries:

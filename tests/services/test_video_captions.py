@@ -506,6 +506,19 @@ def test_transcription_requires_verbose_json_segments() -> None:
         _parse_transcription_response(response)
 
 
+@pytest.mark.parametrize("bad_text", [None, ["array"], {"text": "object"}])
+def test_transcription_rejects_non_string_segment_text(bad_text: Any) -> None:
+    from gflow_cli.services.transcribers.openai_compatible import _parse_transcription_response
+
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {"segments": [{"start": 0.1, "end": 0.9, "text": bad_text}]},
+    )
+    with pytest.raises(ConfigurationError, match="invalid response") as caught:
+        _parse_transcription_response(response)
+    assert caught.value.charged == "no"
+
+
 def test_transcribe_posts_wav_and_writes_timed_json_segments(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
