@@ -1432,7 +1432,7 @@ Options:
   --json                      Emit the result as JSON.
 ```
 
-The output uses the first clip's dimensions and frame rate. Clips with aspect ratios differing by more than 1% are refused; clips at the same ratio can be resized. Audio is normalized
+The output uses the first clip's dimensions and frame rate. If either first-clip dimension is odd, it rounds down to the nearest even value. Clips with aspect ratios differing by more than 1% are refused; clips at the same ratio can be resized. Audio is normalized
 to stereo 44.1 kHz AAC. A volume outside 0–1, unreadable input, or output path
 that aliases an input fails before replacing source media; a failed render removes
 its partial output.
