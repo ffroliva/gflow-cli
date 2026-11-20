@@ -198,6 +198,17 @@ class Dom:
     agent_chip_probes: int = 0
     agent_chip_click_raises: bool = False
     agent_panel_expanded: bool = False
+    # --- #1374 / #1384: the agent panel (2026-11-19 and 2026-11-20 spikes) --------------
+    #: Measured on both builds: while the panel is open the toggle is NOT in the DOM, and
+    #: it comes back (still pressed) once the panel's close button is clicked. Default
+    #: False keeps the older tests' model, a chip still reachable under the panel.
+    agent_panel_removes_chip: bool = False
+    agent_panel_close_raises: bool = False  # the close button is covered or detached
+    agent_panel_sticks: bool = False  # the close click lands and the panel stays open
+    agent_panel_close_clicks: int = 0
+    #: Another page on the same profile turned agent mode off between this page's read
+    #: and its click: the click finds no pressed toggle, and the trigger is now visible.
+    agent_mode_left_elsewhere: bool = False
 
 
 def _default_dom() -> Dom:
@@ -369,6 +380,12 @@ class FakeLocator:
             dom.events.append("cookie_bar_accepted")
         elif self.kind == "agent_close":
             dom.agent_panel_expanded = False
+        elif self.kind == "agent_panel_close":
+            dom.agent_panel_close_clicks += 1
+            if dom.agent_panel_close_raises:
+                raise PlaywrightTimeoutError("click: element is covered by another element")
+            if not dom.agent_panel_sticks:
+                dom.agent_panel_expanded = False
         elif self.kind == "agent_toggle":
             dom.agent_mode = not dom.agent_mode
         elif self.kind == "radio":
@@ -424,6 +441,9 @@ class FakeLocator:
             dom.dialog_closed += 1
         elif self.kind == "agent_chip":
             dom.agent_chip_clicks += 1
+            if dom.agent_mode_left_elsewhere:
+                dom.agent_mode = False  # the other page's click won; ours finds nothing
+                raise PlaywrightTimeoutError("click: waiting for locator to be visible")
             if dom.agent_chip_click_raises:
                 raise PlaywrightTimeoutError("click: element is not stable")
             if not dom.agent_chip_sticks:
@@ -660,13 +680,15 @@ class FakePage:
                 ["trigger"] if dom.trigger_present else [],
                 visible=lambda: not (dom.agent_mode and dom.agent_mode_hides_trigger),
             )
+        under_panel = dom.agent_panel_expanded and dom.agent_panel_removes_chip
         if css == migrated_composer.AGENT_MODE_CHIP:
-            pressed = dom.agent_mode and dom.agent_chip_present
+            pressed = dom.agent_mode and dom.agent_chip_present and not under_panel
             return FakeLocator(self, "agent_chip", ["chip"] if pressed else [])
         if css == migrated_composer.AGENT_MODE_CHIP_ANY:
             # Presence alone, independent of `agent_mode` — that is the whole point of
             # the second selector: #799's cohort renders no chip in any state.
-            return FakeLocator(self, "agent_chip_any", ["chip"] if dom.agent_chip_present else [])
+            present = dom.agent_chip_present and not under_panel
+            return FakeLocator(self, "agent_chip_any", ["chip"] if present else [])
         if css == migrated_composer.AGENT_ONLY_ANCHOR:
             # The agent composer's own settings button: rendered on the agent panel.
             return FakeLocator(self, "agent_settings", ["tune"] if dom.agent_mode else [])
@@ -766,6 +788,13 @@ class FakePage:
             return FakeLocator(self, "cookie_reject", ["reject"] if up else [])
         if css == migrated_composer.COOKIE_BAR_ACCEPT:
             return FakeLocator(self, "cookie_accept", ["accept"] if dom.cookie_bar_visible else [])
+        if css == migrated_composer.AGENT_PANEL:
+            return FakeLocator(
+                self, "agent_panel", ["panel"], visible=lambda: dom.agent_panel_expanded
+            )
+        if css == migrated_composer.AGENT_PANEL_CLOSE:
+            close = [Radio("right_panel_close", "")] if dom.agent_panel_expanded else []
+            return FakeLocator(self, "agent_panel_close", close)
         raise AssertionError(f"composer used an unmodelled selector: {css!r}")
 
 
@@ -3271,6 +3300,74 @@ async def test_ensure_editor_names_the_agent_only_cohort_instead_of_drift(
     assert page.dom.agent_chip_clicks == 0
     events = [e["event"] for e in install_log_capture.entries]
     assert "migrated.agent_only_composer" in events
+
+
+# --- #1374 / #1384: the agent panel, when the recovery cannot finish -------------------
+# The happy paths run against a real CSS engine in test_agent_panel_recovery.py. These are
+# the failures a static page cannot stage: a close that does not land, a panel that will
+# not go away, a probe that stops answering, a second page that wins the race. Each of them
+# must end as drift, never as a guessed agent-only verdict. An agent-only verdict writes
+# account defaults and routes billed runs through the agent chat (#1369).
+
+
+def _panel_open() -> FakePage:
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_panel_expanded = True
+    page.dom.agent_panel_removes_chip = True
+    return page
+
+
+async def test_a_panel_close_that_does_not_land_is_drift_not_agent_only() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _panel_open()
+    page.dom.agent_panel_close_raises = True
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_panel_close_clicks == 1
+    assert page.dom.agent_chip_clicks == 0
+    assert "agent-only" not in str(exc.value).casefold()
+
+
+async def test_a_panel_that_will_not_close_is_drift_after_one_close() -> None:
+    """A close that lands but leaves the panel up must not be retried on every re-entry."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _panel_open()
+    page.dom.agent_panel_sticks = True
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert page.dom.agent_panel_close_clicks == 1
+    assert "agent-only" not in str(exc.value).casefold()
+
+
+async def test_an_unreadable_toggle_after_the_panel_close_is_drift(
+    install_log_capture,
+) -> None:
+    """Guard (also drift before the fix): unknown is not absent. The first probe answers,
+    then the page goes dark."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _panel_open()
+    page.dom.agent_chip_probe_raises_from = 1
+    with pytest.raises(UiSelectorDriftError) as exc:
+        await MigratedComposer().ensure_editor(page, "p1", timeout_s=0.2)
+    assert "agent-only" not in str(exc.value).casefold()
+    events = [e["event"] for e in install_log_capture.entries]
+    assert "migrated.agent_only_composer" not in events
+
+
+async def test_a_toggle_another_page_already_turned_off_is_classic_not_blocked() -> None:
+    """Two pages on one profile: ours read the toggle pressed, the other page's click won,
+    and ours finds nothing to click. The trigger is visible now, so this run is healthy."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.agent_mode = True
+    page.dom.agent_mode_left_elsewhere = True
+    assert await MigratedComposer().ensure_editor(page, "p1", timeout_s=1.0) == "classic"
+    assert page.dom.agent_chip_clicks == 1
 
 
 async def test_ensure_editor_reports_classic_on_a_healthy_composer() -> None:
