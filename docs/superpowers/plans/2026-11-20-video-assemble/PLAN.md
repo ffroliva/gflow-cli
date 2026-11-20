@@ -41,11 +41,11 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Pin normalization, audio absence, mixing, path validation and failure cleanup.
 **Files:** `tests/services/test_video_assembly.py`.
 **Steps:**
-- [ ] Build compact synthetic PyAV fixtures for varied dimensions/rates and silent clips.
-- [ ] Assert output streams/duration/mix and safe failure behavior.
+- [x] Build compact synthetic PyAV fixtures for varied dimensions/rates and silent clips.
+- [x] Assert output streams/duration/mix and safe failure behavior.
 **Tests created (red):**
-- [ ] Heterogeneous inputs normalize and missing audio is silence.
-- [ ] Invalid media and output collision fail without damaging inputs.
+- [x] Heterogeneous inputs normalize and missing audio is silence.
+- [x] Invalid media and output collision fail without damaging inputs.
 
 ## Task 2 — BDD contract
 **What:** Bind CLI behavior scenarios offline.
