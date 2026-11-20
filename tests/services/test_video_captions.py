@@ -106,6 +106,16 @@ def test_audio_decode_does_not_require_numpy(
     assert wav.startswith(b"RIFF")
 
 
+def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
+    from gflow_cli.services.video_captions import _load_caption_font
+    from PIL import ImageFont
+
+    font = _load_caption_font(720)
+    rendered = font.getmask("Ação café naïve Привет").getbbox()
+    tofu = ImageFont.load_default(size=font.size).getmask("\ufffd").getbbox()
+    assert rendered is not None and rendered != tofu
+
+
 def test_resolve_video_source_accepts_local_and_verified_catalog_video(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

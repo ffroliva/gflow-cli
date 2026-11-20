@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import tempfile
 import wave
@@ -407,7 +408,7 @@ def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module:
     original_pts, original_time_base = frame.pts, frame.time_base
     image = frame.to_image().convert("RGBA")
     draw = draw_module.Draw(image, "RGBA")
-    font = font_module.load_default(size=max(14, round(frame.height * 0.045)))
+    font = _load_caption_font(frame.height, font_module)
     lines = text.splitlines()
     box = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, align="center", spacing=2)
     x = max(8, (frame.width - (box[2] - box[0])) // 2)
@@ -421,3 +422,28 @@ def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module:
     result = av.VideoFrame.from_image(image.convert("RGB"))
     result.pts, result.time_base = original_pts, original_time_base
     return result
+
+
+def _load_caption_font(height: int, font_module: Any | None = None) -> Any:
+    if font_module is None:
+        from PIL import ImageFont as font_module
+
+    size = max(14, round(height * 0.045))
+    candidates = (
+        [r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\arial.ttf"]
+        if os.name == "nt"
+        else [
+            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+            "/Library/Fonts/Arial Unicode.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ]
+    )
+    for candidate in candidates:
+        if Path(candidate).is_file():
+            try:
+                return font_module.truetype(candidate, size=size)
+            except OSError:
+                continue
+    return font_module.load_default(size=size)
