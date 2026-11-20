@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import math
 import os
 import re
 import tempfile
@@ -11,27 +10,24 @@ import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
-from urllib.parse import urlsplit
+from typing import Any
 
-import httpx
 import structlog
 
 from gflow_cli.api.video import is_media_uuid
-from gflow_cli.config import DEFAULT_LLM_BASE_URL, get_settings
+from gflow_cli.config import get_settings
 from gflow_cli.data._repo_base import verified_local_path
 from gflow_cli.data.models import AssetKind
-from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import (
     ConfigurationError,
     DataStoreError,
     FrameExtractionError,
-    NetworkError,
-    RateLimitError,
     VideoProcessingError,
     nothing_submitted,
 )
 from gflow_cli.services.media_recovery import resolve_asset
+from gflow_cli.services.speech_ports import Transcriber, TranscriptionRequest
+from gflow_cli.services.transcribers.openai_compatible import make_transcriber
 
 log = structlog.get_logger(__name__)
 _TIMESTAMP = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
@@ -255,24 +251,10 @@ def transcribe_video(
     language: str | None = None,
     profile: str | None = None,
     _source: Path | None = None,
+    transcriber: Transcriber | None = None,
 ) -> TranscribeResult:
     _require_chain_extra()
-    settings = get_settings()
-    base_url = (settings.llm_base_url or DEFAULT_LLM_BASE_URL).rstrip("/")
-    if base_url == DEFAULT_LLM_BASE_URL.rstrip("/"):
-        raise ConfigurationError(
-            detail=(
-                "Google's default endpoint does not offer /audio/transcriptions; "
-                "audio was not sent. "
-                "Configure GFLOW_CLI_LLM_BASE_URL for a transcription provider or use --srt."
-            ),
-            charged="no",
-            remediation_hint=(
-                "Configure GFLOW_CLI_LLM_BASE_URL, GFLOW_CLI_LLM_API_KEY, and "
-                "GFLOW_CLI_LLM_MODEL for an OpenAI, Groq, or local Whisper server; "
-                "or pass --srt to video captions."
-            ),
-        )
+    active_transcriber = transcriber or make_transcriber()
     source = _source or resolve_video_source(file_or_id, profile=profile, route="video.transcribe")
     destination = (out_file or source.with_suffix(".srt")).expanduser().resolve()
     if destination == source.resolve():
@@ -290,104 +272,17 @@ def transcribe_video(
             ),
         )
     audio, duration = extract_wav_bytes(source)
-    segments = _request_segments(base_url, settings, audio, language)
+    transcript = active_transcriber.transcribe(
+        TranscriptionRequest(
+            audio_bytes=audio, language=language, model=get_settings().transcribe_model
+        )
+    )
+    segments = tuple(
+        CaptionEntry(index, item.start, item.end, item.text)
+        for index, item in enumerate(transcript.segments, 1)
+    )
     _atomic_write(destination, format_srt(segments).encode("utf-8"))
-    log.info("video.transcribe.completed", segments=len(segments), host=urlsplit(base_url).hostname)
     return TranscribeResult(source, destination, language, duration, segments)
-
-
-def _request_segments(
-    base_url: str, settings: Any, audio: bytes, language: str | None
-) -> tuple[CaptionEntry, ...]:
-    headers: dict[str, str] = {}
-    if settings.llm_api_key:
-        headers["Authorization"] = f"Bearer {settings.llm_api_key.get_secret_value()}"
-    data: dict[str, str] = {
-        "model": settings.transcribe_model,
-        "response_format": "verbose_json",
-    }
-    if language:
-        data["language"] = language
-    try:
-        with httpx.Client(follow_redirects=False, timeout=120) as client:
-            response = client.post(
-                f"{base_url}/audio/transcriptions",
-                headers=headers,
-                data=data,
-                files={"file": ("audio.wav", audio, "audio/wav")},
-            )
-        return _parse_transcription_response(response)
-    except (ConfigurationError, RateLimitError, NetworkError):
-        raise
-    except httpx.HTTPError as exc:
-        raise NetworkError(
-            detail="Transcription endpoint could not be reached.", charged="no"
-        ) from exc
-    except (ValueError, KeyError, TypeError) as exc:
-        raise ConfigurationError(
-            detail="Transcription endpoint returned an invalid response.",
-            charged="no",
-            remediation_hint="Configure the endpoint to return valid verbose_json segments or SRT.",
-        ) from exc
-
-
-def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntry, ...]:
-    if 300 <= response.status_code < 400:
-        raise ConfigurationError(
-            detail="Transcription endpoint redirected; request refused.",
-            charged="no",
-            remediation_hint="Configure the exact transcription endpoint URL without redirects.",
-        )
-    if response.status_code == 429:
-        raise RateLimitError(detail="Transcription endpoint rate limit reached.", retry_after=None)
-    if response.status_code >= 500:
-        raise NetworkError(
-            detail=f"Transcription endpoint failed: {redact_error_detail(response.text)}",
-            charged="no",
-        )
-    if response.status_code >= 400:
-        raise ConfigurationError(
-            detail=f"Transcription request rejected: {redact_error_detail(response.text)}",
-            charged="no",
-            remediation_hint="Check the transcription endpoint URL, model, and API key.",
-        )
-    try:
-        payload: Any = response.json()
-    except ValueError:
-        payload = None
-    if not isinstance(payload, dict):
-        return tuple(parse_srt(response.text, source_name="transcription response"))
-    parsed = cast(dict[str, Any], payload)
-    raw = parsed.get("segments")
-    if isinstance(raw, list):
-        return _parse_transcription_segments(cast(list[object], raw))
-    raise ConfigurationError(
-        detail="Transcription response has no timed segments; request verbose_json.",
-        charged="no",
-        remediation_hint="Configure the transcription endpoint to return verbose_json segments.",
-    )
-
-
-def _parse_transcription_segments(raw_segments: list[object]) -> tuple[CaptionEntry, ...]:
-    entries: list[CaptionEntry] = []
-    for seg in raw_segments:
-        if not isinstance(seg, dict):
-            continue
-        segment = cast(dict[str, Any], seg)
-        try:
-            start, end = float(segment["start"]), float(segment["end"])
-            text = str(segment["text"]).strip()
-        except (KeyError, TypeError, ValueError):
-            continue
-        if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
-            entries.append(CaptionEntry(len(entries) + 1, start, end, text))
-    if entries:
-        return tuple(entries)
-    raise ConfigurationError(
-        detail="Transcription completed but no speech found.",
-        charged="no",
-        remediation_hint="Use a clip with speech and retry.",
-    )
 
 
 def caption_video(
@@ -398,6 +293,7 @@ def caption_video(
     out_file: Path | None = None,
     language: str | None = None,
     profile: str | None = None,
+    transcriber: Transcriber | None = None,
 ) -> CaptionsResult:
     if srt_path is not None:
         _require_chain_extra()
@@ -416,7 +312,12 @@ def caption_video(
         )
     if srt_path is None:
         transcribed = transcribe_video(
-            file_or_id, out_file=srt_out_file, language=language, profile=profile, _source=source
+            file_or_id,
+            out_file=srt_out_file,
+            language=language,
+            profile=profile,
+            _source=source,
+            transcriber=transcriber,
         )
         caption_path, entries = transcribed.srt_file, list(transcribed.segments)
     else:

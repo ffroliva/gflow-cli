@@ -21,6 +21,8 @@ from gflow_cli.errors import (
     RateLimitError,
     VideoProcessingError,
 )
+from gflow_cli.services import video_captions as service
+from gflow_cli.services.speech_ports import Transcript, TranscriptionRequest, TranscriptSegment
 from gflow_cli.services.video_captions import (
     CaptionEntry,
     TranscribeResult,
@@ -139,13 +141,15 @@ def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Pat
 def test_transcribe_refuses_existing_srt_before_network(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
     config.reset_settings()
     existing = media_files[0].with_suffix(".srt")
     existing.write_text("keep me", encoding="utf-8")
-    monkeypatch.setattr(service, "_request_segments", lambda *_: pytest.fail("network called"))
+    monkeypatch.setattr(
+        "gflow_cli.services.transcribers.openai_compatible.httpx.Client",
+        lambda *_a, **_k: pytest.fail("network called"),
+    )
     try:
         with pytest.raises(ConfigurationError, match="already exists") as caught:
             transcribe_video(str(media_files[0]))
@@ -159,14 +163,16 @@ def test_transcribe_refuses_existing_srt_before_network(
 def test_captions_without_srt_refuses_existing_default_srt_before_network(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     source, _ = media_files
     srt = source.with_suffix(".srt")
     srt.write_text("preserve", encoding="utf-8")
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
     config.reset_settings()
-    monkeypatch.setattr(service, "_request_segments", lambda *_: pytest.fail("network called"))
+    monkeypatch.setattr(
+        "gflow_cli.services.transcribers.openai_compatible.httpx.Client",
+        lambda *_a, **_k: pytest.fail("network called"),
+    )
     try:
         with pytest.raises(ConfigurationError, match="already exists") as caught:
             caption_video(str(source))
@@ -243,7 +249,6 @@ def test_long_caption_wraps_within_frame(size: tuple[int, int]) -> None:
 def test_resolve_video_source_accepts_local_and_verified_catalog_video(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     source, _ = media_files
     assert resolve_video_source(str(source), profile=None, route="test") == source.resolve()
@@ -273,7 +278,6 @@ def test_resolve_video_source_accepts_local_and_verified_catalog_video(
 def test_transcribe_accepts_raw_srt_response(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
     config.reset_settings()
@@ -298,7 +302,7 @@ def test_transcribe_accepts_raw_srt_response(
         def post(self, *_: Any, **__: Any) -> Response:
             return Response()
 
-    monkeypatch.setattr(service.httpx, "Client", Client)
+    monkeypatch.setattr("gflow_cli.services.transcribers.openai_compatible.httpx.Client", Client)
     try:
         result = transcribe_video(str(media_files[0]))
     finally:
@@ -308,7 +312,7 @@ def test_transcribe_accepts_raw_srt_response(
 
 @pytest.mark.parametrize("segments", [[], [{"start": 0, "end": 0, "text": "bad"}], [None]])
 def test_transcription_refuses_empty_or_invalid_segments(segments: list[Any]) -> None:
-    from gflow_cli.services.video_captions import _parse_transcription_response
+    from gflow_cli.services.transcribers.openai_compatible import _parse_transcription_response
 
     response = SimpleNamespace(status_code=200, json=lambda: {"segments": segments})
     with pytest.raises(ConfigurationError, match="no speech found") as caught:
@@ -319,7 +323,6 @@ def test_transcription_refuses_empty_or_invalid_segments(segments: list[Any]) ->
 def test_silent_transcription_does_not_write_srt(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     source, _ = media_files
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
@@ -344,7 +347,7 @@ def test_silent_transcription_does_not_write_srt(
         def post(self, *_: Any, **__: Any) -> Response:
             return Response()
 
-    monkeypatch.setattr(service.httpx, "Client", Client)
+    monkeypatch.setattr("gflow_cli.services.transcribers.openai_compatible.httpx.Client", Client)
     try:
         with pytest.raises(ConfigurationError, match="no speech found") as caught:
             transcribe_video(str(source))
@@ -355,7 +358,7 @@ def test_silent_transcription_does_not_write_srt(
 
 
 def test_transcription_requires_verbose_json_segments() -> None:
-    from gflow_cli.services.video_captions import _parse_transcription_response
+    from gflow_cli.services.transcribers.openai_compatible import _parse_transcription_response
 
     response = SimpleNamespace(status_code=200, json=lambda: {"text": "hello"})
     with pytest.raises(ConfigurationError, match="verbose_json"):
@@ -365,7 +368,6 @@ def test_transcription_requires_verbose_json_segments() -> None:
 def test_transcribe_posts_wav_and_writes_timed_json_segments(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
     monkeypatch.setenv("GFLOW_CLI_TRANSCRIBE_MODEL", "test-whisper")
@@ -393,7 +395,7 @@ def test_transcribe_posts_wav_and_writes_timed_json_segments(
             captured.update(url=url, **kwargs)
             return Response()
 
-    monkeypatch.setattr(service.httpx, "Client", Client)
+    monkeypatch.setattr("gflow_cli.services.transcribers.openai_compatible.httpx.Client", Client)
     try:
         result = transcribe_video(str(media_files[0]), language="en")
     finally:
@@ -425,7 +427,6 @@ def test_transcribe_maps_http_errors_without_exposing_response_text(
     status: int,
     error_type: type[Exception],
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
     config.reset_settings()
@@ -449,7 +450,7 @@ def test_transcribe_maps_http_errors_without_exposing_response_text(
         def post(self, *_: Any, **__: Any) -> Response:
             return Response(status)
 
-    monkeypatch.setattr(service.httpx, "Client", Client)
+    monkeypatch.setattr("gflow_cli.services.transcribers.openai_compatible.httpx.Client", Client)
     try:
         with pytest.raises(error_type) as caught:
             transcribe_video(str(media_files[0]))
@@ -463,7 +464,6 @@ def test_caption_video_burns_frames_and_keeps_audio(
     media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     av = pytest.importorskip("av")
-    from gflow_cli.services import video_captions as service
 
     source, _ = media_files
     overlays = 0
@@ -535,7 +535,6 @@ def test_caption_video_refuses_non_utf8_srt_with_clear_error(
 def test_caption_video_maps_local_render_failure_to_processing_error(
     media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     srt = tmp_path / "captions.srt"
     srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello", encoding="utf-8")
@@ -551,7 +550,6 @@ def test_caption_video_maps_local_render_failure_to_processing_error(
 def test_caption_video_transcribes_first_and_writes_both_outputs(
     media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from gflow_cli.services import video_captions as service
 
     source, _ = media_files
     transcript = TranscribeResult(
@@ -562,3 +560,28 @@ def test_caption_video_transcribes_first_and_writes_both_outputs(
     assert result.srt_file == transcript.srt_file
     assert result.output_file.is_file()
     assert result.frames_burned > 0
+
+
+def test_caption_and_transcribe_accept_transcriber_port(
+    media_files: tuple[Path, Path], tmp_path: Path
+) -> None:
+    class FakeTranscriber:
+        def transcribe(self, request: TranscriptionRequest) -> Transcript:
+            assert request.audio_bytes.startswith(b"RIFF")
+            assert request.model == config.get_settings().transcribe_model
+            return Transcript((TranscriptSegment(0.2, 0.9, "spoken words"),))
+
+    source, _ = media_files
+    fake = FakeTranscriber()
+    transcript = transcribe_video(
+        str(source), out_file=tmp_path / "standalone.srt", transcriber=fake
+    )
+    assert transcript.segments == (CaptionEntry(1, 0.2, 0.9, "spoken words"),)
+    rendered = caption_video(
+        str(source),
+        srt_out_file=tmp_path / "caption.srt",
+        out_file=tmp_path / "captioned.mkv",
+        transcriber=fake,
+    )
+    assert rendered.srt_file.read_text(encoding="utf-8").startswith("1\n00:00:00,200")
+    assert rendered.output_file.is_file()

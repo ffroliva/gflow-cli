@@ -83,7 +83,9 @@ def _fake_transcription(case: dict[str, Any]) -> None:
             case["requests"] += 1
             return Response()
 
-    case["client_patch"] = patch("gflow_cli.services.video_captions.httpx.Client", Client)
+    case["client_patch"] = patch(
+        "gflow_cli.services.transcribers.openai_compatible.httpx.Client", Client
+    )
     case["client_patch"].start()
 
 
