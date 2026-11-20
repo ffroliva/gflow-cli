@@ -326,6 +326,20 @@ def gate_quoted_credits(title: str) -> int | None:
     return parse_credit_quote(title[: count.start()] + title[count.end() :]) if count else None
 
 
+def _unapproved_media_cap_error(max_credits: int, media_id: str) -> CreditCapExceededError:
+    error = CreditCapExceededError(
+        quoted=None,
+        max_credits=max_credits,
+        route="agent-only composer without an approved quote",
+        completed_media_ids=[media_id],
+    )
+    error.charged, error.next_action = "maybe", "reconcile"
+    error.remediation_hint = (
+        "A clip appeared without an approved quote; reconcile the Flow project before retrying."
+    )
+    return error
+
+
 def _tile_key(tile: dict[str, str]) -> str:
     return tile["video"] or tile["img"]
 
@@ -870,18 +884,7 @@ class AgentOnlyComposer:
                 started = True
                 await _maybe_await(on_first_media(named[0]))
                 if run.max_credits is not None and not run.approvals:
-                    error = CreditCapExceededError(
-                        quoted=None,
-                        max_credits=run.max_credits,
-                        route="agent-only composer without an approved quote",
-                        completed_media_ids=[named[0]],
-                    )
-                    error.charged, error.next_action = "maybe", "reconcile"
-                    error.remediation_hint = (
-                        "A clip appeared without an approved quote; reconcile the Flow project "
-                        "before retrying."
-                    )
-                    raise error
+                    raise _unapproved_media_cap_error(run.max_credits, named[0])
             ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
             # #1354: the listing may name the clip before its player mounts, or the run may
             # time out waiting for it; the early report must not wait for the download.
@@ -890,18 +893,7 @@ class AgentOnlyComposer:
                 started = True
                 await _maybe_await(on_first_media(listed))
                 if run.max_credits is not None and not run.approvals:
-                    error = CreditCapExceededError(
-                        quoted=None,
-                        max_credits=run.max_credits,
-                        route="agent-only composer without an approved quote",
-                        completed_media_ids=[listed],
-                    )
-                    error.charged, error.next_action = "maybe", "reconcile"
-                    error.remediation_hint = (
-                        "A clip appeared without an approved quote; reconcile the Flow project "
-                        "before retrying."
-                    )
-                    raise error
+                    raise _unapproved_media_cap_error(run.max_credits, listed)
             if ready is not None:
                 return [ready]
             await asyncio.sleep(POLL_S)

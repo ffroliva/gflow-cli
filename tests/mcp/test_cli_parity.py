@@ -293,10 +293,10 @@ _OPTION_EXEMPT: dict[str, str] = {
         "coarse mapping — gflow_list_models returns every model; the id is its filter (#1196)"
     ),
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
-    "video t2v:no_max_credits": "CLI can clear the env default; MCP omission cannot (docs/MCP.md)",
-    "video i2v:no_max_credits": "CLI can clear the env default; MCP omission cannot (docs/MCP.md)",
-    "video r2v:no_max_credits": "CLI can clear the env default; MCP omission cannot (docs/MCP.md)",
-    "video generate:no_max_credits": "CLI can clear the env default; MCP omission cannot (docs/MCP.md)",
+    "video t2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
 }
 
 

@@ -166,6 +166,61 @@ async def test_unset_cap_skips_the_quote_read(monkeypatch: pytest.MonkeyPatch) -
 
 
 @pytest.mark.asyncio
+async def test_migrated_video_reads_quote_again_after_settings_before_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from gflow_cli.api.transports import _mc_settings_pane, migrated_composer
+    from gflow_cli.api.transports.batchexecute import STATUS_DONE, GenerationRecord
+    from gflow_cli.api.video import GenerateVideoRequest
+
+    read = AsyncMock(side_effect=[8, 8])
+    monkeypatch.setattr(_mc_settings_pane, "_read_credit_quote", read)
+    composer = MagicMock()
+
+    async def apply_settings(page: object, request: GenerateVideoRequest) -> int | None:
+        return await read(page, request.max_credits)
+
+    composer.apply_video_settings = apply_settings
+    composer.send_prompt = AsyncMock()
+    composer.submit_and_observe = AsyncMock(
+        return_value=GenerationRecord("op", "p", "media", STATUS_DONE)
+    )
+    monkeypatch.setattr(
+        migrated_composer,
+        "_prepare_video_composer",
+        AsyncMock(return_value=("p", composer, "classic")),
+    )
+
+    class Watch:
+        seen = staticmethod(lambda: False)
+
+        def __init__(self, _page: object) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr(migrated_composer, "SubmitWatch", Watch)
+    page = MagicMock()
+    await migrated_composer.run_video(
+        page,
+        GenerateVideoRequest(prompt="cat", max_credits=10),
+        project_id="p",
+        save=AsyncMock(),
+        poll_timeout_s=20,
+        download=False,
+        on_started=None,
+    )
+    assert read.await_count == 2
+    composer.submit_and_observe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_agent_video_cap_requires_confirmation_when_user_disabled_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -264,7 +319,9 @@ async def test_agent_video_with_media_but_no_approved_gate_is_maybe_charged(
     composer = agent.AgentOnlyComposer()
     monkeypatch.setattr(agent, "_video_uuids", lambda _state: ["orphan-media"])
     monkeypatch.setattr(composer, "_gate_turn", AsyncMock(return_value=False))
-    monkeypatch.setattr(composer, "_ready_video", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        composer, "_ready_video", AsyncMock(side_effect=AssertionError("cap check was skipped"))
+    )
     page = type("Page", (), {"evaluate": AsyncMock(return_value={"pending": 1})})()
     run = agent._Run("video", 60, 1e20, 0, 1, 0, max_credits=10)
 

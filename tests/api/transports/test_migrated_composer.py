@@ -927,6 +927,7 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
     assert quoted is None
+    assert not any("flow-credit-cost-label" in selector for selector in page.selector_calls)
     assert not page.dom.pane_open  # closed afterwards
 
 
