@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A project left in Flow's agent mode, or with the agent panel open, runs on the classic composer again on flow.google.com ([#1384](https://github.com/ffroliva/gflow-cli/issues/1384), [#1374](https://github.com/ffroliva/gflow-cli/issues/1374)).**
+  - **The new build.** Flow's 2026-11-20 build replaced the Agent chip with a switch and closes the agent panel through a different control. Every generation on such a page failed before submit as selector drift (exit 23), `image t2i` included.
+  - **The older build.** With the panel open, the page was read as the agent-only composer, so image-to-video, reference-to-video and image-to-image exited 36.
+  - **What gflow does now, on both builds and through the CLI and MCP alike:**
+    - closes the panel with its own close button;
+    - turns agent mode off;
+    - continues on the classic composer.
+  - **Flow remembers that change for the account.** The run logs `migrated.agent_mode_exited` at warning level when it happens.
+  - **Messages** that asked users to turn "the Agent chip" off now say to close the agent panel and switch Agent off.
+
 ## [0.103.0] — 2026-11-19
 
 ### Added

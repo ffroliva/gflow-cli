@@ -82,22 +82,22 @@ fix.
 listed above.
 
 **Steps:**
-- [ ] Model the new build's states C1/C2/C3 from the spike's snapshots (switch, panel header
+- [x] Model the new build's states C1/C2/C3 from the spike's snapshots (switch, panel header
       buttons, prompt box inside the panel, library `settings_2`)
-- [ ] Old-build panel state (`close`, chip absent, `tune`)
-- [ ] Run against develop; read each failure line (`UiSelectorDriftError` / `agent_only`), not
+- [x] Old-build panel state (`close`, chip absent, `tune`)
+- [x] Run against develop; read each failure line (`UiSelectorDriftError` / `agent_only`), not
       just the red count
 
 **Tests created (red):**
-- [ ] new-build panel open returns `classic` after the close and the switch
-- [ ] new-build agent mode on, panel closed, returns `classic`
-- [ ] old-build panel open returns `classic`
-- [ ] healthy page: no click, one toggle count (passes on develop too; it guards the regression)
-- [ ] no toggle after the close → drift, not agent-only
-- [ ] close click fails → drift; toggle probe `None` → drift
-- [ ] decoys (prompt-box `close`, library `settings_2`) never clicked
-- [ ] at most one panel close per gate call under a slow mount
-- [ ] trigger visible when the click is blocked → `classic`, not "blocked"
+- [x] new-build panel open returns `classic` after the close and the switch
+- [x] new-build agent mode on, panel closed, returns `classic`
+- [x] old-build panel open returns `classic`
+- [x] healthy page: no click, one toggle count (passes on develop too; it guards the regression)
+- [x] no toggle after the close → drift, not agent-only
+- [x] close click fails → drift; toggle probe `None` → drift
+- [x] decoys (prompt-box `close`, library `settings_2`) never clicked
+- [x] at most one panel close per gate call under a slow mount
+- [x] trigger visible when the click is blocked → `classic`, not "blocked"
 
 ## Task 2: red BDD e2e (live, $0)
 
@@ -112,9 +112,9 @@ Both have the submit aborted, reusing `_abort_video_submits` from
 the outcome.
 
 **Steps:**
-- [ ] Feature file and binding per `docs/E2E_TESTING.md` § BDD-bound e2e
-- [ ] Run on a live profile against develop: red (`UiSelectorDriftError`)
-- [ ] `tests/features/test_e2e_binding_guard.py` green
+- [x] Feature file and binding per `docs/E2E_TESTING.md` § BDD-bound e2e
+- [x] Run on a live profile against develop: red (`UiSelectorDriftError`)
+- [x] `tests/features/test_e2e_binding_guard.py` green
 
 ## Task 3: constants for both builds
 
@@ -122,15 +122,15 @@ the outcome.
 contract to v2.
 
 **Steps:**
-- [ ] `AGENT_MODE_CHIP` / `AGENT_MODE_CHIP_ANY`: CSS unions; the switch is scoped to
+- [x] `AGENT_MODE_CHIP` / `AGENT_MODE_CHIP_ANY`: CSS unions; the switch is scoped to
       `flow-agent-mode-switch button.switch`, because `.agent-action-button` also carries
       `aria-pressed`. Use the descendant form: the spike recorded the nearest custom ancestor,
       not a direct child
-- [ ] `AGENT_PANEL_CLOSE`: `close` or `right_panel_close` inside `flow-agent-panel`, excluding
+- [x] `AGENT_PANEL_CLOSE`: `close` or `right_panel_close` inside `flow-agent-panel`, excluding
       `flow-creative-agent-prompt-box`
-- [ ] `MIGRATED_SETTINGS_CONTRACT` to v2; registry entries and note; contract fixture
+- [x] `MIGRATED_SETTINGS_CONTRACT` to v2; registry entries and note; contract fixture
       re-recorded
-- [ ] `tests/flow_selectors/test_registry.py` uniqueness holds on the spike's DOM
+- [x] `tests/flow_selectors/test_registry.py` uniqueness holds on the spike's DOM
 
 ## Task 4: the gate reorder (the fix)
 
@@ -138,25 +138,25 @@ contract to v2.
 pressed toggle, then runs the #749 click. The happy path is untouched.
 
 **Steps:**
-- [ ] `_close_agent_panel(page)`, shared by both close sites
-- [ ] Bounded `wait_for` on the pressed toggle replaces the 0.2 s sleep
-- [ ] A close that fails, or a probe that cannot be read, maps to `"blocked"` with its
+- [x] `_close_agent_panel(page)`, shared by both close sites
+- [x] Bounded `wait_for` on the pressed toggle replaces the 0.2 s sleep
+- [x] A close that fails, or a probe that cannot be read, maps to `"blocked"` with its
       exception, so it surfaces as drift (exit 23).
-- [ ] A close that lands but brings no toggle within the wait returns `"absent"`, so
+- [x] A close that lands but brings no toggle within the wait returns `"absent"`, so
       `_absent_chip_verdict` runs today's agent-only check unchanged. Reading: old build →
       `agent_only` as today; new build → no `tune` → drift.
-- [ ] Re-read the trigger before raising "blocked"
-- [ ] Rewrite the comment that claims "the pressed-state chip has already been confirmed"
-- [ ] Task 1's tests and task 2's e2e go green
+- [x] Re-read the trigger before raising "blocked"
+- [x] Rewrite the comment that claims "the pressed-state chip has already been confirmed"
+- [x] Task 1's tests and task 2's e2e go green
 
 ## Task 5: messages and observability
 
 **Steps:**
-- [ ] Remediation text: "close the agent panel, then switch Agent off" (`_mc_common.py`
+- [x] Remediation text: "close the agent panel, then switch Agent off" (`_mc_common.py`
       `_recovery_detail` and the agent-only / blocked details)
-- [ ] `migrated.agent_mode_exited` at `warning`, saying Flow remembers this for the account;
+- [x] `migrated.agent_mode_exited` at `warning`, saying Flow remembers this for the account;
       `safe_page_url` only, never panel text
-- [ ] Offline tests for the wording and the event
+- [x] Offline tests for the wording and the event
 
 ## Task 6: MCP surface (no code; verification)
 
@@ -164,27 +164,27 @@ The CLI surface does not change, so no new parameters, codec keys or parity entr
 The MCP door reaches the same gate.
 
 **Steps:**
-- [ ] Re-read `mcp/tools.py` docstrings that describe agent-only (around line 1028) and
+- [x] Re-read `mcp/tools.py` docstrings that describe agent-only (around line 1028) and
       `docs/MCP.md` around line 549; correct any claim this change makes false
-- [ ] The task-2 MCP scenario runs green: a twin is a separate surface (AGENTS.md, second law)
+- [x] The task-2 MCP scenario runs green: a twin is a separate surface (AGENTS.md, second law)
 
 ## Task 7: existing tests that name the old chip
 
 **Steps:**
-- [ ] `tests/e2e/test_migrated_host_e2e.py` (`test_e2e_agent_mode_is_left_before_the_readiness_gate`,
+- [x] `tests/e2e/test_migrated_host_e2e.py` (`test_e2e_agent_mode_is_left_before_the_readiness_gate`,
       lines ~237 and ~273) and `tests/e2e/test_click_attribution_bdd.py:81` use the both-build
       constants; the control arm that neuters `AGENT_MODE_CHIP` keeps proving the gate is the cause
-- [ ] Run them live
+- [x] Run them live
 
 ## Task 8: docs
 
 **Steps:**
-- [ ] `KNOWN_ISSUES.md`:
+- [x] `KNOWN_ISSUES.md`:
   - rewrite the agent-only entry: "no chip" is no longer a cohort signal, the panel is
     recoverable, and the new build fails closed as drift for an account with no classic arm;
   - add a note on the mode switch gflow performs
-- [ ] `CHANGELOG.md` `[Unreleased]` → Fixed (#1374, #1384)
-- [ ] `docs/MCP.md` as found in task 6; `generate_website_docs.py` regenerated if a mirrored doc
+- [x] `CHANGELOG.md` `[Unreleased]` → Fixed (#1374, #1384)
+- [x] `docs/MCP.md` as found in task 6; `generate_website_docs.py` regenerated if a mirrored doc
       changes
 
 ## Task 9: gates, review, verification, PR
@@ -225,4 +225,7 @@ The MCP door reaches the same gate.
 | 2026-11-20 | Doctor composer verdict deferred | needs a browser, a project and a lease; carries an MCP twin of its own | bundling it here (Architect, UX, Devil's Advocate) |
 | 2026-11-20 | No per-profile lock | re-reading the trigger before "blocked" covers the observed race; a lock is unmeasured complexity | `asyncio.Lock` per profile (Performance) |
 | 2026-11-20 | The 2026-11-20 canary's two red `test_project_create_e2e` video tests are out of scope | re-run on a live profile the same evening: 2 passed in 106 s on develop's code, so not this root | folding them into task 7 |
+| 2026-11-20 | The offline "never agent-only" scenarios are plain tests, not a second feature file | the real-CSS module (`test_agent_panel_recovery.py`) and the fake-page tests cover scenarios 6–9, 12, 13 directly; a Gherkin layer over them would add a binding and no evidence | `tests/features/agent_panel_never_agent_only.feature` |
+| 2026-11-20 | `test_click_attribution_bdd.py` keeps its old-chip markup | it serves synthetic markup, and the old chip still matches the both-build union; the live `test_migrated_host_e2e.py` arm was the one that would silently skip on the new build, and was updated | rewriting a synthetic page that is still valid |
+| 2026-11-20 | The blocked-recovery guard asserts an unreadable page, not "first probe answers, then dark" | after the panel close the first probe answering `pressed` and the click landing is a genuine recovery, so `classic` is right there | keeping a premise the new order makes false |
 | 2026-11-20 | Leave the account in classic after recovery | #749 precedent; restoring agent mode would re-break the next run | restoring the user's agent mode after each run (decided 2026-11-20: leave it off) |

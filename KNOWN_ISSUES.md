@@ -1521,7 +1521,7 @@ continue as a seeded I2V generation — tracked as backlog.
 ### Some accounts get an agent-only composer on flow.google.com — text-to-image and text-to-video are driven; other forms are not
 
 Some accounts on `flow.google.com` are served a composer with **no classic arm at all**:
-the only prompt box is the agent panel, there is no `agent-mode-chip` to turn off, and
+the only prompt box is the agent panel, there is no Agent toggle to turn off, and
 aspect / model / count are Agent-settings **defaults** rather than per-request controls.
 
 **Driven ([#799](https://github.com/ffroliva/gflow-cli/issues/799)):** `gflow image t2i` and
@@ -1571,15 +1571,32 @@ reloads (log event `migrated.agent_only_reload`, #1142).
 - An image whose orientation does not match the requested aspect is kept (the run is
   billed and the file is valid) and logged as `migrated.agent_only.aspect_mismatch`.
 
-**Detection** is unchanged from v0.74.0: a hidden settings trigger with **no chip anywhere**
-is this composer; with a chip it is the recoverable agent mode of
-[#749](https://github.com/ffroliva/gflow-cli/issues/749). It is now reported after a 5 s
-early wait instead of the full 30 s readiness gate.
+**Detection.** A hidden settings trigger with **no Agent toggle anywhere** is this composer;
+with a toggle it is the recoverable agent mode of
+[#749](https://github.com/ffroliva/gflow-cli/issues/749). It is reported after a 5 s early
+wait instead of the full 30 s readiness gate.
+
+**The open agent panel is not this composer
+([#1374](https://github.com/ffroliva/gflow-cli/issues/1374),
+[#1384](https://github.com/ffroliva/gflow-cli/issues/1384)).** While Flow's agent panel is
+docked open, the Agent toggle is not in the page at all, on both builds measured. That page
+used to be read as this composer (2026-11-19 build) or as selector drift, exit 23 (2026-11-20
+build). gflow now closes the panel first, through its own close button, then turns agent mode
+off. **Flow remembers that for the account**: agent mode stays off until it is switched on
+again, and the run logs `migrated.agent_mode_exited` at warning level when it happens. This
+composer is reported only when no toggle appears after the panel is closed.
+
+Flow's 2026-11-20 build replaced the Agent chip (`button.agent-mode-chip`) with a switch
+(`flow-agent-mode-switch`), and closes the panel through `right_panel_close` instead of
+`close`; gflow matches both builds. On the 2026-11-20 build an account with no classic arm at
+all has not been observed. If one exists, it is reported as selector drift (exit 23) rather
+than driven, because this composer's settings button is measured only on the older build
+([spike](docs/superpowers/spikes/2026-11-20-agent-mode-switch-and-panel-rendering.md)).
 
 The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
-discriminator more than a guess: a healthy migrated composer carries
-`button.agent-mode-chip` **present and un-pressed** with its settings trigger visible. So a
-migrated account normally has a chip, and having none is the anomaly this keys on.
+discriminator more than a guess: a healthy migrated composer carries its Agent toggle
+**present and un-pressed** with its settings trigger visible. So a migrated account normally
+has a toggle, and having none, with the panel closed, is the anomaly this keys on.
 
 ---
 
@@ -1642,11 +1659,11 @@ mid-run agent-mode flip is equally consistent with the evidence.
 
 | The message says | What it means | What to do |
 |---|---|---|
-| `… did not accept a click … the account is in Flow's agent mode` | the mode flipped after the editor was ready | turn the **Agent** chip off in a browser; re-run |
+| `… did not accept a click … the account is in Flow's agent mode` | the mode flipped after the editor was ready | close the agent panel and switch **Agent** off in a browser; re-run |
 | `… it is covered by <tag>.<class>` | something is stacked over the control — the class names it | dismiss it in a browser; re-run |
 | `… the page is accepting no pointer events at all` | an overlay has the whole app blocked (#593's shape) | dismiss it in a browser; re-run |
-| `… it carries a bare `hidden` attribute` / `it is disabled` | the control is present but not usable | usually agent mode or a cohort difference; check the Agent chip first |
-| `… it is not rendered (display, visibility, or a zero-sized box)` | it is in the DOM but not on screen | as above — check the Agent chip, then file a bug with the log |
+| `… it carries a bare `hidden` attribute` / `it is disabled` | the control is present but not usable | usually agent mode or a cohort difference; check the Agent switch first |
+| `… it is not rendered (display, visibility, or a zero-sized box)` | it is in the DOM but not on screen | as above — check the Agent switch, then file a bug with the log |
 | `… it answers no hit test at its own centre` | nothing named itself as the cover, but the click still landed elsewhere | re-run once; if it repeats, file a bug — an overlay outside the document is the usual shape |
 | `… it was visible, enabled and hit-testable … most likely still moving` | nothing readable was wrong | Playwright also needs a *stable* box; re-run once. If it repeats, file a bug — this message means we looked and found nothing, which is a real finding worth having |
 | `… it could not be read back` | the page changed under the diagnosis | re-run; if it repeats, attach the log |
