@@ -220,6 +220,24 @@ def test_transcribe_accepts_raw_srt_response(
     assert result.segments[0].text == "spoken words"
 
 
+@pytest.mark.parametrize("segments", [[], [{"start": 0, "end": 0, "text": "bad"}], [None]])
+def test_transcription_refuses_empty_or_invalid_segments(segments: list[Any]) -> None:
+    from gflow_cli.services.video_captions import _parse_transcription_response
+
+    response = SimpleNamespace(status_code=200, json=lambda: {"segments": segments})
+    with pytest.raises(ConfigurationError, match="no speech found") as caught:
+        _parse_transcription_response(response)
+    assert caught.value.charged == "no"
+
+
+def test_transcription_requires_verbose_json_segments() -> None:
+    from gflow_cli.services.video_captions import _parse_transcription_response
+
+    response = SimpleNamespace(status_code=200, json=lambda: {"text": "hello"})
+    with pytest.raises(ConfigurationError, match="verbose_json"):
+        _parse_transcription_response(response)
+
+
 def test_transcribe_posts_wav_and_writes_timed_json_segments(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

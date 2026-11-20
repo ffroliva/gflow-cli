@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import math
 import os
 import re
 import tempfile
@@ -304,13 +305,29 @@ def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntr
     parsed = cast(dict[str, Any], payload)
     raw = parsed.get("segments")
     if isinstance(raw, list):
-        raw_segments = cast(list[dict[str, Any]], raw)
-        return tuple(
-            CaptionEntry(i, float(seg["start"]), float(seg["end"]), str(seg["text"]).strip())
-            for i, seg in enumerate(raw_segments, 1)
-            if str(seg.get("text", "")).strip()
+        entries: list[CaptionEntry] = []
+        for seg in raw:
+            if not isinstance(seg, dict):
+                continue
+            try:
+                start, end = float(seg["start"]), float(seg["end"])
+                text = str(seg["text"]).strip()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
+                entries.append(CaptionEntry(len(entries) + 1, start, end, text))
+        if entries:
+            return tuple(entries)
+        raise ConfigurationError(
+            detail="Transcription completed but no speech found.",
+            charged="no",
+            remediation_hint="Use a clip with speech and retry.",
         )
-    return tuple(parse_srt(str(parsed.get("text", "")), source_name="transcription response"))
+    raise ConfigurationError(
+        detail="Transcription response has no timed segments; request verbose_json.",
+        charged="no",
+        remediation_hint="Configure the transcription endpoint to return verbose_json segments.",
+    )
 
 
 def caption_video(
