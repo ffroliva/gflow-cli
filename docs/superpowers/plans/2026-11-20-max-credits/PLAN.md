@@ -436,7 +436,7 @@ uv run python scripts/ci/check_size.py
 - Create: `tests/features/credit_cap_refusal.feature`
 - Create: `tests/e2e/test_credit_cap_refusal_bdd.py`
 
-- [ ] **Step 1: Create `tests/features/credit_cap_refusal.feature` and `tests/e2e/test_credit_cap_refusal_bdd.py`**
+- [x] **Step 1: Create `tests/features/credit_cap_refusal.feature` and `tests/e2e/test_credit_cap_refusal_bdd.py`**
 
 Follow [`docs/E2E_TESTING.md`](../../../E2E_TESTING.md) § BDD-bound e2e and the pattern in `tests/e2e/test_upscale_bdd.py`:
 - Bind all three scenarios in `tests/features/credit_cap_refusal.feature`:
@@ -444,7 +444,7 @@ Follow [`docs/E2E_TESTING.md`](../../../E2E_TESTING.md) § BDD-bound e2e and the
   2. `MCP gflow_generate_video refuses before submit when Flow's quote exceeds max_credits` (`@e2e @e2e_auth`, $0): invokes the MCP `gflow_generate_video` path with `max_credits=3`, asserts RFC 9457 error envelope with `exit_code == 45`, `charged == "no"`, `quoted == 4`, `max_credits == 3`, and unchanged balance.
   3. `Migrated composer submits and completes when Flow's quote equals --max-credits` (`@e2e @e2e_video`, opt-in via `GFLOW_CLI_E2E_RUN_VIDEO=1`, 4 credits): runs 4s x1 `omni-flash` with `max_credits=4` and asserts exit 0 and a downloaded MP4 file.
 
-- [ ] **Step 2: Run the offline E2E binding guard test**
+- [x] **Step 2: Run the offline E2E binding guard test**
 
 Run: `uv run python -m pytest tests/features/test_e2e_binding_guard.py -q`
 Expected: PASS (every `@e2e`-tagged feature is bound only under `tests/e2e/`, and every untagged feature is bound under `tests/features/`).
