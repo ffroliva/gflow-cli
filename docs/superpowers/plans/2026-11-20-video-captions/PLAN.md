@@ -326,14 +326,14 @@ adapter rebases cleanly onto `#1359` (`video assemble`) without breaching `check
 - `tests/cli/test_cli_video_captions.py` — Click `CliRunner` tests for both commands
 
 **Steps:**
-- [ ] Write failing CLI tests in `tests/cli/test_cli_video_captions.py` covering `--json`, `-o id`, table output, `-o out.srt` remediation (exit 2 `use --out-file`), catalog UUID `--profile` resolution, and exit codes 11 / 16 / 20.
-- [ ] Implement `src/gflow_cli/cli_video_captions.py`:
+- [x] Write failing CLI tests in `tests/cli/test_cli_video_captions.py` covering `--json`, `-o id`, table output, `-o out.srt` remediation (exit 2 `use --out-file`), catalog UUID `--profile` resolution, and exit codes 11 / 16 / 20.
+- [x] Implement `src/gflow_cli/cli_video_captions.py`:
   - `@spends_credits(False)` on both `@click.command("transcribe", ...)` and `@click.command("captions", ...)`.
   - `transcribe` arguments/options: `@click.argument("file")`, `@out_file_option(help="Explicit output .srt file path (defaults to <name>.srt).")`, `@click.option("--language", default=None, help="ISO-639-1 language hint for transcription (e.g. 'en', 'es', 'pt').")`, `@click.option("--profile", default=None, help="Profile name when FILE is a catalog media UUID.")`, `@output_format_option(has_out_file=True)`.
   - `captions` arguments/options: `@click.argument("file")`, `@click.option("--srt", default=None, type=click.Path(dir_okay=False, path_type=Path), help="Existing .srt subtitle file to burn in. When omitted, transcribes FILE first and writes <name>.srt.")`, `@click.option("--language", default=None, help="ISO-639-1 language hint when transcribing (ignored when --srt is given).")`, `@out_file_option(help="Explicit output .mp4 file path (defaults to <name>-captions.mp4).")`, `@click.option("--profile", default=None, help="Profile name when FILE is a catalog media UUID.")`, `@output_format_option(has_out_file=True)`.
   - Route execution through `run_with_handlers(..., cli_command="video transcribe" | "video captions", as_json=is_json, output_format=output_format)`.
-- [ ] Register `video.add_command(transcribe)` and `video.add_command(captions)` at the bottom of `src/gflow_cli/cli_video.py`.
-- [ ] Run `uv run pytest tests/cli/test_cli_video_captions.py` and confirm all CLI tests pass.
+- [x] Register `video.add_command(transcribe)` and `video.add_command(captions)` at the bottom of `src/gflow_cli/cli_video.py`.
+- [x] Run `uv run pytest tests/cli/test_cli_video_captions.py` and confirm all CLI tests pass.
 
 ---
 
