@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.103.1] — 2026-11-20
+
 ### Fixed
 
 - **A project left in Flow's agent mode, or with the agent panel open, runs on the classic composer again on flow.google.com ([#1384](https://github.com/ffroliva/gflow-cli/issues/1384), [#1374](https://github.com/ffroliva/gflow-cli/issues/1374)).**
@@ -17,7 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - turns agent mode off;
     - continues on the classic composer.
   - **Flow keeps that change across reloads**, so agent mode stays off until it is switched on again. The run logs `migrated.agent_mode_exited` at warning level when it happens.
-  - **Messages** that asked users to turn "the Agent chip" off now say to close the agent panel and switch Agent off.
+  - **Messages** that asked users to turn "the Agent chip" off now say to close the agent panel and switch Agent off. The error table in `KNOWN_ISSUES.md`, the exit-23 row in USAGE and the agent-only section of the MCP guide describe the switch and the panel ([#1389](https://github.com/ffroliva/gflow-cli/pull/1389)).
+  - **gflow never guesses at the panel's close button.** If more than one control matches, or none does, nothing is clicked and the run stops before submit with exit 23, charged nothing ([#1389](https://github.com/ffroliva/gflow-cli/pull/1389)).
+- **#1369 (the agent-only chat answering the previous request) is closed as stale.** On Flow's 2026-11-20 build the agent-only driver stops at its settings button before sending anything, so the carry-over cannot occur there. The check moves to [#1387](https://github.com/ffroliva/gflow-cli/issues/1387), which ports the driver to that build ([spike](docs/superpowers/spikes/2026-11-20-agent-only-driver-on-the-new-build.md)).
 
 ## [0.103.0] — 2026-11-19
 
@@ -7297,7 +7301,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.103.1...HEAD
+[0.103.1]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...v0.103.1
 [0.103.0]: https://github.com/ffroliva/gflow-cli/compare/v0.102.1...v0.103.0
 [0.102.1]: https://github.com/ffroliva/gflow-cli/compare/v0.102.0...v0.102.1
 [0.102.0]: https://github.com/ffroliva/gflow-cli/compare/v0.101.2...v0.102.0

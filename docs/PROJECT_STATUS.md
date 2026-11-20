@@ -6,6 +6,16 @@
 
 ## Current release
 
+**v0.103.1 — beta.** A patch release for Google Flow's 2026-11-20 build on flow.google.com (#1384, #1374).
+
+**Fixed.**
+- **Agent mode and the agent panel no longer break runs.** Flow's new build replaced the Agent chip with a switch, and the docked agent panel hides it. A project left that way failed every generation with exit 23, or (on the older build) was read as the agent-only composer, refusing i2v, r2v and i2i with exit 36. gflow now closes the panel, switches agent mode off and continues on the classic composer, through the CLI and MCP alike. Flow keeps that change across reloads, and the run logs `migrated.agent_mode_exited` as a warning. If the panel's close button is ambiguous, nothing is clicked and the run stops before submit, charged nothing.
+- **#1369 is closed as stale**: on the new build the agent-only driver stops before sending anything; the check moves to #1387.
+
+Full ledger: [LIVE_VERIFICATION_v0.103.1](LIVE_VERIFICATION_v0.103.1.md).
+
+<details><summary>v0.103.0 — model retirement, first beta</summary>
+
 **v0.103.0 — beta.** The first beta release. gflow says which video models Google Flow is retiring: Flow retires Omni 1.1 Flash (`omni-flash`), Veo 3.1 Fast (`veo-fast`) and Veo 3.1 Quality (`veo-quality`) on 2026-12-05 (#1375).
 
 **Added.**
@@ -16,6 +26,8 @@
 - The PyPI classifier moves to `Development Status :: 4 - Beta`, and the README leads with what gflow-cli does.
 
 Full ledger: [LIVE_VERIFICATION_v0.103.0](LIVE_VERIFICATION_v0.103.0.md).
+
+</details>
 
 <details><summary>v0.102.1 — agent-only video naming</summary>
 
@@ -1015,6 +1027,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Agent panel and Agent switch recovery on Flow's 2026-11-20 build; agent mode moves to its own mixin (#1384 #1374; #1369 closed as stale → #1387) | ✅ done (v0.103.1) |
 | Model retirement, slice 1: `retires_on`, a `model.retiring` warning on every video route (CLI and MCP), the exit-11 refusal naming the date, and defaults/docs/e2e moved off the leaving models (#1375) | ✅ done (v0.103.0) |
 | Agent-only video named from the project listing when the page shows only `/asb/` media (#1354) | ✅ done (v0.102.1) |
 | Reliability wave: `charged: no` before submit, `indeterminate` after it, re-extend, typed exits 32/35/22, extras-preserving update, engine and host telemetry (#1320 #1322 #1326 #1332 #1333 #1334 #1335 #1338 #1343 #1346 #1347) | ✅ done (v0.102.0) |
