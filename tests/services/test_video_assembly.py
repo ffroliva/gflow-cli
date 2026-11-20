@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import av
+import builtins
+
 import numpy as np
 import pytest
 
@@ -212,6 +214,24 @@ def test_mixes_music_and_voiceover_with_ducking(tmp_path: Path) -> None:
     assert result.has_music and result.has_voiceover and result.ducking_applied
     assert decoded
     assert max(float(np.abs(frame.to_ndarray()).max()) for frame in decoded) > 0.1
+
+
+def test_assembly_does_not_import_numpy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(clip, size=(64, 48), rate=24, frames=4, audio=True)
+    original_import = builtins.__import__
+
+    def without_numpy(name: str, *args: object, **kwargs: object) -> object:
+        if name == "numpy" or name.startswith("numpy."):
+            raise ImportError("NumPy disabled for this regression test")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_numpy)
+
+    result = assemble_videos([clip], output)
+
+    assert result.output_file == output
 
 
 def test_rejects_missing_non_uuid_path() -> None:

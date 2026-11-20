@@ -183,7 +183,7 @@ def _validate_assembly(
     clip_volume: float = 1.0,
     music_volume: float = 0.3,
     voiceover_volume: float = 1.0,
-) -> list[Path]:
+) -> None:
     if not clips:
         raise VideoAssemblyError(detail="At least one clip is required.", route="video.assemble")
     if any(not 0 <= value <= 1 for value in (clip_volume, music_volume, voiceover_volume)):
@@ -272,6 +272,7 @@ def _encode_clip(
         source_index = 0
         frame = next(frames, None)
         source_rate = float(stream.average_rate or frame_rate)
+        frame_time_base = Fraction(1, 1) / Fraction(frame_rate).limit_denominator(1000)
         for index in range(target_count):
             wanted = min(round(index * source_rate / frame_rate), source_count - 1)
             while source_index < wanted:
@@ -281,7 +282,7 @@ def _encode_clip(
                 break
             normalized = frame.reformat(width=size[0], height=size[1], format="yuv420p")
             normalized.pts = pts
-            normalized.time_base = Fraction(1, 1) / Fraction(frame_rate).limit_denominator(1000)
+            normalized.time_base = frame_time_base
             pts += 1
             for packet in stream_out.encode(normalized):
                 target.mux(packet)
