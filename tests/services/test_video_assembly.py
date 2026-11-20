@@ -8,8 +8,9 @@ import av
 import numpy as np
 import pytest
 
-from gflow_cli.errors import VideoAssemblyError
-from gflow_cli.services.video_assembly import assemble_videos
+from gflow_cli.data.models import AssetKind
+from gflow_cli.errors import DataStoreError, VideoAssemblyError
+from gflow_cli.services.video_assembly import assemble_videos, resolve_assembly_input
 
 
 def _clip(path: Path, *, size: tuple[int, int], rate: int, frames: int, audio: bool) -> None:
@@ -73,3 +74,33 @@ def test_rejects_output_alias_and_corrupt_input_without_partial_output(tmp_path:
         assemble_videos([corrupt], output)
     assert not output.exists()
     assert clip.exists()
+
+
+def test_resolves_catalog_uuid_only_through_verified_video_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = tmp_path / "catalog clip.mp4"
+    local.touch()
+    asset = type("Asset", (), {"kind": AssetKind.VIDEO, "local_files": [object()]})()
+    monkeypatch.setattr("gflow_cli.services.video_assembly.resolve_asset", lambda *a, **k: asset)
+    monkeypatch.setattr("gflow_cli.services.video_assembly.verified_local_path", lambda _: local)
+
+    assert (
+        resolve_assembly_input("123e4567-e89b-12d3-a456-426614174000", profile="default") == local
+    )
+
+
+def test_rejects_catalog_uuid_without_verified_local_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asset = type("Asset", (), {"kind": AssetKind.VIDEO, "local_files": [object()]})()
+    monkeypatch.setattr("gflow_cli.services.video_assembly.resolve_asset", lambda *a, **k: asset)
+    monkeypatch.setattr("gflow_cli.services.video_assembly.verified_local_path", lambda _: None)
+
+    with pytest.raises(DataStoreError, match="no verified local file"):
+        resolve_assembly_input("123e4567-e89b-12d3-a456-426614174000")
+
+
+def test_rejects_missing_non_uuid_path() -> None:
+    with pytest.raises(VideoAssemblyError, match="Input file does not exist"):
+        resolve_assembly_input("missing/../missing.mp4")

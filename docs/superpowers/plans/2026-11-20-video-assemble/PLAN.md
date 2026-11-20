@@ -67,8 +67,8 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Resolve each argument as local path or catalog ID.
 **Files:** service or narrow helper, relevant tests.
 **Steps:**
-- [ ] Reuse `media_recovery` catalog lookup and `_repo_base.verified_local_path`.
-- [ ] Test missing ID/file and traversal/symlink boundary behavior.
+- [x] Reuse `media_recovery` catalog lookup and `_repo_base.verified_local_path`.
+- [x] Test missing ID/file and explicit-path boundary behavior; local paths are caller-selected, catalog IDs are UUID-only and integrity-verified.
 
 ## Task 5 — CLI adapter
 **What:** Add `gflow video assemble CLIP...` with fixed requested options.

@@ -12,7 +12,11 @@ from typing import Any
 
 import numpy as np
 
-from gflow_cli.errors import FrameExtractionError, VideoAssemblyError
+from gflow_cli.api.video import is_media_uuid
+from gflow_cli.data.models import AssetKind
+from gflow_cli.data.repository import verified_local_path
+from gflow_cli.errors import DataStoreError, FrameExtractionError, VideoAssemblyError
+from gflow_cli.services.media_recovery import resolve_asset
 
 _SAMPLE_RATE = 44100
 _CHANNELS = 2
@@ -31,6 +35,29 @@ class AssemblyResult:
     height: int
     frame_rate: float
     bytes: int
+
+
+def resolve_assembly_input(value: str, *, profile: str | None = None) -> Path:
+    """Resolve a local file or a catalog video UUID with an integrity-verified copy."""
+    path = Path(value).expanduser()
+    if path.is_file():
+        return path.resolve()
+    if not is_media_uuid(value):
+        raise VideoAssemblyError(
+            detail=f"Input file does not exist: {path}", route="video.assemble"
+        )
+    asset = resolve_asset(value, profile=profile, route="video.assemble")
+    if asset.kind is not AssetKind.VIDEO:
+        raise DataStoreError(
+            detail=f"Catalog media {value!r} is not a video.", route="video.assemble"
+        )
+    for local_file in asset.local_files:
+        if verified := verified_local_path(local_file):
+            return verified.resolve()
+    raise DataStoreError(
+        detail=f"Catalog video {value!r} has no verified local file.",
+        route="video.assemble",
+    )
 
 
 def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: Any | None = None) -> Path:
