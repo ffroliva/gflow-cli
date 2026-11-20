@@ -701,6 +701,64 @@ def test_caption_video_uses_unique_temp_file_and_preserves_dot_tmp_source(
     assert sibling_temp.read_bytes() == b"in-flight run"
 
 
+def test_render_video_pyav12_audio_stream_fallback_uses_template_only(tmp_path: Path) -> None:
+    video_stream = SimpleNamespace(average_rate=25, width=160, height=90, time_base=Fraction(1, 25))
+    audio_stream = SimpleNamespace(codec_context=SimpleNamespace(name="aac"))
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class StubInput:
+        duration = 1000000
+        streams = SimpleNamespace(video=[video_stream], audio=[audio_stream])
+
+        def __enter__(self) -> StubInput:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def decode(self, _stream: Any) -> list[Any]:
+            return []
+
+        def seek(self, _offset: int) -> None:
+            return None
+
+        def demux(self, _stream: Any) -> list[Any]:
+            return []
+
+    class StubEncodedStream:
+        width = 0
+        height = 0
+        pix_fmt = ""
+
+        def encode(self, _frame: Any = None) -> list[Any]:
+            return []
+
+    class StubOutput:
+        def __enter__(self) -> StubOutput:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def add_stream(self, *args: Any, **kwargs: Any) -> StubEncodedStream:
+            calls.append((args, kwargs))
+            if "template" in kwargs and args:
+                raise ValueError("PyAV 12 rejects codec_name with template")
+            return StubEncodedStream()
+
+        def mux(self, _packet: Any) -> None:
+            return None
+
+    stub_av = SimpleNamespace(
+        time_base=1000000,
+        open=lambda _path, mode="r", **_kw: StubOutput() if mode == "w" else StubInput(),
+    )
+    service._render_video(
+        stub_av, tmp_path / "in.mp4", tmp_path / "out.mp4", [], object(), object()
+    )
+    assert calls[1] == ((), {"template": audio_stream})
+
+
 def test_caption_video_transcribes_first_and_writes_both_outputs(
     media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

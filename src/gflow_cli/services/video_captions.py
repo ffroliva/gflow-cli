@@ -462,7 +462,7 @@ def _render_video(
             audio_output = (
                 output.add_stream_from_template(audio_stream)
                 if hasattr(output, "add_stream_from_template")
-                else output.add_stream(audio_stream.codec_context.name, template=audio_stream)
+                else output.add_stream(template=audio_stream)
             )
         duration = float(input_container.duration or 0) / av.time_base
         overlays: dict[str, tuple[Any, int]] = {}
