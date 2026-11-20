@@ -174,12 +174,24 @@ def template(output: Path, force: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if value:
+        ctx.meta["no_max_credits"] = True
+
+
 @spends_credits(True)
 @movie.command("run")
 @click.argument(
     "manifest_path", metavar="MANIFEST", type=click.Path(dir_okay=False, path_type=Path)
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--no-max-credits",
+    is_flag=True,
+    expose_value=False,
+    callback=_set_no_max_credits,
+    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
+)
 @click.option(
     "--max-credits",
     type=click.IntRange(min=0),
@@ -250,7 +262,10 @@ def run(
         sys.exit(11)
 
     settings = get_settings()
-    effective_max_credits = resolve_max_credits(max_credits, settings.max_credits)
+    effective_max_credits = resolve_max_credits(
+        max_credits,
+        None if click.get_current_context().meta.get("no_max_credits") else settings.max_credits,
+    )
     out_dir = resolve_batch_output_dir(
         cli_override=out_dir_override,
         config_value=manifest.output_dir,
@@ -464,7 +479,10 @@ async def _sync_scene_instructions(
 
 
 def _preserve_movie_cap_partials(
-    exc: Exception, manifest: MovieManifest, state: MovieState
+    exc: Exception,
+    manifest: MovieManifest,
+    state: MovieState,
+    run_media_ids: list[str],
 ) -> None:
     if isinstance(exc, CreditCapExceededError):
         completed = [
@@ -473,9 +491,14 @@ def _preserve_movie_cap_partials(
             if scene.id in state.scenes
             and state.scenes[scene.id].status == "completed"
             and state.scenes[scene.id].media_id
+            and state.scenes[scene.id].media_id in run_media_ids
         ]
+        completed.extend(
+            media_id for media_id in exc.completed_media_ids if media_id not in completed
+        )
         if completed:
-            exc.charged = "yes"
+            if exc.charged != "maybe":
+                exc.charged = "yes"
             exc.next_action = "reconcile"
             exc.retryable = False
             exc.completed_media_ids = completed
@@ -493,6 +516,7 @@ async def _run_one_scene(
     profile_dir: Path,
     out_dir: Path,
     generated_any: bool,
+    run_media_ids: list[str] | None = None,
     continue_on_error: bool,
     brief_cache: _BriefSyncCache,
     budget: CreditBudget,
@@ -552,6 +576,8 @@ async def _run_one_scene(
             max_credits=budget.max_credits,
         )
         budget.record_spend(video_result.quoted_credits)
+        if run_media_ids is not None:
+            run_media_ids.append(video_result.status.media_id)
         local_path_str = (
             str(video_result.local_path) if video_result.local_path is not None else None
         )
@@ -569,7 +595,14 @@ async def _run_one_scene(
         return video_result.local_path
 
     except Exception as exc:
-        _preserve_movie_cap_partials(exc, manifest, state)
+        billed_quote = getattr(exc, "quoted_credits", None)
+        partial_media_ids = getattr(exc, "completed_media_ids", [])
+        if budget.remaining is not None and (billed_quote is not None or partial_media_ids):
+            if billed_quote is None:
+                budget.remaining = 0
+            else:
+                budget.record_spend(billed_quote)
+        _preserve_movie_cap_partials(exc, manifest, state, run_media_ids or [])
         log.error(
             "movie.scene_failed",
             scene_id=scene.id,
@@ -584,10 +617,10 @@ async def _run_one_scene(
         else:
             failed_method = "text"
         state.scenes[scene.id] = SceneState(
-            media_id="",
+            media_id=partial_media_ids[0] if partial_media_ids else "",
             flow_operation_id=None,
             local_path=None,
-            status="failed",
+            status="completed" if partial_media_ids else "failed",
             prompt=prompt,
             consistency_method=failed_method,
             style_hash=resume_hash(prompt),
@@ -670,6 +703,7 @@ async def _run_movie(
             # ------------------------------------------------------------------
             console.print("\n[bold]Scenes[/bold]")
             generated_any = False
+            run_media_ids: list[str] = []
             # One memo for the whole run so scenes sharing a brief sync it once.
             brief_cache = _BriefSyncCache()
 
@@ -703,6 +737,7 @@ async def _run_movie(
                     profile_dir=profile_dir,
                     out_dir=out_dir,
                     generated_any=generated_any,
+                    run_media_ids=run_media_ids,
                     continue_on_error=continue_on_error,
                     brief_cache=brief_cache,
                     budget=budget,
@@ -933,6 +968,8 @@ async def _generate_scene(
             on_started=on_started,
         )
     except Exception as exc:
+        if started_media_ids:
+            setattr(exc, "completed_media_ids", list(started_media_ids))  # noqa: B010
         # #341: persist the scene failure before the per-scene handler in
         # `_run_one_scene` decides continue-vs-abort.
         record_failed_operation_safe(

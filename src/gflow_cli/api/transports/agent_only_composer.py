@@ -45,6 +45,7 @@ from urllib.parse import urlsplit
 import structlog
 from playwright.async_api import Error as PlaywrightError
 
+from gflow_cli.api.credit_cap import parse_credit_quote
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.transports._mc_common import (
@@ -225,6 +226,7 @@ class DefaultsSnapshot:
     aspect_index: int
     count_index: int
     model_text: str
+    confirm_value: str = "1"
 
 
 def compose_image_directive(prompt: str, count: int, aspect_label: str) -> str:
@@ -319,9 +321,9 @@ def gate_quotes_more(title: str, count: int) -> bool | None:
 
 
 def gate_quoted_credits(title: str) -> int | None:
-    """Return the final integer token, which Flow uses for the gate's credit quote."""
-    numbers = _NUMBER_RE.findall(title)
-    return int(numbers[-1]) if numbers else None
+    """Return a strict, unambiguous quote, excluding the generation count."""
+    count = _NUMBER_RE.search(title)
+    return parse_credit_quote(title[: count.start()] + title[count.end() :]) if count else None
 
 
 def _tile_key(tile: dict[str, str]) -> str:
@@ -504,6 +506,7 @@ class AgentOnlyComposer:
                     model_text=_picker_label(
                         await page.locator(MODEL_PICKER[section]).first.inner_text()
                     ),
+                    confirm_value=await self._confirm_value(page),
                 )
                 await self._check_radio(page, base, aspect_ligature, "aspect")
                 await self._check_radio(page, base + 1, count - 1, "count")
@@ -525,8 +528,15 @@ class AgentOnlyComposer:
         )
         return snapshot
 
+    async def _confirm_value(self, page: Page) -> str:
+        for value in _CONFIRM_VALUE.values():
+            radio = page.locator(f"{CONFIRM_INPUT}[value='{value}']")
+            if await radio.count() == 1 and await radio.is_checked():
+                return value
+        raise UiSelectorDriftError(detail="agent-only composer: confirm choice is unreadable")
+
     async def restore_defaults(self, page: Page, snapshot: DefaultsSnapshot) -> None:
-        """Put back aspect / count / model. Confirm is deliberately left as applied."""
+        """Restore the account's original settings after a run."""
         await self._open_pane(page)
         base = _GROUP_BASE[snapshot.section]
         try:
@@ -535,6 +545,9 @@ class AgentOnlyComposer:
             if snapshot.count_index >= 0:
                 await self._check_radio(page, base + 1, snapshot.count_index, "count")
             await self._choose_model(page, snapshot.section, snapshot.model_text)
+            radio = page.locator(f"{CONFIRM_INPUT}[value='{snapshot.confirm_value}']")
+            if await radio.count() == 1 and not await radio.is_checked():
+                await radio.check(timeout=4000)
             await self._save(page)
         except Exception:
             # The failed-apply hazard from the other end: left open, the next run would
@@ -660,17 +673,18 @@ class AgentOnlyComposer:
             title = await gate.locator(GATE_TITLE).first.inner_text(timeout=2000)
         except PlaywrightError:
             title = ""
+        if title != run.last_gate_title:
+            run.last_gate_title = title
+            run.stable_gate_polls = 1
+            return False
+        run.stable_gate_polls += 1
+        if run.stable_gate_polls < 2:
+            return False
         quotes_more = gate_quotes_more(title, run.count)
-        if run.max_credits is not None:
-            quoted = gate_quoted_credits(title)
-            if quoted is None or quoted > run.max_credits:
-                await self._reject_gate(page, run.baseline_gates)
-                raise CreditCapExceededError(
-                    quoted=quoted,
-                    max_credits=run.max_credits,
-                    route="agent-only confirmation gate",
-                )
-            run.quoted_credits = quoted
+        if run.gate_seen_at is None:
+            run.gate_seen_at = time.monotonic()
+        if not await self._gate_cap_ready(page, run, title):
+            return False
         shown = redact_sensitive_text(title[:200]) or "(no title)"
         if quotes_more:
             rejected = await self._reject_gate(page, run.baseline_gates)
@@ -685,13 +699,9 @@ class AgentOnlyComposer:
             )
         if quotes_more is False:
             return True
-        if run.gate_seen_at is None:
-            run.gate_seen_at = time.monotonic()
         if time.monotonic() - run.gate_seen_at < GATE_SETTLE_S:
             return False
         if run.kind == "image":
-            # Unmeasured title shape. Images cost no credits, and _await_images still
-            # refuses a run that made more than requested.
             log.warning("migrated.agent_only.gate_count_unread", kind=run.kind)
             return True
         raise FlowAgentUiError(
@@ -706,6 +716,36 @@ class AgentOnlyComposer:
                 "can read it."
             ),
         )
+
+    async def _gate_cap_ready(self, page: Page, run: _Run, title: str) -> bool:
+        if run.max_credits is None:
+            return True
+        max_credits = run.max_credits
+        quoted = gate_quoted_credits(title)
+        if quoted is None:
+            if run.gate_seen_at is None:
+                run.gate_seen_at = time.monotonic()
+            if time.monotonic() - run.gate_seen_at < GATE_SETTLE_S:
+                return False
+            await self._reject_cap_gate(page, run, quoted, max_credits)
+        elif quoted > max_credits:
+            await self._reject_cap_gate(page, run, quoted, max_credits)
+        run.quoted_credits = quoted
+        return True
+
+    async def _reject_cap_gate(
+        self, page: Page, run: _Run, quoted: int | None, max_credits: int
+    ) -> None:
+        rejected = await self._reject_gate(page, run.baseline_gates)
+        error = CreditCapExceededError(
+            quoted=quoted,
+            max_credits=max_credits,
+            route="agent-only confirmation gate",
+        )
+        if not rejected:
+            error.charged, error.next_action = "maybe", "reconcile"
+            error.remediation_hint = "The gate is still open in Flow; reconcile before retrying."
+        raise error
 
     async def _reject_gate(self, page: Page, baseline_gates: int) -> bool:
         """Click Reject; True once the gate is seen to turn read-only."""
@@ -829,6 +869,19 @@ class AgentOnlyComposer:
             if named and not started and on_first_media is not None:
                 started = True
                 await _maybe_await(on_first_media(named[0]))
+                if run.max_credits is not None and not run.approvals:
+                    error = CreditCapExceededError(
+                        quoted=None,
+                        max_credits=run.max_credits,
+                        route="agent-only composer without an approved quote",
+                        completed_media_ids=[named[0]],
+                    )
+                    error.charged, error.next_action = "maybe", "reconcile"
+                    error.remediation_hint = (
+                        "A clip appeared without an approved quote; reconcile the Flow project "
+                        "before retrying."
+                    )
+                    raise error
             ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
             # #1354: the listing may name the clip before its player mounts, or the run may
             # time out waiting for it; the early report must not wait for the download.
@@ -836,6 +889,19 @@ class AgentOnlyComposer:
             if listed and not started and on_first_media is not None:
                 started = True
                 await _maybe_await(on_first_media(listed))
+                if run.max_credits is not None and not run.approvals:
+                    error = CreditCapExceededError(
+                        quoted=None,
+                        max_credits=run.max_credits,
+                        route="agent-only composer without an approved quote",
+                        completed_media_ids=[listed],
+                    )
+                    error.charged, error.next_action = "maybe", "reconcile"
+                    error.remediation_hint = (
+                        "A clip appeared without an approved quote; reconcile the Flow project "
+                        "before retrying."
+                    )
+                    raise error
             if ready is not None:
                 return [ready]
             await asyncio.sleep(POLL_S)
@@ -998,6 +1064,8 @@ class _Run:
     approvals: int = 0
     #: When this run's gate was first seen with a title that could not be read yet.
     gate_seen_at: float | None = None
+    last_gate_title: str = ""
+    stable_gate_polls: int = 0
     #: Clip uuids and `/asb/` tokens on the page before the submit: never this run's clip.
     seen_before: frozenset[str] = frozenset()
     #: Whether this run's clip has shown as pending; the listing is not read before that.

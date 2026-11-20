@@ -873,7 +873,7 @@ async def test_a_non_google_src_is_never_requested(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_defaults_are_applied_then_restored_and_confirm_is_kept(page: Page) -> None:
+async def test_defaults_and_confirm_are_restored_after_a_run(page: Page) -> None:
     await _load(page)
     composer = aoc.AgentOnlyComposer()
     snap = await composer.apply_defaults(
@@ -893,7 +893,7 @@ async def test_defaults_are_applied_then_restored_and_confirm_is_kept(page: Page
     assert applied["confirm"] == 1
     assert restored["groups"] == [0, 1, 0, 0]
     assert restored["models"]["video"] == "Omni 1.1 Flash"
-    assert restored["confirm"] == 1, "confirm is a standing choice, never restored"
+    assert restored["confirm"] == 0, "the account's original confirm choice is restored"
 
 
 @pytest.mark.asyncio

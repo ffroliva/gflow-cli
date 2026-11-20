@@ -680,8 +680,10 @@ class FakePage:
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
         self.selector_calls.append(css)
-        if css == CREDIT_COST_LABEL:
+        if css == CREDIT_COST_LABEL or css == "flow-credit-cost-label.settings-credit-cost":
             return FakeLocator(self, "credit_cost", ["quote"] if dom.pane_open else [])
+        if css == ".cdk-overlay-pane flow-prompt-box-settings":
+            return FakeLocator(self, "settings_pane", ["pane"] if dom.pane_open else [])
         if css == ".settings-trigger-button":
             # In agent mode it is still THERE (count 1) — just `hidden`. The reporter
             # counted 57 locator matches on an element that never became visible.
@@ -924,7 +926,7 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
     assert page.dom.groups["aspect"][0].checked  # 16:9
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
-    assert quoted == 4
+    assert quoted is None
     assert not page.dom.pane_open  # closed afterwards
 
 
@@ -937,7 +939,7 @@ async def test_apply_video_settings_refuses_quote_over_cap_before_closing_pane()
     assert caught.value.quoted == 4
     assert caught.value.max_credits == 3
     assert caught.value.charged == "no"
-    assert CREDIT_COST_LABEL in page.selector_calls
+    assert ".cdk-overlay-pane flow-prompt-box-settings" in page.selector_calls
 
 
 async def test_apply_video_settings_fails_closed_when_quote_is_unreadable() -> None:

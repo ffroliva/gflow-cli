@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Hard per-command video credit caps ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)).** Pass `--max-credits N` to billed video commands or set `GFLOW_CLI_MAX_CREDITS=N`; MCP agents can pass `max_credits`. gflow reads Flow's pre-submit quote, refuses an unreadable or over-limit quote with exit 45, and tracks spend across chain, extend, and movie runs.
+- **Hard per-command video credit caps ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)).** Pass `--max-credits N` to billed video commands or set `GFLOW_CLI_MAX_CREDITS=N`; use `--no-max-credits` to clear that default for one CLI call. MCP agents can pass `max_credits`, but cannot clear the environment default per call. gflow reads Flow's pre-submit quote, refuses an unreadable or over-limit quote with exit 45, and tracks spend across chain, extend, and movie runs.
 
 ### Fixed
 

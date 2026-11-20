@@ -160,6 +160,7 @@ Default: unset (the legacy exit codes). Set it to `2` to opt in to the stable ex
 **What:** Default hard per-command credit cap for billed video generation.
 **Default:** unset (no cap)
 **CLI override:** `--max-credits N` on video generation, chain, extend, and `movie run`.
+Use `--no-max-credits` on one CLI command to ignore this default.
 
 When set, gflow compares the cap with Flow's own pre-submit credit quote. A missing or
 over-limit quote refuses before submit with exit 45. Chain, extend, and movie commands

@@ -58,8 +58,13 @@ CREDIT_COST_LABEL = (
 
 
 async def _read_credit_quote(page: Page, max_credits: int | None) -> int | None:
+    if max_credits is None:
+        return None
     try:
-        label = await page.locator(CREDIT_COST_LABEL).first.inner_text(timeout=2000)
+        pane = page.locator(".cdk-overlay-pane flow-prompt-box-settings")
+        label = await pane.locator("flow-credit-cost-label.settings-credit-cost").first.inner_text(
+            timeout=2000
+        )
     except PlaywrightError:
         label = ""
     quoted = parse_credit_quote(label)

@@ -1234,8 +1234,6 @@ def _build_video_payload(
     reference_entity_names: list[str] | None = None,
     max_credits: int | None = None,
 ) -> dict[str, Any]:
-    if max_credits is not None and max_credits < 0:
-        raise ValueError("max_credits must be >= 0")
     payload: dict[str, Any] = {
         "prompt": prompt,
         "mode": mode,
@@ -1303,7 +1301,7 @@ async def gflow_generate_video(  # NOSONAR
     duration: int | None = None,
     resolution: str | None = None,
     count: int = 1,
-    max_credits: int | None = None,
+    max_credits: Annotated[int | None, Field(ge=0)] = None,
     tools: _ToolsParam = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
@@ -1354,7 +1352,7 @@ async def gflow_generate_video(  # NOSONAR
             other model, or on the labs editor, the job fails pre-submit with the
             exit-11-equivalent envelope and no credits spent.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
-        max_credits: Hard per-command cap from Flow's quote; missing or over-limit quotes refuse.
+        max_credits: Flow quote cap. Omission uses the environment default, which MCP cannot clear.
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -1406,6 +1404,8 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if max_credits is not None and max_credits < 0:
+        return _bad_param("Invalid max_credits", "max_credits must be >= 0.")
     # #1008: a video moved to a local file cannot live in a cloud bucket.
     if isinstance(resolved := _resolve_out_file(out_file, local_only=True), dict):
         return resolved

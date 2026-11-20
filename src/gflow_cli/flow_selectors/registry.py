@@ -10,7 +10,6 @@ State-gated entries (sidebar close) wait for `Reach` — see spec R4.
 from __future__ import annotations
 
 from gflow_cli.api.transports import migrated_composer, mode_control, ui_automation
-from gflow_cli.api.transports._mc_settings_pane import CREDIT_COST_LABEL
 from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors.model import Selector, Surface
 
@@ -70,14 +69,6 @@ SELECTORS: tuple[Selector, ...] = (
         candidates=(migrated_composer.READY_ANCHOR,),
         mode=UiMode.CLASSIC,
         note="ensure_editor's readiness anchor; #749 hid it under agent mode.",
-    ),
-    Selector(
-        key="migrated.composer.credit_cost",
-        surface="migrated_editor",
-        candidates=(CREDIT_COST_LABEL,),
-        mode=UiMode.CLASSIC,
-        expect_unique=True,
-        note="Flow's pre-submit quote; read only the custom element, never sibling labels.",
     ),
     Selector(
         key="migrated.agent_chip",

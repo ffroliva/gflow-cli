@@ -78,6 +78,45 @@ __all__ = [
 _log = structlog.get_logger(__name__)
 
 
+def _account_failed_link(
+    budget: CreditBudget, exc: Exception, previous_ids: list[str]
+) -> list[str]:
+    media_ids = list(getattr(exc, "completed_media_ids", []))
+    current_ids = [media_id for media_id in media_ids if media_id not in previous_ids]
+    quote = getattr(exc, "quoted_credits", None)
+    if budget.remaining is not None and (quote is not None or current_ids):
+        budget.remaining = max(0, budget.remaining - quote) if quote is not None else 0
+    if isinstance(exc, GFlowError):
+        if current_ids or quote is not None:
+            exc.charged, exc.next_action = "maybe", "reconcile"
+        elif previous_ids:
+            exc.charged, exc.next_action = "yes", "reconcile"
+    if isinstance(exc, CreditCapExceededError):
+        exc.completed_media_ids = previous_ids + current_ids
+    return current_ids
+
+
+def _record_unresolved_link(
+    recorder: ChainRecorder | None,
+    *,
+    index: int,
+    spec: ChainLinkSpec,
+    out_dir: Path,
+    media_id: str,
+    is_last: bool,
+) -> None:
+    if recorder is not None:
+        recorder.record_chain_link(
+            ChainLinkResult(
+                index=index,
+                prompt=spec.prompt,
+                local_path=out_dir / f".gflow-pending-{media_id}.mp4",
+                media_id=media_id,
+                frame_path=None if is_last else out_dir / f"link{index}_lastframe.jpg",
+            )
+        )
+
+
 @dataclass(frozen=True)
 class ChainLinkSpec:
     """One link's inputs: a prompt plus optional per-link overrides.
@@ -265,13 +304,20 @@ async def _generate_link(
         if not wrap:
             if completed_paths and isinstance(exc, GFlowError):
                 # #1201: links 0..k are billed whatever this link's own class says.
-                exc.charged = "yes"
                 exc.next_action = "reconcile"
                 exc.retryable = False
                 if not exc.operation_id:  # an in-flight link's own id is the better handle
                     exc.operation_id = completed_media_ids[-1]
                 if isinstance(exc, CreditCapExceededError):
-                    exc.completed_media_ids = list(completed_media_ids)
+                    current_ids = [
+                        media_id
+                        for media_id in exc.completed_media_ids
+                        if media_id not in completed_media_ids
+                    ]
+                    exc.completed_media_ids = list(completed_media_ids) + current_ids
+                    exc.charged = "maybe" if current_ids else "yes"
+                else:
+                    exc.charged = "yes"
             raise
         _log.warning(
             "chain_link_aborted",
@@ -464,15 +510,30 @@ async def run_chain(
         )
         req = replace(req, max_credits=budget.max_credits)
 
-        result = await _generate_link(
-            client=client,
-            req=req,
-            index=index,
-            completed_paths=completed_paths,
-            completed_media_ids=[r.media_id for r in results],
-            on_link_started=on_link_started,
-            on_link_failed=on_link_failed,
-        )
+        try:
+            result = await _generate_link(
+                client=client,
+                req=req,
+                index=index,
+                completed_paths=completed_paths,
+                completed_media_ids=[r.media_id for r in results],
+                on_link_started=on_link_started,
+                on_link_failed=on_link_failed,
+            )
+        except Exception as exc:
+            previous_ids = [r.media_id for r in results]
+            media_ids = _account_failed_link(budget, exc, previous_ids)
+            current_ids = [media_id for media_id in media_ids if media_id not in previous_ids]
+            if current_ids:
+                _record_unresolved_link(
+                    recorder,
+                    index=index,
+                    spec=spec,
+                    out_dir=out_dir,
+                    media_id=current_ids[0],
+                    is_last=index == last_index,
+                )
+            raise
         budget.record_spend(result.quoted_credits)
         if relocate is not None:  # a missing clip is left as is and refused just below
             result = await _relocate_guarded(relocate, index, result)

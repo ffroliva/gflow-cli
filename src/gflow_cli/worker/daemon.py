@@ -54,7 +54,6 @@ def _apply_configured_video_cap(
     request: GenerateVideoRequest, settings: Any
 ) -> GenerateVideoRequest:
     configured = getattr(settings, "max_credits", None)
-    configured = configured if type(configured) is int else None
     effective = resolve_max_credits(request.max_credits, configured)
     return replace(request, max_credits=effective) if effective != request.max_credits else request
 

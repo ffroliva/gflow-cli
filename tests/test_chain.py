@@ -154,6 +154,35 @@ async def test_chain_deducts_credit_quote_and_marks_partial_refusal(tmp_path: Pa
     assert caught.value.to_problem_details()["completed_media_ids"] == ["m0"]
 
 
+@pytest.mark.asyncio
+async def test_chain_persists_a_started_but_unresolved_link_for_resume(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli.errors import CreditCapExceededError
+
+    client = MagicMock(name="FlowApiClient")
+    error = CreditCapExceededError(quoted=None, max_credits=4, completed_media_ids=["orphan"])
+    error.charged, error.next_action = "maybe", "reconcile"
+    client.generate_video = AsyncMock(side_effect=error)
+    recorder = MagicMock()
+
+    with pytest.raises(CreditCapExceededError):
+        await run_chain(
+            client=client,
+            links=_two_link_specs(),
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            recorder=recorder,
+            extractor=_fake_extractor([]),
+            max_credits=4,
+        )
+
+    (pending,) = recorder.record_chain_link.call_args.args
+    assert pending.media_id == "orphan"
+    assert pending.local_path.name == ".gflow-pending-orphan.mp4"
+    assert not pending.local_path.exists()
+
+
 async def test_links_run_strictly_sequentially(tmp_path: Path) -> None:
     """generate_video is awaited exactly once per link, in link order."""
     results = [

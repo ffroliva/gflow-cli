@@ -52,6 +52,11 @@ def test_generate_video_request_rejects_negative_cap() -> None:
         GenerateVideoRequest(prompt="test", max_credits=-1)
 
 
+def test_missing_quote_remediation_says_to_run_without_a_cap() -> None:
+    error = CreditCapExceededError(quoted=None, max_credits=4)
+    assert "run without a credit cap" in error.remediation_hint
+
+
 def test_max_credits_setting_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings(max_credits=10).max_credits == 10
     monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "10")

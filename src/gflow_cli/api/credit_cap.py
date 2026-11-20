@@ -21,8 +21,6 @@ def enforce_credit_cap(
     """Fail closed for an unreadable quote when a cap is active."""
     if max_credits is None:
         return quoted
-    if max_credits < 0:
-        raise ValueError("max_credits must be >= 0")
     if quoted is None or quoted > max_credits:
         raise CreditCapExceededError(quoted=quoted, max_credits=max_credits, route=route)
     return quoted
@@ -33,21 +31,10 @@ def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | 
     return cli_value if cli_value is not None else configured
 
 
-def enforce_total_credit_cap(
-    *, unit_cost: int, count: int, max_credits: int | None, route: str
-) -> int:
-    """Check a known per-step quote against a whole-command cap and return its total."""
-    total = unit_cost * count
-    enforce_credit_cap(quoted=total, max_credits=max_credits, route=route)
-    return total
-
-
 class CreditBudget:
     """Mutable remaining credits for a multi-submit command."""
 
     def __init__(self, max_credits: int | None) -> None:
-        if max_credits is not None and max_credits < 0:
-            raise ValueError("max_credits must be >= 0")
         self.remaining = max_credits
 
     @property

@@ -925,14 +925,23 @@ class CreditCapExceededError(GFlowError):
         route: str = "",
         completed_media_ids: list[str] | None = None,
     ) -> None:
-        if max_credits < 0:
-            raise ValueError("max_credits must be >= 0")
         detail = (
             f"Flow quoted {quoted} credits, exceeding the maximum of {max_credits}."
             if quoted is not None
             else f"Flow's credit quote was unavailable; the maximum is {max_credits}."
         )
-        super().__init__(detail, status=422, route=route, charged="no", next_action="fix_input")
+        super().__init__(
+            detail,
+            status=422,
+            route=route,
+            remediation_hint=(
+                "This surface shows no price before submit; run without a credit cap."
+                if quoted is None
+                else None
+            ),
+            charged="no",
+            next_action="fix_input",
+        )
         self.quoted = quoted
         self.max_credits = max_credits
         self.completed_media_ids = completed_media_ids or []
@@ -941,7 +950,7 @@ class CreditCapExceededError(GFlowError):
         out = super().to_problem_details()
         out["quoted"] = self.quoted
         out["max_credits"] = self.max_credits
-        if self.completed_media_ids:
+        if getattr(self, "completed_media_ids", None):
             out["completed_media_ids"] = self.completed_media_ids
         return out
 

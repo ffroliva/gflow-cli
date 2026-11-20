@@ -38,7 +38,7 @@ def _balance(env: dict[str, str], profile: str) -> int:
     config.reset_settings()
     result = CliRunner().invoke(main, ["credits", "user", "--profile", profile, "--json"], env=env)
     assert result.exit_code == 0, result.output
-    return json.loads(result.output)["credits"]
+    return json.loads(result.stdout)["credits"]
 
 
 @given("a live classic Flow project served by flow.google.com")
@@ -101,9 +101,7 @@ def _install_route_backstop(monkeypatch: pytest.MonkeyPatch, world: dict[str, An
     world["submission_attempts"] = attempts
 
 
-@when(
-    parsers.parse("the operator requests an omni-flash 4-second x1 video with max_credits {cap:d}")
-)
+@when(parsers.parse("the operator requests an omni-1.2 4-second x1 video with max_credits {cap:d}"))
 def _cli_video(world: dict[str, Any], cap: int) -> None:
     config.reset_settings()
     world["cli"] = CliRunner().invoke(
@@ -115,7 +113,7 @@ def _cli_video(world: dict[str, Any], cap: int) -> None:
             "--project",
             world["project"],
             "--model",
-            "omni-flash",
+            "omni-1.2",
             "--duration",
             "4",
             "--count",
@@ -128,7 +126,7 @@ def _cli_video(world: dict[str, Any], cap: int) -> None:
     )
 
 
-@when(parsers.parse("MCP requests an omni-flash 4-second x1 video with max_credits {cap:d}"))
+@when(parsers.parse("MCP requests an omni-1.2 4-second x1 video with max_credits {cap:d}"))
 def _mcp_video(monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], cap: int) -> None:
     for key, value in world["env"].items():
         monkeypatch.setenv(key, value)
@@ -158,7 +156,7 @@ def _paid_video_enabled(
     _live_classic_project(world, e2e_profile_dir, e2e_env)
 
 
-@when("the operator requests an omni-flash 4-second x1 video with max_credits 4")
+@when("the operator requests an omni-1.2 4-second x1 video with max_credits 4")
 def _cli_video_at_quote(world: dict[str, Any]) -> None:
     _cli_video(world, 4)
 
@@ -167,7 +165,7 @@ def _cli_video_at_quote(world: dict[str, Any]) -> None:
 def _cli_refusal(world: dict[str, Any]) -> None:
     result = world["cli"]
     assert result.exit_code == 45, result.output
-    world["error"] = json.loads(result.output)["error"]
+    world["error"] = json.loads(result.stdout)["error"]
     assert world["error"]["class"] == "CreditCapExceededError"
     assert world["error"]["charged"] == "no"
     assert world["error"]["next_action"] == "fix_input"
@@ -204,6 +202,6 @@ def _balance_unchanged(world: dict[str, Any]) -> None:
 def _paid_success(world: dict[str, Any]) -> None:
     result = world["cli"]
     assert result.exit_code == 0, result.output
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     output = Path(data["local_path"])
     assert output.is_file() and output.stat().st_size > 0

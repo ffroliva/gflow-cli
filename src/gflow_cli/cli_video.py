@@ -34,8 +34,10 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import (
-    enforce_total_credit_cap,
-    resolve_max_credits,
+    enforce_credit_cap,
+)
+from gflow_cli.api.credit_cap import (
+    resolve_max_credits as _resolve_max_credits,
 )
 from gflow_cli.api.extend_chain import run_extend_chain
 from gflow_cli.api.transports import migrated_extend
@@ -139,6 +141,27 @@ _max_credits_option = click.option(
 )
 
 
+def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if value:
+        ctx.meta["no_max_credits"] = True
+
+
+_no_max_credits_option = click.option(
+    "--no-max-credits",
+    is_flag=True,
+    expose_value=False,
+    callback=_set_no_max_credits,
+    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
+)
+
+
+def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | None:
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.meta.get("no_max_credits"):
+        configured = None
+    return _resolve_max_credits(cli_value, configured)
+
+
 def _warn_persistence_failed_after_success(
     *,
     exc: Exception,
@@ -170,6 +193,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
         (
             click.option("--profile", default=None, help="Profile name (overrides default)."),
             _max_credits_option,
+            _no_max_credits_option,
             tool_option,
             _project_option,
             _project_name_option,
@@ -740,7 +764,7 @@ def _resolve_chain_resume(
     finally:
         probe.close()
     seed_clip = Path(completed[-1].local_path) if completed else None
-    if seed_clip is not None and len(completed) < len(links) and not seed_clip.is_file():
+    if seed_clip is not None and not seed_clip.is_file():
         raise FrameExtractionError(
             detail=f"cannot resume chain {chain_id}: the clip of its last completed link, "
             f"{seed_clip}, is missing, so the next link has nothing to continue from",
@@ -1581,6 +1605,7 @@ def i2v(  # NOSONAR
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
 @_max_credits_option
+@_no_max_credits_option
 @output_format_option(has_out_file=True)
 def r2v(
     prompt: str,
@@ -1707,6 +1732,7 @@ def r2v(
     help="Cap the number of links; error (exit 11) if the manifest has more.",
 )
 @_max_credits_option
+@_no_max_credits_option
 @click.option(
     "--yes",
     "-y",
@@ -1827,6 +1853,10 @@ _EXTEND_CONTENT_SECONDS = 7
 # labs.google's extend takes an aspect; flow.google.com keeps the source clip's.
 _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
+
+
+async def _refuse_unpriced_extend(max_credits: int) -> None:
+    enforce_credit_cap(quoted=None, max_credits=max_credits, route="flow.google.com video extend")
 
 
 async def _run_extend(  # noqa: PLR0913
@@ -2037,12 +2067,8 @@ async def _extend_session(  # noqa: PLR0913
         # Pre-flight balance check for the WHOLE run. `chain` never knew prices
         # so it could not do this; stopping here beats stopping at segment 6
         # holding a half-length video and a spent balance.
-        total_cost = enforce_total_credit_cap(
-            unit_cost=unit,
-            count=segments,
-            max_credits=max_credits,
-            route="video extend",
-        )
+        total_cost = unit * segments
+        enforce_credit_cap(quoted=total_cost, max_credits=max_credits, route="video extend")
         # `balance` is the only unknown here — the resolver cannot return a model
         # without also returning its cost.
         if balance is not None and balance < total_cost:
@@ -2296,6 +2322,7 @@ async def _extend_session(  # noqa: PLR0913
 @click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
 @click.option("--profile", default=None, help="Auth profile to use.")
 @_max_credits_option
+@_no_max_credits_option
 @output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
     media_id: str,
@@ -2369,6 +2396,14 @@ def extend(  # noqa: PLR0913
                     "max_credits": effective_max_credits,
                 }
             )
+        return
+    if migrated and effective_max_credits is not None:
+        run_with_handlers(
+            lambda: _refuse_unpriced_extend(effective_max_credits),
+            cli_command=_EXTEND_COMMAND,
+            as_json=is_json,
+            output_format=output_format,
+        )
         return
     if not yes:
         click.confirm(f"Submit {count} extend segment(s)?", abort=True)

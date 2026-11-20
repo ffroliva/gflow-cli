@@ -16,6 +16,7 @@ from gflow_cli.cli_video import video
 def test_billed_video_commands_expose_max_credits(name: str) -> None:
     command = video.commands[name]
     assert any("--max-credits" in option.opts for option in command.params)
+    assert any("--no-max-credits" in option.opts for option in command.params)
 
 
 def test_video_generate_bridge_exposes_max_credits() -> None:
@@ -62,6 +63,101 @@ def test_extend_dry_run_shows_max_credits() -> None:
     )
     assert result.exit_code == 0, result.output
     assert "max credits : 12" in result.output
+
+
+def test_no_max_credits_ignores_environment_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli import cli_video
+
+    captured: dict[str, object] = {}
+
+    async def capture(*_args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "6")
+    monkeypatch.setattr(cli_video, "_run_t2v", capture)
+    monkeypatch.setattr(cli_video, "_resolve_profile", lambda _profile: "test")
+    monkeypatch.setattr(cli_video, "_make_provider_dir", lambda _profile: Path("."))
+    result = CliRunner().invoke(
+        video, ["t2v", "cat", "--no-max-credits"], env={"GFLOW_CLI_MAX_CREDITS": "6"}
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["max_credits"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["t2v", "i2v", "r2v"])
+async def test_video_builders_use_environment_cap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+) -> None:
+    from types import SimpleNamespace
+
+    from gflow_cli import cli_video
+
+    captured: dict[str, object] = {}
+
+    async def capture(request: object, **_: object) -> None:
+        captured["request"] = request
+
+    monkeypatch.setattr(cli_video, "get_settings", lambda: SimpleNamespace(max_credits=7))
+    monkeypatch.setattr(cli_video, "_generate_and_report", capture)
+    common = dict(profile_name="test", profile_dir=tmp_path, out_dir=None)
+    if mode == "t2v":
+        await cli_video._run_t2v(**common, prompt="cat", aspect="16:9", max_credits=None)
+    elif mode == "i2v":
+        await cli_video._run_i2v(
+            **common,
+            params=cli_video._I2VParams(image="frame.png", prompt="cat", aspect="16:9"),
+        )
+    else:
+        await cli_video._run_r2v(**common, prompt="cat", refs=("ref.png",), aspect="16:9")
+    assert captured["request"].max_credits == 7
+
+
+def test_chain_resume_refuses_an_unresolved_billed_link(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from gflow_cli import cli_video
+    from gflow_cli.data.chain_repo import ChainLinkRecorder
+    from gflow_cli.errors import FrameExtractionError
+
+    probe = MagicMock()
+    probe.completed_links.return_value = [SimpleNamespace(local_path=str(tmp_path / "missing.mp4"))]
+    monkeypatch.setattr(ChainLinkRecorder, "open", lambda *_args, **_kwargs: probe)
+    with pytest.raises(FrameExtractionError):
+        cli_video._resolve_chain_resume(
+            "chain-id", [object()], settings=object(), profile_name="test", profile_dir=tmp_path
+        )
+    probe.close.assert_called_once()
+
+
+def test_migrated_extend_refuses_cap_before_confirmation_or_client_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli import cli_video
+    from gflow_cli.cli import main
+    from gflow_cli.config import Settings
+
+    client = MagicMock()
+    monkeypatch.setattr(cli_video, "get_settings", lambda: Settings(flow_host="flow.google.com"))
+    monkeypatch.setattr(cli_video, "FlowApiClient", lambda **_: client)
+    result = CliRunner().invoke(
+        main,
+        [
+            "video",
+            "extend",
+            "b9458021-fc2d-4d95-ab53-cf844c6f1079",
+            "continue",
+            "--project",
+            "7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
+            "--max-credits",
+            "4",
+        ],
+    )
+    assert result.exit_code == 45, result.output
+    assert "Submit" not in result.output
+    client.assert_not_called()
 
 
 @pytest.mark.asyncio

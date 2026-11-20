@@ -165,7 +165,9 @@ Every subcommand accepts `--profile <name>` (per-subcommand, not global) to driv
 **Credit cap:** Add `--max-credits N` to a billed video command, or set
 `GFLOW_CLI_MAX_CREDITS=N` as its default. Flow's own pre-submit quote is checked; a missing
 quote or one above the cap refuses with exit 45. Chain, extend and movie commands share the
-same cap across submissions. Image commands do not use this option.
+same cap across submissions. Use `--no-max-credits` to ignore the environment default for a
+single CLI command. MCP calls cannot clear the environment default per call. Image commands
+do not use this option.
 
 ## Recipes
 
