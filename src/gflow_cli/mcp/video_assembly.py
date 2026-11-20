@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from gflow_cli.mcp.server import server
+from gflow_cli.services.video_assembly import (
+    assemble_videos,
+    assembly_result_payload,
+    resolve_assembly_input,
+)
 
 
 def _guarded(fn: Any) -> Any:
@@ -20,13 +25,6 @@ def _guarded(fn: Any) -> Any:
         return await guarded(fn)(*args, **kwargs)
 
     return wrapper
-
-
-from gflow_cli.services.video_assembly import (
-    assemble_videos,
-    assembly_result_payload,
-    resolve_assembly_input,
-)
 
 
 @server.tool(
