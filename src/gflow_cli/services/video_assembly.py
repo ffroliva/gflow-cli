@@ -37,6 +37,27 @@ class AssemblyResult:
     bytes: int
 
 
+def assembly_result_payload(result: AssemblyResult) -> dict[str, Any]:
+    """The stable JSON result shape shared by the CLI and MCP adapters."""
+    return {
+        "status": "succeeded",
+        "output_file": str(result.output_file),
+        "duration_seconds": result.duration_seconds,
+        "clips_count": result.clips_count,
+        "has_music": result.has_music,
+        "has_voiceover": result.has_voiceover,
+        "ducking_applied": result.ducking_applied,
+        "video_stream": {
+            "codec": "h264",
+            "width": result.width,
+            "height": result.height,
+            "fps": result.frame_rate,
+        },
+        "audio_stream": {"codec": "aac", "sample_rate": _SAMPLE_RATE, "channels": _CHANNELS},
+        "bytes": result.bytes,
+    }
+
+
 def resolve_assembly_input(value: str, *, profile: str | None = None) -> Path:
     """Resolve a local file or a catalog video UUID with an integrity-verified copy."""
     path = Path(value).expanduser()

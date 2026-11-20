@@ -82,10 +82,10 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Register `gflow_video_assemble`, preserving CLI semantics.
 **Files:** MCP tool module, `worker/codec.py`, `tests/mcp/test_cli_parity.py`, MCP tests.
 **Steps:**
-- [ ] Expose all clips/options and map typed errors to Problem Details.
-- [ ] Ensure direct and queued payload round-trip retains all keys.
-- [ ] Verify local assembly remains available with `--no-spend`.
-- [ ] Check six mirror axes in `skills/check/SKILL.md` step 1b.
+- [x] Expose all clips/options and map typed errors to Problem Details.
+- [x] Run directly in-process, following existing local credit-free MCP tools; no worker payload or codec is involved.
+- [x] Verify local assembly remains available with `--no-spend`.
+- [x] Check six mirror axes in `skills/check/SKILL.md` step 1b: CLI/MCP each call the same service; the MCP docstring states the same behavior; agent-facing/docs updates are in Task 7; typed error and exit semantics are documented in Task 7; no templates/config are affected; website docs mirror will be generated and checked.
 
 ## Task 7 — Documentation
 **What:** Document command, tool, limits and alternative.

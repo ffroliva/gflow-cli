@@ -70,7 +70,11 @@ from gflow_cli.paths import (
     extend_output_path,
     relocate_video_output,
 )
-from gflow_cli.services.video_assembly import assemble_videos, resolve_assembly_input
+from gflow_cli.services.video_assembly import (
+    assemble_videos,
+    assembly_result_payload,
+    resolve_assembly_input,
+)
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
@@ -1155,23 +1159,7 @@ def assemble(
             voiceover_volume=voiceover_volume,
             duck=duck,
         )
-        payload = {
-            "status": "succeeded",
-            "output_file": str(result.output_file),
-            "duration_seconds": result.duration_seconds,
-            "clips_count": result.clips_count,
-            "has_music": result.has_music,
-            "has_voiceover": result.has_voiceover,
-            "ducking_applied": result.ducking_applied,
-            "video_stream": {
-                "codec": "h264",
-                "width": result.width,
-                "height": result.height,
-                "fps": result.frame_rate,
-            },
-            "audio_stream": {"codec": "aac", "sample_rate": 44100, "channels": 2},
-            "bytes": result.bytes,
-        }
+        payload = assembly_result_payload(result)
         if as_json or output_format == OutputFormat.JSON.value:
             json_output.emit(payload)
         else:
