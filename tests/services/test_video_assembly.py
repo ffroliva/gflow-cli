@@ -15,7 +15,15 @@ from gflow_cli.services import video_assembly
 from gflow_cli.services.video_assembly import assemble_videos, resolve_assembly_input
 
 
-def _clip(path: Path, *, size: tuple[int, int], rate: int, frames: int, audio: bool) -> None:
+def _clip(
+    path: Path,
+    *,
+    size: tuple[int, int],
+    rate: int,
+    frames: int,
+    audio: bool,
+    audio_frequency: int | None = None,
+) -> None:
     with av.open(str(path), "w", format="mp4") as output:
         video = output.add_stream("mpeg4", rate=rate)
         video.width, video.height = size
@@ -33,13 +41,22 @@ def _clip(path: Path, *, size: tuple[int, int], rate: int, frames: int, audio: b
         for packet in video.encode():
             output.mux(packet)
         if sound is not None:
-            sample = av.AudioFrame.from_ndarray(
-                np.zeros((2, 1024), dtype=np.float32), format="fltp", layout="stereo"
-            )
-            sample.sample_rate = 44100
-            sample.pts = 0
-            for packet in sound.encode(sample):
-                output.mux(packet)
+            for start in range(0, frames * 4410, 1024):
+                samples = np.arange(start, min(start + 1024, frames * 4410)) / 44100
+                tone = (
+                    np.zeros(len(samples), dtype=np.float32)
+                    if audio_frequency is None
+                    else (0.3 * np.sin(2 * np.pi * audio_frequency * samples)).astype(
+                        np.float32
+                    )
+                )
+                sample = av.AudioFrame.from_ndarray(
+                    np.vstack([tone, tone]), format="fltp", layout="stereo"
+                )
+                sample.sample_rate = 44100
+                sample.pts = start
+                for packet in sound.encode(sample):
+                    output.mux(packet)
             for packet in sound.encode():
                 output.mux(packet)
 
@@ -80,6 +97,26 @@ def test_assembles_varied_clips_and_missing_audio_as_silence(tmp_path: Path) -> 
         assert container.streams.audio
     assert result.clips_count == 2
     assert result.duration_seconds == pytest.approx(2, abs=0.2)
+
+
+def test_silent_clip_spool_does_not_overwrite_next_clips_audio(tmp_path: Path) -> None:
+    silent = tmp_path / "silent.mp4"
+    audible = tmp_path / "audible.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(silent, size=(64, 48), rate=10, frames=10, audio=False)
+    _clip(
+        audible,
+        size=(64, 48),
+        rate=10,
+        frames=10,
+        audio=True,
+        audio_frequency=660,
+    )
+
+    assemble_videos([silent, audible], output)
+
+    assert _band_rms(output, 660, 0.1, 0.9) < 0.005
+    assert _band_rms(output, 660, 1.1, 1.8) > 0.05
 
 
 def test_realistic_clips_preserve_duration_frames_and_streams(

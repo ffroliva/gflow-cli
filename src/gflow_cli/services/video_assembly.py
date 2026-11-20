@@ -112,6 +112,7 @@ def _write_audio_pcm(
                 if written >= samples:
                     break
     target.truncate(start + samples * _CHANNELS * 4)
+    target.seek(start + samples * _CHANNELS * 4)
 
 
 def _pcm_spool(path: Path, *, samples: int, av: Any) -> Path:
