@@ -1521,7 +1521,7 @@ continue as a seeded I2V generation — tracked as backlog.
 ### Some accounts get an agent-only composer on flow.google.com — text-to-image and text-to-video are driven; other forms are not
 
 Some accounts on `flow.google.com` are served a composer with **no classic arm at all**:
-the only prompt box is the agent panel, there is no `agent-mode-chip` to turn off, and
+the only prompt box is the agent panel, there is no Agent toggle to turn off, and
 aspect / model / count are Agent-settings **defaults** rather than per-request controls.
 
 **Driven ([#799](https://github.com/ffroliva/gflow-cli/issues/799)):** `gflow image t2i` and
@@ -1571,15 +1571,34 @@ reloads (log event `migrated.agent_only_reload`, #1142).
 - An image whose orientation does not match the requested aspect is kept (the run is
   billed and the file is valid) and logged as `migrated.agent_only.aspect_mismatch`.
 
-**Detection** is unchanged from v0.74.0: a hidden settings trigger with **no chip anywhere**
-is this composer; with a chip it is the recoverable agent mode of
-[#749](https://github.com/ffroliva/gflow-cli/issues/749). It is now reported after a 5 s
-early wait instead of the full 30 s readiness gate.
+**Detection.** A hidden settings trigger with **no Agent toggle anywhere** is this composer;
+with a toggle it is the recoverable agent mode of
+[#749](https://github.com/ffroliva/gflow-cli/issues/749). It is reported after a 5 s early
+wait instead of the full 30 s readiness gate.
+
+**The open agent panel is not this composer
+([#1374](https://github.com/ffroliva/gflow-cli/issues/1374),
+[#1384](https://github.com/ffroliva/gflow-cli/issues/1384)).** While Flow's agent panel is
+docked open, the Agent toggle is not in the page at all, on both builds measured. That page
+used to be read as this composer (2026-11-19 build) or as selector drift, exit 23 (2026-11-20
+build). gflow now closes the panel first, through its own close button, then turns agent mode
+off. **Flow keeps that across reloads**: agent mode stays off until it is switched on
+again, and the run logs `migrated.agent_mode_exited` at warning level when it happens. This
+composer is reported only when no toggle appears after the panel is closed.
+
+Flow's 2026-11-20 build replaced the Agent chip (`button.agent-mode-chip`) with a switch
+(`flow-agent-mode-switch`), and closes the panel through `right_panel_close` instead of
+`close`; gflow matches both builds. On the 2026-11-20 build an account with no classic arm at
+all has not been observed. If one exists, it is reported as selector drift (exit 23) rather
+than driven, because this composer's settings button is measured only on the older build
+([spike](docs/superpowers/spikes/2026-11-20-agent-mode-switch-and-panel-rendering.md)). Porting the
+driver to the 2026-11-20 build is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387)
+([spike](docs/superpowers/spikes/2026-11-20-agent-only-driver-on-the-new-build.md)).
 
 The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
-discriminator more than a guess: a healthy migrated composer carries
-`button.agent-mode-chip` **present and un-pressed** with its settings trigger visible. So a
-migrated account normally has a chip, and having none is the anomaly this keys on.
+discriminator more than a guess: a healthy migrated composer carries its Agent toggle
+**present and un-pressed** with its settings trigger visible. So a composer served from
+flow.google.com normally has a toggle, and having none, with the panel closed, is the anomaly this keys on.
 
 ---
 
@@ -1607,30 +1626,33 @@ workaround anyone needs to discover.
 
 ### Flow's agent-mode chip hides the settings trigger on `flow.google.com` (exit 23)
 
-- **Status:** Mitigated · **Severity:** High while it lasts (every video run on the account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0 · **Tracked:** [#749](https://github.com/ffroliva/gflow-cli/issues/749), follow-up [#752](https://github.com/ffroliva/gflow-cli/issues/752)
+- **Status:** Mitigated · **Severity:** High while it lasts (every video run on the account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0; on Flow's 2026-11-20 build v0.71.1–0.103.0, fixed in 0.103.1 · **Tracked:** [#749](https://github.com/ffroliva/gflow-cli/issues/749), follow-up [#752](https://github.com/ffroliva/gflow-cli/issues/752), [#1384](https://github.com/ffroliva/gflow-cli/issues/1384), [#1374](https://github.com/ffroliva/gflow-cli/issues/1374)
 
-The migrated composer has an **Agent** chip. Pressed, Flow swaps the prompt box and
+The migrated composer has an **Agent** chip (a switch, `flow-agent-mode-switch`, since Flow's
+2026-11-20 build, [#1384](https://github.com/ffroliva/gflow-cli/issues/1384)). Pressed, Flow swaps the prompt box and
 leaves `.settings-trigger-button` — the element this driver waits on — in the DOM under
 a bare `hidden` (`display: none`, 0×0). Flow **remembers the chip per account**, so a
 single click in a browser made every later `gflow video` run on that account die at 30 s
 as `UiSelectorDriftError` (exit 23), telling the user to file a frontend-drift bug about
 a frontend that was working correctly.
 
-**Mitigation** (v0.71.1): the readiness gate leaves agent mode by
+**Mitigation** (v0.71.1; agent panel and switch v0.103.1): the readiness gate leaves agent mode by
 itself, so an account parked there recovers with no user action. If it cannot, the error
 now names which of three things happened rather than blaming drift:
 
 | The message says | What it means | What to do |
 |---|---|---|
-| `the account is in Flow's agent mode … the chip could not be clicked` | something is covering the chip (a modal) | dismiss it in a browser; re-run |
-| `the chip was clicked, and it is STILL pressed` | the mode is pinned on this account | turn the **Agent** chip off in a browser; re-run |
+| `the account is in Flow's agent mode … the agent panel's close button or the Agent switch could not be clicked` | something is covering the control (a modal); the click error at the end names which | dismiss it in a browser; re-run |
+| `the agent panel's close button (…) matched N elements, so none was clicked` | Flow's panel header no longer has exactly one close button; gflow does not guess (#1273) | close the agent panel by hand and switch **Agent** off; file a bug with the log |
+| `the Agent switch was clicked, and it is STILL on` | the mode is pinned on this account | switch **Agent** off in a browser; re-run |
 | `agent mode was left, but the settings trigger … still did not become visible` | the mode is off — this is real selector drift | file a bug; it is not this issue |
-| `the chip could not be read back, so whether the mode is still on is unknown` | the page went dark mid-recovery | check the **Agent** chip in a browser *before* filing this as drift |
-| `the settings trigger … is not visible — the account is in Flow's agent mode` | the mode flipped **mid-run**, after the editor was already ready | turn the **Agent** chip off in a browser; re-run |
-| `the model picker (arrow_drop_down) is hidden in the settings pane` (since v0.89.1, [#788](https://github.com/ffroliva/gflow-cli/issues/788)) | the pane opened but its model picker is hidden, so `--model` cannot be checked; nothing was submitted | if the **Agent** chip is on, turn it off in a browser; re-run |
+| `the switch could not be read back, so whether the mode is still on is unknown` | the page went dark mid-recovery | check the **Agent** switch in a browser *before* filing this as drift |
+| `the settings trigger … is not visible — the account is in Flow's agent mode` | the mode flipped **mid-run**, after the editor was already ready | close the agent panel and switch **Agent** off in a browser; re-run |
+| `the model picker (arrow_drop_down) is hidden in the settings pane` (since v0.89.1, [#788](https://github.com/ffroliva/gflow-cli/issues/788)) | the pane opened but its model picker is hidden, so `--model` cannot be checked; nothing was submitted | if agent mode is on, close the agent panel and switch **Agent** off in a browser; re-run |
 
 **On 0.71.0 and earlier there is no recovery.** Open the project on
-`flow.google.com`, click the **Agent** chip off, and the account works again.
+`flow.google.com`, switch **Agent** off (a chip on builds before 2026-11-20), and the account
+works again.
 
 **Follow-up ([#776](https://github.com/ffroliva/gflow-cli/issues/776)) — the same
 confusion survived one gate later, on the *click*.** The table above covers the readiness
@@ -1642,11 +1664,11 @@ mid-run agent-mode flip is equally consistent with the evidence.
 
 | The message says | What it means | What to do |
 |---|---|---|
-| `… did not accept a click … the account is in Flow's agent mode` | the mode flipped after the editor was ready | turn the **Agent** chip off in a browser; re-run |
+| `… did not accept a click … the account is in Flow's agent mode` | the mode flipped after the editor was ready | close the agent panel and switch **Agent** off in a browser; re-run |
 | `… it is covered by <tag>.<class>` | something is stacked over the control — the class names it | dismiss it in a browser; re-run |
 | `… the page is accepting no pointer events at all` | an overlay has the whole app blocked (#593's shape) | dismiss it in a browser; re-run |
-| `… it carries a bare `hidden` attribute` / `it is disabled` | the control is present but not usable | usually agent mode or a cohort difference; check the Agent chip first |
-| `… it is not rendered (display, visibility, or a zero-sized box)` | it is in the DOM but not on screen | as above — check the Agent chip, then file a bug with the log |
+| `… it carries a bare `hidden` attribute` / `it is disabled` | the control is present but not usable | usually agent mode or a cohort difference; check the Agent switch first |
+| `… it is not rendered (display, visibility, or a zero-sized box)` | it is in the DOM but not on screen | as above — check the Agent switch, then file a bug with the log |
 | `… it answers no hit test at its own centre` | nothing named itself as the cover, but the click still landed elsewhere | re-run once; if it repeats, file a bug — an overlay outside the document is the usual shape |
 | `… it was visible, enabled and hit-testable … most likely still moving` | nothing readable was wrong | Playwright also needs a *stable* box; re-run once. If it repeats, file a bug — this message means we looked and found nothing, which is a real finding worth having |
 | `… it could not be read back` | the page changed under the diagnosis | re-run; if it repeats, attach the log |

@@ -232,9 +232,14 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
         composer = MigratedComposer()
         await composer.ensure_editor(page, project, timeout_s=45.0)
 
-        # Into agent mode, through the chip a user would click. `aria-pressed='false'`
-        # is the same control before it is pressed.
-        chip = page.locator("button.agent-mode-chip[aria-pressed='false']").first
+        # Into agent mode, through the toggle a user would click. `aria-pressed='false'`
+        # is the same control before it is pressed. Both builds: the chip (2026-11-19) and
+        # the switch (2026-11-20, #1384); literals, so the restore below does not depend
+        # on the constants under test.
+        chip = page.locator(
+            "button.agent-mode-chip[aria-pressed='false'], "
+            "flow-agent-mode-switch button.switch[aria-pressed='false']"
+        ).first
         if not await chip.count():
             pytest.skip("this account's composer renders no agent-mode chip")
         await chip.click(timeout=10_000)
@@ -249,9 +254,9 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
             # would resolve against the developer's own catalog and profile store
             # (#86's pollution mode, reintroduced mid-test).
             with monkeypatch.context() as m:
-                from gflow_cli.api.transports import _mc_editor_gate
+                from gflow_cli.api.transports import _mc_agent_mode
 
-                m.setattr(_mc_editor_gate, "AGENT_MODE_CHIP", "button.gflow-no-such-chip")
+                m.setattr(_mc_agent_mode, "AGENT_MODE_CHIP", "button.gflow-no-such-chip")
                 # Pinned to the message, not just the class: without this the control
                 # passes on ANY drift, including one raised by the recovery firing
                 # wrongly, and stops discriminating the moment it matters.
@@ -270,7 +275,10 @@ async def test_e2e_agent_mode_is_left_before_the_readiness_gate(
             # covering the chip, this click times out too, and an exception here would
             # replace the real assertion failure with a cleanup one.
             try:
-                pressed = page.locator("button.agent-mode-chip[aria-pressed='true']").first
+                pressed = page.locator(
+                    "button.agent-mode-chip[aria-pressed='true'], "
+                    "flow-agent-mode-switch button.switch[aria-pressed='true']"
+                ).first
                 if await pressed.count():
                     await pressed.click(timeout=10_000)
             except Exception as cleanup_error:  # noqa: BLE001 - never mask the verdict

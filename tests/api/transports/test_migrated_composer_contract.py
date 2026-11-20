@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 
 import gflow_cli.api.transports.migrated_composer as mc_mod
+from gflow_cli.api.transports._mc_agent_mode import AgentModeMixin
 from gflow_cli.api.transports._mc_editor_gate import EditorGateMixin
 from gflow_cli.api.transports._mc_media import MediaMixin
 from gflow_cli.api.transports._mc_mention import MentionMixin
@@ -51,6 +52,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "migrated_composer_contract.json"
 PARTS = (
     "common",
     "media",
+    "agent_mode",
     "editor_gate",
     "settings_pane",
     "upload_frame",
@@ -159,17 +161,25 @@ MODULE_NAMES = (
 
 PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     (
-        "EditorGateMixin.ensure_editor",
+        "AgentModeMixin._agent_chip_pressed",
         "AGENT_MODE_CHIP",
-    ): "gflow_cli.api.transports._mc_editor_gate",
+    ): "gflow_cli.api.transports._mc_agent_mode",
+    (
+        "AgentModeMixin._exit_agent_mode",
+        "AGENT_PANEL_SETTLE_S",
+    ): "gflow_cli.api.transports._mc_agent_mode",
+    (
+        "AgentModeMixin._close_agent_panel",
+        "AGENT_PANEL_SETTLE_S",
+    ): "gflow_cli.api.transports._mc_agent_mode",
     (
         "EditorGateMixin.ensure_editor_for",
         "AGENT_ONLY_RELOAD_WAIT_S",
     ): "gflow_cli.api.transports._mc_editor_gate",
     (
-        "EditorGateMixin._is_agent_only_composer",
+        "AgentModeMixin._is_agent_only_composer",
         "AGENT_ONLY_SETTLE_S",
-    ): "gflow_cli.api.transports._mc_editor_gate",
+    ): "gflow_cli.api.transports._mc_agent_mode",
     (
         "MentionMixin.reference_existing",
         "EXISTING_REF_WAIT_S",
@@ -436,6 +446,7 @@ def test_tests_that_patch_the_composer_class_still_reach_the_methods() -> None:
         UploadFrameMixin,
         SettingsPaneMixin,
         EditorGateMixin,
+        AgentModeMixin,
         MediaMixin,
         object,
     )

@@ -73,8 +73,8 @@ MENU_ITEM = "[role='menuitem']"
 COMPOSER = "[contenteditable='true']"
 #: Named contract for the migrated Angular settings surface. Diagnostics include this
 #: value so a future Flow DOM variant gets a new contract instead of a fuzzy fallback.
-MIGRATED_SETTINGS_CONTRACT = "migrated-angular-settings-v1"
-#: Flow's agent-mode chip. Pressed, `.settings-trigger-button` stays in the DOM but gains
+MIGRATED_SETTINGS_CONTRACT = "migrated-angular-settings-v2"
+#: Flow's agent-mode toggle. Pressed, `.settings-trigger-button` stays in the DOM but gains
 #: a bare `hidden` (display:none, 0x0, not hit-testable) — which is why every gate on it
 #: waits for VISIBILITY and never `count()` (#749).
 #:
@@ -91,12 +91,38 @@ MIGRATED_SETTINGS_CONTRACT = "migrated-angular-settings-v1"
 #:
 #: Accounts, measurements and the transition inventory:
 #: docs/superpowers/spikes/2026-09-08-migrated-composer-agent-mode-hides-settings.md
-AGENT_MODE_CHIP = "button.agent-mode-chip[aria-pressed='true']"
-#: The same chip in ANY state. :data:`AGENT_MODE_CHIP` matches only a PRESSED chip, so it
+#:
+#: Two builds, one union (#1384). Flow's 2026-11-20 build replaced the chip with
+#: `flow-agent-mode-switch > button.switch`, carrying the same `aria-pressed`, and both builds
+#: have been served within a day of each other. The switch is scoped to its component
+#: for the same reason the chip is: `agent-action-button` carries `aria-pressed` too.
+#: docs/superpowers/spikes/2026-11-20-agent-mode-switch-and-panel-rendering.md
+AGENT_MODE_CHIP = (
+    "button.agent-mode-chip[aria-pressed='true'], "
+    "flow-agent-mode-switch button.switch[aria-pressed='true']"
+)
+#: The same toggle in ANY state. :data:`AGENT_MODE_CHIP` matches only a PRESSED one, so it
 #: cannot tell "this account has no agent/classic split" from "the split exists and is
 #: currently off" — the distinction #799 turns on. Never click this one: it is not
 #: self-guarding, and a click would toggle a healthy composer INTO agent mode.
-AGENT_MODE_CHIP_ANY = "button.agent-mode-chip"
+AGENT_MODE_CHIP_ANY = "button.agent-mode-chip, flow-agent-mode-switch button.switch"
+#: Flow's agent panel, the docked chat. While it is open the toggle above is NOT in the
+#: page, on both builds, and it comes back pressed once the panel is closed (#1374).
+AGENT_PANEL = "flow-agent-panel"
+#: The panel's own close button: `close` (2026-11-19) or `right_panel_close` (2026-11-20).
+#: Buttons inside the panel's prompt box are excluded, because an attached reference chip
+#: there carries a `close` of its own.
+AGENT_PANEL_CLOSE = ", ".join(
+    f"{AGENT_PANEL} button:not(flow-creative-agent-prompt-box button)"
+    f":has(mat-icon:text-is('{ligature}'))"
+    for ligature in ("right_panel_close", "close")
+)
+#: How long the panel gets to close, and the toggle to come back, after the close click.
+#: Measured as a re-render, not a navigation; this is headroom.
+AGENT_PANEL_SETTLE_S = 5.0
+#: What a user does by hand when agent mode is in the way. One string, because Flow renamed
+#: the control once already (chip to switch, 2026-11-20) and four messages carried it.
+AGENT_MODE_REMEDIATION = "close the agent panel and switch Agent off in a browser, then re-run"
 #: How long the classic composer gets to come back after the chip is clicked. The swap is
 #: a local Angular re-render, not a navigation — measured well under a second on both
 #: accounts — so this is headroom, not an expectation.
@@ -260,8 +286,8 @@ async def _visible_model_picker(page: Page, pane: Any, *, what: str) -> Any:
             ),
             # Hidden is #749's agent-mode shape, the one cause with a user action.
             remediation_hint=(
-                "Nothing was submitted. If the Agent chip is on in this project, turn it "
-                "off in a browser and re-run."
+                f"Nothing was submitted. If agent mode is on in this project, "
+                f"{AGENT_MODE_REMEDIATION}."
                 if hidden
                 else None
             ),
@@ -1320,18 +1346,18 @@ def _recovery_detail(page: Page, pressed: bool | None, error: Exception) -> str:
     """Why the trigger did not come back after the agent chip was clicked (#749)."""
     if pressed:
         return (
-            f"migrated host: the account was in Flow's agent mode, the chip was "
-            f"clicked, and it is STILL pressed {AGENT_RECOVERY_S:.0f}s later on "
+            f"migrated host: the account was in Flow's agent mode, the Agent switch was "
+            f"clicked, and it is STILL on {AGENT_RECOVERY_S:.0f}s later on "
             f"{safe_page_url(page.url)} (host=migrated) — the mode is pinned on this account; "
-            f"turn the Agent chip off in a browser and re-run: {error}"
+            f"switch Agent off in a browser and re-run: {error}"
         )
     if pressed is None:
         return (
-            f"migrated host: the account was in Flow's agent mode, the chip was "
+            f"migrated host: the account was in Flow's agent mode, the Agent switch was "
             f"clicked, and the settings trigger ({READY_ANCHOR}) did not come "
             f"back within {AGENT_RECOVERY_S:.0f}s on {safe_page_url(page.url)} (host=migrated) "
-            f"— the chip could not be read back, so whether the mode is still "
-            f"on is unknown; check the Agent chip in a browser before filing "
+            f"— the switch could not be read back, so whether the mode is still "
+            f"on is unknown; check the Agent switch in a browser before filing "
             f"this as drift: {error}"
         )
     return (

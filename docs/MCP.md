@@ -549,19 +549,22 @@ The migrated composer itself also comes in more than one shape. An account whose
 is **agent-only** — no classic composer at all — is driven through its chat agent for
 `gflow_generate_image` (text-to-image) and `gflow_generate_video` (text-to-video): aspect,
 count and model are set in Agent settings for the run and restored afterwards, and
-"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. Other forms on
+"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. On Flow's 2026-11-20 build the agent-only driver stops before submit with exit 23, because its settings button is not rendered there; porting it is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387). Other forms on
 that composer (references, image-to-video, instructions, Omni 1.2 Flash, more than one video)
 return an exit-36-equivalent envelope before anything is clicked
 ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), after up to three free page reloads in
 case Flow serves the classic composer on the next load ([#1142](https://github.com/ffroliva/gflow-cli/issues/1142)). Through v0.73.2 such an account got
 a generic selector-drift envelope (exit 23); v0.74.0 and v0.75.0 named it with exit 25.
 
-The distinction that matters, because the DOM is identical either way: a **pressed chip**
-means the classic arm exists and gflow turns it back on itself
-([#749](https://github.com/ffroliva/gflow-cli/issues/749)); **no chip at all** means there
-is no classic arm to return to, aspect / model / count are Agent-settings defaults rather
-than per-request controls, and no flag or profile change helps. Generating from the Flow
-web UI still works.
+The distinction that matters, because the DOM is identical either way: a **pressed Agent
+toggle** (a chip, or since Flow's 2026-11-20 build a switch) means the classic arm exists and
+gflow turns it off itself ([#749](https://github.com/ffroliva/gflow-cli/issues/749)). An open
+**agent panel** hides the toggle from the page; gflow closes the panel first and looks again
+([#1374](https://github.com/ffroliva/gflow-cli/issues/1374),
+[#1384](https://github.com/ffroliva/gflow-cli/issues/1384)). Only **no toggle at all, with the
+panel closed,** means there is no classic arm to return to: aspect / model / count are
+Agent-settings defaults rather than per-request controls, and no flag or profile change helps.
+Generating from the Flow web UI still works.
 
 ### 6.2 Envelope → cause → what to do
 

@@ -15,6 +15,7 @@ import structlog
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.transports._mc_common import (
+    AGENT_MODE_REMEDIATION,
     ASPECT_LIGATURE,
     FRAMES_LIGATURE,
     IMAGE_ASPECT_LIGATURE,
@@ -187,8 +188,7 @@ class SettingsPaneMixin(EditorGateMixin):
             await trigger.wait_for(state="visible", timeout=5000)
         except Exception as e:
             why = (
-                " — the account is in Flow's agent mode, which hides it; turn the Agent "
-                "chip off in a browser and re-run"
+                f" — the account is in Flow's agent mode, which hides it; {AGENT_MODE_REMEDIATION}"
                 if await self._agent_chip_pressed(page)
                 else ""
             )
