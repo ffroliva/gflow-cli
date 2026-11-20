@@ -786,7 +786,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash (at most 10 with `--end-frame`); 4/6/8/10
 > when `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
-> `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+> `--profile NAME`, `--out-dir DIR` (default `tmp/`), and `--max-credits INTEGER` (hard
+> per-command cap; defaults to `GFLOW_CLI_MAX_CREDITS`).
 >
 > **Leaving models (#1375).** Flow retires `omni-flash` (Omni 1.1 Flash), `veo-fast` and
 > `veo-quality` on 2026-12-05. `gflow models` shows the date in its `retires on` column, and a
@@ -833,6 +834,15 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > Instead of a static per-model table, gflow now checks the route Flow
 > **actually used** after submit: a run whose end frame was silently dropped
 > fails loudly rather than reporting a clip that ignored it as a success.
+
+**Per-command credit cap (#1355).** Billed video commands (`video t2v`/`i2v`/`r2v`/`generate`,
+`video chain`/`extend`, and `movie run`) accept `--max-credits N`. `GFLOW_CLI_MAX_CREDITS=N`
+sets the default; an explicit flag wins. On the migrated classic composer gflow reads the
+integer from Flow's settings-pane quote before upload or submit. If the quote is unreadable,
+or exceeds the cap, the command refuses with `CreditCapExceededError` (exit 45) and reports
+`charged: no` when nothing was submitted. Chain, extend, and movie runs count prior quoted
+spend against the same cap. On routes without a measured pre-submit quote, a set cap refuses
+closed with exit 45. Image commands do not accept this option.
 
 ## `gflow video t2v`
 
@@ -2568,6 +2578,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Recognised by the warning's class, so it does not depend on the UI language ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |
+| `45` | `CreditCapExceededError` | Flow's quote is missing or exceeds `--max-credits`; includes `quoted` and `max_credits` | Choose a cheaper model/duration/count or raise the cap. Refusal is pre-submit (`charged: no`) unless earlier links or scenes completed (`charged: yes`, reconcile). |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

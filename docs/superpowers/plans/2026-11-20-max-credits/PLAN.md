@@ -465,11 +465,11 @@ Expected: PASS (every `@e2e`-tagged feature is bound only under `tests/e2e/`, an
 - Modify: `skills/gflow-cli/SKILL.md`
 - Regenerate: `website/docs/*` and `.claude-plugin/*` via CI scripts
 
-- [ ] **Step 1: Update `src/gflow_cli/cli_capabilities.py` and `docs/CAPABILITIES.md`**
+- [x] **Step 1: Update `src/gflow_cli/cli_capabilities.py` and `docs/CAPABILITIES.md`**
 
 Update the `generate.video` capability note in `src/gflow_cli/cli_capabilities.py` (and `docs/CAPABILITIES.md` if applicable) to mention that pre-submit credit caps (`--max-credits`, `GFLOW_CLI_MAX_CREDITS`, MCP `max_credits`) are enforced from Flow's own pre-submit quote on `flow.google.com` video generation and labs direct-wire `video extend`, and fail closed on routes without a pre-submit quote.
 
-- [ ] **Step 2: Update `docs/ERRORS.md`, `docs/USAGE.md`, `docs/CONFIGURATION.md`, `docs/MCP.md`, `CHANGELOG.md`, `README.md`, and `skills/gflow-cli/SKILL.md`**
+- [x] **Step 2: Update `docs/ERRORS.md`, `docs/USAGE.md`, `docs/CONFIGURATION.md`, `docs/MCP.md`, `CHANGELOG.md`, `README.md`, and `skills/gflow-cli/SKILL.md`**
 
 1. `docs/ERRORS.md`:
    - Add `https://gflow-cli.dev/errors/credit-cap-exceeded` | `422` | `45` | `no` (or `yes` after partial chain completion) | `fix_input` (or `reconcile` after partial chain completion) | Flow's pre-submit credit quote exceeds `--max-credits` / `max_credits`, or the active route does not expose a readable pre-submit quote when a cap is set.
@@ -490,7 +490,7 @@ Update the `generate.video` capability note in `src/gflow_cli/cli_capabilities.p
    uv run python scripts/ci/generate_website_docs.py
    ```
 
-- [ ] **Step 3: Run the complete `/gflow:check` verification suite**
+- [x] **Step 3: Run the complete `/gflow:check` verification suite**
 
 Run:
 ```bash

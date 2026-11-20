@@ -166,7 +166,7 @@ Compared from each project's own README on 2026-11-19. "—" means that README d
 | Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | 2K, 4K | 4K |
 | Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — |
 | `charged` field on every error | **Yes** | — | — | — | — |
-| Per-call credit cap | Planned ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)) | Yes (`max_credits`) | — | — | — |
+| Per-call credit cap | Yes (`--max-credits`, read from Flow's own quote) | Yes (`max_credits`) | — | — | — |
 | Video-to-video edit | Planned ([#1356](https://github.com/ffroliva/gflow-cli/issues/1356)) | Yes | Yes | — | — |
 | Narration audio | Planned ([#1357](https://github.com/ffroliva/gflow-cli/issues/1357)) | Yes | — | — | Yes |
 | Captions | Planned ([#1358](https://github.com/ffroliva/gflow-cli/issues/1358)) | Yes | — | — | — |

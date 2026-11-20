@@ -162,6 +162,11 @@ gflow cancel TASK_ID [--json]   # not yet submitted -> cancelled, exit 0, nothin
 
 Every subcommand accepts `--profile <name>` (per-subcommand, not global) to drive multiple Google accounts side-by-side.
 
+**Credit cap:** Add `--max-credits N` to a billed video command, or set
+`GFLOW_CLI_MAX_CREDITS=N` as its default. Flow's own pre-submit quote is checked; a missing
+quote or one above the cap refuses with exit 45. Chain, extend and movie commands share the
+same cap across submissions. Image commands do not use this option.
+
 ## Recipes
 
 ### Single image (most common)

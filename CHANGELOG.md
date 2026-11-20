@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Hard per-command video credit caps ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)).** Pass `--max-credits N` to billed video commands or set `GFLOW_CLI_MAX_CREDITS=N`; MCP agents can pass `max_credits`. gflow reads Flow's pre-submit quote, refuses an unreadable or over-limit quote with exit 45, and tracks spend across chain, extend, and movie runs.
+
 ### Fixed
 
 - **A project left in Flow's agent mode, or with the agent panel open, runs on the classic composer again on flow.google.com ([#1384](https://github.com/ffroliva/gflow-cli/issues/1384), [#1374](https://github.com/ffroliva/gflow-cli/issues/1374)).**
