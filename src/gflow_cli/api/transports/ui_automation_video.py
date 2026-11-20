@@ -752,6 +752,10 @@ class VideoGenerationMixin(FrameAttachMixin):
         flow_host = get_settings().flow_host
         prefer = migrated_can_serve(request, project_id)
         route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+        if route == "labs" and request.max_credits is not None:
+            from gflow_cli.api.credit_cap import enforce_credit_cap  # noqa: PLC0415
+
+            enforce_credit_cap(quoted=None, max_credits=request.max_credits, route="labs video UI")
         if route == "labs":
             await self._enter_editor(page, out_dir, project_id=project_id)
             await VideoGenerationMixin._wait_video_editor_ready(page)

@@ -298,7 +298,7 @@ Run: `uv run python -m pytest tests/api/test_credit_cap.py tests/test_errors_cla
 - Modify: `src/gflow_cli/api/_flow_media_edit.py`
 - Modify: `tests/api/test_credit_cap.py`
 
-- [ ] **Step 1: Add transport enforcement unit tests in `tests/api/test_credit_cap.py` (Red)**
+- [x] **Step 1: Add transport enforcement unit tests in `tests/api/test_credit_cap.py` (Red)**
 
 Add fake-page / fake-locator tests covering:
 1. Migrated classic composer (`SettingsPaneMixin.apply_video_settings` / `read_and_enforce_pane_quote`):
@@ -316,7 +316,7 @@ Add fake-page / fake-locator tests covering:
 4. Labs direct-wire `MediaEditSurface.extend_video`:
    - When `max_credits=5` and `resolve_extend_model` returns `unit_cost=10`, raises `CreditCapExceededError(quoted=10, max_credits=5, charged="no")` before `mint_token`.
 
-- [ ] **Step 2: Register `CREDIT_COST_LABEL` in `src/gflow_cli/flow_selectors/registry.py`**
+- [x] **Step 2: Register `CREDIT_COST_LABEL` in `src/gflow_cli/flow_selectors/registry.py`**
 
 In `MigratedComposerSelectors`:
 ```python
@@ -326,21 +326,21 @@ CREDIT_COST_LABEL: str = (
 )
 ```
 
-- [ ] **Step 3: Enforce and return quote in `src/gflow_cli/api/transports/_mc_settings_pane.py` and `migrated_composer.py`**
+- [x] **Step 3: Enforce and return quote in `src/gflow_cli/api/transports/_mc_settings_pane.py` and `migrated_composer.py`**
 
 In `_mc_settings_pane.py`:
 - Add helper `_read_pane_credit_quote(self, pane: Any, max_credits: int | None) -> int | None` (delegating to `credit_cap.parse_credit_quote` and `credit_cap.enforce_credit_cap`) and call it at the end of `apply_video_settings` right before `await self._close_pane(page, pane)`.
 - Have `apply_video_settings` take `max_credits: int | None = None` and return `int | None` (the parsed quote), adding zero `if` branches to `apply_video_settings` (`C901` stays 12).
 - In `migrated_composer.py::run_video`, pass `max_credits=request.max_credits` into `self.apply_video_settings(...)`, capture `quoted_credits`, and attach `quoted_credits=quoted_credits` on the returned `VideoResult` (`C901` stays 13).
 
-- [ ] **Step 4: Enforce quote on `src/gflow_cli/api/transports/agent_only_composer.py`**
+- [x] **Step 4: Enforce quote on `src/gflow_cli/api/transports/agent_only_composer.py`**
 
 - Add `gate_quoted_credits(title: str) -> int | None` (returns `int(numbers[-1])` when `len(_NUMBER_RE.findall(title)) >= 2`, else `None`).
 - Add `max_credits: int | None = None` to `_AgentRun`.
 - In `run_agent_video`, call a helper `_prepare_agent_confirm_mode(request.max_credits)` that checks `_confirm_setting()`: if `request.max_credits is not None` and mode is `"never"`, raises `CreditCapExceededError(quoted=None, max_credits=request.max_credits, route="flow.google.com agent-only composer with GFLOW_CLI_AGENT_CONFIRM=never")`; if `request.max_credits is not None`, forces `confirm="always"`.
 - In `_gate_within_count`, after confirming count matches, call `_enforce_agent_gate_credit_cap(page, title, run)`: when `run.max_credits is not None`, parse `quoted = gate_quoted_credits(title)` and if `quoted is None or quoted > run.max_credits`, call `rejected = await _reject_gate(page)` and raise `CreditCapExceededError(quoted=quoted, max_credits=run.max_credits, charged="no" if rejected else "maybe", next_action="fix_input" if rejected else "reconcile")`. Attach `quoted_credits` to `VideoResult`.
 
-- [ ] **Step 5: Fail closed on unquoted routes and enforce on `MediaEditSurface.extend_video`**
+- [x] **Step 5: Fail closed on unquoted routes and enforce on `MediaEditSurface.extend_video`**
 
 - In `src/gflow_cli/api/transports/ui_automation_video.py`: on the `route == "labs"` branch (before `_apply_video_settings`), call `enforce_credit_cap(None, request.max_credits, route="labs.google UI video composer")`.
 - In `src/gflow_cli/api/transports/migrated_extend.py::run_extend` and `src/gflow_cli/api/_flow_media_edit.py::extend_video_migrated`: accept `max_credits: int | None = None` and call `enforce_credit_cap(None, max_credits, route="flow.google.com video extend")` before opening the menu.

@@ -11,7 +11,9 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
+from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.transports._mc_common import (
@@ -49,6 +51,24 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import GenerateVideoRequest
 
 log = structlog.get_logger(__name__)
+CREDIT_COST_LABEL = (
+    ".cdk-overlay-pane flow-prompt-box-settings div.settings-content > "
+    "flow-credit-cost-label.settings-credit-cost"
+)
+
+
+async def _read_credit_quote(page: Page, max_credits: int | None) -> int | None:
+    try:
+        label = await page.locator(CREDIT_COST_LABEL).first.inner_text(timeout=2000)
+    except PlaywrightError:
+        label = ""
+    quoted = parse_credit_quote(label)
+    log.info("migrated.credit_quote_checked", quoted=quoted, max_credits=max_credits)
+    return enforce_credit_cap(
+        quoted=quoted,
+        max_credits=max_credits,
+        route="flow.google.com settings pane",
+    )
 
 
 class SettingsPaneMixin(EditorGateMixin):
@@ -56,7 +76,7 @@ class SettingsPaneMixin(EditorGateMixin):
 
     # --- settings ---------------------------------------------------------------
 
-    async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> None:
+    async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> int | None:
         """Mode, model, aspect, duration, count — through the radios, with read-back.
 
         Model goes first: like on labs.google the duration row is model-state.
@@ -125,6 +145,7 @@ class SettingsPaneMixin(EditorGateMixin):
             if request.resolution is not None:
                 await _select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
+            quoted = await _read_credit_quote(page, request.max_credits)
             log.info(
                 "migrated.settings_applied",
                 aspect=request.aspect.value,
@@ -144,6 +165,7 @@ class SettingsPaneMixin(EditorGateMixin):
             await self._close_pane(page, strict=False)
             raise
         await self._close_pane(page, strict=True)
+        return quoted
 
     async def apply_image_settings(self, page: Page, request: GenerateImageRequest) -> None:
         """Bind Image mode, model, aspect and count with read-back before submission."""

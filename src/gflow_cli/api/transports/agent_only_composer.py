@@ -66,6 +66,7 @@ from gflow_cli.api.transports.migrated_composer import (
 from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStarted, VideoStatus
 from gflow_cli.errors import (
     ConfigurationError,
+    CreditCapExceededError,
     FlowAgentUiError,
     FlowHostMigratedError,
     TransportTimeoutError,
@@ -315,6 +316,12 @@ def gate_quotes_more(title: str, count: int) -> bool | None:
     if len(numbers) < 2:
         return None
     return any(n > count for n in numbers[:-1])
+
+
+def gate_quoted_credits(title: str) -> int | None:
+    """Return the final integer token, which Flow uses for the gate's credit quote."""
+    numbers = _NUMBER_RE.findall(title)
+    return int(numbers[-1]) if numbers else None
 
 
 def _tile_key(tile: dict[str, str]) -> str:
@@ -654,6 +661,16 @@ class AgentOnlyComposer:
         except PlaywrightError:
             title = ""
         quotes_more = gate_quotes_more(title, run.count)
+        if run.max_credits is not None:
+            quoted = gate_quoted_credits(title)
+            if quoted is None or quoted > run.max_credits:
+                await self._reject_gate(page, run.baseline_gates)
+                raise CreditCapExceededError(
+                    quoted=quoted,
+                    max_credits=run.max_credits,
+                    route="agent-only confirmation gate",
+                )
+            run.quoted_credits = quoted
         shown = redact_sensitive_text(title[:200]) or "(no title)"
         if quotes_more:
             rejected = await self._reject_gate(page, run.baseline_gates)
@@ -744,6 +761,7 @@ class AgentOnlyComposer:
         kind: Section,
         count: int,
         budget_s: float,
+        max_credits: int | None = None,
         on_first_media: Callable[[str], object] | None = None,
         read_listing: ListingReader | None = None,
     ) -> list[TileMedia]:
@@ -751,6 +769,7 @@ class AgentOnlyComposer:
 
         ``read_listing`` returns the project's ``Zzl0ze`` payload (or ``None``); a video
         whose page names no uuid is looked up there (#1354)."""
+        self.quoted_credits: int | None = None
         baseline_gates = await page.locator(LIVE_GATE).count()
         if kind == "video":
             baseline, baseline_head = await self._video_baseline(page)
@@ -759,12 +778,22 @@ class AgentOnlyComposer:
         submitted_at = time.time()
         await self._submit(page, directive)
         log.info("migrated.agent_only.submitted", kind=kind, count=count)
-        run = _Run(kind, budget_s, time.monotonic() + budget_s, baseline_gates, count, submitted_at)
+        run = _Run(
+            kind,
+            budget_s,
+            time.monotonic() + budget_s,
+            baseline_gates,
+            count,
+            submitted_at,
+            max_credits,
+        )
         run.seen_before = frozenset(baseline)
         if kind == "video":
-            return await self._await_video(
+            media = await self._await_video(
                 page, run, count, baseline, baseline_head, on_first_media, read_listing
             )
+            self.quoted_credits = run.quoted_credits
+            return media
         return await self._await_images(page, run, count, baseline)
 
     async def _await_video(
@@ -964,6 +993,8 @@ class _Run:
     count: int
     #: Wall-clock time just before the submit click: a listed clip created earlier is not ours.
     submitted_at: float
+    max_credits: int | None = None
+    quoted_credits: int | None = None
     approvals: int = 0
     #: When this run's gate was first seen with a title that could not be read yet.
     gate_seen_at: float | None = None
@@ -1207,6 +1238,13 @@ async def run_agent_video(
     unported = unported_video(request)
     if unported is not None:
         raise refuse_unported(unported)
+    confirm = _confirm_setting()
+    if request.max_credits is not None and confirm == "never":
+        raise CreditCapExceededError(
+            quoted=None,
+            max_credits=request.max_credits,
+            route="agent-only confirmation is disabled",
+        )
     composer = AgentOnlyComposer()
     snapshot = await composer.apply_defaults(
         page,
@@ -1214,7 +1252,7 @@ async def run_agent_video(
         aspect_ligature=ASPECT_LIGATURE[request.aspect],
         count=1,
         model=VIDEO_MODEL_MENU_MATCHERS[request.model] if request.model else None,
-        confirm=_confirm_setting(),
+        confirm="always" if request.max_credits is not None else confirm,
     )
 
     def started(media_id: str) -> object:
@@ -1231,6 +1269,7 @@ async def run_agent_video(
             kind="video",
             count=1,
             budget_s=poll_timeout_s,
+            max_credits=request.max_credits,
             on_first_media=started,
             read_listing=lambda budget_s: read_project_listing(page, project_id, budget_s=budget_s),
         )
@@ -1241,4 +1280,5 @@ async def run_agent_video(
         status=VideoStatus(media_id=media.uuid, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=local_path,
         project_id=project_id,
+        quoted_credits=composer.quoted_credits,
     )

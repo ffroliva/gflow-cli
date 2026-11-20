@@ -422,7 +422,7 @@ async def run_video(
     # Everything up to the submit click spends nothing (#1320); a stray Enter while a
     # mention picker closes could submit, so the watch withholds the claim if one left.
     with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
-        await composer.apply_video_settings(page, request)
+        quoted_credits = await composer.apply_video_settings(page, request)
         media_id: str | None = None
         end_media_id: str | None = None
         reference_ids: tuple[str, ...] = ()
@@ -495,6 +495,7 @@ async def run_video(
         project_id=pid,
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,
+        quoted_credits=quoted_credits,
     )
 
 
