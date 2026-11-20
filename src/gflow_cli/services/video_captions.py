@@ -198,12 +198,37 @@ def resolve_video_source(file_or_id: str, *, profile: str | None, route: str) ->
         )
 
 
+def _srt_exists_error(destination: Path) -> ConfigurationError:
+    return ConfigurationError(
+        detail=f"SRT output already exists: {destination.name}.",
+        charged="no",
+        remediation_hint=("Pass --srt to video captions to reuse it, or remove the existing file."),
+    )
+
+
 def _atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", delete=False) as f:
         temporary = Path(f.name)
         f.write(data)
-    temporary.replace(path)
+    try:
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise _srt_exists_error(path) from exc
+        except OSError:
+            try:
+                descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+            except FileExistsError as exc:
+                raise _srt_exists_error(path) from exc
+            os.close(descriptor)
+            try:
+                os.replace(temporary, path)
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
@@ -264,13 +289,7 @@ def transcribe_video(
             remediation_hint="Choose a separate --out-file path for the SRT.",
         )
     if destination.exists():
-        raise ConfigurationError(
-            detail=f"SRT output already exists: {destination.name}.",
-            charged="no",
-            remediation_hint=(
-                "Pass --srt to video captions to reuse it, or remove the existing file."
-            ),
-        )
+        raise _srt_exists_error(destination)
     audio, duration = extract_wav_bytes(source)
     transcript = active_transcriber.transcribe(
         TranscriptionRequest(

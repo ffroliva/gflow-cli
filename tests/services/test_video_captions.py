@@ -160,6 +160,38 @@ def test_transcribe_refuses_existing_srt_before_network(
     assert existing.read_text(encoding="utf-8") == "keep me"
 
 
+def test_transcribe_no_clobber_when_srt_created_during_transcription(
+    media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _ = media_files
+    destination = tmp_path / "race.srt"
+    other_temp = tmp_path / ".race.srt.other"
+    other_temp.write_text("other run temp", encoding="utf-8")
+
+    class RacingTranscriber:
+        def transcribe(self, _request: TranscriptionRequest) -> Transcript:
+            destination.write_text("winner", encoding="utf-8")
+            return Transcript((TranscriptSegment(0.0, 0.5, "late"),))
+
+    with pytest.raises(ConfigurationError, match="already exists"):
+        transcribe_video(str(source), out_file=destination, transcriber=RacingTranscriber())
+    assert destination.read_text(encoding="utf-8") == "winner"
+    assert other_temp.read_text(encoding="utf-8") == "other run temp"
+    assert [p for p in tmp_path.glob(".race.srt.*") if p != other_temp] == []
+
+    # Fallback path when hard links are unsupported on the target filesystem
+    destination.unlink()
+
+    def no_hardlink(_src: object, _dst: object) -> None:
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr("gflow_cli.services.video_captions.os.link", no_hardlink)
+    with pytest.raises(ConfigurationError, match="already exists"):
+        transcribe_video(str(source), out_file=destination, transcriber=RacingTranscriber())
+    assert destination.read_text(encoding="utf-8") == "winner"
+    assert [p for p in tmp_path.glob(".race.srt.*") if p != other_temp] == []
+
+
 def test_captions_without_srt_refuses_existing_default_srt_before_network(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
