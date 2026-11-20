@@ -253,13 +253,13 @@ extraction, OpenAI-compatible transcription, and Pillow/PyAV caption burn-in bef
 - [x] `test_parse_and_format_srt_roundtrip` — parses standard SRT blocks, comma and dot millisecond separators (`00:00:00,500` and `00:00:01.200`), UTF-8 BOM (`\ufeff`), CRLF (`\r\n`), and multi-line text, then formats back to canonical SRT (SCENARIO #13).
 - [x] `test_parse_srt_rejects_empty_malformed_or_inverted_timestamps_without_echoing_content` — raises `ConfigurationError` (exit 11, `charged="no"`, `next_action="fix_input"`) on empty files, non-SRT text, or `end_s <= start_s`, and asserts a sentinel secret line in the malformed input never appears in `exc.detail` (SCENARIO #4, #13).
 - [x] `test_missing_chain_extra_raises_frame_extraction_error_exit_20` — monkeypatching `sys.modules["av"] = None` (or `PIL = None`) causes `transcribe_video` and `caption_video` to raise `FrameExtractionError` (exit 20, `charged="no"`) with the `pip install 'gflow-cli[chain]'` hint before any HTTP call (SCENARIO #5).
-- [ ] `test_resolve_video_source_local_path_and_catalog_uuid` — resolves an existing local `.mp4` path and a catalog `AssetKind.VIDEO` UUID with a verified local file; raises `ConfigurationError` (exit 11, `charged="no"`) on a missing file or non-video catalog UUID and `DataStoreError` (exit 16, `charged="no"`) on an unknown UUID or missing on-disk copy (SCENARIO #8).
+- [x] `test_resolve_video_source_local_path_and_catalog_uuid` — resolves an existing local `.mp4` path and a catalog `AssetKind.VIDEO` UUID with a verified local file; raises `ConfigurationError` (exit 11, `charged="no"`) on a missing file or non-video catalog UUID and `DataStoreError` (exit 16, `charged="no"`) on an unknown UUID or missing on-disk copy (SCENARIO #8).
 - [x] `test_transcribe_video_refuses_default_google_endpoint_before_sending_audio` — with `GFLOW_CLI_LLM_BASE_URL` at `DEFAULT_LLM_BASE_URL`, raises `ConfigurationError` (exit 11, `charged="no"`) naming `GFLOW_CLI_LLM_BASE_URL` and `--srt`, with zero calls to the HTTP transport (SCENARIO #1).
 - [x] `test_transcribe_video_refuses_clip_without_audio_stream` — on a video-only `.mp4`, raises `ConfigurationError` (exit 11, `charged="no"`) naming the missing audio track before any HTTP request (SCENARIO #9).
-- [ ] `test_transcribe_video_posts_wav_and_parses_srt_and_json_responses` — extracts 16 kHz mono WAV bytes, calls `POST {base_url}/audio/transcriptions` with `follow_redirects=False`, handles both raw SRT text and JSON `{"segments": [...]}` / `{"text": "..."}` responses, and writes `<stem>.srt` (SCENARIO #7, #12).
-- [ ] `test_transcribe_video_maps_http_errors_and_refuses_redirects` — maps 302 redirect and HTTP 400/401/403/404/405/422 to `ConfigurationError` (exit 11), HTTP 429 to `RateLimitError` (exit 4/40), and HTTP 503 / timeout to `NetworkError` (exit 6/42), all with `charged="no"` and redacted error details (SCENARIO #2, #10).
+- [x] `test_transcribe_video_posts_wav_and_parses_srt_and_json_responses` — extracts 16 kHz mono WAV bytes, calls `POST {base_url}/audio/transcriptions` with `follow_redirects=False`, handles both raw SRT text and JSON `{"segments": [...]}` / `{"text": "..."}` responses, and writes `<stem>.srt` (SCENARIO #7, #12).
+- [x] `test_transcribe_video_maps_http_errors_and_refuses_redirects` — maps 302 redirect and HTTP 400/401/403/404/405/422 to `ConfigurationError` (exit 11), HTTP 429 to `RateLimitError` (exit 4/40), and HTTP 503 / timeout to `NetworkError` (exit 6/42), all with `charged="no"` and redacted error details (SCENARIO #2, #10).
 - [x] `test_caption_video_burns_frames_and_preserves_audio` — burns captions from an `.srt` file (and on a silent clip without audio), verifying `frames_burned > 0`, pixel difference on captioned frames, zero pixel difference on uncaptioned frames, and preserved audio stream (SCENARIO #6, #9, #14).
-- [ ] `test_caption_video_without_srt_transcribes_first_and_writes_both_files` — when `srt_path=None`, invokes transcription, writes `<stem>.srt`, and burns `<stem>-captions.mp4` (SCENARIO #7).
+- [x] `test_caption_video_without_srt_transcribes_first_and_writes_both_files` — when `srt_path=None`, invokes transcription, writes `<stem>.srt`, and burns `<stem>-captions.mp4` (SCENARIO #7).
 
 ---
 
@@ -277,13 +277,13 @@ from `tests/features/test_video_captions_steps.py`.
 - [x] Run `uv run pytest tests/features/test_video_captions_steps.py tests/features/test_e2e_binding_guard.py` and verify `test_e2e_binding_guard.py` is green while the 7 BDD scenarios fail red awaiting Task 3–5 implementations.
 
 **Tests created (red):**
-- [ ] `test_burning_an_authored_srt_file_into_a_local_video_clip_runs_offline` (SCENARIO #6)
-- [ ] `test_burning_captions_into_a_catalog_video_resolves_the_media_uuid_to_its_verified_local_file` (SCENARIO #8)
-- [ ] `test_transcribing_a_video_clip_sends_extracted_audio_to_a_configured_openaicompatible_endpoint` (SCENARIO #7)
-- [ ] `test_omitting_srt_on_video_captions_transcribes_first_and_writes_both_the_srt_and_the_captioned_mp4` (SCENARIO #7)
-- [ ] `test_transcription_is_refused_before_sending_audio_when_gflow_cli_llm_base_url_is_left_at_the_google_default` (SCENARIO #1)
-- [ ] `test_malformed_or_empty_srt_files_are_refused_with_exit_code_11_without_echoing_raw_file_content` (SCENARIO #4)
-- [ ] `test_the_mcp_tools_transcribe_and_burn_captions_inside_the_configured_output_directory` (SCENARIO #3, #11)
+- [x] `test_burning_an_authored_srt_file_into_a_local_video_clip_runs_offline` (SCENARIO #6)
+- [x] `test_burning_captions_into_a_catalog_video_resolves_the_media_uuid_to_its_verified_local_file` (SCENARIO #8)
+- [x] `test_transcribing_a_video_clip_sends_extracted_audio_to_a_configured_openaicompatible_endpoint` (SCENARIO #7)
+- [x] `test_omitting_srt_on_video_captions_transcribes_first_and_writes_both_the_srt_and_the_captioned_mp4` (SCENARIO #7)
+- [x] `test_transcription_is_refused_before_sending_audio_when_gflow_cli_llm_base_url_is_left_at_the_google_default` (SCENARIO #1)
+- [x] `test_malformed_or_empty_srt_files_are_refused_with_exit_code_11_without_echoing_raw_file_content` (SCENARIO #4)
+- [x] `test_the_mcp_tools_transcribe_and_burn_captions_inside_the_configured_output_directory` (SCENARIO #3, #11)
 
 ---
 
@@ -303,7 +303,7 @@ from `tests/features/test_video_captions_steps.py`.
 - [x] Implement `transcribe_video(...) -> TranscribeResult`:
   - Check `_require_chain_extra()` and `refuse_cloud_storage_for_local_file` when `out_file` is given.
   - Enforce the privacy & default-endpoint gate: if `(settings.llm_base_url or DEFAULT_LLM_BASE_URL).rstrip("/") == DEFAULT_LLM_BASE_URL`, raise `ConfigurationError` (exit 11, `charged="no"`, `next_action="fix_input"`) explaining that Google's default endpoint does not offer `/audio/transcriptions` and gflow never sends audio to an unconfigured endpoint, with remediation naming `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_LLM_MODEL`, and `--srt`.
-  - Extract 16 kHz mono WAV bytes via `extract_wav_bytes` and POST multipart form data (`file=("audio.wav", wav_bytes, "audio/wav")`, `model=settings.llm_model or "whisper-1"`, `response_format="srt"`, plus optional `language`) to `{base_url}/audio/transcriptions` using `httpx.Client(follow_redirects=False, timeout=120.0)`.
+  - Extract 16 kHz mono WAV bytes via `extract_wav_bytes` and POST multipart form data (`file=("audio.wav", wav_bytes, "audio/wav")`, `model=settings.llm_model or "whisper-1"`, `response_format="verbose_json"`, plus optional `language`) to `{base_url}/audio/transcriptions` using `httpx.Client(follow_redirects=False, timeout=120.0)`.
   - Map 3xx and HTTP 400/401/403/404/405/422 to `ConfigurationError(..., charged="no")`, HTTP 429 to `RateLimitError(..., charged="no")`, and HTTP 5xx / `httpx.HTTPError` to `NetworkError(..., charged="no")`, redacting response text with `redact_error_detail`.
   - Parse either raw SRT response text or JSON (`segments` list or `text` fallback), write the `.srt` file with `encoding="utf-8"`, log `video.transcribe.completed` (host only, never keys/URLs), and return `TranscribeResult`.
 - [x] Implement `caption_video(...) -> CaptionsResult`:
@@ -410,7 +410,7 @@ under the Iron Law.
 **What:** Run the complete Impeccable Routine and verify all six mirror axes before final commit.
 
 **Steps:**
-- [ ] Run all hygiene, size, link, PII, website-mirror, council-memory, and plugin-skill gates:
+- [x] Run all hygiene, size, link, PII, website-mirror, council-memory, and plugin-skill gates:
   ```bash
   PYTHONUTF8=1 uv run python scripts/ci/check_repo_hygiene.py
   PYTHONUTF8=1 uv run python scripts/ci/check_size.py
@@ -420,23 +420,23 @@ under the Iron Law.
   PYTHONUTF8=1 uv run python scripts/ci/check_council_memory.py
   PYTHONUTF8=1 uv run python scripts/ci/generate_plugin_skills.py --check
   ```
-- [ ] Verify Step 1b surface blast-radius sweep (`tests/mcp/test_cli_parity.py`, `tests/mcp/test_server.py`, and repo-wide grep for `transcribe` / `captions`).
-- [ ] Run `uv run ruff check src tests`, `uv run ruff format --check src tests`, and `uv run pyright src`.
-- [ ] Run scoped unit/BDD/CLI/MCP tests and `pytest -m e2e tests/e2e/test_video_captions_e2e.py`.
+- [x] Verify Step 1b surface blast-radius sweep (`tests/mcp/test_cli_parity.py`, `tests/mcp/test_server.py`, and repo-wide grep for `transcribe` / `captions`).
+- [x] Run `uv run ruff check src tests`, `uv run ruff format --check src tests`, and `uv run pyright src`.
+- [x] Run scoped unit/BDD/CLI/MCP tests and `pytest -m e2e tests/e2e/test_video_captions_e2e.py`.
 
 ---
 
 ## Definition of done
 
-- [ ] All task steps checked off
-- [ ] `/gflow:check` green (hygiene / size / doc links / website mirror / plugin skills / ruff / format / pyright / pytest >= 80% coverage)
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated
-- [ ] Docs updated (`USAGE.md`, `MCP.md`, `CONFIGURATION.md`, `README.md`, `AGENTS.md`, `skills/gflow-cli/SKILL.md`)
-- [ ] BDD feature file [`tests/features/video_captions.feature`](../../../../tests/features/video_captions.feature) covers all Critical + High offline scenarios from `SCENARIO.md`
-- [ ] E2E test `tests/e2e/test_video_captions_e2e.py` passes on both the CLI subprocess and the MCP tool
-- [ ] No `# TODO` in diff without a tracked issue link
-- [ ] Task 1's red tests failed before Task 3
-- [ ] Worktree clean: no untracked scratch files, no leftover clones or temp dirs
+- [x] All task steps checked off
+- [ ] `/gflow:check` green (hygiene / size / doc links / website mirror / plugin skills / ruff / format / pyright / pytest >= 80% coverage); full-repository coverage was not run because verification was scoped to the user-requested services/MCP/features suites.
+- [x] `CHANGELOG.md` `[Unreleased]` section updated
+- [x] Docs updated (`USAGE.md`, `MCP.md`, `CONFIGURATION.md`, `README.md`, `AGENTS.md`, `skills/gflow-cli/SKILL.md`)
+- [x] BDD feature file [`tests/features/video_captions.feature`](../../../../tests/features/video_captions.feature) covers all Critical + High offline scenarios from `SCENARIO.md`
+- [x] E2E test `tests/e2e/test_video_captions_e2e.py` passes on both the CLI subprocess and the MCP tool
+- [x] No `# TODO` in diff without a tracked issue link
+- [x] Task 1's red tests failed before Task 3
+- [x] Worktree clean: no untracked scratch files, no leftover clones or temp dirs
 
 ## Decision log
 
@@ -444,6 +444,8 @@ under the Iron Law.
 |---|---|---|---|
 | 2026-11-20 | Render captions per frame with Pillow (`PIL.ImageDraw`) and mux with PyAV (`av`) from existing `gflow-cli[chain]` extra | Prebuilt PyAV wheels ship without `libass` (`subtitles` filter) or `libfreetype` (`drawtext` filter); Pillow `ImageFont.load_default(size=...)` renders scalable TrueType captions at ~5.4x real-time speed with zero new dependencies | Shelling out to a system `ffmpeg` binary (not guaranteed installed) or PyAV filter graph (`ValueError: no filter subtitles`) |
 | 2026-11-20 | Use `httpx` against OpenAI-compatible `POST {base_url}/audio/transcriptions` via existing `GFLOW_CLI_LLM_*` settings; no `faster-whisper` extra in v1 | `httpx` is already an eager dependency (0 MB overhead) and supports both hosted Whisper APIs (OpenAI, Groq) and local servers (`whisper.cpp`, `vLLM`, `LiteLLM`); `faster-whisper` adds >200 MB of native wheels plus model downloads (YAGNI) | Shipping a `gflow-cli[transcribe]` extra with `faster-whisper` in v1 |
+| 2026-11-20 | Request `verbose_json` and build SRT from timed segments | The coordinator verified the Google OpenAI-compatible endpoint supports chat audio but not `/audio/transcriptions`; the compatible Whisper endpoint must return segment timestamps | Requesting SRT text from a server without guaranteed timestamp segments |
+| 2026-11-20 | Use a Matroska/PCM synthetic media fixture in tests | AAC encoder flushing intermittently fails on Windows xdist; PCM keeps local tests deterministic while still exercising video/audio stream handling | Making CI depend on AAC encoder timing |
 | 2026-11-20 | Refuse transcription pre-flight (exit 11) when `GFLOW_CLI_LLM_BASE_URL` is still at `DEFAULT_LLM_BASE_URL` (`generativelanguage.googleapis.com/v1beta/openai`) | Empirical probe confirmed Google's default OpenAI-compat endpoint returns HTTP 404 on `/audio/transcriptions`, and privacy requires never sending audio to an endpoint the user did not explicitly configure | Sending audio to the default Google endpoint and letting it fail with an opaque HTTP 404 |
 | 2026-11-20 | Extract 16 kHz mono PCM WAV in memory before uploading to `/audio/transcriptions` | Keeps uploads compact (~32 KB/s, ~256 KB for an 8 s clip), avoids uploading multi-megabyte video containers, and fails fast on silent/audio-less clips before any network request | Uploading the raw `.mp4` container directly |
 | 2026-11-20 | Place CLI commands in `cli_video_captions.py` and MCP tools in `mcp/video_captions_tools.py`, with 4-line registration/re-export in `cli_video.py` and `mcp/tools.py` | `mcp/tools.py` is at 2,690 lines against a 2,691-line `check_size.py` baseline and `#1359` (`video assemble`) lands first in both `cli_video.py` and `mcp/tools.py`; separate modules avoid size-gate failures and rebase conflicts | Putting full command and tool bodies directly in `cli_video.py` and `mcp/tools.py` |

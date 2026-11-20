@@ -6,14 +6,32 @@ import json
 import os
 import subprocess
 import sys
-import asyncio
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
+
+
+def _assert_caption_pixels(source: Path, output: Path) -> None:
+    av = pytest.importorskip("av")
+    with av.open(str(source)) as original, av.open(str(output)) as rendered:
+        fps = float(original.streams.video[0].average_rate or 10)
+        source_frames = list(original.decode(video=0))
+        output_frames = list(rendered.decode(video=0))
+    assert len(source_frames) == len(output_frames)
+    caption_diffs: list[float] = []
+    plain_diffs: list[float] = []
+    for index, (before, after) in enumerate(zip(source_frames, output_frames, strict=True)):
+        diff = float(
+            np.mean(np.abs(before.to_ndarray().astype(float) - after.to_ndarray().astype(float)))
+        )
+        (caption_diffs if 0.2 <= index / fps <= 1.0 else plain_diffs).append(diff)
+    assert caption_diffs and max(caption_diffs) > 1
+    assert not plain_diffs or max(plain_diffs) < 2
 
 
 @dataclass(frozen=True)
@@ -43,11 +61,11 @@ def installed_cli(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Installe
 @pytest.fixture
 def clip_files(tmp_path: Path) -> tuple[Path, Path]:
     av = pytest.importorskip("av")
-    clip, srt = tmp_path / "clip with spaces.mp4", tmp_path / "sample.srt"
-    with av.open(str(clip), mode="w") as output:
+    clip, srt = tmp_path / "clip with spaces.mkv", tmp_path / "sample.srt"
+    with av.open(str(clip), mode="w", format="matroska") as output:
         video = output.add_stream("libx264", rate=10)
         video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
-        audio = output.add_stream("aac", rate=16000)
+        audio = output.add_stream("pcm_s16le", rate=16000)
         audio.layout = "mono"
         for index in range(20):
             frame = av.VideoFrame(160, 90, "rgb24")
@@ -56,11 +74,9 @@ def clip_files(tmp_path: Path) -> tuple[Path, Path]:
                 output.mux(packet)
         for packet in video.encode():
             output.mux(packet)
-        sample = av.AudioFrame(format="fltp", layout="mono", samples=1600)
+        sample = av.AudioFrame(format="s16", layout="mono", samples=1600)
         sample.sample_rate, sample.pts = 16000, 0
         for packet in audio.encode(sample):
-            output.mux(packet)
-        for packet in audio.encode():
             output.mux(packet)
     srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nHello captions\n", encoding="utf-8")
     return clip, srt
@@ -93,6 +109,7 @@ def test_installed_cli_burns_authored_srt(
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["frames_burned"] > 0
+    _assert_caption_pixels(clip, output)
     av = pytest.importorskip("av")
     with av.open(str(output)) as video:
         assert video.streams.audio
@@ -114,6 +131,7 @@ async def test_mcp_tool_burns_srt_inside_output_directory(
     assert result["status"] == "ok", result
     assert Path(result["output_file"]).is_relative_to(output_dir.resolve())
     assert result["frames_burned"] > 0
+    _assert_caption_pixels(clip, Path(result["output_file"]))
 
 
 @pytest.mark.asyncio

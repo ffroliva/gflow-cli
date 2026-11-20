@@ -2658,7 +2658,10 @@ async def gflow_instructions_apply(
     )
 
 
-from gflow_cli.mcp.video_captions_tools import gflow_video_captions, gflow_video_transcribe
+from gflow_cli.mcp.video_captions_tools import (  # noqa: E402 — adapter imports shared tools helpers
+    gflow_video_captions,
+    gflow_video_transcribe,
+)
 
 # Re-export Path so tests that import it directly still work
 __all__ = [

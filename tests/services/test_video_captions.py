@@ -5,15 +5,27 @@ from __future__ import annotations
 import sys
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
-from gflow_cli.errors import ConfigurationError, FrameExtractionError
+from gflow_cli import config
+from gflow_cli.data.models import AssetKind
+from gflow_cli.errors import (
+    ConfigurationError,
+    DataStoreError,
+    FrameExtractionError,
+    NetworkError,
+    RateLimitError,
+)
 from gflow_cli.services.video_captions import (
     CaptionEntry,
+    TranscribeResult,
     caption_video,
     format_srt,
     parse_srt,
+    resolve_video_source,
     transcribe_video,
 )
 
@@ -21,13 +33,14 @@ from gflow_cli.services.video_captions import (
 @pytest.fixture
 def media_files(tmp_path: Path) -> tuple[Path, Path]:
     av = pytest.importorskip("av")
-    audio_video = tmp_path / "clip.mp4"
-    silent_video = tmp_path / "silent.mp4"
+    audio_video = tmp_path / "clip.mkv"
+    silent_video = tmp_path / "silent.mkv"
     for path, with_audio in ((audio_video, True), (silent_video, False)):
-        with av.open(str(path), mode="w") as output:
+        # PCM in Matroska avoids AAC encoder flush failures under Windows xdist.
+        with av.open(str(path), mode="w", format="matroska") as output:
             video = output.add_stream("libx264", rate=10)
             video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
-            audio = output.add_stream("aac", rate=16000) if with_audio else None
+            audio = output.add_stream("pcm_s16le", rate=16000) if with_audio else None
             if audio:
                 audio.layout = "mono"
             for index in range(20):
@@ -39,12 +52,10 @@ def media_files(tmp_path: Path) -> tuple[Path, Path]:
             for packet in video.encode():
                 output.mux(packet)
             if audio:
-                audio_frame = av.AudioFrame(format="fltp", layout="mono", samples=1600)
+                audio_frame = av.AudioFrame(format="s16", layout="mono", samples=1600)
                 audio_frame.sample_rate = 16000
                 audio_frame.pts = 0
                 for packet in audio.encode(audio_frame):
-                    output.mux(packet)
-                for packet in audio.encode():
                     output.mux(packet)
     return audio_video, silent_video
 
@@ -71,6 +82,8 @@ def test_missing_chain_extra_fails_before_transcription(monkeypatch: pytest.Monk
     assert caught.value.charged == "no"
     assert caught.value.resolved_next_action() == "fix_input"
     assert "gflow-cli[chain]" in caught.value.detail
+    with pytest.raises(FrameExtractionError):
+        caption_video("clip.mp4", srt_path=Path("captions.srt"))
 
 
 def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Path]) -> None:
@@ -81,6 +94,168 @@ def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Pat
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
     with pytest.raises(ConfigurationError, match="audio"):
         transcribe_video(str(media_files[1]))
+
+
+def test_resolve_video_source_accepts_local_and_verified_catalog_video(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    source, _ = media_files
+    assert resolve_video_source(str(source), profile=None, route="test") == source.resolve()
+    with pytest.raises(ConfigurationError):
+        resolve_video_source(str(source.with_name("missing.mp4")), profile=None, route="test")
+
+    monkeypatch.setattr(
+        service,
+        "resolve_asset",
+        lambda *_args, **_kwargs: SimpleNamespace(kind=AssetKind.VIDEO, local_files=[object()]),
+    )
+    monkeypatch.setattr(service, "verified_local_path", lambda _local_file: source)
+    assert (
+        resolve_video_source(
+            "11111111-2222-3333-4444-555555555555", profile="default", route="test"
+        )
+        == source
+    )
+
+    monkeypatch.setattr(service, "verified_local_path", lambda _local_file: None)
+    with pytest.raises(DataStoreError):
+        resolve_video_source(
+            "11111111-2222-3333-4444-555555555555", profile="default", route="test"
+        )
+
+
+def test_transcribe_accepts_raw_srt_response(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    config.reset_settings()
+
+    class Response:
+        status_code = 200
+        text = "1\n00:00:00,200 --> 00:00:00,900\nspoken words\n"
+
+        def json(self) -> object:
+            raise ValueError("not JSON")
+
+    class Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def post(self, *_: Any, **__: Any) -> Response:
+            return Response()
+
+    monkeypatch.setattr(service.httpx, "Client", Client)
+    try:
+        result = transcribe_video(str(media_files[0]))
+    finally:
+        config.reset_settings()
+    assert result.segments[0].text == "spoken words"
+
+
+def test_transcribe_posts_wav_and_writes_timed_json_segments(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    config.reset_settings()
+    captured: dict[str, Any] = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def json(self) -> dict[str, Any]:
+            return {"segments": [{"start": 0.2, "end": 0.9, "text": "spoken words"}]}
+
+    class Client:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["client_options"] = kwargs
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def post(self, url: str, **kwargs: Any) -> Response:
+            captured.update(url=url, **kwargs)
+            return Response()
+
+    monkeypatch.setattr(service.httpx, "Client", Client)
+    try:
+        result = transcribe_video(str(media_files[0]), language="en")
+    finally:
+        config.reset_settings()
+
+    assert captured["url"].endswith("/audio/transcriptions")
+    assert captured["client_options"]["follow_redirects"] is False
+    assert captured["data"] == {
+        "model": "whisper-1",
+        "response_format": "verbose_json",
+        "language": "en",
+    }
+    assert captured["files"]["file"][2] == "audio/wav"
+    assert result.srt_file.read_text(encoding="utf-8").startswith("1\n00:00:00,200")
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type"),
+    [
+        (302, ConfigurationError),
+        (400, ConfigurationError),
+        (429, RateLimitError),
+        (503, NetworkError),
+    ],
+)
+def test_transcribe_maps_http_errors_without_exposing_response_text(
+    media_files: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    error_type: type[Exception],
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", "http://127.0.0.1:8080/v1")
+    config.reset_settings()
+
+    class Response:
+        text = "HTTP 403 denied for Bearer ya29.a0Af-secret123 token"
+
+        def __init__(self, status_code: int) -> None:
+            self.status_code = status_code
+
+    class Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def post(self, *_: Any, **__: Any) -> Response:
+            return Response(status)
+
+    monkeypatch.setattr(service.httpx, "Client", Client)
+    try:
+        with pytest.raises(error_type) as caught:
+            transcribe_video(str(media_files[0]))
+    finally:
+        config.reset_settings()
+    assert caught.value.charged == "no"
+    assert "ya29.a0Af-secret123" not in caught.value.detail
 
 
 def test_caption_video_burns_frames_and_keeps_audio(
@@ -94,3 +269,19 @@ def test_caption_video_burns_frames_and_keeps_audio(
     assert result.frames_burned > 0
     with av.open(str(result.output_file)) as output:
         assert output.streams.audio
+
+
+def test_caption_video_transcribes_first_and_writes_both_outputs(
+    media_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.services import video_captions as service
+
+    source, _ = media_files
+    transcript = TranscribeResult(
+        source, tmp_path / "clip.srt", "en", 2.0, (CaptionEntry(1, 0.2, 1.0, "Hello"),)
+    )
+    monkeypatch.setattr(service, "transcribe_video", lambda *_args, **_kwargs: transcript)
+    result = caption_video(str(source), srt_out_file=transcript.srt_file)
+    assert result.srt_file == transcript.srt_file
+    assert result.output_file.is_file()
+    assert result.frames_burned > 0

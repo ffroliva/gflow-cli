@@ -17,11 +17,11 @@ from gflow_cli.services.video_captions import caption_video, transcribe_video
 def _profile(file: str, profile: str) -> str | None | dict[str, Any]:
     if not is_media_uuid(file):
         return None
-    return common._resolve_and_validate_profile(profile)
+    return common._resolve_and_validate_profile(profile)  # pyright: ignore[reportPrivateUsage]
 
 
 def _output(out_file: str | None, default_name: str) -> str | dict[str, Any]:
-    path = common._resolve_out_file(out_file, local_only=True)
+    path = common._resolve_out_file(out_file, local_only=True)  # pyright: ignore[reportPrivateUsage]
     if isinstance(path, dict):
         return path
     if path is not None:
@@ -67,15 +67,16 @@ def _result(result: Any, *, transcribing: bool) -> dict[str, Any]:
     description=(
         "Transcribe a local video or catalog video UUID to an .srt file using the configured "
         "OpenAI-compatible audio transcription endpoint. Credit-free; output stays inside "
-        "the configured output directory. Google’s default endpoint is refused before audio is sent."
+        "the configured output directory. Google’s default endpoint is refused before audio "
+        "is sent."
     ),
 )
-@common._guarded
+@common._guarded  # pyright: ignore[reportPrivateUsage]
 async def gflow_video_transcribe(
     file: str,
     out_file: OutFileParam = None,
     language: str | None = None,
-    profile: str = common._DEFAULT_PROFILE,
+    profile: str = common._DEFAULT_PROFILE,  # pyright: ignore[reportPrivateUsage]
 ) -> dict[str, Any]:
     """Transcribe FILE and return the SRT path and timed segments."""
     resolved_profile = _profile(file, profile)
@@ -94,16 +95,17 @@ async def gflow_video_transcribe(
     name="gflow_video_captions",
     description=(
         "Burn an authored SRT file into a local video or transcribe first when srt is omitted. "
-        "Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory."
+        "Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured "
+        "output directory."
     ),
 )
-@common._guarded
+@common._guarded  # pyright: ignore[reportPrivateUsage]
 async def gflow_video_captions(
     file: str,
     srt: str | None = None,
     language: str | None = None,
     out_file: OutFileParam = None,
-    profile: str = common._DEFAULT_PROFILE,
+    profile: str = common._DEFAULT_PROFILE,  # pyright: ignore[reportPrivateUsage]
 ) -> dict[str, Any]:
     """Burn SRT captions into FILE, optionally transcribing first."""
     resolved_profile = _profile(file, profile)

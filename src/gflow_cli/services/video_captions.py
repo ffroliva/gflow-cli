@@ -9,7 +9,7 @@ import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -151,7 +151,9 @@ def resolve_video_source(file_or_id: str, *, profile: str | None, route: str) ->
             detail=f"No verified local video copy for {file_or_id}.",
             route=route,
             charged="no",
-            remediation_hint=f"Run `gflow data download {file_or_id}` first, or pass a local video path.",
+            remediation_hint=(
+                f"Run `gflow data download {file_or_id}` first, or pass a local video path."
+            ),
         )
 
 
@@ -211,7 +213,8 @@ def transcribe_video(
     if base_url == DEFAULT_LLM_BASE_URL.rstrip("/"):
         raise ConfigurationError(
             detail=(
-                "Google's default endpoint does not offer /audio/transcriptions; audio was not sent. "
+                "Google's default endpoint does not offer /audio/transcriptions; "
+                "audio was not sent. "
                 "Configure GFLOW_CLI_LLM_BASE_URL for a transcription provider or use --srt."
             ),
             charged="no",
@@ -237,7 +240,7 @@ def transcribe_video(
 def _request_segments(
     base_url: str, settings: Any, audio: bytes, language: str | None
 ) -> tuple[CaptionEntry, ...]:
-    headers = {}
+    headers: dict[str, str] = {}
     if settings.llm_api_key:
         headers["Authorization"] = f"Bearer {settings.llm_api_key.get_secret_value()}"
     data: dict[str, str] = {
@@ -286,17 +289,21 @@ def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntr
             charged="no",
         )
     try:
-        payload = response.json()
+        payload: Any = response.json()
     except ValueError:
         payload = None
-    if isinstance(payload, dict) and isinstance(payload.get("segments"), list):
+    if not isinstance(payload, dict):
+        return tuple(parse_srt(response.text, source_name="transcription response"))
+    parsed = cast(dict[str, Any], payload)
+    raw = parsed.get("segments")
+    if isinstance(raw, list):
+        raw_segments = cast(list[dict[str, Any]], raw)
         return tuple(
             CaptionEntry(i, float(seg["start"]), float(seg["end"]), str(seg["text"]).strip())
-            for i, seg in enumerate(payload["segments"], 1)
+            for i, seg in enumerate(raw_segments, 1)
             if str(seg.get("text", "")).strip()
         )
-    text = payload.get("text") if isinstance(payload, dict) else response.text
-    return tuple(parse_srt(str(text), source_name="transcription response"))
+    return tuple(parse_srt(str(parsed.get("text", "")), source_name="transcription response"))
 
 
 def caption_video(
@@ -308,7 +315,7 @@ def caption_video(
     language: str | None = None,
     profile: str | None = None,
 ) -> CaptionsResult:
-    av, (_, ImageDraw, ImageFont) = _require_chain_extra()
+    av, (_, image_draw, image_font) = _require_chain_extra()
     settings = get_settings()
     refuse_cloud_storage_for_local_file(settings.storage_uri, "Video caption burn-in")
     source = resolve_video_source(file_or_id, profile=profile, route="video.captions")
@@ -338,7 +345,7 @@ def caption_video(
     temporary = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
     try:
         frames, burned, duration = _render_video(
-            av, source, temporary, entries, ImageDraw, ImageFont
+            av, source, temporary, entries, image_draw, image_font
         )
         temporary.replace(destination)
     except Exception as exc:
