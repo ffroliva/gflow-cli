@@ -20,7 +20,7 @@ def _guarded(fn: Any) -> Any:
 
     @wraps(fn)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        from gflow_cli.mcp.tools import _guarded as guarded
+        from gflow_cli.mcp.tools import _guarded as guarded  # pyright: ignore[reportPrivateUsage]
 
         return await guarded(fn)(*args, **kwargs)
 
@@ -60,7 +60,10 @@ async def gflow_video_assemble(
         duck: Reduce music while voiceover is present (default true).
         profile: Optional catalog profile to disambiguate media IDs.
     """
-    from gflow_cli.mcp.tools import _bad_param, _resolve_out_file
+    from gflow_cli.mcp.tools import (
+        _bad_param,  # pyright: ignore[reportPrivateUsage]
+        _resolve_out_file,  # pyright: ignore[reportPrivateUsage]
+    )
 
     destination = _resolve_out_file(out_file)
     if isinstance(destination, dict):
