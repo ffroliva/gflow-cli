@@ -245,20 +245,20 @@ extraction, OpenAI-compatible transcription, and Pillow/PyAV caption burn-in bef
 - `tests/services/test_video_captions.py` — comprehensive unit test suite targeting `gflow_cli.services.video_captions`
 
 **Steps:**
-- [ ] Create `tests/services/test_video_captions.py` with synthetic PyAV H.264/AAC `.mp4` and video-only `.mp4` fixtures.
-- [ ] Run `uv run pytest tests/services/test_video_captions.py` and confirm it fails red with `ModuleNotFoundError: No module named 'gflow_cli.services.video_captions'`.
-- [ ] Commit the red test scaffold noting the failure line in the commit message.
+- [x] Create `tests/services/test_video_captions.py` with synthetic PyAV H.264/AAC `.mp4` and video-only `.mp4` fixtures.
+- [x] Run `uv run pytest tests/services/test_video_captions.py` and confirm it fails red with `ModuleNotFoundError: No module named 'gflow_cli.services.video_captions'`.
+- [x] Commit the red test scaffold noting the failure line in the commit message.
 
 **Tests created (red):**
-- [ ] `test_parse_and_format_srt_roundtrip` — parses standard SRT blocks, comma and dot millisecond separators (`00:00:00,500` and `00:00:01.200`), UTF-8 BOM (`\ufeff`), CRLF (`\r\n`), and multi-line text, then formats back to canonical SRT (SCENARIO #13).
-- [ ] `test_parse_srt_rejects_empty_malformed_or_inverted_timestamps_without_echoing_content` — raises `ConfigurationError` (exit 11, `charged="no"`, `next_action="fix_input"`) on empty files, non-SRT text, or `end_s <= start_s`, and asserts a sentinel secret line in the malformed input never appears in `exc.detail` (SCENARIO #4, #13).
-- [ ] `test_missing_chain_extra_raises_frame_extraction_error_exit_20` — monkeypatching `sys.modules["av"] = None` (or `PIL = None`) causes `transcribe_video` and `caption_video` to raise `FrameExtractionError` (exit 20, `charged="no"`) with the `pip install 'gflow-cli[chain]'` hint before any HTTP call (SCENARIO #5).
+- [x] `test_parse_and_format_srt_roundtrip` — parses standard SRT blocks, comma and dot millisecond separators (`00:00:00,500` and `00:00:01.200`), UTF-8 BOM (`\ufeff`), CRLF (`\r\n`), and multi-line text, then formats back to canonical SRT (SCENARIO #13).
+- [x] `test_parse_srt_rejects_empty_malformed_or_inverted_timestamps_without_echoing_content` — raises `ConfigurationError` (exit 11, `charged="no"`, `next_action="fix_input"`) on empty files, non-SRT text, or `end_s <= start_s`, and asserts a sentinel secret line in the malformed input never appears in `exc.detail` (SCENARIO #4, #13).
+- [x] `test_missing_chain_extra_raises_frame_extraction_error_exit_20` — monkeypatching `sys.modules["av"] = None` (or `PIL = None`) causes `transcribe_video` and `caption_video` to raise `FrameExtractionError` (exit 20, `charged="no"`) with the `pip install 'gflow-cli[chain]'` hint before any HTTP call (SCENARIO #5).
 - [ ] `test_resolve_video_source_local_path_and_catalog_uuid` — resolves an existing local `.mp4` path and a catalog `AssetKind.VIDEO` UUID with a verified local file; raises `ConfigurationError` (exit 11, `charged="no"`) on a missing file or non-video catalog UUID and `DataStoreError` (exit 16, `charged="no"`) on an unknown UUID or missing on-disk copy (SCENARIO #8).
-- [ ] `test_transcribe_video_refuses_default_google_endpoint_before_sending_audio` — with `GFLOW_CLI_LLM_BASE_URL` at `DEFAULT_LLM_BASE_URL`, raises `ConfigurationError` (exit 11, `charged="no"`) naming `GFLOW_CLI_LLM_BASE_URL` and `--srt`, with zero calls to the HTTP transport (SCENARIO #1).
-- [ ] `test_transcribe_video_refuses_clip_without_audio_stream` — on a video-only `.mp4`, raises `ConfigurationError` (exit 11, `charged="no"`) naming the missing audio track before any HTTP request (SCENARIO #9).
+- [x] `test_transcribe_video_refuses_default_google_endpoint_before_sending_audio` — with `GFLOW_CLI_LLM_BASE_URL` at `DEFAULT_LLM_BASE_URL`, raises `ConfigurationError` (exit 11, `charged="no"`) naming `GFLOW_CLI_LLM_BASE_URL` and `--srt`, with zero calls to the HTTP transport (SCENARIO #1).
+- [x] `test_transcribe_video_refuses_clip_without_audio_stream` — on a video-only `.mp4`, raises `ConfigurationError` (exit 11, `charged="no"`) naming the missing audio track before any HTTP request (SCENARIO #9).
 - [ ] `test_transcribe_video_posts_wav_and_parses_srt_and_json_responses` — extracts 16 kHz mono WAV bytes, calls `POST {base_url}/audio/transcriptions` with `follow_redirects=False`, handles both raw SRT text and JSON `{"segments": [...]}` / `{"text": "..."}` responses, and writes `<stem>.srt` (SCENARIO #7, #12).
 - [ ] `test_transcribe_video_maps_http_errors_and_refuses_redirects` — maps 302 redirect and HTTP 400/401/403/404/405/422 to `ConfigurationError` (exit 11), HTTP 429 to `RateLimitError` (exit 4/40), and HTTP 503 / timeout to `NetworkError` (exit 6/42), all with `charged="no"` and redacted error details (SCENARIO #2, #10).
-- [ ] `test_caption_video_burns_frames_and_preserves_audio` — burns captions from an `.srt` file (and on a silent clip without audio), verifying `frames_burned > 0`, pixel difference on captioned frames, zero pixel difference on uncaptioned frames, and preserved audio stream (SCENARIO #6, #9, #14).
+- [x] `test_caption_video_burns_frames_and_preserves_audio` — burns captions from an `.srt` file (and on a silent clip without audio), verifying `frames_burned > 0`, pixel difference on captioned frames, zero pixel difference on uncaptioned frames, and preserved audio stream (SCENARIO #6, #9, #14).
 - [ ] `test_caption_video_without_srt_transcribes_first_and_writes_both_files` — when `srt_path=None`, invokes transcription, writes `<stem>.srt`, and burns `<stem>-captions.mp4` (SCENARIO #7).
 
 ---
