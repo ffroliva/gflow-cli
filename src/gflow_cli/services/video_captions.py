@@ -231,6 +231,21 @@ def _atomic_write(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _stream_start_seconds(stream: Any) -> float:
+    if stream is None or stream.start_time is None or stream.time_base is None:
+        return 0.0
+    return float(stream.start_time * stream.time_base)
+
+
+def _frame_start_seconds(frame: Any, stream: Any, cursor_s: float, *, is_first: bool) -> float:
+    tb = frame.time_base or stream.time_base
+    if frame.pts is not None and tb is not None:
+        return float(frame.pts * tb)
+    if is_first:
+        return _stream_start_seconds(stream)
+    return cursor_s
+
+
 def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
     av, _ = _require_chain_extra()
     try:
@@ -242,13 +257,28 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
                     remediation_hint="Pass a video containing an audio track.",
                 )
             stream = container.streams.audio[0]
+            video = container.streams.video[0] if container.streams.video else None
+            cursor_s = _stream_start_seconds(video)
+            decoded_frames = 0
             resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
             samples: list[bytes] = []
             duration = float(container.duration or 0) / av.time_base
             for frame in container.decode(stream):
+                frame_start_s = _frame_start_seconds(
+                    frame, stream, cursor_s, is_first=decoded_frames == 0
+                )
+                gap_s = frame_start_s - cursor_s
+                if (
+                    gap_s > (0.0 if decoded_frames == 0 else 0.01)
+                    and (gap_samples := round(gap_s * 16000)) > 0
+                ):
+                    samples.append(bytes(gap_samples * 2))
+                rate = float(frame.sample_rate or stream.rate or 16000)
+                cursor_s = max(cursor_s, frame_start_s) + (frame.samples / rate)
                 for converted in resampler.resample(frame):
+                    decoded_frames += 1
                     samples.append(bytes(converted.planes[0])[: converted.samples * 2])
-            if not samples:
+            if not decoded_frames:
                 raise ConfigurationError(
                     detail="Video audio track contains no decodable audio.",
                     charged="no",
