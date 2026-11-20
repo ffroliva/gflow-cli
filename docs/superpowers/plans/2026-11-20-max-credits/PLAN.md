@@ -117,7 +117,7 @@ Proceed with implementation subject to the five design mitigations below (non-si
 - Modify: `tests/test_errors_classification.py`
 - Modify: `tests/test_problem_details_extensions.py`
 
-- [ ] **Step 1: Write failing unit tests in `tests/api/test_credit_cap.py`**
+- [x] **Step 1: Write failing unit tests in `tests/api/test_credit_cap.py`**
 
 Cover:
 1. `parse_credit_quote("Generating will use 4 credits") == 4`, `parse_credit_quote("A geração vai usar 12 créditos") == 12`, `parse_credit_quote("Generating will use 0 credits") == 0`.
@@ -130,7 +130,7 @@ Cover:
 8. `GenerateVideoRequest(prompt="test", max_credits=-1)` raises `ValueError("max_credits must be >= 0")`.
 9. `Settings(max_credits=10)` and `GFLOW_CLI_MAX_CREDITS=10` load `10`; `GFLOW_CLI_MAX_CREDITS=-1` raises `ValidationError`.
 
-- [ ] **Step 2: Add failing error-code and Problem Details extension tests in `tests/test_errors_classification.py` and `tests/test_problem_details_extensions.py`**
+- [x] **Step 2: Add failing error-code and Problem Details extension tests in `tests/test_errors_classification.py` and `tests/test_problem_details_extensions.py`**
 
 Assert:
 - `get_exit_code(CreditCapExceededError(quoted=8, max_credits=4))` returns `45` both when `GFLOW_CLI_EXIT_CODES` is unset/1 and when `GFLOW_CLI_EXIT_CODES=2`.
@@ -144,7 +144,7 @@ Assert:
   - `"max_credits": 4`
 - When `quoted=None`, `to_problem_details()` serializes `"max_credits": 4` and `"quoted": None` (or omits `None` when `exclude_none=True` while preserving `err.quoted is None` on the exception and `"quoted": None` in JSON error output).
 
-- [ ] **Step 3: Run pytest on the new tests and confirm they fail (Red)**
+- [x] **Step 3: Run pytest on the new tests and confirm they fail (Red)**
 
 Run: `uv run python -m pytest tests/api/test_credit_cap.py tests/test_errors_classification.py tests/test_problem_details_extensions.py -q`
 Expected: `ImportError` / `AttributeError` for `gflow_cli.api.credit_cap` and `CreditCapExceededError`.

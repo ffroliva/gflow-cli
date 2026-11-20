@@ -23,6 +23,7 @@ from gflow_cli.errors import (
     RETRY_ACTIONS,
     RETRYABLE_ERRORS,
     ChainPartialError,
+    CreditCapExceededError,
     GFlowError,
     MediaAttributionError,
     MediaDownloadError,
@@ -67,6 +68,26 @@ def test_every_subclass_declares_its_own_defaults(cls: type[GFlowError]) -> None
 
 def test_every_mapped_class_is_covered() -> None:
     assert set(EXIT_CODE_MAP) <= set(_SUBCLASSES)
+
+
+def test_credit_cap_problem_details_contains_quote_and_limit() -> None:
+    details = CreditCapExceededError(quoted=8, max_credits=4).to_problem_details()
+    assert details == {
+        "type": "https://gflow-cli.dev/errors/credit-cap-exceeded",
+        "title": "Credit cap exceeded",
+        "status": 422,
+        "detail": "Flow quoted 8 credits, exceeding the maximum of 4.",
+        "charged": "no",
+        "next_action": "fix_input",
+        "quoted": 8,
+        "max_credits": 4,
+    }
+
+
+def test_credit_cap_problem_details_keeps_unreadable_quote() -> None:
+    error = CreditCapExceededError(quoted=None, max_credits=4)
+    assert error.quoted is None
+    assert error.to_problem_details()["quoted"] is None
 
 
 @pytest.mark.parametrize("cls", _SUBCLASSES, ids=lambda c: c.__name__)
