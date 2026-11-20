@@ -1626,7 +1626,8 @@ workaround anyone needs to discover.
 
 - **Status:** Mitigated · **Severity:** High while it lasts (every video run on the account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0 · **Tracked:** [#749](https://github.com/ffroliva/gflow-cli/issues/749), follow-up [#752](https://github.com/ffroliva/gflow-cli/issues/752)
 
-The migrated composer has an **Agent** chip. Pressed, Flow swaps the prompt box and
+The migrated composer has an **Agent** chip (a switch, `flow-agent-mode-switch`, since Flow's
+2026-11-20 build, [#1384](https://github.com/ffroliva/gflow-cli/issues/1384)). Pressed, Flow swaps the prompt box and
 leaves `.settings-trigger-button` — the element this driver waits on — in the DOM under
 a bare `hidden` (`display: none`, 0×0). Flow **remembers the chip per account**, so a
 single click in a browser made every later `gflow video` run on that account die at 30 s
@@ -1639,12 +1640,13 @@ now names which of three things happened rather than blaming drift:
 
 | The message says | What it means | What to do |
 |---|---|---|
-| `the account is in Flow's agent mode … the chip could not be clicked` | something is covering the chip (a modal) | dismiss it in a browser; re-run |
-| `the chip was clicked, and it is STILL pressed` | the mode is pinned on this account | turn the **Agent** chip off in a browser; re-run |
+| `the account is in Flow's agent mode … the agent panel's close button or the Agent switch could not be clicked` | something is covering the control (a modal); the click error at the end names which | dismiss it in a browser; re-run |
+| `the agent panel's close button (…) matched N elements, so none was clicked` | Flow's panel header no longer has exactly one close button; gflow does not guess (#1273) | close the agent panel by hand and switch **Agent** off; file a bug with the log |
+| `the Agent switch was clicked, and it is STILL on` | the mode is pinned on this account | switch **Agent** off in a browser; re-run |
 | `agent mode was left, but the settings trigger … still did not become visible` | the mode is off — this is real selector drift | file a bug; it is not this issue |
-| `the chip could not be read back, so whether the mode is still on is unknown` | the page went dark mid-recovery | check the **Agent** chip in a browser *before* filing this as drift |
-| `the settings trigger … is not visible — the account is in Flow's agent mode` | the mode flipped **mid-run**, after the editor was already ready | turn the **Agent** chip off in a browser; re-run |
-| `the model picker (arrow_drop_down) is hidden in the settings pane` (since v0.89.1, [#788](https://github.com/ffroliva/gflow-cli/issues/788)) | the pane opened but its model picker is hidden, so `--model` cannot be checked; nothing was submitted | if the **Agent** chip is on, turn it off in a browser; re-run |
+| `the switch could not be read back, so whether the mode is still on is unknown` | the page went dark mid-recovery | check the **Agent** switch in a browser *before* filing this as drift |
+| `the settings trigger … is not visible — the account is in Flow's agent mode` | the mode flipped **mid-run**, after the editor was already ready | close the agent panel and switch **Agent** off in a browser; re-run |
+| `the model picker (arrow_drop_down) is hidden in the settings pane` (since v0.89.1, [#788](https://github.com/ffroliva/gflow-cli/issues/788)) | the pane opened but its model picker is hidden, so `--model` cannot be checked; nothing was submitted | if agent mode is on, close the agent panel and switch **Agent** off in a browser; re-run |
 
 **On 0.71.0 and earlier there is no recovery.** Open the project on
 `flow.google.com`, click the **Agent** chip off, and the account works again.

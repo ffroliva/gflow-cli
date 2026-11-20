@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from gflow_cli.api.transports import _mc_editor_gate
+from gflow_cli.api.transports import _mc_agent_mode, _mc_editor_gate
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.errors import UiSelectorDriftError
 
@@ -84,6 +84,7 @@ function render() {
     html = `<flow-prompt-box>${agentBox(false)}</flow-prompt-box>`;
   } else {
     const head = S.build === 'new' ? ['forum', 'settings_2', 'right_panel_close'] : ['menu', 'edit_square', 'close'];
+    if (S.extraClose) head.unshift('close');  // a second close outside the prompt box
     // The prompt box (with its decoy `close`) comes BEFORE the header here, the reverse of
     // Flow's order, so a close anchor that relied on DOM order would hit the decoy.
     html = `<mat-sidenav-content><flow-agent-panel>${agentBox(true)}`
@@ -114,8 +115,8 @@ DECOYS = ("flow-creative-agent-prompt-box:close", "flow-tile-view-header:setting
 def _fast_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shrink the gate's waits. These pages either settle at once or never will."""
     monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_EARLY_S", 0.5)
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_SETTLE_S", 0.2)
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 0.3)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_ONLY_SETTLE_S", 0.2)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_PANEL_SETTLE_S", 0.3)
 
 
 async def _run(page: Page, **scenario: Any) -> tuple[str, list[str], dict[str, Any]]:
@@ -215,11 +216,21 @@ async def test_old_build_agent_only_page_does_not_wait_for_a_toggle_that_never_c
     settle for a toggle it will never render would tax every such run."""
     import time
 
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 3.0)
+    monkeypatch.setattr(_mc_agent_mode, "AGENT_PANEL_SETTLE_S", 3.0)
     t0 = time.monotonic()
     kind, _, _ = await _run(page, build="old", agent=True, panel=True, classicArm=False)
     assert kind == "agent_only"
     assert time.monotonic() - t0 < 2.5
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_panel_close_is_not_clicked(page: Page) -> None:
+    """#1273's rule: a match on several elements is a miss, never a `.first` click. With
+    two `close` buttons outside the prompt box, the gate clicks neither and reports drift."""
+    with pytest.raises(UiSelectorDriftError):
+        await _run(page, build="old", agent=True, panel=True, classicArm=True, extraClose=True)
+    clicks: list[str] = await page.evaluate("window.CLICKS")
+    assert clicks == []
 
 
 # --- decoys --------------------------------------------------------------------------------
