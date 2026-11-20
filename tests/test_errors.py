@@ -708,7 +708,7 @@ def test_specific_remediation_hints() -> None:
     assert (
         FrameExtractionError().remediation_hint
         == "Verify input video file is readable and non-corrupt. Ensure the gflow-cli[chain] "
-        "extra and its packages (av, numpy, pillow) are installed: "
+        "extra and its packages (av, pillow) are installed: "
         "pip install 'gflow-cli[chain]'"
     )
     # #493: the hint must name the artifacts drift sites actually write (the

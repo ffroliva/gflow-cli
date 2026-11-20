@@ -1582,7 +1582,7 @@ class FrameExtractionError(GFlowError):
     """Raised when the video-chain last-frame extractor cannot produce a frame.
 
     Covers the missing-optional-dependency case (the ``chain`` extra was
-    skipped, so ``av``, ``numpy`` and/or ``pillow`` are absent) and an undecodable /
+    skipped, so ``av`` and/or ``pillow`` are absent) and an undecodable /
     truncated input video. The remediation names the extra AND its required packages
     carries so an operator hitting the missing-dependency path can self-serve —
     it used to say only "PyAV", which left a missing Pillow undiagnosable (#813).
@@ -1594,7 +1594,7 @@ class FrameExtractionError(GFlowError):
     title = "Last-frame extraction failed"
     _default_remediation = (
         "Verify input video file is readable and non-corrupt. Ensure the "
-        "gflow-cli[chain] extra and its packages (av, numpy, pillow) are "
+        "gflow-cli[chain] extra and its packages (av, pillow) are "
         "installed: pip install 'gflow-cli[chain]'"
     )
 
