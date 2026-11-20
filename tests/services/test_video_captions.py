@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from fractions import Fraction
 from pathlib import Path
 
 import pytest
@@ -32,21 +33,24 @@ def media_files(tmp_path: Path) -> tuple[Path, Path]:
             for index in range(20):
                 frame = av.VideoFrame(160, 90, "rgb24")
                 frame.pts = index
-                frame.time_base = video.time_base
+                frame.time_base = Fraction(1, 10)
                 for packet in video.encode(frame):
                     output.mux(packet)
             for packet in video.encode():
                 output.mux(packet)
             if audio:
+                audio_frame = av.AudioFrame(format="fltp", layout="mono", samples=1600)
+                audio_frame.sample_rate = 16000
+                audio_frame.pts = 0
+                for packet in audio.encode(audio_frame):
+                    output.mux(packet)
                 for packet in audio.encode():
                     output.mux(packet)
     return audio_video, silent_video
 
 
 def test_parse_and_format_srt_roundtrip() -> None:
-    entries = parse_srt(
-        "\ufeff1\r\n00:00:00,500 --> 00:00:01.200\r\nHello\r\nworld\r\n"
-    )
+    entries = parse_srt("\ufeff1\r\n00:00:00,500 --> 00:00:01.200\r\nHello\r\nworld\r\n")
     assert entries == [CaptionEntry(1, 0.5, 1.2, "Hello\nworld")]
     assert parse_srt(format_srt(entries)) == entries
 
@@ -55,7 +59,8 @@ def test_parse_and_format_srt_roundtrip() -> None:
 def test_parse_srt_rejects_invalid_input_without_echoing(content: str) -> None:
     with pytest.raises(ConfigurationError) as caught:
         parse_srt(content, source_name="private.srt")
-    assert caught.value.exit_code == 11
+    assert caught.value.charged == "no"
+    assert caught.value.resolved_next_action() == "fix_input"
     assert "PRIVATE SENTINEL" not in caught.value.detail
 
 
@@ -63,7 +68,8 @@ def test_missing_chain_extra_fails_before_transcription(monkeypatch: pytest.Monk
     monkeypatch.setitem(sys.modules, "av", None)
     with pytest.raises(FrameExtractionError) as caught:
         transcribe_video("clip.mp4")
-    assert caught.value.exit_code == 20
+    assert caught.value.charged == "no"
+    assert caught.value.resolved_next_action() == "fix_input"
     assert "gflow-cli[chain]" in caught.value.detail
 
 
