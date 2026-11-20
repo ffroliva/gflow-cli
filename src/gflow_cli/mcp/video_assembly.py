@@ -24,6 +24,7 @@ def _guarded(fn: Any) -> Any:
 
         return await guarded(fn)(*args, **kwargs)
 
+    wrapper.__gflow_guarded__ = True
     return wrapper
 
 
