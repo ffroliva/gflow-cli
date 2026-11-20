@@ -18,6 +18,41 @@ import pytest
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_media]
 
 
+def _narration_clip(path: Path) -> None:
+    av = pytest.importorskip("av")
+    import numpy as np
+
+    with av.open(str(path), mode="w", format="mp4") as output:
+        video = output.add_stream("libx264", rate=24)
+        video.width, video.height, video.pix_fmt = 1280, 720, "yuv420p"
+        video.time_base = Fraction(1, 24)
+        audio = output.add_stream("aac", rate=44100)
+        audio.layout, audio.format = "stereo", "fltp"
+        frame = av.VideoFrame(1280, 720, "yuv420p")
+        frame.planes[0].update(bytes([16]) * frame.planes[0].buffer_size)
+        for plane in frame.planes[1:]:
+            plane.update(bytes([128]) * plane.buffer_size)
+        for index in range(96):
+            frame.pts, frame.time_base = index, Fraction(1, 24)
+            for packet in video.encode(frame):
+                output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
+
+        seconds = np.arange(44100 * 4, dtype=np.float32) / 44100
+        tone = (0.28 * np.sin(2 * np.pi * 440 * seconds)).astype(np.float32)
+        for start in range(0, len(tone), 1024):
+            chunk = tone[start : start + 1024]
+            samples = np.vstack((chunk, chunk))
+            audio_frame = av.AudioFrame.from_ndarray(samples, format="fltp", layout="stereo")
+            audio_frame.sample_rate, audio_frame.pts = 44100, start
+            audio_frame.time_base = Fraction(1, 44100)
+            for packet in audio.encode(audio_frame):
+                output.mux(packet)
+        for packet in audio.encode():
+            output.mux(packet)
+
+
 def _assert_caption_pixels(source: Path, output: Path) -> None:
     av = pytest.importorskip("av")
     with av.open(str(source)) as original, av.open(str(output)) as rendered:
@@ -227,3 +262,68 @@ async def test_installed_cli_and_mcp_transcribe_with_configured_whisper_endpoint
     monkeypatch.undo()
     assert mcp_result["status"] == "ok", mcp_result
     assert Path(mcp_result["srt_file"]).read_text(encoding="utf-8").strip()
+
+
+def test_installed_cli_assembles_voiceover_before_transcribing_captions(
+    installed_cli: InstalledCli, tmp_path: Path
+) -> None:
+    endpoint = os.environ.get("GFLOW_CLI_E2E_TRANSCRIBE_BASE_URL")
+    if not endpoint:
+        pytest.skip("GFLOW_CLI_E2E_TRANSCRIBE_BASE_URL is unset; set it to a local Whisper server.")
+
+    clip, narrated = tmp_path / "clip.mp4", tmp_path / "narrated.mp4"
+    speech = Path(
+        os.environ.get(
+            "GFLOW_CLI_E2E_SPEECH_WAV",
+            str(Path(__file__).resolve().parents[1] / "fixtures" / "video_captions_speech.wav"),
+        )
+    )
+    assert speech.is_file(), f"speech WAV does not exist: {speech}"
+    _narration_clip(clip)
+    env = {
+        **os.environ,
+        "GFLOW_CLI_LLM_BASE_URL": endpoint,
+        "GFLOW_CLI_TRANSCRIBE_MODEL": os.environ.get("GFLOW_CLI_TRANSCRIBE_MODEL", "whisper-1"),
+        "GFLOW_CLI_LLM_API_KEY": os.environ.get("GFLOW_CLI_LLM_API_KEY", "local"),
+    }
+    assembled = subprocess.run(
+        [
+            str(installed_cli.python),
+            "-m",
+            "gflow_cli",
+            "video",
+            "assemble",
+            str(clip),
+            "--voiceover",
+            str(speech),
+            "--out-file",
+            str(narrated),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    assert assembled.returncode == 0, assembled.stderr
+    assert narrated.is_file()
+
+    captions = subprocess.run(
+        [
+            str(installed_cli.python),
+            "-m",
+            "gflow_cli",
+            "video",
+            "captions",
+            str(narrated),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=env,
+    )
+    assert captions.returncode == 0, captions.stderr
+    srt = Path(json.loads(captions.stdout)["srt_file"])
+    transcript = srt.read_text(encoding="utf-8").strip()
+    assert transcript and "hello" in transcript.lower()

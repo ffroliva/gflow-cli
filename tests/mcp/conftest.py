@@ -13,6 +13,7 @@ import pytest
 import gflow_cli.mcp.prompts
 import gflow_cli.mcp.resources
 import gflow_cli.mcp.tools  # noqa: F401
+import gflow_cli.mcp.video_captions_tools  # noqa: F401
 
 
 @pytest.fixture(autouse=True)

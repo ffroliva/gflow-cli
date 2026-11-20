@@ -1609,12 +1609,15 @@ class VideoAssemblyError(GFlowError):
     _default_remediation = (
         "Check that the local media files are readable and the output path is writable."
     )
+
+
 class VideoProcessingError(FrameExtractionError):
     """Raised when local video decoding or caption rendering fails."""
 
     problem_type = "https://gflow-cli.dev/errors/video-processing"
     title = "Video processing failed"
     charged = "no"
+    next_action = "fix_input"
     _default_remediation = "Check that the local video is readable and its codecs are supported."
 
 
