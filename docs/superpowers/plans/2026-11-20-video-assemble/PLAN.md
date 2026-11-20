@@ -103,7 +103,7 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 - [x] Run the installed wheel's CLI and MCP stdio twin, including success and structured failure. Local-only: use `@pytest.mark.e2e` with no Flow cost marker; documented in `docs/E2E_TESTING.md`.
 
 ## Task 9 — Gates and review
-- [x] Run the requested gates and installed E2E. Ruff, Pyright, docs, size and E2E passed; the broad suite had one failure because `tests/mcp/test_readme_counts.py` still expects the README's 20-tool count to match the new 21-tool registry.
+- [x] Run the requested gates and installed E2E. The installed CLI/MCP E2E passed (1 test); the targeted services, MCP, features, and README-count suite passed (790 tests). Ruff, format, Pyright, size, docs links, website mirror, and plugin skill checks passed.
 - [x] Record docs and six-axis parity review; no live Flow verification is required for this local-only operation.
 
 ## Definition of done
