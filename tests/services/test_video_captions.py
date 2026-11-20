@@ -79,6 +79,7 @@ def test_parse_srt_rejects_invalid_input_without_echoing(content: str) -> None:
         parse_srt(content, source_name="private.srt")
     assert caught.value.charged == "no"
     assert caught.value.resolved_next_action() == "fix_input"
+    assert "SRT" in caught.value.remediation_hint or "timestamp" in caught.value.remediation_hint
     assert "PRIVATE SENTINEL" not in caught.value.detail
 
 

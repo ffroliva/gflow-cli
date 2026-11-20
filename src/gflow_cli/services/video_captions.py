@@ -83,7 +83,9 @@ def parse_srt(content: str, *, source_name: str = "<srt>") -> list[CaptionEntry]
         )
         if not match:
             raise ConfigurationError(
-                detail=f"Invalid SubRip file {source_name!r} at block {block_number}.", charged="no"
+                detail=f"Invalid SubRip file {source_name!r} at block {block_number}.",
+                charged="no",
+                remediation_hint="Correct the SRT block index and timestamp lines, then retry.",
             )
         text = "\n".join(lines[2:]).strip()
         if not text:
@@ -91,12 +93,16 @@ def parse_srt(content: str, *, source_name: str = "<srt>") -> list[CaptionEntry]
         start, end = _seconds(match.group(1)), _seconds(match.group(2))
         if end <= start:
             raise ConfigurationError(
-                detail=f"Invalid SubRip file {source_name!r} at block {block_number}.", charged="no"
+                detail=f"Invalid SubRip file {source_name!r} at block {block_number}.",
+                charged="no",
+                remediation_hint="Correct the SRT timestamps so the end follows the start.",
             )
         entries.append(CaptionEntry(int(lines[0].strip()), start, end, text))
     if not entries:
         raise ConfigurationError(
-            detail=f"Invalid SubRip file {source_name!r} at block 1.", charged="no"
+            detail=f"Invalid SubRip file {source_name!r} at block 1.",
+            charged="no",
+            remediation_hint="Provide an SRT file with at least one timed caption cue.",
         )
     return entries
 
@@ -137,14 +143,19 @@ def resolve_video_source(file_or_id: str, *, profile: str | None, route: str) ->
         path = path.resolve()
         if not path.is_file():
             raise ConfigurationError(
-                detail=f"Video file does not exist: {path}", charged="no", route=route
+                detail=f"Video file does not exist: {path}",
+                charged="no",
+                route=route,
+                remediation_hint="Check the path and pass an existing local video file.",
             )
         return path
     with nothing_submitted():
         asset = resolve_asset(file_or_id, profile=profile, route=route)
         if asset.kind is not AssetKind.VIDEO:
             raise ConfigurationError(
-                detail=f"Catalog media {file_or_id} is not a video.", charged="no"
+                detail=f"Catalog media {file_or_id} is not a video.",
+                charged="no",
+                remediation_hint="Pass a catalog UUID whose media type is video.",
             )
         for local_file in asset.local_files:
             if (verified := verified_local_path(local_file)) is not None:
@@ -173,7 +184,9 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
         with av.open(str(video_path)) as container:
             if not container.streams.audio:
                 raise ConfigurationError(
-                    detail="Video has no audio track to transcribe.", charged="no"
+                    detail="Video has no audio track to transcribe.",
+                    charged="no",
+                    remediation_hint="Pass a video containing an audio track.",
                 )
             stream = container.streams.audio[0]
             resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
@@ -184,7 +197,9 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
                     samples.append(bytes(converted.planes[0])[: converted.samples * 2])
             if not samples:
                 raise ConfigurationError(
-                    detail="Video audio track contains no decodable audio.", charged="no"
+                    detail="Video audio track contains no decodable audio.",
+                    charged="no",
+                    remediation_hint="Check the audio codec and re-encode the clip if needed.",
                 )
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as output:
@@ -229,7 +244,9 @@ def transcribe_video(
     destination = (out_file or source.with_suffix(".srt")).expanduser().resolve()
     if destination == source.resolve():
         raise ConfigurationError(
-            detail="SRT output must not overwrite the input video.", charged="no"
+            detail="SRT output must not overwrite the input video.",
+            charged="no",
+            remediation_hint="Choose a separate --out-file path for the SRT.",
         )
     if destination.exists():
         raise ConfigurationError(
@@ -273,7 +290,9 @@ def _request_segments(
         ) from exc
     except (ValueError, KeyError, TypeError) as exc:
         raise ConfigurationError(
-            detail="Transcription endpoint returned an invalid response.", charged="no"
+            detail="Transcription endpoint returned an invalid response.",
+            charged="no",
+            remediation_hint="Configure the endpoint to return valid verbose_json segments or SRT.",
         ) from exc
     raise AssertionError("unreachable")
 
@@ -281,7 +300,9 @@ def _request_segments(
 def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntry, ...]:
     if 300 <= response.status_code < 400:
         raise ConfigurationError(
-            detail="Transcription endpoint redirected; request refused.", charged="no"
+            detail="Transcription endpoint redirected; request refused.",
+            charged="no",
+            remediation_hint="Configure the exact transcription endpoint URL without redirects.",
         )
     if response.status_code == 429:
         raise RateLimitError(detail="Transcription endpoint rate limit reached.", retry_after=None)
@@ -294,6 +315,7 @@ def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntr
         raise ConfigurationError(
             detail=f"Transcription request rejected: {redact_error_detail(response.text)}",
             charged="no",
+            remediation_hint="Check the transcription endpoint URL, model, and API key.",
         )
     try:
         payload: Any = response.json()
@@ -349,7 +371,9 @@ def caption_video(
         (srt_path or srt_out_file or Path()).expanduser().resolve(),
     }:
         raise ConfigurationError(
-            detail="Caption output must not overwrite an input file.", charged="no"
+            detail="Caption output must not overwrite an input file.",
+            charged="no",
+            remediation_hint="Choose a distinct --out-file path for the captioned video.",
         )
     if destination.exists():
         raise ConfigurationError(
@@ -376,7 +400,9 @@ def caption_video(
             ) from exc
     if destination in {source.resolve(), caption_path.resolve()}:
         raise ConfigurationError(
-            detail="Caption output must not overwrite an input file.", charged="no"
+            detail="Caption output must not overwrite an input file.",
+            charged="no",
+            remediation_hint="Choose a distinct --out-file path for the captioned video.",
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
