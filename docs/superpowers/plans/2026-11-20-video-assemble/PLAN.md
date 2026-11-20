@@ -74,9 +74,9 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Add `gflow video assemble CLIP...` with fixed requested options.
 **Files:** `src/gflow_cli/cli_video.py`, CLI tests.
 **Steps:**
-- [ ] Validate volumes in [0,1], require clips and `--out-file`.
-- [ ] Emit consistent human and `--json` success output.
-- [ ] Test help, errors, and dependency hint.
+- [x] Validate volumes in [0,1], require clips and `--out-file`.
+- [x] Emit consistent human and `--json` success output.
+- [x] Test help, errors, and dependency hint via the shared missing-chain error.
 
 ## Task 6 — MCP twin
 **What:** Register `gflow_video_assemble`, preserving CLI semantics.

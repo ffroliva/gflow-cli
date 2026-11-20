@@ -70,6 +70,7 @@ from gflow_cli.paths import (
     extend_output_path,
     relocate_video_output,
 )
+from gflow_cli.services.video_assembly import assemble_videos, resolve_assembly_input
 from gflow_cli.storage import cloud_info_from_path, refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
@@ -1096,6 +1097,95 @@ async def _run_chain(
 @click.group()
 def video() -> None:
     """Generate and manage videos via Google Flow Veo."""
+
+
+@spends_credits(False)
+@video.command(
+    "assemble",
+    short_help="Join local or catalog clips with optional audio tracks (credit-free).",
+    help=(
+        "Join local video files or catalog media IDs without contacting Flow. Output uses "
+        "the first clip's dimensions and frame rate. Existing output files are refused."
+    ),
+)
+@click.argument("clips", nargs=-1, required=True)
+@click.option("--music", type=str, help="Music file or locally available catalog media ID.")
+@click.option("--voiceover", type=str, help="Voiceover file or locally available catalog media ID.")
+@click.option("--clip-volume", type=click.FloatRange(0.0, 1.0), default=1.0, show_default=True)
+@click.option("--music-volume", type=click.FloatRange(0.0, 1.0), default=0.3, show_default=True)
+@click.option("--voiceover-volume", type=click.FloatRange(0.0, 1.0), default=1.0, show_default=True)
+@click.option(
+    "--duck/--no-duck", default=True, show_default=True, help="Duck music under voiceover."
+)
+@click.option(
+    "--out-file",
+    required=True,
+    type=click.Path(dir_okay=False, path_type=Path),
+    help="Output MP4 path (must not already exist).",
+)
+@click.option("--profile", default=None, help="Profile for catalog media ID resolution.")
+@output_format_option(allow_id=False, has_out_file=True)
+def assemble(
+    clips: tuple[str, ...],
+    music: str | None,
+    voiceover: str | None,
+    clip_volume: float,
+    music_volume: float,
+    voiceover_volume: float,
+    duck: bool,
+    out_file: Path,
+    profile: str | None,
+    as_json: bool,
+    output_format: str = "table",
+) -> None:
+    """Assemble local CLIPS into one MP4 with optional music and voiceover."""
+
+    async def _run() -> None:
+        output_path = out_file.expanduser()
+        if output_path.suffix.lower() != ".mp4":
+            output_path = output_path.with_suffix(".mp4")
+        paths = [resolve_assembly_input(value, profile=profile) for value in clips]
+        result = assemble_videos(
+            paths,
+            output_path,
+            music=resolve_assembly_input(music, profile=profile) if music else None,
+            voiceover=resolve_assembly_input(voiceover, profile=profile) if voiceover else None,
+            clip_volume=clip_volume,
+            music_volume=music_volume,
+            voiceover_volume=voiceover_volume,
+            duck=duck,
+        )
+        payload = {
+            "status": "succeeded",
+            "output_file": str(result.output_file),
+            "duration_seconds": result.duration_seconds,
+            "clips_count": result.clips_count,
+            "has_music": result.has_music,
+            "has_voiceover": result.has_voiceover,
+            "ducking_applied": result.ducking_applied,
+            "video_stream": {
+                "codec": "h264",
+                "width": result.width,
+                "height": result.height,
+                "fps": result.frame_rate,
+            },
+            "audio_stream": {"codec": "aac", "sample_rate": 44100, "channels": 2},
+            "bytes": result.bytes,
+        }
+        if as_json or output_format == OutputFormat.JSON.value:
+            json_output.emit(payload)
+        else:
+            console.print(
+                f"Assembled {result.clips_count} clips into {result.output_file} "
+                f"({result.duration_seconds:.2f}s)."
+            )
+
+    run_with_handlers(
+        _run,
+        cli_command="video assemble",
+        as_json=as_json or output_format == OutputFormat.JSON.value,
+        output_format=output_format,
+    )
 
 
 @spends_credits(True)
