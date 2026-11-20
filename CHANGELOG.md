@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video assemble` joins clips with a music bed and a voiceover, locally and free ([#1359](https://github.com/ffroliva/gflow-cli/issues/1359)).** Clips are local files or catalogued media ids; `--music` and `--voiceover` mix in with per-track volume, and `--duck` lowers the music under the voiceover. Output takes the first clip's size and frame rate; a clip with a different aspect ratio is refused rather than stretched. It runs on PyAV from the `chain` extra, needs no system ffmpeg, contacts no Flow surface and spends no credits. The MCP twin `gflow_video_assemble` stays available under `--no-spend`.
+
 ### Fixed
 
 - **The landing page meets WCAG AA contrast in both themes.**
