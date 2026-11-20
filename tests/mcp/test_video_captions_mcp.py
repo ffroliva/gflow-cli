@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,10 +67,6 @@ async def test_transcribe_tool_is_credit_free_and_returns_guarded_error() -> Non
     result = await gflow_video_transcribe("missing.mp4")
     assert result["status"] == "error"
     assert result["error"]["charged"] == "no"
-
-
-import subprocess
-import sys
 
 
 def test_video_captions_adapter_imports_in_fresh_interpreter() -> None:

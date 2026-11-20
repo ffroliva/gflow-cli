@@ -360,13 +360,15 @@ def _parse_transcription_response(response: httpx.Response) -> tuple[CaptionEntr
     parsed = cast(dict[str, Any], payload)
     raw = parsed.get("segments")
     if isinstance(raw, list):
+        raw_segments = cast(list[object], raw)
         entries: list[CaptionEntry] = []
-        for seg in raw:
+        for seg in raw_segments:
             if not isinstance(seg, dict):
                 continue
+            segment = cast(dict[str, Any], seg)
             try:
-                start, end = float(seg["start"]), float(seg["end"])
-                text = str(seg["text"]).strip()
+                start, end = float(segment["start"]), float(segment["end"])
+                text = str(segment["text"]).strip()
             except (KeyError, TypeError, ValueError):
                 continue
             if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
@@ -408,12 +410,6 @@ def caption_video(
             detail="Caption output must not overwrite an input file.",
             charged="no",
             remediation_hint="Choose a distinct --out-file path for the captioned video.",
-        )
-    if destination.exists():
-        raise ConfigurationError(
-            detail=f"Caption output already exists: {destination.name}.",
-            charged="no",
-            remediation_hint="Choose another --out path or remove the existing file.",
         )
     if srt_path is None:
         transcribed = transcribe_video(
@@ -501,7 +497,7 @@ def _render_video(
                     overlays[text] = _caption_overlay(
                         frame.width, frame.height, text, draw_module, font_module
                     )
-                frame = _blend_caption(av, frame, *overlays[text])
+                frame = _draw_caption(av, frame, text, draw_module, font_module, overlays[text])
             for packet in encoded.encode(frame):
                 output.mux(packet)
         for packet in encoded.encode():
@@ -515,12 +511,19 @@ def _render_video(
     return frames, burned, duration
 
 
-def _draw_caption(av: Any, frame: Any, text: str, draw_module: Any, font_module: Any) -> Any:
+def _draw_caption(
+    av: Any,
+    frame: Any,
+    text: str,
+    draw_module: Any,
+    font_module: Any,
+    overlay: tuple[Any, int] | None = None,
+) -> Any:
     original_pts, original_time_base = frame.pts, frame.time_base
     return _blend_caption(
         av,
         frame,
-        *_caption_overlay(frame.width, frame.height, text, draw_module, font_module),
+        *(overlay or _caption_overlay(frame.width, frame.height, text, draw_module, font_module)),
         original_pts=original_pts,
         original_time_base=original_time_base,
     )

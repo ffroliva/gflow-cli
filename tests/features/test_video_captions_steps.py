@@ -25,6 +25,9 @@ scenarios("video_captions.feature")
 def video_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    for stale in ("speech.srt", "speech-captions.mp4"):
+        (tmp_path / stale).unlink(missing_ok=True)
+    (tmp_path / "out" / "speech.srt").unlink(missing_ok=True)
     config.reset_settings()
     case: dict[str, Any] = {"root": tmp_path, "requests": 0}
     yield case
@@ -237,14 +240,12 @@ def remediation(video_case: dict[str, Any], first: str, second: str) -> None:
 
 
 @when(parsers.parse('the MCP tool "{tool}" is called for "{file}" with out_file "{out_file}"'))
-@then(parsers.parse('the MCP reply has status "{status}"'))
 def call_mcp(
     video_case: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     tool: str = "gflow_video_captions",
     file: str = "speech.mp4",
     out_file: str = "captioned/final.mp4",
-    status: str = "ok",
 ) -> None:
     from gflow_cli.mcp.tools import gflow_video_captions
 
@@ -252,8 +253,12 @@ def call_mcp(
     config.reset_settings()
     video_case["mcp"] = asyncio.run(gflow_video_captions(file, out_file=out_file))
     assert tool == "gflow_video_captions"
-    assert video_case["mcp"]["status"] == status
     config.reset_settings()
+
+
+@then(parsers.parse('the MCP reply has status "{status}"'))
+def assert_mcp_status(video_case: dict[str, Any], status: str) -> None:
+    assert video_case["mcp"]["status"] == status, video_case["mcp"]
 
 
 @then(

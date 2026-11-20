@@ -2690,8 +2690,8 @@ __all__ = [
     "gflow_instructions_rm",
     "gflow_instructions_toggle_mode",
     "gflow_instructions_apply",
-    "gflow_video_transcribe",
-    "gflow_video_captions",
+    "gflow_video_transcribe",  # noqa: F822 — lazily re-exported by __getattr__
+    "gflow_video_captions",  # noqa: F822 — lazily re-exported by __getattr__
     "_TokenBucket",
     "_adapt_tools",
     "_format_mcp_error",
