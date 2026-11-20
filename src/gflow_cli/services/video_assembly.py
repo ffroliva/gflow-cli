@@ -18,6 +18,7 @@ from gflow_cli.services.media_recovery import resolve_asset
 _SAMPLE_RATE = 44100
 _CHANNELS = 2
 _CHUNK = 1024
+_DUCKING = "threshold=0.01:ratio=10:attack=5:release=400"
 
 
 @dataclass(frozen=True)
@@ -300,6 +301,14 @@ def _encode_video(target: Any, clips: list[Path], layout: _VideoLayout, av: Any)
     return audio_out
 
 
+def _split_voice(graph: Any, voice_in: Any, voiceover_volume: float) -> Any:
+    voice_vol = graph.add("volume", str(voiceover_volume))
+    voice_in.link_to(voice_vol)
+    split = graph.add("asplit")
+    voice_vol.link_to(split)
+    return split
+
+
 def _audio_graph(
     av: Any,
     *,
@@ -332,13 +341,8 @@ def _audio_graph(
                 sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
             )
             inputs.append(voice_in)
-            voice_vol = graph.add("volume", str(voiceover_volume))
-            voice_in.link_to(voice_vol)
-            split = graph.add("asplit")
-            voice_vol.link_to(split)
-            compressor = graph.add(
-                "sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300"
-            )
+            split = _split_voice(graph, voice_in, voiceover_volume)
+            compressor = graph.add("sidechaincompress", _DUCKING)
             music_vol.link_to(compressor, 0, 0)
             split.link_to(compressor, 0, 1)
             tracks.extend([(compressor, 0), (split, 1)])
@@ -357,9 +361,15 @@ def _audio_graph(
             sample_rate=_SAMPLE_RATE, format="flt", layout="stereo", time_base="1/44100"
         )
         inputs.append(clip_voice)
-        compressor = graph.add("sidechaincompress", "threshold=0.05:ratio=4:attack=20:release=300")
+        if music is None:
+            split = _split_voice(graph, clip_voice, voiceover_volume)
+            tracks.append((split, 1))
+            key = split
+        else:
+            key = clip_voice
+        compressor = graph.add("sidechaincompress", _DUCKING)
         clip_vol.link_to(compressor, 0, 0)
-        clip_voice.link_to(compressor, 0, 1)
+        key.link_to(compressor, 0, 1)
         tracks[0] = (compressor, 0)
     mixer = graph.add(
         "amix", f"inputs={len(tracks)}:duration=first:dropout_transition=0:normalize=0"

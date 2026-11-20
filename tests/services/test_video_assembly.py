@@ -59,16 +59,36 @@ def _clip(
                 output.mux(packet)
 
 
-def _audio(path: Path, *, frequency: float) -> None:
+def _audio(path: Path, *, frequency: float, duration: float = 0.5, level: float = 0.3) -> None:
     rate = 44100
-    samples = np.arange(rate // 2, dtype=np.float32) / rate
-    tone = (0.3 * np.sin(2 * np.pi * frequency * samples)).astype(np.float32)
+    samples = np.arange(int(rate * duration), dtype=np.float32) / rate
+    tone = (level * np.sin(2 * np.pi * frequency * samples)).astype(np.float32)
     with av.open(str(path), "w", format="mp4") as output:
         stream = output.add_stream("aac", rate=rate)
         stream.layout = "stereo"
         stream.format = "fltp"
         for start in range(0, len(tone), 1024):
             block = np.vstack([tone[start : start + 1024], tone[start : start + 1024]])
+            frame = av.AudioFrame.from_ndarray(block, format="fltp", layout="stereo")
+            frame.sample_rate = rate
+            frame.pts = start
+            for packet in stream.encode(frame):
+                output.mux(packet)
+        for packet in stream.encode():
+            output.mux(packet)
+
+
+def _quiet_bursts(path: Path) -> None:
+    rate = 44100
+    samples = np.arange(rate * 4, dtype=np.float32) / rate
+    signal = (0.09 * np.sqrt(2) * np.sin(2 * np.pi * 880 * samples)).astype(np.float32)
+    signal *= ((samples % 2) < 0.5).astype(np.float32)
+    with av.open(str(path), "w", format="mp4") as output:
+        stream = output.add_stream("aac", rate=rate)
+        stream.layout = "stereo"
+        stream.format = "fltp"
+        for start in range(0, len(signal), 1024):
+            block = np.vstack([signal[start : start + 1024]] * 2)
             frame = av.AudioFrame.from_ndarray(block, format="fltp", layout="stereo")
             frame.sample_rate = rate
             frame.pts = start
@@ -368,6 +388,28 @@ def test_ducking_reduces_music_during_voiceover_bursts(
     burst = _band_rms(output, 220, 0.1, 0.4)
     gap = _band_rms(output, 220, 0.6, 0.9)
     assert 20 * np.log10(burst / gap) <= -6
+
+
+@pytest.mark.parametrize("bed", ["clip", "music"])
+def test_ducking_keeps_quiet_voice_above_loud_bed(tmp_path: Path, bed: str) -> None:
+    clip = tmp_path / "clip.mp4"
+    music = tmp_path / "music.m4a"
+    voice = tmp_path / "voice.m4a"
+    output = tmp_path / "mix.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=40, audio=bed == "clip", audio_frequency=440)
+    _audio(music, frequency=220, duration=4, level=0.6)
+    _quiet_bursts(voice)
+
+    assemble_videos([clip], output, music=music if bed == "music" else None, voiceover=voice)
+
+    bed_frequency = 440 if bed == "clip" else 220
+    burst_bed = _band_rms(output, bed_frequency, 0.1, 0.4)
+    gap_bed = _band_rms(output, bed_frequency, 0.9, 1.2)
+    burst_voice = _band_rms(output, 880, 0.1, 0.4)
+    reduction_db = 20 * np.log10(burst_bed / gap_bed)
+    margin_db = 20 * np.log10(burst_voice / burst_bed)
+    assert reduction_db <= -12, f"bed reduction was {reduction_db:.1f} dB"
+    assert margin_db >= 6, f"voice-over-bed margin was {margin_db:.1f} dB"
 
 
 @pytest.mark.parametrize("duck", [True, False])
