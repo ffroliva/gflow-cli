@@ -2374,8 +2374,8 @@ async def gflow_video_assemble(
     Args:
         clips: Local video paths or catalog UUIDs with verified local copies.
         out_file: Required MP4 destination, relative to the configured output directory.
-        music: Optional local audio path or catalog UUID.
-        voiceover: Optional local audio path or catalog UUID.
+        music: Optional local audio file path.
+        voiceover: Optional local audio file path.
         clip_volume: Clip audio gain, from 0 to 1 (default 1).
         music_volume: Music gain, from 0 to 1 (default 0.3).
         voiceover_volume: Voiceover gain, from 0 to 1 (default 1).
@@ -2389,8 +2389,8 @@ async def gflow_video_assemble(
     if output.suffix.lower() != ".mp4":
         output = output.with_suffix(".mp4")
     paths = [resolve_assembly_input(value, profile=profile) for value in clips]
-    music_path = resolve_assembly_input(music, profile=profile) if music else None
-    voice_path = resolve_assembly_input(voiceover, profile=profile) if voiceover else None
+    music_path = Path(music).expanduser() if music else None
+    voice_path = Path(voiceover).expanduser() if voiceover else None
     result = await asyncio.to_thread(
         assemble_videos,
         paths,

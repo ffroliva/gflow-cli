@@ -1113,8 +1113,8 @@ def video() -> None:
     ),
 )
 @click.argument("clips", nargs=-1, required=True)
-@click.option("--music", type=str, help="Music file or locally available catalog media ID.")
-@click.option("--voiceover", type=str, help="Voiceover file or locally available catalog media ID.")
+@click.option("--music", type=str, help="Local music audio file.")
+@click.option("--voiceover", type=str, help="Local voiceover audio file.")
 @click.option("--clip-volume", type=click.FloatRange(0.0, 1.0), default=1.0, show_default=True)
 @click.option("--music-volume", type=click.FloatRange(0.0, 1.0), default=0.3, show_default=True)
 @click.option("--voiceover-volume", type=click.FloatRange(0.0, 1.0), default=1.0, show_default=True)
@@ -1152,8 +1152,8 @@ def assemble(
         result = assemble_videos(
             paths,
             output_path,
-            music=resolve_assembly_input(music, profile=profile) if music else None,
-            voiceover=resolve_assembly_input(voiceover, profile=profile) if voiceover else None,
+            music=Path(music).expanduser() if music else None,
+            voiceover=Path(voiceover).expanduser() if voiceover else None,
             clip_volume=clip_volume,
             music_volume=music_volume,
             voiceover_volume=voiceover_volume,

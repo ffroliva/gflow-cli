@@ -42,6 +42,25 @@ def _clip(path: Path, *, size: tuple[int, int], rate: int, frames: int, audio: b
                 output.mux(packet)
 
 
+def _audio(path: Path, *, frequency: float) -> None:
+    rate = 44100
+    samples = np.arange(rate // 2, dtype=np.float32) / rate
+    tone = (0.3 * np.sin(2 * np.pi * frequency * samples)).astype(np.float32)
+    with av.open(str(path), "w", format="mp4") as output:
+        stream = output.add_stream("aac", rate=rate)
+        stream.layout = "stereo"
+        stream.format = "fltp"
+        for start in range(0, len(tone), 1024):
+            block = np.vstack([tone[start : start + 1024], tone[start : start + 1024]])
+            frame = av.AudioFrame.from_ndarray(block, format="fltp", layout="stereo")
+            frame.sample_rate = rate
+            frame.pts = start
+            for packet in stream.encode(frame):
+                output.mux(packet)
+        for packet in stream.encode():
+            output.mux(packet)
+
+
 def test_assembles_varied_clips_and_missing_audio_as_silence(tmp_path: Path) -> None:
     first = tmp_path / "first.mp4"
     second = tmp_path / "second.mp4"
@@ -99,6 +118,25 @@ def test_rejects_catalog_uuid_without_verified_local_copy(
 
     with pytest.raises(DataStoreError, match="no verified local file"):
         resolve_assembly_input("123e4567-e89b-12d3-a456-426614174000")
+
+
+def test_mixes_music_and_voiceover_with_ducking(tmp_path: Path) -> None:
+    clip = tmp_path / "clip.mp4"
+    music = tmp_path / "music.m4a"
+    voiceover = tmp_path / "voiceover.m4a"
+    output = tmp_path / "mix.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=5, audio=False)
+    _audio(music, frequency=220)
+    _audio(voiceover, frequency=1000)
+
+    result = assemble_videos([clip], output, music=music, voiceover=voiceover)
+
+    with av.open(str(output)) as container:
+        audio = container.streams.audio[0]
+        decoded = list(container.decode(audio))
+    assert result.has_music and result.has_voiceover and result.ducking_applied
+    assert decoded
+    assert max(float(np.abs(frame.to_ndarray()).max()) for frame in decoded) > 0.1
 
 
 def test_rejects_missing_non_uuid_path() -> None:

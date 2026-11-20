@@ -91,9 +91,9 @@ See `SCENARIO.md`; must-cover High items are tasks 1–3 and 6.
 **What:** Document command, tool, limits and alternative.
 **Files:** `docs/USAGE.md`, `docs/MCP.md`, `CHANGELOG.md`, `README.md`.
 **Steps:**
-- [ ] Add Unreleased entry and CLI/MCP examples.
-- [ ] Update README “Join clips” gflow-cli cell to “Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`)”; remove planned link.
-- [ ] Update `gflow docs` topic catalog and capabilities only if they enumerate commands/features.
+- [x] Add Unreleased entry and CLI/MCP examples.
+- [x] Update README “Join clips” gflow-cli cell to “Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`)”; remove planned link.
+- [x] Check `gflow docs` topic catalog and capabilities; neither enumerates video command features, so no change was needed.
 
 ## Task 8 — Installed-surface E2E
 **What:** Exercise installed CLI and MCP with real local media.

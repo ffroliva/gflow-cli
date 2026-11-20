@@ -32,6 +32,7 @@ Commands:
     i2v                         Generate a video from an initial frame + motion prompt.
     r2v                         Generate a video from reference images + prompt.
     chain                       Render a JSONL manifest as a last-frame I2V chain.
+    assemble                    Join local clips with optional local audio tracks.
 
   scene     Compose Flow Scenes (Add Clip) — credit-free REST.
     create                      Compose ordered, trimmable clips into a scene (optional extended .mp4).
@@ -1410,6 +1411,40 @@ gflow tools run creative-director "a cat on a couch" --style cinema --json
 To author your own tool, drop a TOML in `<GFLOW_CLI_HOME>/tools/` — see
 [TOOLS.md § My Tools](TOOLS.md).
 
+## `gflow video assemble`
+
+Join one or more local video files or catalog media IDs into an MP4. This command
+works entirely on your machine and uses no Flow credits. Catalog IDs need a local
+copy whose recorded size and SHA-256 still match.
+
+```text
+gflow video assemble CLIPS... --out-file PATH [OPTIONS]
+
+Options:
+  --music PATH                Optional local music audio file.
+  --voiceover PATH            Optional local voiceover audio file.
+  --clip-volume FLOAT         Clip audio gain, 0–1 (default 1).
+  --music-volume FLOAT        Music gain, 0–1 (default 0.3).
+  --voiceover-volume FLOAT    Voiceover gain, 0–1 (default 1).
+  --duck / --no-duck          Duck music under voiceover (default on).
+  --profile NAME              Profile to resolve catalog IDs.
+  --out-file PATH             Required output path; existing files are refused.
+  --json                      Emit the result as JSON.
+```
+
+The output uses the first clip's dimensions and frame rate. Audio is normalized
+to stereo 44.1 kHz AAC. A volume outside 0–1, unreadable input, or output path
+that aliases an input fails before replacing source media; a failed render removes
+its partial output.
+
+```bash
+gflow video assemble intro.mp4 scene.mp4 outro.mp4 --music score.wav \
+  --voiceover narration.wav --out-file finished.mp4 --json
+```
+
+For clips already in a Flow project that need no audio mix, use
+[`gflow scene create`](#gflow-scene) for server-side composition instead.
+
 ## `gflow scene`
 
 Compose ordered, trimmable video clips into a Flow **Scene** (the "Add Clip"
@@ -2531,7 +2566,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|
 | `0`  | —                     | Success                                          | —                                                          |
-| `1`  | unhandled / unmapped  | Anything not derived from `GFlowError`, a typed error with no code of its own (e.g. a reCAPTCHA mint failure, `type` `…/errors/recaptcha-mint`, [#915](https://github.com/ffroliva/gflow-cli/issues/915) — branch on the `--json` `type`) — **or a deliberate CLI verdict**: `gflow auth status` exits 1 for a dead/unverifiable session | Re-run with `--verbose`; for `auth status` follow the printed hint; file a bug if it persists |
+| `1`  | unhandled / unmapped  | Anything not derived from `GFlowError`, a typed error with no code of its own (e.g. `VideoAssemblyError` for local media processing, or a reCAPTCHA mint failure, `type` `…/errors/recaptcha-mint`, [#915](https://github.com/ffroliva/gflow-cli/issues/915) — branch on the `--json` `type`) — **or a deliberate CLI verdict**: `gflow auth status` exits 1 for a dead/unverifiable session | Re-run with `--verbose`; for `auth status` follow the printed hint; file a bug if it persists |
 | `2`  | usage error (Click)   | Bad usage / missing arg / profile missing        | Standard CLI usage error                                   |
 | `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403), or Flow served one of its OAuth/sign-in routes instead of the page gflow asked for ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | `gflow auth login --profile <name>` — **but read the error's own `remediation_hint` first.** `AisandboxAuthError` shares this code. (Before v0.87.1, when `gflow credits` failed on an account migrated to `flow.google.com`, re-logging in could not help and could roll the profile's browser-strategy marker back ([#795](https://github.com/ffroliva/gflow-cli/issues/795), [#791](https://github.com/ffroliva/gflow-cli/issues/791)).) Since v0.87.1 a credits exit 3 means a sign-in landing, fixable with `gflow credits --refresh` |
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |

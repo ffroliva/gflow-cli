@@ -179,6 +179,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/model-mode-incompatibility` | `ModelModeIncompatibilityError` | 17 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/video-model-selection` | `VideoModelSelectionError` | 18 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/scene-concat` | `SceneConcatError` | 19 | `no` | `fix_input` |
+| `https://gflow-cli.dev/errors/video-assembly` | `VideoAssemblyError` | 1 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/frame-extraction` | `FrameExtractionError` | 20 | `maybe` | `fix_input` |
 | `https://gflow-cli.dev/errors/chain-partial` | `ChainPartialError` | 21 | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/upscale-unavailable` | `UpscaleUnavailableError` | 22 | `no` | `none` |
