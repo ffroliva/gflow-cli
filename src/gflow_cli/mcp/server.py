@@ -196,9 +196,10 @@ def _register_surfaces() -> None:
     from gflow_cli.mcp import prompts as _prompts
     from gflow_cli.mcp import resources as _resources
     from gflow_cli.mcp import tools as _tools
+    from gflow_cli.mcp import video_captions_tools as _video_captions_tools
 
     # Access them to satisfy pyright unused import check
-    _ = (_prompts, _resources, _tools)
+    _ = (_prompts, _resources, _tools, _video_captions_tools)
     _apply_no_spend_policy()
 
 

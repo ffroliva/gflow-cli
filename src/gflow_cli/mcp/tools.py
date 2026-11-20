@@ -2658,10 +2658,13 @@ async def gflow_instructions_apply(
     )
 
 
-from gflow_cli.mcp.video_captions_tools import (  # noqa: E402 — adapter imports shared tools helpers
-    gflow_video_captions,
-    gflow_video_transcribe,
-)
+def __getattr__(name: str) -> Any:
+    if name in {"gflow_video_transcribe", "gflow_video_captions"}:
+        from gflow_cli.mcp import video_captions_tools
+
+        return getattr(video_captions_tools, name)
+    raise AttributeError(name)
+
 
 # Re-export Path so tests that import it directly still work
 __all__ = [

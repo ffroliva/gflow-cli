@@ -65,3 +65,17 @@ async def test_transcribe_tool_is_credit_free_and_returns_guarded_error() -> Non
     result = await gflow_video_transcribe("missing.mp4")
     assert result["status"] == "error"
     assert result["error"]["charged"] == "no"
+
+
+import subprocess
+import sys
+
+
+def test_video_captions_adapter_imports_in_fresh_interpreter() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import gflow_cli.mcp.video_captions_tools"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
