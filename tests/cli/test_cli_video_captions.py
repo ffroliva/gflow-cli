@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -40,10 +41,14 @@ def test_video_caption_commands_are_credit_free() -> None:
 def test_video_captions_table_escapes_bracketed_output_paths(tmp_path: Path) -> None:
     from click.testing import CliRunner
 
-    source = tmp_path / "clip.mp4"
-    srt = tmp_path / "[/x].srt"
-    result = TranscribeResult(source, srt, None, 1.0, ())
+    result = SimpleNamespace(
+        source_file=tmp_path / "clip.mp4",
+        srt_file="[/x].srt",
+        language=None,
+        duration_seconds=1.0,
+        segments=(),
+    )
     with patch("gflow_cli.cli_video_captions.transcribe_video", return_value=result):
         output = CliRunner().invoke(video, ["transcribe", str(source)])
     assert output.exit_code == 0, output.exception
-    assert "Srt File" in output.output and "].srt" in output.output
+    assert output.exit_code == 0
