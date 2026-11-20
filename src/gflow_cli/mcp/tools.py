@@ -2688,3 +2688,4 @@ __all__ = [
     "_gflow_error_dict",
     "_run_generation_task",
 ]
+from gflow_cli.mcp.video_assembly import gflow_video_assemble  # noqa: E402, F401  # pyright: ignore[reportUnusedImport]

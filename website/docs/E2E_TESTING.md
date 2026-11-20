@@ -41,6 +41,12 @@ author forgets the `pytestmark` declaration.
 
 Tests in `tests/smoke/` carry `pytest.mark.smoke`.
 
+Installed-surface tests that use synthetic local data and never contact Flow may
+carry a cost sub-marker. Local-media tests must carry `pytest.mark.e2e_media`;
+select them alone with `pytest -m e2e_media` (`pytest -m e2e` runs them too). For example, `tests/e2e/test_video_assemble_e2e.py` builds and installs
+the wheel, then runs the CLI and MCP stdio tool against generated media files.
+It needs no profile, browser or Flow credits.
+
 ### Cost sub-markers (Layer 4)
 
 Each e2e test also carries **one or more cost sub-markers** so you can run
@@ -58,6 +64,7 @@ exactly the cost tier you can afford:
 | `e2e_auth` | 0 | < 30 s | auth/session/health-check — always safe to run |
 | `e2e_telemetry` | 0 | < 60 s | usage telemetry against an installed wheel — zero credits, no browser, no Flow account |
 | `e2e_update` | 0 | < 120 s | `gflow update` through real installers in tmp venvs (needs the network for index dependencies, keeps pip and uv caches under tmp) — zero credits, no browser, no Flow account |
+| `e2e_media` | 0 | < 120 s | Local media commands (`video assemble`) against an installed wheel on generated h264/AAC clips — zero credits, no browser, no Flow account |
 | `e2e_image` | **0** (daily cap) | 30–120 s | text-to-image or image-to-image golden path |
 | `e2e_batch` | **0** (daily cap) | 2–10 min | batch image generation |
 | `e2e_video` | ~1 Veo | 1–10 min | text-to-video or image-to-video |
@@ -72,6 +79,7 @@ data-layer assertions depend on a real generation having run first.
 e2e ─┬─ e2e_auth      (auth/session, health check — zero credits)
      ├─ e2e_telemetry (usage telemetry against an installed wheel — zero credits)
      ├─ e2e_update    (gflow update in tmp venvs — zero credits)
+     ├─ e2e_media     (local media commands — zero credits)
      ├─ e2e_image     (t2i, i2i — ZERO credits, daily cap only)
      │   └─ e2e_data  (+ DB assertions)
      ├─ e2e_batch     (batch t2i — ZERO credits, daily cap only)
