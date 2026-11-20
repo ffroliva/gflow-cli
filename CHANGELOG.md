@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The README's models table renders as one table again.** A note about the 2026-12-05 retirements sat between its rows, so Veo 3.1 Lite and every image model lost the table header.
+- **The README comparison table adds kodelyx/flow-agent**, with two rows where it goes further than gflow-cli: an OpenAI-compatible API and credit pooling across Google accounts. `llms.txt` now claims only what still holds with it counted: gflow-cli is the only tool in that table that installs from PyPI and is listed in the official MCP Registry.
+- **The README, `llms.txt` and the landing page say which gflow-cli this is.** Other projects use the name, including Node.js packages on npm and JSR; this one is the Python package on PyPI.
+
 ## [0.103.1] — 2026-11-20
 
 ### Fixed

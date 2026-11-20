@@ -38,6 +38,8 @@
       "mainEntity": [
         {"@type": "Question", "name": "Is gflow-cli an official Google tool?",
          "acceptedAnswer": {"@type": "Answer", "text": "No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session."}},
+        {"@type": "Question", "name": "Is this the gflow-cli package on npm or JSR?",
+         "acceptedAnswer": {"@type": "Answer", "text": "No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at github.com/ffroliva/gflow-cli and listed in the MCP Registry as io.github.ffroliva/gflow-cli."}},
         {"@type": "Question", "name": "Do I need a Gemini or Vertex AI API key?",
          "acceptedAnswer": {"@type": "Answer", "text": "No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API."}},
         {"@type": "Question", "name": "How do I connect Claude or Cursor to Google Flow?",
@@ -320,6 +322,7 @@
       </div>
       <div class="grid">
         <div class="cell"><h3>Is gflow-cli an official Google tool?</h3><p>No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.</p></div>
+        <div class="cell"><h3>Is this the gflow-cli package on npm or JSR?</h3><p>No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at github.com/ffroliva/gflow-cli and listed in the MCP Registry as io.github.ffroliva/gflow-cli.</p></div>
         <div class="cell"><h3>Do I need a Gemini or Vertex AI API key?</h3><p>No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.</p></div>
         <div class="cell"><h3>How do I connect Claude or Cursor to Google Flow?</h3><p>Install with uv tool install gflow-cli, sign in once with gflow auth login --browser chrome, then run gflow mcp setup (Claude Desktop), gflow mcp setup --target cursor, or install the Claude Code plugin.</p></div>
         <div class="cell"><h3>Can an AI agent spend my Flow credits without asking?</h3><p>Not when the server runs as gflow mcp run --no-spend: the credit-spending tools are never registered. Image generation spends no credits (it counts against a daily image quota); only video spends credits.</p></div>
