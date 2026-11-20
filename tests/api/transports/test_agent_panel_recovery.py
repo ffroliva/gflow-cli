@@ -84,9 +84,11 @@ function render() {
     html = `<flow-prompt-box>${agentBox(false)}</flow-prompt-box>`;
   } else {
     const head = S.build === 'new' ? ['forum', 'settings_2', 'right_panel_close'] : ['menu', 'edit_square', 'close'];
-    html = `<mat-sidenav-content><flow-agent-panel>`
+    // The prompt box (with its decoy `close`) comes BEFORE the header here, the reverse of
+    // Flow's order, so a close anchor that relied on DOM order would hit the decoy.
+    html = `<mat-sidenav-content><flow-agent-panel>${agentBox(true)}`
       + head.map((l) => `<button class="flow-icon-button-transparent">${icon(l)}</button>`).join('')
-      + `<flow-chat-view></flow-chat-view>${agentBox(true)}</flow-agent-panel></mat-sidenav-content>`;
+      + `<flow-chat-view></flow-chat-view></flow-agent-panel></mat-sidenav-content>`;
   }
   document.getElementById('root').innerHTML = html;
 }
@@ -113,9 +115,7 @@ def _fast_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shrink the gate's waits. These pages either settle at once or never will."""
     monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_EARLY_S", 0.5)
     monkeypatch.setattr(_mc_editor_gate, "AGENT_ONLY_SETTLE_S", 0.2)
-    # How long the gate waits for the toggle after closing the panel. raising=False: the
-    # constant arrives with the fix, and this red-first module predates it.
-    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 0.3, raising=False)
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 0.3)
 
 
 async def _run(page: Page, **scenario: Any) -> tuple[str, list[str], dict[str, Any]]:
@@ -205,6 +205,21 @@ async def test_old_build_agent_only_page_keeps_its_verdict_after_the_panel_close
     kind, clicks, _ = await _run(page, build="old", agent=True, panel=True, classicArm=False)
     assert kind == "agent_only"
     assert clicks == ["flow-agent-panel:close"]
+
+
+@pytest.mark.asyncio
+async def test_old_build_agent_only_page_does_not_wait_for_a_toggle_that_never_comes(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the close, the agent-only page shows its `tune` at once; waiting the whole
+    settle for a toggle it will never render would tax every such run."""
+    import time
+
+    monkeypatch.setattr(_mc_editor_gate, "AGENT_PANEL_SETTLE_S", 3.0)
+    t0 = time.monotonic()
+    kind, _, _ = await _run(page, build="old", agent=True, panel=True, classicArm=False)
+    assert kind == "agent_only"
+    assert time.monotonic() - t0 < 2.5
 
 
 # --- decoys --------------------------------------------------------------------------------

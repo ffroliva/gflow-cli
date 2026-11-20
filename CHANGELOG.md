@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - closes the panel with its own close button;
     - turns agent mode off;
     - continues on the classic composer.
-  - **Flow remembers that change for the account.** The run logs `migrated.agent_mode_exited` at warning level when it happens.
+  - **Flow keeps that change across reloads**, so agent mode stays off until it is switched on again. The run logs `migrated.agent_mode_exited` at warning level when it happens.
   - **Messages** that asked users to turn "the Agent chip" off now say to close the agent panel and switch Agent off.
 
 ## [0.103.0] — 2026-11-19

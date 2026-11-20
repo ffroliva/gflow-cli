@@ -1582,7 +1582,7 @@ wait instead of the full 30 s readiness gate.
 docked open, the Agent toggle is not in the page at all, on both builds measured. That page
 used to be read as this composer (2026-11-19 build) or as selector drift, exit 23 (2026-11-20
 build). gflow now closes the panel first, through its own close button, then turns agent mode
-off. **Flow remembers that for the account**: agent mode stays off until it is switched on
+off. **Flow keeps that across reloads**: agent mode stays off until it is switched on
 again, and the run logs `migrated.agent_mode_exited` at warning level when it happens. This
 composer is reported only when no toggle appears after the panel is closed.
 

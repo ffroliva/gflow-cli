@@ -200,10 +200,11 @@ class Dom:
     agent_panel_expanded: bool = False
     # --- #1374 / #1384: the agent panel (2026-11-19 and 2026-11-20 spikes) --------------
     #: Measured on both builds: while the panel is open the toggle is NOT in the DOM, and
-    #: it comes back (still pressed) once the panel's close button is clicked. Default
-    #: False keeps the older tests' model, a chip still reachable under the panel.
-    agent_panel_removes_chip: bool = False
+    #: it comes back (still pressed) once the panel's close button is clicked.
     agent_panel_close_raises: bool = False  # the close button is covered or detached
+    #: The panel mounts after the gate's first look: invisible on the first read only.
+    agent_panel_mounts_late: bool = False
+    agent_panel_reads: int = 0
     agent_panel_sticks: bool = False  # the close click lands and the panel stays open
     agent_panel_close_clicks: int = 0
     #: Another page on the same profile turned agent mode off between this page's read
@@ -678,7 +679,7 @@ class FakePage:
                 ["trigger"] if dom.trigger_present else [],
                 visible=lambda: not (dom.agent_mode and dom.agent_mode_hides_trigger),
             )
-        under_panel = dom.agent_panel_expanded and dom.agent_panel_removes_chip
+        under_panel = dom.agent_panel_expanded
         if css == migrated_composer.AGENT_MODE_CHIP:
             pressed = dom.agent_mode and dom.agent_chip_present and not under_panel
             return FakeLocator(self, "agent_chip", ["chip"] if pressed else [])
@@ -784,9 +785,18 @@ class FakePage:
         if css == migrated_composer.COOKIE_BAR_ACCEPT:
             return FakeLocator(self, "cookie_accept", ["accept"] if dom.cookie_bar_visible else [])
         if css == migrated_composer.AGENT_PANEL:
-            return FakeLocator(
-                self, "agent_panel", ["panel"], visible=lambda: dom.agent_panel_expanded
-            )
+
+            def _panel_visible() -> bool:
+                dom.agent_panel_reads += 1
+                if dom.agent_panel_mounts_late and dom.agent_panel_reads == 1:
+                    return False
+                return dom.agent_panel_expanded
+
+            return FakeLocator(self, "agent_panel", ["panel"], visible=_panel_visible)
+        if css == f"{migrated_composer.AGENT_MODE_CHIP_ANY}, {migrated_composer.AGENT_ONLY_ANCHOR}":
+            # The post-close wait: the toggle, or the agent-only composer's `tune`.
+            seen = (dom.agent_chip_present and not under_panel) or dom.agent_mode
+            return FakeLocator(self, "toggle_or_tune", ["it"] if seen else [])
         if css == migrated_composer.AGENT_PANEL_CLOSE:
             close = [Radio("right_panel_close", "")] if dom.agent_panel_expanded else []
             return FakeLocator(self, "agent_panel_close", close)
@@ -3309,8 +3319,21 @@ def _panel_open() -> FakePage:
     page = FakePage()
     page.dom.agent_mode = True
     page.dom.agent_panel_expanded = True
-    page.dom.agent_panel_removes_chip = True
     return page
+
+
+async def test_a_panel_that_mounts_after_the_first_look_is_not_called_agent_only() -> None:
+    """Review finding: the panel close looks once. A panel that mounts after that look
+    left no toggle and `tune` in reach, which read as #799's composer, the #1374 symptom.
+    A visible panel must never be called agent-only; the gate re-enters and closes it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = _panel_open()
+    page.dom.agent_panel_mounts_late = True
+    kind = await MigratedComposer().ensure_editor(page, "p1", timeout_s=6.0)
+    assert kind == "classic"
+    assert page.dom.agent_panel_close_clicks == 1
+    assert not page.dom.agent_mode
 
 
 async def test_a_panel_close_that_does_not_land_is_drift_not_agent_only() -> None:
@@ -3375,7 +3398,9 @@ async def test_leaving_agent_mode_is_a_warning_that_flow_remembers_it(install_lo
     exited = [e for e in install_log_capture.entries if e["event"] == "migrated.agent_mode_exited"]
     assert exited, "no agent_mode_exited event"
     assert exited[0]["log_level"] == "warning"
-    assert "remembers" in exited[0]["note"]
+    # Measured: the state persists across reloads of the project. Whether it is per
+    # account or per project is not measured, so the note claims neither.
+    assert "across reloads" in exited[0]["note"]
 
 
 async def test_a_blocked_recovery_tells_the_user_what_to_do_on_either_build() -> None:

@@ -115,9 +115,17 @@ async def _leave_in_agent_mode(page: Any, *, panel: bool) -> None:
                 await expand.click(timeout=10_000)
                 break
         await page.locator("flow-agent-panel").first.wait_for(state="visible", timeout=15_000)
-    # Flow keeps the state across a reload (spike step C3); prove it before the When.
+    # Flow saves the panel state after the click, not with it: a reload the moment the panel
+    # is visible came back without it (measured 2026-11-20); the spikes' 2.5 s settle kept it.
+    await page.wait_for_timeout(3000)
+    # Flow keeps the state across a reload (spike step C3); prove it before the When, or the
+    # gate's panel close would never run and the scenario would pass on the compact arm.
     await page.reload(wait_until="domcontentloaded")
     await page.wait_for_timeout(4000)
+    if panel:
+        await page.locator("flow-agent-panel").first.wait_for(state="visible", timeout=15_000)
+    else:
+        await page.locator(_PRESSED).first.wait_for(state="visible", timeout=15_000)
 
 
 @pytest.fixture
@@ -212,6 +220,8 @@ def _mcp_video(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     world["result"] = asyncio.run(_run())
+    # The submit was aborted in Chrome, so a completed job would mean one got through.
+    assert world["result"]["status"] != "completed", world["result"]
 
 
 # --- Then -------------------------------------------------------------------------------

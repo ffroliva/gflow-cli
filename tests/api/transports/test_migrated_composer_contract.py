@@ -159,8 +159,16 @@ MODULE_NAMES = (
 
 PATCHED_GLOBAL_READERS: dict[tuple[str, str], str] = {
     (
-        "EditorGateMixin.ensure_editor",
+        "EditorGateMixin._agent_chip_pressed",
         "AGENT_MODE_CHIP",
+    ): "gflow_cli.api.transports._mc_editor_gate",
+    (
+        "EditorGateMixin._exit_agent_mode",
+        "AGENT_PANEL_SETTLE_S",
+    ): "gflow_cli.api.transports._mc_editor_gate",
+    (
+        "EditorGateMixin._close_agent_panel",
+        "AGENT_PANEL_SETTLE_S",
     ): "gflow_cli.api.transports._mc_editor_gate",
     (
         "EditorGateMixin.ensure_editor_for",

@@ -120,6 +120,9 @@ AGENT_PANEL_CLOSE = ", ".join(
 #: How long the panel gets to close, and the toggle to come back, after the close click.
 #: Measured as a re-render, not a navigation; this is headroom.
 AGENT_PANEL_SETTLE_S = 5.0
+#: What a user does by hand when agent mode is in the way. One string, because Flow renamed
+#: the control once already (chip to switch, 2026-11-20) and four messages carried it.
+AGENT_MODE_REMEDIATION = "close the agent panel and switch Agent off in a browser, then re-run"
 #: How long the classic composer gets to come back after the chip is clicked. The swap is
 #: a local Angular re-render, not a navigation — measured well under a second on both
 #: accounts — so this is headroom, not an expectation.
@@ -283,8 +286,8 @@ async def _visible_model_picker(page: Page, pane: Any, *, what: str) -> Any:
             ),
             # Hidden is #749's agent-mode shape, the one cause with a user action.
             remediation_hint=(
-                "Nothing was submitted. If agent mode is on in this project, close the agent "
-                "panel and switch Agent off in a browser, then re-run."
+                f"Nothing was submitted. If agent mode is on in this project, "
+                f"{AGENT_MODE_REMEDIATION}."
                 if hidden
                 else None
             ),

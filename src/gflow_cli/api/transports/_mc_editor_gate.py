@@ -22,6 +22,7 @@ from gflow_cli.api.transports._mc_common import (
     _CLICK_POSTMORTEM_JS,
     AGENT_MODE_CHIP,
     AGENT_MODE_CHIP_ANY,
+    AGENT_MODE_REMEDIATION,
     AGENT_ONLY_ANCHOR,
     AGENT_ONLY_EARLY_S,
     AGENT_ONLY_RELOAD_WAIT_S,
@@ -165,11 +166,11 @@ class EditorGateMixin(MediaMixin):
                 raise UiSelectorDriftError(
                     detail=(
                         f"migrated host: the account is in Flow's agent mode, which hides "
-                        f"the settings trigger, and the agent panel close or the Agent "
-                        f"switch ({AGENT_MODE_CHIP}) could not be clicked on "
-                        f"{safe_page_url(page.url)} after {timeout_s:.0f}s (host=migrated) — "
-                        f"something is covering it; close the agent panel, switch Agent off "
-                        f"in a browser and re-run. Readiness gate: {e}. Click: {click_error}"
+                        f"the settings trigger, and gflow could not leave it on "
+                        f"{safe_page_url(page.url)} after {timeout_s:.0f}s (host=migrated): "
+                        f"the agent panel's close button or the Agent switch could not be "
+                        f"clicked (the click error below names which); "
+                        f"{AGENT_MODE_REMEDIATION}. Readiness gate: {e}. Click: {click_error}"
                     ),
                 ) from click_error
             try:
@@ -281,6 +282,10 @@ class EditorGateMixin(MediaMixin):
                     await asyncio.sleep(AGENT_ONLY_SETTLE_S)
                 if not await trigger.count() or await trigger.is_visible():
                     return False
+                # An open agent panel hides the toggle (#1374): a panel that mounted after
+                # the close looked is not this cohort. The gate re-enters and closes it.
+                if await page.locator(AGENT_PANEL).first.is_visible():
+                    return False
                 if await page.locator(AGENT_MODE_CHIP_ANY).first.count():
                     return False
                 if not await page.locator(AGENT_ONLY_ANCHOR).first.count():
@@ -318,8 +323,11 @@ class EditorGateMixin(MediaMixin):
         if close_error is not None:
             return "blocked", close_error
         if closed:
+            # The toggle, or the agent-only composer's own `tune`, whichever renders first:
+            # an account with no classic arm never shows a toggle, and waiting the whole
+            # settle for one would tax every such run.
             try:
-                await page.locator(AGENT_MODE_CHIP).first.wait_for(
+                await page.locator(f"{AGENT_MODE_CHIP_ANY}, {AGENT_ONLY_ANCHOR}").first.wait_for(
                     state="visible", timeout=int(AGENT_PANEL_SETTLE_S * 1000)
                 )
             except Exception as e:  # noqa: BLE001 - the read below decides, not the wait
@@ -333,11 +341,11 @@ class EditorGateMixin(MediaMixin):
         except Exception as e:  # noqa: BLE001 - the caller decides what it means
             log.warning("migrated.agent_mode_exit_failed", error=str(e)[:200])
             return "blocked", e
-        # A warning, not info: gflow just changed a setting Flow remembers for the account.
+        # A warning, not info: gflow just changed a setting Flow keeps across reloads.
         log.warning(
             "migrated.agent_mode_exited",
             issue_ref="#749",
-            note="Flow remembers this for the account: agent mode stays off until switched on",
+            note="Flow keeps this across reloads: agent mode stays off until switched on again",
         )
         return "clicked", None
 
@@ -439,8 +447,7 @@ class EditorGateMixin(MediaMixin):
         # pointer-events nor the hit-test — so nothing else below would notice it.
         if await self._agent_chip_pressed(page):
             seen.append(
-                "the account is in Flow's agent mode, which hides it — close the agent "
-                "panel and switch Agent off in a browser, then re-run"
+                f"the account is in Flow's agent mode, which hides it — {AGENT_MODE_REMEDIATION}"
             )
         # One chain, because these are competing readings of the SAME question — can a
         # pointer reach it — ordered most specific first. The JS only hit-tests
