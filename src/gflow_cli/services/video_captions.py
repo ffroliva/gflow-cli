@@ -34,11 +34,6 @@ from gflow_cli.storage import refuse_cloud_storage_for_local_file
 
 log = structlog.get_logger(__name__)
 _TIMESTAMP = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
-_BLOCK = re.compile(
-    r"(?m)^\s*(\d+)\s*\n\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*"
-    r"(\d{2}:\d{2}:\d{2}[,.]\d{3})[^\n]*\n(.*?)(?=\n\s*\n|\Z)",
-    re.S,
-)
 
 
 @dataclass(frozen=True)
@@ -79,21 +74,26 @@ def _seconds(value: str) -> float:
 def parse_srt(content: str, *, source_name: str = "<srt>") -> list[CaptionEntry]:
     content = content.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n").strip()
     entries: list[CaptionEntry] = []
-    position = 0
-    for block_number, match in enumerate(_BLOCK.finditer(content), 1):
-        if content[position : match.start()].strip():
+    for block_number, block in enumerate(re.split(r"\n\s*\n", content), 1):
+        lines = block.splitlines()
+        match = re.fullmatch(
+            r"\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[,.]\d{3})[^\n]*",
+            lines[1] if len(lines) >= 2 and lines[0].strip().isdigit() else "",
+        )
+        if not match:
             raise ConfigurationError(
                 detail=f"Invalid SubRip file {source_name!r} at block {block_number}.", charged="no"
             )
-        start, end = _seconds(match.group(2)), _seconds(match.group(3))
-        text = match.group(4).strip()
-        if start < 0 or end <= start or not text:
+        text = "\n".join(lines[2:]).strip()
+        if not text:
+            continue
+        start, end = _seconds(match.group(1)), _seconds(match.group(2))
+        if end <= start:
             raise ConfigurationError(
                 detail=f"Invalid SubRip file {source_name!r} at block {block_number}.", charged="no"
             )
-        entries.append(CaptionEntry(int(match.group(1)), start, end, text))
-        position = match.end()
-    if not entries or content[position:].strip():
+        entries.append(CaptionEntry(int(lines[0].strip()), start, end, text))
+    if not entries:
         raise ConfigurationError(
             detail=f"Invalid SubRip file {source_name!r} at block 1.", charged="no"
         )
