@@ -195,6 +195,7 @@ async def test_catalog_media_ids_assemble_in_cli_and_mcp(
         db_path=real_settings.resolved_db_path(), profile=profile, limit=1000, offset=0
     )
     usable: list[tuple[str, Path, float]] = []
+    first_ratio = 0.0
     with DataStore.open(real_settings.resolved_db_path()) as store:
         repo = DataRepository(store)
         for candidate in candidates:
@@ -209,6 +210,12 @@ async def test_catalog_media_ids_assemble_in_cli_and_mcp(
                 continue
             with av.open(str(local_path)) as container:
                 duration = float(container.duration or 0) / av.time_base
+                stream = container.streams.video[0]
+                ratio = stream.width / stream.height
+            # The command refuses a clip whose aspect ratio differs from the first one's.
+            if usable and abs(ratio - first_ratio) > 0.01 * first_ratio:
+                continue
+            first_ratio = ratio if not usable else first_ratio
             usable.append((candidate.media_id, local_path, duration))
             if len(usable) == 2:
                 break
