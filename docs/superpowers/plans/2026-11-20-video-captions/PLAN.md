@@ -395,13 +395,13 @@ under the Iron Law.
 - `website/docs/*` and `plugins/gflow/skills/gflow-cli/SKILL.md` — regenerated via CI scripts
 
 **Steps:**
-- [ ] Update `docs/USAGE.md` with synopsis entries and dedicated sections for `gflow video transcribe` and `gflow video captions`, including examples, `--json` output shape, exit codes (11, 16, 20), and the privacy statement that audio is never sent unless `GFLOW_CLI_LLM_BASE_URL` is configured to a transcription endpoint.
-- [ ] Update `docs/MCP.md`, `docs/CONFIGURATION.md`, and `.env.template`.
-- [ ] Update `README.md` comparison table row `| Captions | Planned ([#1358](https://github.com/ffroliva/gflow-cli/issues/1358)) |` to `| Captions | Yes (\`video captions\`, \`.srt\` export) |`.
-- [ ] Update `AGENTS.md` and `skills/gflow-cli/SKILL.md` command lists.
-- [ ] Verify `gflow docs` (`src/gflow_cli/docs_catalog.py`) and `gflow capabilities` (`src/gflow_cli/cli_capabilities.py`): `docs_catalog.py` discovers `docs/*.md` dynamically and `cli_capabilities.py` reports Flow host/generation capabilities only, so no capability key change is required.
-- [ ] Add the `[Unreleased]` -> `### Added` entry in `CHANGELOG.md`.
-- [ ] Run `uv run python scripts/ci/generate_website_docs.py` and `uv run python scripts/ci/generate_plugin_skills.py`.
+- [x] Update `docs/USAGE.md` with synopsis entries and dedicated sections for `gflow video transcribe` and `gflow video captions`, including examples, `--json` output shape, exit codes (11, 16, 20), and the privacy statement that audio is never sent unless `GFLOW_CLI_LLM_BASE_URL` is configured to a transcription endpoint.
+- [x] Update `docs/MCP.md`, `docs/CONFIGURATION.md`, and `.env.template`.
+- [x] Update `README.md` comparison table row `| Captions | Planned ([#1358](https://github.com/ffroliva/gflow-cli/issues/1358)) |` to `| Captions | Yes (\`video captions\`, \`.srt\` export) |`.
+- [x] Update `AGENTS.md` and `skills/gflow-cli/SKILL.md` command lists.
+- [x] Verify `gflow docs` (`src/gflow_cli/docs_catalog.py`) and `gflow capabilities` (`src/gflow_cli/cli_capabilities.py`): `docs_catalog.py` discovers `docs/*.md` dynamically and `cli_capabilities.py` reports Flow host/generation capabilities only, so no capability key change is required.
+- [x] Add the `[Unreleased]` -> `### Added` entry in `CHANGELOG.md`.
+- [x] Run `uv run python scripts/ci/generate_website_docs.py` and `uv run python scripts/ci/generate_plugin_skills.py`.
 
 ---
 

@@ -171,7 +171,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | Per-call credit cap | Planned ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)) | Yes (`max_credits`) | — | — | — | — |
 | Video-to-video edit | Planned ([#1356](https://github.com/ffroliva/gflow-cli/issues/1356)) | Yes | Yes | — | — | — |
 | Narration audio | Planned ([#1357](https://github.com/ffroliva/gflow-cli/issues/1357)) | Yes | — | — | — | Yes |
-| Captions | Planned ([#1358](https://github.com/ffroliva/gflow-cli/issues/1358)) | Yes | — | — | — | — |
+| Captions | Yes (`video captions`, `.srt` export) | Yes | — | — | — | — |
 | Join clips | Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`) | Yes, with music and voiceover | — | — | Yes (scene) | Yes, with music and narration |
 | Bulk agent-mode image batch | Planned ([#1361](https://github.com/ffroliva/gflow-cli/issues/1361)) | Yes | Yes | — | — | — |
 | Web control panel | Planned ([#1364](https://github.com/ffroliva/gflow-cli/issues/1364)) | Yes | — | — | — | Yes |

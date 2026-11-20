@@ -187,6 +187,12 @@ URL (`https://user:pass@host`) are rejected; pass the credential via
 `GFLOW_CLI_LLM_API_KEY`. Redirects are never followed, because `urllib` would re-send your
 `Authorization` header to whatever host a redirect names.
 
+`gflow video transcribe` and `gflow video captions` also use this base URL, but require its
+`/audio/transcriptions` route to return timed segments. The built-in Google Gemini endpoint
+does not provide that route, so gflow refuses before extracting or sending audio while it is
+the configured default. Set this value to OpenAI, Groq, or a local Whisper-compatible server;
+the audio is sent only to that configured endpoint.
+
 #### `GFLOW_CLI_LLM_API_KEY`
 
 **What:** The credential gflow presents to that endpoint, as `Authorization: Bearer`.
@@ -205,6 +211,7 @@ endpoint's own default > omitted, letting the gateway choose. The builtin tools 
 nothing on purpose: a hardcoded vendor model name is rejected by any gateway that does not
 serve it. Note Google's compat endpoint has **no** server-side default and answers
 `400 "model is not specified"`, so the default endpoint ships a matching default model.
+For transcription, an unset value selects `whisper-1`.
 
 #### When is the tool active?
 

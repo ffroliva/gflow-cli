@@ -301,6 +301,76 @@ Notes:
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
 
+## `gflow video transcribe` and `gflow video captions`
+
+Transcribe a local video or catalog media UUID to SubRip (`.srt`), then optionally burn those
+captions into a local MP4. Both commands are local post-processing: they open no browser and
+spend no Flow credits. Install media support with `pip install 'gflow-cli[chain]'`.
+
+```text
+gflow video transcribe FILE [--out-file FILE.srt] [--language CODE] [--profile NAME] [--json]
+gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--json]
+```
+
+`FILE` is a local video path or catalog video UUID. `transcribe` defaults to `<name>.srt`;
+`captions` defaults to `<name>-captions.mp4`. When `--srt` is omitted, captions transcribes
+first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
+burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream.
+
+Transcription sends only extracted 16 kHz mono WAV audio to the configured
+`GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional
+`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_LLM_MODEL` (`whisper-1` when unset). gflow refuses
+before extracting or sending audio while the built-in Google Gemini endpoint is configured;
+set the base URL to an OpenAI, Groq, or local Whisper-compatible server. The response must
+provide timed segments for SRT output.
+
+```bash
+gflow video transcribe out/clip.mp4 --language en --json
+gflow video captions out/clip.mp4 --srt out/clip.srt --out-file out/clip-captioned.mp4
+```
+
+`--json` reports the source, output paths, duration, and segment or frame counts. `-o id`
+prints the generated `.srt` or `.mp4` path. Errors use exit 11 (`ConfigurationError`, including
+the default endpoint and invalid SRT), 16 (`DataStoreError`, catalog lookup), 20
+(`FrameExtractionError`, missing chain extra or unreadable media), 4 (`RateLimitError`), or 6
+(`NetworkError`). Output files are written through a temporary file and renamed into place;
+the input file is never overwritten.
+
+## `gflow video transcribe` and `gflow video captions`
+
+Transcribe a local video or catalog media UUID to SubRip (`.srt`), then optionally burn those
+captions into a local MP4. Both commands are local post-processing: they open no browser and
+spend no Flow credits. Install media support with `pip install 'gflow-cli[chain]'`.
+
+```text
+gflow video transcribe FILE [--out-file FILE.srt] [--language CODE] [--profile NAME] [--json]
+gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--json]
+```
+
+`FILE` is a local video path or catalog video UUID. `transcribe` defaults to `<name>.srt`;
+`captions` defaults to `<name>-captions.mp4`. When `--srt` is omitted, captions transcribes
+first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
+burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream.
+
+Transcription sends only extracted 16 kHz mono WAV audio to the configured
+`GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional
+`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_LLM_MODEL` (`whisper-1` when unset). gflow refuses
+before extracting or sending audio while the built-in Google Gemini endpoint is configured;
+set the base URL to an OpenAI, Groq, or local Whisper-compatible server. The response must
+provide timed segments for SRT output.
+
+```bash
+gflow video transcribe out/clip.mp4 --language en --json
+gflow video captions out/clip.mp4 --srt out/clip.srt --out-file out/clip-captioned.mp4
+```
+
+`--json` reports the source, output paths, duration, and segment or frame counts. `-o id`
+prints the generated `.srt` or `.mp4` path. Errors use exit 11 (`ConfigurationError`, including
+the default endpoint and invalid SRT), 16 (`DataStoreError`, catalog lookup), 20
+(`FrameExtractionError`, missing chain extra or unreadable media), 4 (`RateLimitError`), or 6
+(`NetworkError`). Output files are written through a temporary file and renamed into place;
+the input file is never overwritten.
+
 ## `gflow video upscale`
 
 Upscale or export a **platform-generated** video to 1080p Full HD, download it at 720p,
