@@ -523,7 +523,7 @@ def _caption_overlay(
     draw = draw_module.Draw(overlay, "RGBA")
     lines = _wrap_caption(text, font, draw, width * 0.9)
     if len(lines) > 3:
-        font = _load_caption_font(max(12, round(height * 0.04)), font_module)
+        font = _load_caption_font(height, font_module, size=max(12, round(height * 0.04)))
         lines = _wrap_caption(text, font, draw, width * 0.9)
     box = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, align="center", spacing=2)
     x = max(8, (width - (box[2] - box[0])) // 2)
@@ -570,13 +570,15 @@ def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str
     return lines
 
 
-def _load_caption_font(height: int, image_font_module: Any | None = None) -> Any:
+def _load_caption_font(
+    height: int, image_font_module: Any | None = None, *, size: int | None = None
+) -> Any:
     if image_font_module is None:
         from PIL import ImageFont
 
         image_font_module = ImageFont
 
-    size = max(14, round(height * 0.045))
+    resolved_size = size if size is not None else max(14, round(height * 0.045))
     candidates = (
         [r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\arial.ttf"]
         if os.name == "nt"
@@ -591,7 +593,7 @@ def _load_caption_font(height: int, image_font_module: Any | None = None) -> Any
     for candidate in candidates:
         if Path(candidate).is_file():
             try:
-                return image_font_module.truetype(candidate, size=size)
+                return image_font_module.truetype(candidate, size=resolved_size)
             except OSError:
                 continue
-    return image_font_module.load_default(size=size)
+    return image_font_module.load_default(size=resolved_size)

@@ -334,6 +334,32 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
     assert sum(glyph is not None and glyph != tofu for glyph in glyphs) >= 15
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "expected_initial", "expected_fallback"),
+    [(1920, 1080, 49, 43), (1280, 720, 32, 29)],
+)
+def test_caption_overlay_fallback_font_scales_once(
+    width: int,
+    height: int,
+    expected_initial: int,
+    expected_fallback: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    loaded_sizes: list[int] = []
+    original_load = service._load_caption_font
+
+    def record_load(*args: Any, **kwargs: Any) -> Any:
+        font = original_load(*args, **kwargs)
+        loaded_sizes.append(font.size)
+        return font
+
+    monkeypatch.setattr(service, "_load_caption_font", record_load)
+    service._caption_overlay(width, height, "one\ntwo\nthree\nfour", ImageDraw, ImageFont)
+    assert loaded_sizes == [expected_initial, expected_fallback]
+
+
 def test_caption_background_is_translucent_on_rgb_frame() -> None:
     av = pytest.importorskip("av")
     from PIL import Image, ImageDraw, ImageFont
