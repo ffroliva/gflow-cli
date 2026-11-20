@@ -127,6 +127,16 @@ def test_keyboard_interrupt_removes_partial_output_and_temp_file(
     assert not list(tmp_path.glob(".joined.*.mp4"))
 
 
+def test_rejects_music_file_without_audio_stream(tmp_path: Path) -> None:
+    clip = tmp_path / "clip.mp4"
+    music = tmp_path / "silent-video.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=2, audio=True)
+    _clip(music, size=(64, 48), rate=10, frames=2, audio=False)
+
+    with pytest.raises(VideoAssemblyError, match="Audio input has no audio stream"):
+        assemble_videos([clip], tmp_path / "joined.mp4", music=music)
+
+
 def test_resolves_catalog_uuid_only_through_verified_video_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

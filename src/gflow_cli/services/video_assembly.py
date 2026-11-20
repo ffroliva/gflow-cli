@@ -101,6 +101,11 @@ def _pcm_spool(path: Path, *, samples: int, av: Any, audio_stream: bool = True) 
                 resampler = av.AudioResampler(format="flt", layout="stereo", rate=_SAMPLE_RATE)
                 written = 0
                 with av.open(str(path)) as source:
+                    if not source.streams.audio:
+                        raise VideoAssemblyError(
+                            detail=f"Audio input has no audio stream: {path}",
+                            route="video.assemble",
+                        )
                     stream = source.streams.audio[0]
                     for decoded in source.decode(stream):
                         for frame in resampler.resample(decoded):
