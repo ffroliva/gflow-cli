@@ -253,8 +253,12 @@ def test_outputs_and_parents_validated_before_transcriber(
 
 
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
-    with pytest.raises(ConfigurationError, match="audio"):
-        transcribe_video(str(media_files[1]))
+    class UnreachableTranscriber:
+        def transcribe(self, _request: TranscriptionRequest) -> Transcript:
+            pytest.fail("transcriber should not be called on a clip without audio")
+
+    with pytest.raises(ConfigurationError, match="Video has no audio track to transcribe"):
+        transcribe_video(str(media_files[1]), transcriber=UnreachableTranscriber())
 
 
 def test_audio_decode_does_not_require_numpy(
