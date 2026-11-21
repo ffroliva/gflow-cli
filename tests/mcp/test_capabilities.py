@@ -34,6 +34,7 @@ _VIDEO = "generate.video"
 #: upscale). A new command fails test_every_cli_command_has_a_capability_entry until it
 #: is added here, which forces the question "does the capability document still hold?".
 COMMAND_CAPABILITY: dict[str, str | None] = {
+    "audio narrate": None,
     "image t2i": _IMAGE,
     "image i2i": _IMAGE,
     "image generate": _IMAGE,  # bridge to t2i/i2i (#1193)

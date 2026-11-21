@@ -1,7 +1,7 @@
 """Shared fixtures for the e2e test suite.
 
-e2e tests hit the real Flow API / real Google auth endpoints and are opt-in:
-run with ``-m e2e`` and ``GFLOW_CLI_E2E_PROFILE=<profile_name>`` set.
+Flow e2e tests hit Google endpoints and require ``GFLOW_CLI_E2E_PROFILE``.
+Network-only ``e2e_tts`` tests need no Flow profile; select them with ``-m e2e_tts``.
 
 ## Cost sub-markers
 
@@ -9,6 +9,7 @@ Every e2e test carries ``pytest.mark.e2e`` plus one or more cost sub-markers
 so you can run only what you can afford:
 
     pytest -m "e2e_auth"                         # zero credits
+    pytest -m "e2e_tts"                          # network TTS, zero Flow credits
     pytest -m "e2e and not e2e_batch and not e2e_video"  # cheap
     pytest -m "e2e"                              # full regression
 
@@ -19,6 +20,7 @@ so you can run only what you can afford:
 | e2e_batch  | 0 (daily cap)    | 2–10 min          |
 | e2e_video  | 1 Veo credit     | 1–10 min          |
 | e2e_data   | same as above *  | +0 s              |
+| e2e_tts    | 0 Flow credits; provider network use may apply | 1–5 min |
 
 ``e2e_data`` is always combined with ``e2e_image`` or ``e2e_video`` because
 data-layer assertions depend on a real generation having run.

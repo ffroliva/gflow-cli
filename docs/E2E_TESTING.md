@@ -65,6 +65,7 @@ exactly the cost tier you can afford:
 | `e2e_telemetry` | 0 | < 60 s | usage telemetry against an installed wheel — zero credits, no browser, no Flow account |
 | `e2e_update` | 0 | < 120 s | `gflow update` through real installers in tmp venvs (needs the network for index dependencies, keeps pip and uv caches under tmp) — zero credits, no browser, no Flow account |
 | `e2e_media` | 0 | < 120 s | Local media commands (`video assemble`, `video captions`) against an installed wheel on generated H264/AAC clips — zero credits, no browser, no Flow account |
+| `e2e_tts` | 0 Flow credits; provider network use may apply | 1–5 min | Edge or Gemini narration through installed CLI/MCP, followed by local voiceover assembly — no browser or Flow account |
 | `e2e_image` | **0** (daily cap) | 30–120 s | text-to-image or image-to-image golden path |
 | `e2e_batch` | **0** (daily cap) | 2–10 min | batch image generation |
 | `e2e_video` | ~1 Veo | 1–10 min | text-to-video or image-to-video |
@@ -80,6 +81,7 @@ e2e ─┬─ e2e_auth      (auth/session, health check — zero credits)
      ├─ e2e_telemetry (usage telemetry against an installed wheel — zero credits)
      ├─ e2e_update    (gflow update in tmp venvs — zero credits)
      ├─ e2e_media     (local media commands — zero credits)
+     ├─ e2e_tts       (network TTS providers; zero Flow credits)
      ├─ e2e_image     (t2i, i2i — ZERO credits, daily cap only)
      │   └─ e2e_data  (+ DB assertions)
      ├─ e2e_batch     (batch t2i — ZERO credits, daily cap only)

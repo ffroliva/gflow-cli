@@ -294,6 +294,23 @@ def installer() -> Installer | None:
     return Installer("pip", tuple(pip_cmd), spec)
 
 
+def extra_install_hint(extra: str) -> str:
+    """The command that adds ``extra`` to this install, keeping the extras it already has."""
+    spec = f"gflow-cli[{','.join(sorted({*_installed_extras(), extra}))}]"
+    inst = installer()
+    if inst is None:
+        return f'pip install "{spec}", or `uv sync --extra {extra}` in a source checkout'
+    if inst.name == "uv":
+        return f'uv tool install --force "{spec}"'
+    if inst.name == "pipx":
+        return f'pipx install --force "{spec}"'
+    user_flag = " --user" if "--user" in inst.command else ""
+    return (
+        f'{sys.executable} -m pip install{user_flag} "{spec}", '
+        f'or `uvx --from "{spec}" gflow ...` when running through uvx'
+    )
+
+
 def shown_command(command: tuple[str, ...]) -> str:
     """The command as a user can paste it: a ``[extras]`` spec quoted against shell globbing."""
     return " ".join(f'"{arg}"' if "[" in arg else arg for arg in command)

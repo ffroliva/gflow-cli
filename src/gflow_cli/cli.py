@@ -28,6 +28,7 @@ from gflow_cli._cli_helpers import (
     output_format_option,
     spends_credits,
 )
+from gflow_cli.cli_audio import audio as _audio_group
 from gflow_cli.cli_cancel import cancel as _cancel_command
 from gflow_cli.cli_capabilities import capabilities as _capabilities_command
 from gflow_cli.cli_character import character as _character_group
@@ -715,6 +716,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
 
 
 main.add_command(_cancel_command)
+main.add_command(_audio_group)
 main.add_command(_capabilities_command)
 main.add_command(_character_group)
 main.add_command(_credits_group)

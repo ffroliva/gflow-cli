@@ -1,0 +1,56 @@
+"""Direct, credit-free MCP tool for local text-to-speech narration."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any, Literal
+
+from gflow_cli.mcp import tools as common
+from gflow_cli.mcp.server import server
+from gflow_cli.services.audio_narration import narrate, validate_narration
+
+
+@server.tool(
+    name="gflow_narrate",
+    description=(
+        "Synthesize a local narration audio file. Narration text is sent to the selected "
+        "provider (Microsoft Edge Read Aloud or Google Gemini); this uses no Flow credits. "
+        "Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY. Output paths stay inside the configured "
+        "output directory."
+    ),
+)
+@common._guarded  # pyright: ignore[reportPrivateUsage]
+async def gflow_narrate(
+    text: str,
+    *,
+    out_file: str,
+    provider: Literal["edge", "gemini"] = "edge",
+    voice: str | None = None,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
+) -> dict[str, Any]:
+    """Create a narration file from text."""
+    validate_narration(text, provider, rate, pitch)
+    output = common._confined_output_file(out_file)  # pyright: ignore[reportPrivateUsage]
+    if isinstance(output, dict):
+        return output
+    out_path = Path(output)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return common._bad_param(  # pyright: ignore[reportPrivateUsage]
+            "Invalid Output",
+            f"Cannot create the output directory {out_path.parent}; "
+            "choose an out_file whose parent is a writable directory.",
+        )
+    result = await asyncio.to_thread(
+        narrate,
+        text=text,
+        out_file=out_path,
+        provider=provider,
+        voice=voice,
+        rate=rate,
+        pitch=pitch,
+    )
+    return result.payload()

@@ -209,8 +209,20 @@ the audio is sent only to that configured endpoint.
 **What:** The credential gflow presents to that endpoint, as `Authorization: Bearer`.
 **Default:** unset — and **optional**. When unset the header is omitted entirely, which is
 what a keyless local gateway expects.
-**Note:** this is the *only* key gflow holds. Provider keys (OpenAI, Anthropic, Google…)
-stay with your gateway; gflow never sees them.
+**Note:** this key is for the prompt-tools gateway; narration uses the separate
+`GFLOW_CLI_GEMINI_TTS_API_KEY` when Gemini is selected.
+
+#### `GFLOW_CLI_GEMINI_TTS_API_KEY`
+
+**What:** Dedicated Google Gemini credential for `gflow audio narrate --provider gemini`.
+**Default:** unset. Gemini narration fails before sending a request when this key is absent.
+**Security:** this key is separate from `GFLOW_CLI_LLM_API_KEY`; neither setting is used as a
+fallback for the other. Narration text is sent to Google's Gemini TTS endpoint.
+
+The default Edge provider is keyless and requires the optional `gflow-cli[tts]` extra. It uses
+Microsoft's unofficial consumer Read Aloud endpoint, which has no SLA and may change. The
+`edge-tts` optional dependency carries LGPL/GPL license terms; use Gemini if those terms or the
+endpoint's availability are unsuitable.
 
 #### `GFLOW_CLI_LLM_MODEL`
 

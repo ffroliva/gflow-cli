@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+import gflow_cli.mcp.audio_tools  # noqa: F401
+
 # Register every prompt/resource/tool against the REAL server before any test runs.
 # `run_stdio()`/`run_http()` import these modules lazily, and three tests call them
 # with `gflow_cli.mcp.server.server` patched to a MagicMock. Whichever import comes
