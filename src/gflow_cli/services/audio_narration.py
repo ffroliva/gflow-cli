@@ -40,9 +40,19 @@ def narrate(
     script = _read_script(text, text_file)
     _validate_output(out_file)
     if provider not in ("edge", "gemini"):
-        raise ConfigurationError("Provider must be edge or gemini.", charged="no")
+        raise ConfigurationError(
+            "Provider must be edge or gemini.",
+            charged="no",
+            remediation_hint="Select a supported provider: edge or gemini.",
+        )
     if not _valid_rate(rate) or not _valid_pitch(pitch):
-        raise ConfigurationError("Rate or pitch has an invalid format.", charged="no")
+        raise ConfigurationError(
+            "Rate or pitch has an invalid format.",
+            charged="no",
+            remediation_hint=(
+                "Use formats like +10% or -5% for rate, and +20Hz or -10Hz for pitch."
+            ),
+        )
 
     adapter = synthesizer or _make_synthesizer(provider, settings or get_settings())
     temporary = _temporary_path(out_file)
@@ -93,27 +103,52 @@ def narrate(
 
 def _read_script(text: str | None, text_file: Path | None) -> str:
     if (text is None) == (text_file is None):
-        raise ConfigurationError("Provide exactly one of text or text_file.", charged="no")
+        raise ConfigurationError(
+            "Provide exactly one of text or text_file.",
+            charged="no",
+            remediation_hint=(
+                "Pass either narration text as an argument or --text-file pointing to a script."
+            ),
+        )
     if text_file is not None:
         try:
             text = text_file.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise ConfigurationError(
-                f"Could not read UTF-8 narration text file: {text_file}", charged="no"
+                f"Could not read UTF-8 narration text file: {text_file}",
+                charged="no",
+                remediation_hint=(
+                    "Ensure the text file exists, is readable, and contains valid UTF-8 text."
+                ),
             ) from exc
     assert text is not None
     if not text.strip():
-        raise ConfigurationError("Narration text cannot be empty.", charged="no")
+        raise ConfigurationError(
+            "Narration text cannot be empty.",
+            charged="no",
+            remediation_hint="Provide non-empty text to narrate.",
+        )
     return text
 
 
 def _validate_output(path: Path) -> None:
     if not path.parent.is_dir():
         raise ConfigurationError(
-            f"Narration output parent does not exist: {path.parent}", charged="no"
+            f"Narration output parent does not exist: {path.parent}",
+            charged="no",
+            remediation_hint=(
+                "Create the parent directory or choose a path in an existing directory."
+            ),
         )
     if path.exists():
-        raise ConfigurationError(f"Narration output already exists: {path}", charged="no")
+        raise ConfigurationError(
+            f"Narration output already exists: {path}",
+            charged="no",
+            remediation_hint=(
+                "Choose an --out-file path that does not already exist, "
+                "or remove the existing file."
+            ),
+        )
 
 
 def _temporary_path(path: Path) -> Path:
@@ -124,7 +159,9 @@ def _temporary_path(path: Path) -> Path:
             return Path(temporary.name)
     except OSError as exc:
         raise ConfigurationError(
-            f"Narration output parent is not writable: {path.parent}", charged="no"
+            f"Narration output parent is not writable: {path.parent}",
+            charged="no",
+            remediation_hint="Choose an --out-file path inside a writable directory.",
         ) from exc
 
 

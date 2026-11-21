@@ -132,3 +132,18 @@ def test_narration_succeeds_when_os_link_fails(
     assert target.exists()
     assert target.read_bytes() == b"audio"
     assert result.out_file == target
+
+
+def test_narration_errors_carry_actionable_remediation_hints(tmp_path: Path) -> None:
+    target = tmp_path / "voice.mp3"
+    synthesizer = FakeSynthesizer()
+    with pytest.raises(ConfigurationError) as exc_info:
+        narrate(text="   ", out_file=target, synthesizer=synthesizer)
+    assert exc_info.value.remediation_hint is not None
+    assert "make_transport" not in exc_info.value.remediation_hint
+
+    target.write_bytes(b"existing")
+    with pytest.raises(ConfigurationError) as exc_info:
+        narrate(text="hello", out_file=target, synthesizer=synthesizer)
+    assert exc_info.value.remediation_hint is not None
+    assert "make_transport" not in exc_info.value.remediation_hint
