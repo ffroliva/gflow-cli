@@ -252,7 +252,9 @@ def test_atomic_write_cleans_own_temp_file_on_write_failure(
 
         return BrokenHandle()
 
-    monkeypatch.setattr("gflow_cli.services.video_captions.tempfile.NamedTemporaryFile", failing_ntf)
+    monkeypatch.setattr(
+        "gflow_cli.services.video_captions.tempfile.NamedTemporaryFile", failing_ntf
+    )
     with pytest.raises(ConfigurationError, match="Could not write SubRip file"):
         service._atomic_write(destination, b"content")
     assert not destination.exists()
@@ -704,6 +706,21 @@ def test_transcription_rejects_non_string_segment_text(bad_text: Any) -> None:
     with pytest.raises(ConfigurationError, match="invalid response") as caught:
         _parse_transcription_response(response)
     assert caught.value.charged == "no"
+
+
+def test_transcription_json_cue_text_collapses_blank_lines_for_srt_roundtrip() -> None:
+    from gflow_cli.services.transcribers.openai_compatible import _parse_transcription_response
+
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {"segments": [{"start": 0.1, "end": 0.9, "text": "  First\n\nSecond  "}]},
+    )
+    transcript = _parse_transcription_response(response)
+    entries = [
+        CaptionEntry(i, seg.start, seg.end, seg.text)
+        for i, seg in enumerate(transcript.segments, 1)
+    ]
+    assert parse_srt(format_srt(entries)) == [CaptionEntry(1, 0.1, 0.9, "First\nSecond")]
 
 
 def test_transcribe_posts_wav_and_writes_timed_json_segments(

@@ -137,7 +137,8 @@ def _parse_json_segments(raw: list[object]) -> tuple[TranscriptSegment, ...]:
                     "Configure the endpoint to return valid verbose_json segments or SRT."
                 ),
             )
-        text = raw_text.strip()
+        normalized = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+        text = "\n".join(line for line in normalized.splitlines() if line.strip()).strip()
         if text and math.isfinite(start) and math.isfinite(end) and 0 <= start < end:
             entries.append(TranscriptSegment(start, end, text))
     if entries:
