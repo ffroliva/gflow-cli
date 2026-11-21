@@ -18,22 +18,8 @@ class EdgeTtsSynthesizer:
     attempts: int = 3
 
     def synthesize(self, request: SynthesisRequest) -> SynthesisResult:
-        if not request.text or not request.text.strip():
-            raise ConfigurationError(
-                "Narration text cannot be empty.",
-                charged="no",
-                remediation_hint="Provide non-empty text to narrate.",
-            )
-        try:
-            edge_tts = importlib.import_module("edge_tts")
-        except ImportError as exc:
-            raise ConfigurationError(
-                "Edge narration requires the optional dependency; install with "
-                "pip install 'gflow-cli[tts]'.",
-                charged="no",
-                remediation_hint="Install the tts extra with pip install 'gflow-cli[tts]'.",
-            ) from exc
-
+        _validate_request(request)
+        edge_tts = _load_edge_tts()
         voice = request.voice or "en-US-AndrewNeural"
         for attempt in range(self.attempts):
             try:
@@ -99,3 +85,24 @@ class EdgeTtsSynthesizer:
             if chunk.get("type") == "audio":
                 audio.append(cast(bytes, chunk["data"]))
         return b"".join(audio)
+
+
+def _validate_request(request: SynthesisRequest) -> None:
+    if not request.text or not request.text.strip():
+        raise ConfigurationError(
+            "Narration text cannot be empty.",
+            charged="no",
+            remediation_hint="Provide non-empty text to narrate.",
+        )
+
+
+def _load_edge_tts() -> Any:
+    try:
+        return importlib.import_module("edge_tts")
+    except ImportError as exc:
+        raise ConfigurationError(
+            "Edge narration requires the optional dependency; install with "
+            "pip install 'gflow-cli[tts]'.",
+            charged="no",
+            remediation_hint="Install the tts extra with pip install 'gflow-cli[tts]'.",
+        ) from exc

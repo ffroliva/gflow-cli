@@ -29,26 +29,13 @@ class GeminiTtsSynthesizer:
     model: str = _MODEL
 
     def synthesize(self, request: SynthesisRequest) -> SynthesisResult:
-        if not self.api_key:
-            raise ConfigurationError(
-                "Gemini TTS requires GFLOW_CLI_GEMINI_TTS_API_KEY.",
-                charged="no",
-                remediation_hint=(
-                    "Set GFLOW_CLI_GEMINI_TTS_API_KEY with your Google AI Studio API key."
-                ),
-            )
-        if request.rate != _DEFAULT_RATE or request.pitch != _DEFAULT_PITCH:
-            raise ConfigurationError(
-                "Gemini TTS does not support custom rate or pitch; use the edge provider.",
-                charged="no",
-                remediation_hint="Remove --rate and --pitch, or use --provider edge.",
-            )
+        _validate_request(self.api_key, request)
         voice = _canonical_voice(request.voice)
         try:
             with httpx.Client(follow_redirects=False, timeout=_HTTP_TIMEOUT) as client:
                 response = client.post(
                     f"{_BASE_URL}/models/{self.model}:generateContent",
-                    headers={"x-goog-api-key": self.api_key},
+                    headers={"x-goog-api-key": cast(str, self.api_key)},
                     json={
                         "contents": [{"parts": [{"text": request.text}]}],
                         "generationConfig": {
@@ -59,30 +46,7 @@ class GeminiTtsSynthesizer:
                         },
                     },
                 )
-            if 300 <= response.status_code < 400:
-                raise ConfigurationError(
-                    "Gemini TTS redirected; request refused.",
-                    charged="no",
-                    remediation_hint="Verify the API endpoint URL.",
-                )
-            if response.status_code == 429:
-                raise RateLimitError(
-                    "Gemini TTS rate limit reached.",
-                    retry_after=None,
-                    remediation_hint="Wait a moment before retrying, or switch to --provider edge.",
-                )
-            if response.status_code >= 500:
-                raise NetworkError(
-                    "Gemini TTS endpoint failed.",
-                    charged="no",
-                    remediation_hint="Retry after a moment or use --provider edge.",
-                )
-            if response.status_code >= 400:
-                raise ConfigurationError(
-                    "Gemini TTS request was rejected.",
-                    charged="no",
-                    remediation_hint="Check that your API key and voice parameter are valid.",
-                )
+            _check_response_status(response)
             return _parse_audio(response.json())
         except (ConfigurationError, NetworkError, RateLimitError, TransportTimeoutError):
             raise
@@ -104,6 +68,50 @@ class GeminiTtsSynthesizer:
                 charged="no",
                 remediation_hint="Verify that the model returned audio content or retry.",
             ) from exc
+
+
+def _validate_request(api_key: str | None, request: SynthesisRequest) -> None:
+    if not api_key:
+        raise ConfigurationError(
+            "Gemini TTS requires GFLOW_CLI_GEMINI_TTS_API_KEY.",
+            charged="no",
+            remediation_hint=(
+                "Set GFLOW_CLI_GEMINI_TTS_API_KEY with your Google AI Studio API key."
+            ),
+        )
+    if request.rate != _DEFAULT_RATE or request.pitch != _DEFAULT_PITCH:
+        raise ConfigurationError(
+            "Gemini TTS does not support custom rate or pitch; use the edge provider.",
+            charged="no",
+            remediation_hint="Remove --rate and --pitch, or use --provider edge.",
+        )
+
+
+def _check_response_status(response: httpx.Response) -> None:
+    if 300 <= response.status_code < 400:
+        raise ConfigurationError(
+            "Gemini TTS redirected; request refused.",
+            charged="no",
+            remediation_hint="Verify the API endpoint URL.",
+        )
+    if response.status_code == 429:
+        raise RateLimitError(
+            "Gemini TTS rate limit reached.",
+            retry_after=None,
+            remediation_hint="Wait a moment before retrying, or switch to --provider edge.",
+        )
+    if response.status_code >= 500:
+        raise NetworkError(
+            "Gemini TTS endpoint failed.",
+            charged="no",
+            remediation_hint="Retry after a moment or use --provider edge.",
+        )
+    if response.status_code >= 400:
+        raise ConfigurationError(
+            "Gemini TTS request was rejected.",
+            charged="no",
+            remediation_hint="Check that your API key and voice parameter are valid.",
+        )
 
 
 def _canonical_voice(value: str | None) -> str:
