@@ -768,7 +768,13 @@ async def test_a_save_answered_twice_does_not_end_the_wait_for_another(
     with aoc._SaveWatch(page) as saves:  # type: ignore[arg-type]
         page.handlers["request"](first)
         page.handlers["request"](second)
-        page.handlers["response"](SimpleNamespace(url=url, status=200, request=first))
+
+        async def empty_reply() -> str:
+            return ")]}'\n[]"
+
+        page.handlers["response"](
+            SimpleNamespace(url=url, status=200, request=first, text=empty_reply)
+        )
         page.handlers["requestfailed"](first)
         with pytest.raises(UiSelectorDriftError, match="unanswered"):
             await saves.settled("applying the image defaults", clicked=True)

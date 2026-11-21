@@ -498,6 +498,7 @@ class _SaveWatch:
         try:
             body = await response.text()
         except Exception as exc:  # noqa: BLE001 - an unread reply is not a landed save
+            log.warning("migrated.agent_only.save_reply_unread", error=str(exc)[:200])
             self._resolve(response.request, f"unreadable reply: {str(exc)[:120]}")
             return
         refused = next((e for e in rpc_errors(body) if e.rpcid == AGENT_SETTINGS_SAVE_RPC), None)
