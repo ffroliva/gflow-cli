@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import io
 import re
 import wave
@@ -62,7 +61,8 @@ class GeminiTtsSynthesizer:
                 charged="no",
                 remediation_hint="Check connectivity to Google Generative Language API and retry.",
             ) from exc
-        except (ValueError, KeyError, IndexError, TypeError, binascii.Error) as exc:
+        # ValueError also covers binascii.Error from the base64 decode.
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ConfigurationError(
                 "Gemini TTS returned an invalid audio response.",
                 charged="no",

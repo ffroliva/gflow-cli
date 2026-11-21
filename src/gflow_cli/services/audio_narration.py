@@ -17,6 +17,8 @@ from gflow_cli.services.video_assembly import publish_output
 
 Provider = Literal["edge", "gemini"]
 
+_WRITABLE_OUT_FILE_HINT = "Choose an --out-file path inside a writable directory."
+
 
 @dataclass(frozen=True)
 class NarrationResult:
@@ -81,7 +83,7 @@ def narrate(
             raise ConfigurationError(
                 f"Could not write narration output: {out_file}",
                 charged="no",
-                remediation_hint="Choose an --out-file path inside a writable directory.",
+                remediation_hint=_WRITABLE_OUT_FILE_HINT,
             ) from exc
         return NarrationResult(out_file, provider, result.media_type)
     except ConfigurationError:
@@ -90,7 +92,7 @@ def narrate(
         raise ConfigurationError(
             f"Could not write narration output: {out_file}",
             charged="no",
-            remediation_hint="Choose an --out-file path inside a writable directory.",
+            remediation_hint=_WRITABLE_OUT_FILE_HINT,
         ) from exc
     finally:
         temporary.unlink(missing_ok=True)
@@ -158,7 +160,7 @@ def _open_staging(path: Path) -> tuple[Path, BinaryIO]:
         raise ConfigurationError(
             f"Narration output parent is not writable: {path.parent}",
             charged="no",
-            remediation_hint="Choose an --out-file path inside a writable directory.",
+            remediation_hint=_WRITABLE_OUT_FILE_HINT,
         ) from exc
 
 
