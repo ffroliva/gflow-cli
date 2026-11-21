@@ -301,6 +301,19 @@ Notes:
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
 
+## `gflow audio narrate`
+
+Create a local narration track from text with the keyless Edge provider or Gemini TTS. The
+narration text is sent to the selected provider; this uses no Flow credits.
+
+```text
+gflow audio narrate TEXT --out-file FILE [--text-file UTF8_FILE] [--provider edge|gemini]
+  [--voice ID] [--rate +/-N%] [--pitch +/-NHz] [--json]
+```
+
+Install `gflow-cli[tts]` to use Edge. Gemini requires `GFLOW_CLI_GEMINI_TTS_API_KEY` and writes
+WAV audio that can be passed to `gflow video assemble --voiceover`.
+
 ## `gflow video transcribe` and `gflow video captions`
 
 Transcribe a local video or catalog media UUID to SubRip (`.srt`), then optionally burn those

@@ -210,15 +210,15 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `src/gflow_cli/cli_audio.py`, `src/gflow_cli/cli.py`, `tests/cli/test_cli_audio.py`, `tests/features/test_audio_narrate_steps.py`.
 
 **Steps:**
-- [ ] Register `audio` group with `narrate TEXT` or `--text-file FILE`, required `--out-file`, provider `edge|gemini` default edge, optional voice, rate, pitch, and JSON output.
-- [ ] Follow existing noun-group/verb-leaf conventions in `docs/USAGE.md` and command help; disclose third-party processing.
-- [ ] Use existing error-to-JSON/exit handling and preserve the established video assemble interface.
-- [ ] Do not add a `voices` command in v1; it requires an edge catalog network call and is outside the core job.
+- [x] Register `audio` group with `narrate TEXT` or `--text-file FILE`, required `--out-file`, provider `edge|gemini` default edge, optional voice, rate, pitch, and JSON output.
+- [x] Follow existing noun-group/verb-leaf conventions in `docs/USAGE.md` and command help; disclose third-party processing.
+- [x] Use existing error-to-JSON/exit handling and preserve the established video assemble interface.
+- [x] Do not add a `voices` command in v1; it requires an edge catalog network call and is outside the core job.
 
 **Tests:**
-- [ ] Task 7 CLI and BDD tests pass.
-- [ ] `test_audio_narrate_default_provider_is_edge`.
-- [ ] `test_audio_narrate_text_and_text_file_are_exclusive`.
+- [x] Task 7 CLI and BDD tests pass.
+- [x] `test_audio_narrate_default_provider_is_edge`.
+- [x] `test_audio_narrate_text_and_text_file_are_exclusive`.
 
 ## Task 9 — MCP twin and parity
 

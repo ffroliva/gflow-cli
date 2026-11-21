@@ -13,7 +13,7 @@ from gflow_cli.services.audio_narration import NarrationResult
 def test_audio_narrate_help_discloses_provider_data_transfer() -> None:
     result = CliRunner().invoke(main, ["audio", "narrate", "--help"])
     assert result.exit_code == 0, result.output
-    assert "sent to the selected provider" in result.output.lower()
+    assert "sent to the selected third-party provider" in result.output.lower()
     assert "flow credits" in result.output.lower()
 
 
@@ -40,3 +40,18 @@ def test_audio_narrate_text_and_text_file_are_exclusive(tmp_path: Path) -> None:
     )
     assert response.exit_code == 2
     assert "mutually exclusive" in response.output.lower()
+
+
+def test_audio_narrate_defaults_to_edge_and_accepts_text_file(tmp_path: Path) -> None:
+    output = tmp_path / "voice.mp3"
+    script = tmp_path / "script.txt"
+    script.write_text("Hello", encoding="utf-8")
+    result = NarrationResult(output, "edge", "audio/mpeg")
+    with patch("gflow_cli.cli_audio.narrate", return_value=result) as handler:
+        response = CliRunner().invoke(
+            main,
+            ["audio", "narrate", "--text-file", str(script), "--out-file", str(output)],
+        )
+    assert response.exit_code == 0, response.output
+    assert handler.call_args.kwargs["text_file"] == script
+    assert handler.call_args.kwargs["provider"] == "edge"

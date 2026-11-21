@@ -106,6 +106,15 @@ def configuration_error(narration_case: dict[str, Any]) -> None:
     )
 
 
+@then("audio narration fails with a typed provider error")
+def provider_error(narration_case: dict[str, Any]) -> None:
+    result = narration_case["result"]
+    assert result.exit_code == 6, result.stdout
+    error = json.loads(result.stdout)["error"]
+    assert error["type"] == "https://gflow-cli.dev/errors/network"
+    assert error["charged"] == "no"
+
+
 @then("no narration file is created")
 def output_missing(narration_case: dict[str, Any]) -> None:
     assert not (narration_case["root"] / "missing.mp3").exists()
