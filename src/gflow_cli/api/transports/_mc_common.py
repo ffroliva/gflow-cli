@@ -117,6 +117,9 @@ AGENT_PANEL_CLOSE = ", ".join(
     f":has(mat-icon:text-is('{ligature}'))"
     for ligature in ("right_panel_close", "close")
 )
+#: The compact agent prompt box's control that opens the panel (2026-11-20 build). The agent
+#: chat, with its credit gates and replies, renders only inside the open panel.
+AGENT_PANEL_OPEN = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('right_panel_open'))"
 #: How long the panel gets to close, and the toggle to come back, after the close click.
 #: Measured as a re-render, not a navigation; this is headroom.
 AGENT_PANEL_SETTLE_S = 5.0
@@ -142,7 +145,22 @@ AGENT_ONLY_SETTLE_S = 2.0
 AGENT_ONLY_RELOADS = 3
 AGENT_ONLY_RELOAD_WAIT_S = 5.0
 #: The agent-only composer's own Agent-settings button — the thing its driver needs anyway.
-AGENT_ONLY_ANCHOR = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
+#: Flow's 2026-09-15 build: a `tune` button inside the prompt box.
+AGENT_SETTINGS_TUNE = "flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))"
+#: Flow's 2026-11-20 build renders no `tune`; the gear is a `settings_2` button (#1387): the
+#: compact agent prompt box's `button.agent-action-button` while the agent panel is closed, or
+#: the panel header's own gear while it is open (the closed panel is not in the DOM at all).
+#: The project header carries another `settings_2` (the grid's view settings), so both are
+#: scoped; the header gear excludes buttons inside the panel's prompt box.
+AGENT_SETTINGS_GEAR = ", ".join(
+    (
+        "flow-creative-agent-prompt-box button.agent-action-button"
+        ":has(mat-icon:text-is('settings_2'))",
+        f"{AGENT_PANEL} button:not(flow-creative-agent-prompt-box button)"
+        ":has(mat-icon:text-is('settings_2'))",
+    )
+)
+AGENT_ONLY_ANCHOR = f"{AGENT_SETTINGS_TUNE}, {AGENT_SETTINGS_GEAR}"
 #: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
 ComposerKind = Literal["classic", "agent_only"]
 #: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there
