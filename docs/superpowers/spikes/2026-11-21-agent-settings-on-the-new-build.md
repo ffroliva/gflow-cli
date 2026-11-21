@@ -95,8 +95,10 @@ Then two back-to-back clips, 16:9 then 9:16, 4 s each:
 | B, before the chat fix | closed | no gate approved and no clip queued within 600 s (`approvals=0`, `pending seen: False`) | the same |
 | C, with the chat fix | closed | `panel_opened`, then gate approved 12 s after the submit; downloaded in 64 s; 1280x720 | the same in 55 s; 720x1280 |
 
-Then, in a separate run with the chat fix, two image turns from a closed panel
-(`--generate-images --generate-panel closed`; images cost no credits):
+Then, in a separate run with the chat fix, two image turns, the first from a closed panel
+(`--generate-images --generate-panel closed`; images cost no credits). In that run the
+second turn started with the panel the first turn had opened; the script now sets the
+requested panel state before each image turn, which this run did not measure:
 
 | Turn | Result |
 |---|---|

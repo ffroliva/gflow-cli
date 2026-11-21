@@ -130,13 +130,25 @@ async def _apply_restore(page: Any, section: str, **values: Any) -> dict[str, An
     out: dict[str, Any] = {"before": await _state(page)}
     try:
         snapshot = await composer.apply_defaults(page, section=section, **values)  # type: ignore[arg-type]
-        out["snapshot"] = snapshot.__dict__
+    except Exception as exc:  # noqa: BLE001 - the class and detail are the observation
+        out["raised"] = _described(exc)
+        return out
+    out["snapshot"] = snapshot.__dict__
+    try:
         out["applied_rows"] = await _rows(page)
+    except Exception as exc:  # noqa: BLE001 - the observation; the restore still runs
+        out["raised"] = _described(exc)
+    # Applied means the account holds the probe's values: restore whatever the read did.
+    try:
         await composer.restore_defaults(page, snapshot)
         out["restored"] = True
-    except Exception as exc:  # noqa: BLE001 - the class and detail are the observation
-        out["raised"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+    except Exception as exc:  # noqa: BLE001 - kept apart from the observation's own error
+        out["restore_raised"] = _described(exc)
     return out
+
+
+def _described(exc: Exception) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:300]}"
 
 
 def _dims(path: Path) -> str | None:
@@ -282,6 +294,8 @@ async def main(
             snaps["images_landscape_x2"] = await _generate_images(
                 page, project, ImageAspect.LANDSCAPE, 2, ImageModel.NARWHAL
             )
+            # The first turn opened the panel; each image turn starts from the requested state.
+            await (_close_panel(page) if generate_panel == "closed" else _open_panel(page))
             snaps["images_portrait_x1"] = await _generate_images(
                 page, project, ImageAspect.PORTRAIT, 1, ImageModel.GEM_PIX_2
             )
@@ -312,7 +326,7 @@ if __name__ == "__main__":
         "--generate-panel",
         choices=("open", "closed"),
         default="open",
-        help="the agent panel's state before the first clip",
+        help="the agent panel's state before the first clip and before each image turn",
     )
     parser.add_argument(
         "--generate-images",
