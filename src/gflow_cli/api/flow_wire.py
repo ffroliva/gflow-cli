@@ -1,17 +1,23 @@
-"""Read the Flow credit balance straight from flow.google.com, with no browser (#1229).
+"""Direct wire communication with flow.google.com without a browser (#1229, #1363).
 
 The profile's saved cookies (``auth/cookies.read_cookies_for``) go on one GET of the app
 shell, which carries the page's ``at`` token (``SNlM0e``), session id (``FdrFJe``) and
-build label (``cfb2h``); then one batchexecute POST of ``nzlxg`` returns the balance,
-decoded by ``CreditsInfo.from_nzlxg``. Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
+build label (``cfb2h``); batchexecute POSTs then execute RPC ``nzlxg`` (credit balance read,
+decoded by ``CreditsInfo.from_nzlxg``) or ``pGCYOe`` (media trash/restore mutations,
+#1363). Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
 
 A failure raises :class:`WireReadUnavailable` carrying only an enum reason, and the caller
-(``services/credits.py``) reads through the browser instead. Back-pressure is the exception:
-HTTP 429 and 503 raise the page path's own ``RateLimitError`` / ``NetworkError`` and open a
-per-profile window (Retry-After, else 60 s) in which every read of that profile re-raises
-with nothing sent, because a page load would send the same RPCs to a throttled account.
-Nothing here retries a 4xx, follows a redirect, keeps a cookie Flow sets, or names anything
-but ``nzlxg``. All state is per profile: one account's failure never affects another.
+(``services/credits.py`` or ``services/media_trash.py``) falls back to the browser instead.
+Back-pressure is the exception: HTTP 429 and 503 raise the page path's own ``RateLimitError``
+/ ``NetworkError`` and, for credits reads, open a per-profile window (Retry-After, else 60 s) in
+which every read of that profile re-raises with nothing sent, because a page load would send the
+same RPCs to a throttled account. Media mutations via ``pGCYOe`` carry their own route and
+remediation hint without entering the credits throttle window. An RPC rejection from Flow on
+``pGCYOe`` raises a typed ``FlowApiError`` rather than falling back.
+
+Nothing here retries a 4xx, follows a redirect, keeps a cookie Flow sets, or executes
+unallowed RPCs outside ``nzlxg`` and ``pGCYOe``. All state is per profile: one account's
+failure never affects another.
 """
 
 from __future__ import annotations
