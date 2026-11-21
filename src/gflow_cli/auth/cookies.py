@@ -216,6 +216,22 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
 _SKIP_DIRECT_READ = sys.platform == "darwin"
 
 
+def _reject_unreadable_jar(cookies_file: Path, header: bytes) -> None:
+    """#796: Chrome razes a cookie store it cannot read, so a corrupt one must not reach it.
+
+    Raises ``sqlite3.DatabaseError`` for a non-SQLite header or a malformed body, as the
+    browser_cookie3 read did before Chrome launched. The query is read-only and
+    ``immutable``, so a store held by a running Chrome is neither locked nor changed.
+    """
+    if header != b"SQLite format 3\x00":
+        raise sqlite3.DatabaseError("file is not a database")
+    conn = sqlite3.connect(f"{cookies_file.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+    try:
+        conn.execute("SELECT count(*) FROM cookies").fetchone()
+    finally:
+        conn.close()
+
+
 async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     """Return the Chrome cookies needed by the Flow session probe.
 
@@ -233,12 +249,15 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
             cookies_file = get_cookies_path(profile_dir)
         except FileNotFoundError:
             return ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
-        with open(cookies_file, "rb") as jar:
-            header = jar.read(16)
-        # #796: a corrupt jar must not reach Chrome, which would raze it.
-        # shortcut: header check only; deeper corruption reaches Chrome as before #796.
-        if header and header != b"SQLite format 3\x00":
-            raise sqlite3.DatabaseError("file is not a database")
+        try:
+            with open(cookies_file, "rb") as jar:
+                header = jar.read(16)
+        except OSError:
+            # Unreadable here (permissions, not a file): the direct read fell back too.
+            logger.info("cookie_store_unreadable_falling_back", profile=str(profile_dir))
+            return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
+        if header:  # an empty jar is a fresh profile: Chrome initialises it
+            _reject_unreadable_jar(cookies_file, header)
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:
         return _get_chrome_cookies3(profile_dir=profile_dir)

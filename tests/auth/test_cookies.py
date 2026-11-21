@@ -242,3 +242,87 @@ async def test_snapshot_on_macos_keeps_a_corrupt_jar_away_from_chrome(
     with pytest.raises(sqlite3.DatabaseError):
         await cookies_mod.get_chrome_cookie_snapshot(profile)
     browser.assert_not_awaited()
+
+
+def _write_cookie_db(path: Path) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT)")
+    conn.execute("INSERT INTO cookies VALUES ('labs.google', 'a', 'b')")
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_on_macos_keeps_a_jar_with_a_corrupt_body_away_from_chrome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#796: a valid SQLite header over a malformed body is still corrupt. The
+    browser_cookie3 read raised before Chrome launched; the macOS route must too."""
+    import sqlite3
+
+    profile = _make_profile_with_cookies(tmp_path)
+    jar = profile / "Default" / "Network" / "Cookies"
+    _write_cookie_db(jar)
+    data = bytearray(jar.read_bytes())
+    data[100:] = b"\xff" * (len(data) - 100)  # keep the header, wreck every page
+    jar.write_bytes(bytes(data))
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    browser = AsyncMock()
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        await cookies_mod.get_chrome_cookie_snapshot(profile)
+    browser.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_on_macos_reads_a_valid_jar_through_chrome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = _make_profile_with_cookies(tmp_path)
+    _write_cookie_db(profile / "Default" / "Network" / "Cookies")
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={"a": "b"}, google_session=True)
+    browser = AsyncMock(return_value=expected)
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+
+
+@pytest.mark.asyncio
+async def test_snapshot_on_macos_falls_back_to_chrome_when_the_jar_cannot_be_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable jar fell back to the Playwright read before; it must not
+    surface as a verification error ("check network") on macOS."""
+    profile = _make_profile_with_cookies(tmp_path)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+
+    def _denied(*_args: object, **_kwargs: object) -> object:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("builtins.open", _denied)
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+    browser = AsyncMock(return_value=expected)
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+    browser.assert_awaited_once_with(profile_dir=profile)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_on_macos_without_a_jar_is_an_empty_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = tmp_path / "profile"
+    (profile / "Default").mkdir(parents=True)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    browser = AsyncMock()
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    snapshot = await cookies_mod.get_chrome_cookie_snapshot(profile)
+
+    assert snapshot == cookies_mod.ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+    browser.assert_not_awaited()
