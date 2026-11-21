@@ -9,6 +9,7 @@ and updates local catalog state.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -133,6 +134,68 @@ def resolve_media_trash_target(target_id: str, *, profile: str | None, route: st
         return matches[0]
 
 
+def _resolve_target_info(
+    clean_id: str,
+    profile: str | None,
+    project_id: str | None,
+    route: str,
+    db_path: Path,
+) -> tuple[str, str, str, str]:
+    """Return (media_id, project_id, workflow_id, profile_name)."""
+    if project_id:
+        from gflow_cli import profile_store
+
+        resolved_project_id = project_id.strip()
+        profile_name = profile if profile else profile_store.resolve_profile(None)
+        with DataStore.open(db_path) as store:
+            repo = DataRepository(store)
+            asset = repo.get_asset_by_any_id(profile_name, clean_id)
+        workflow_id = asset.flow_workflow_id if asset and asset.flow_workflow_id else ""
+        return clean_id, resolved_project_id, workflow_id, profile_name
+
+    asset = resolve_media_trash_target(clean_id, profile=profile, route=route)
+    if not asset.flow_project_id:
+        raise DataStoreError(
+            detail=(
+                f"Asset {asset.flow_media_id!r} has no associated flow_project_id in the catalog."
+            ),
+            route=route,
+            charged="no",
+            remediation_hint="Pass --project PROJECT_ID to specify Flow project ID.",
+        )
+    return (
+        asset.flow_media_id,
+        asset.flow_project_id,
+        asset.flow_workflow_id or "",
+        asset.profile_name,
+    )
+
+
+async def _dispatch_mutation(
+    profile_dir: Path,
+    media_id: str,
+    project_id: str,
+    *,
+    archived: bool,
+    action: str,
+    wire_reads: bool,
+    headless: bool,
+) -> dict[str, Any]:
+    wire_res: dict[str, Any] | None = None
+    if wire_reads:
+        try:
+            fn = flow_wire.direct_trash_media if archived else flow_wire.direct_restore_media
+            wire_res = await fn(profile_dir, media_id, project_id)
+        except WireReadUnavailable as exc:
+            log.info(f"media.{action}_wire_fallback", reason=exc.reason.value, media_id=media_id)
+
+    if wire_res is None:
+        async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+            client_fn = client.trash_media if archived else client.restore_media
+            wire_res = await client_fn(media_id, project_id)
+    return wire_res
+
+
 async def set_archived_media_service(
     target_id: str,
     *,
@@ -157,55 +220,20 @@ async def set_archived_media_service(
     clean_id = target_id.strip()
     settings = get_settings()
 
-    asset: AssetLookup | None = None
-    if project_id:
-        from gflow_cli import profile_store
-
-        media_id = clean_id
-        resolved_project_id = project_id.strip()
-        profile_name = profile if profile else profile_store.resolve_profile(None)
-        with DataStore.open(settings.resolved_db_path()) as store:
-            repo = DataRepository(store)
-            asset = repo.get_asset_by_any_id(profile_name, media_id)
-        workflow_id = asset.flow_workflow_id if asset and asset.flow_workflow_id else ""
-    else:
-        asset = resolve_media_trash_target(clean_id, profile=profile, route=resolved_route)
-        profile_name = asset.profile_name
-        media_id = asset.flow_media_id
-        resolved_project_id = asset.flow_project_id
-        if not resolved_project_id:
-            raise DataStoreError(
-                detail=f"Asset {media_id!r} has no associated flow_project_id in the catalog.",
-                route=resolved_route,
-                charged="no",
-                remediation_hint="Pass --project PROJECT_ID to specify Flow project ID.",
-            )
-        workflow_id = asset.flow_workflow_id or ""
-
+    media_id, resolved_project_id, workflow_id, profile_name = _resolve_target_info(
+        clean_id, profile, project_id, resolved_route, settings.resolved_db_path()
+    )
     profile_dir = settings.profile_subdir(profile_name)
 
-    wire_success = False
-    wire_res: dict[str, Any] | None = None
-    if settings.wire_reads:
-        try:
-            if archived:
-                wire_res = await flow_wire.direct_trash_media(
-                    profile_dir, media_id, resolved_project_id
-                )
-            else:
-                wire_res = await flow_wire.direct_restore_media(
-                    profile_dir, media_id, resolved_project_id
-                )
-            wire_success = True
-        except WireReadUnavailable as exc:
-            log.info(f"media.{action}_wire_fallback", reason=exc.reason.value, media_id=media_id)
-
-    if not wire_success or wire_res is None:
-        async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-            if archived:
-                wire_res = await client.trash_media(media_id, resolved_project_id)
-            else:
-                wire_res = await client.restore_media(media_id, resolved_project_id)
+    wire_res = await _dispatch_mutation(
+        profile_dir,
+        media_id,
+        resolved_project_id,
+        archived=archived,
+        action=action,
+        wire_reads=settings.wire_reads,
+        headless=settings.headless,
+    )
 
     restore_hint = None
     if archived:
