@@ -156,14 +156,14 @@ binding all offline scenarios from `tests/features/media_trash.feature`.
 - `tests/services/test_media_trash.py`
 
 **Steps:**
-- [ ] In `src/gflow_cli/api/flow_wire.py`, add `pGCYOe` to `_ALLOWED_RPCIDS` and implement `direct_trash_media` and `direct_restore_media`.
-- [ ] In `src/gflow_cli/api/client.py`, add `trash_media(self, media_id: str, project_id: str) -> dict[str, Any]` and `restore_media(self, media_id: str, project_id: str) -> dict[str, Any]`.
-- [ ] Implement fallback to Playwright page context evaluation (`page.evaluate`) if direct HTTP wire returns 401/redirect or session cookies are stale.
-- [ ] Update unit tests in `tests/services/test_media_trash.py` to cover wire dispatch and fallback mocking.
+- [x] In `src/gflow_cli/api/flow_wire.py`, add `pGCYOe` to `_ALLOWED_RPCIDS` and implement `direct_trash_media` and `direct_restore_media`.
+- [x] In `src/gflow_cli/api/client.py`, add `trash_media(self, media_id: str, project_id: str) -> dict[str, Any]` and `restore_media(self, media_id: str, project_id: str) -> dict[str, Any]`.
+- [x] Implement fallback to Playwright page context evaluation (`page.evaluate`) if direct HTTP wire returns 401/redirect or session cookies are stale.
+- [x] Update unit tests in `tests/services/test_media_trash.py` to cover wire dispatch and fallback mocking.
 
 **Tests created (green):**
-- [ ] `test_direct_trash_media_success` — verifies successful direct HTTP wire POST of `pGCYOe`.
-- [ ] `test_direct_trash_media_fallback_on_stale_cookie` — verifies fallback to page context on 401.
+- [x] `test_direct_trash_media_success` — verifies successful direct HTTP wire POST of `pGCYOe`.
+- [x] `test_direct_trash_media_fallback_on_stale_cookie` — verifies fallback to page context on 401.
 
 ---
 

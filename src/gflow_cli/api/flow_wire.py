@@ -48,7 +48,7 @@ log = structlog.get_logger(__name__)
 
 _ORIGIN = "https://flow.google.com"
 _BATCHEXECUTE = f"{_ORIGIN}/_/AiSandboxAngularFrontend/data/batchexecute"
-_ALLOWED_RPCIDS = frozenset({"nzlxg"})
+_ALLOWED_RPCIDS = frozenset({"nzlxg", "pGCYOe"})
 _ROUTE = "credits_wire"
 _THROTTLED_HINT = "Flow is throttling this account; wait a minute, then read the balance again."
 _THROTTLE_DEFAULT_S = 60.0
@@ -184,7 +184,12 @@ async def _send(client: httpx.AsyncClient, request: httpx.Request) -> httpx.Resp
         return await client.send(request)
 
 
-def _rpc_request(rpcid: str, tokens: _Tokens, headers: dict[str, str]) -> httpx.Request:
+def _rpc_request(
+    rpcid: str,
+    tokens: _Tokens,
+    headers: dict[str, str],
+    payload: list[Any] | None = None,
+) -> httpx.Request:
     if rpcid not in _ALLOWED_RPCIDS:
         msg = f"rpcid {rpcid!r} is not on the wire allow-list"
         raise ValueError(msg)
@@ -192,7 +197,10 @@ def _rpc_request(rpcid: str, tokens: _Tokens, headers: dict[str, str]) -> httpx.
     _reqid += 100_000
     query = {"rpcids": rpcid, "source-path": "/", "bl": tokens.bl, "f.sid": tokens.fsid}
     query |= {"hl": "en", "_reqid": str(_reqid), "rt": "c"}
-    body = urlencode({"f.req": json.dumps([[[rpcid, "[]", None, "generic"]]]), "at": tokens.at})
+    inner_json = json.dumps(payload, separators=(",", ":")) if payload is not None else "[]"
+    body = urlencode(
+        {"f.req": json.dumps([[[rpcid, inner_json, None, "generic"]]]), "at": tokens.at}
+    )
     return httpx.Request(
         "POST",
         f"{_BATCHEXECUTE}?{urlencode({k: v for k, v in query.items() if v is not None})}",
@@ -268,8 +276,11 @@ async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     return await asyncio.wait_for(future, _TOTAL_S)
 
 
-async def read_credits(profile_dir: Path) -> CreditsInfo:
-    """The balance over the wire, or :class:`WireReadUnavailable`. Never starts a browser."""
+async def _execute_direct_rpc(
+    profile_dir: Path,
+    rpcid: str,
+    payload: list[Any] | None = None,
+) -> tuple[httpx.Response, float]:
     require_in_home(profile_dir)  # before anything reads the profile (row 19)
     _gate(profile_dir)
     if get_settings().browser_proxy or getproxies():
@@ -303,10 +314,16 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
         ):
             tokens = await _shell_tokens(client, profile_dir, headers)
             _gate(profile_dir)  # another read's POST may have been throttled meanwhile
-            response = await _send(client, _rpc_request("nzlxg", tokens, headers))
+            response = await _send(client, _rpc_request(rpcid, tokens, headers, payload=payload))
             _check(response, profile_dir)
     except (TimeoutError, httpx.TransportError):
         raise WireReadUnavailable(WireFallbackReason.NETWORK) from None
+    return response, time.perf_counter() - started
+
+
+async def read_credits(profile_dir: Path) -> CreditsInfo:
+    """The balance over the wire, or :class:`WireReadUnavailable`. Never starts a browser."""
+    response, elapsed = await _execute_direct_rpc(profile_dir, "nzlxg")
     frames = [payload for rpcid, payload in parse_frames(response.text) if rpcid == "nzlxg"]
     try:
         info = CreditsInfo.from_nzlxg(frames[0] if frames else None)
@@ -316,8 +333,48 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
             # Only the numeric status: a real rate-limit code shows up here before we act on it.
             log.info("credits.wire_rpc_error", codes=codes)
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE) from None
-    log.info("credits.wire_read", ms=round((time.perf_counter() - started) * 1000))
+    log.info("credits.wire_read", ms=round(elapsed * 1000))
     return info
+
+
+async def direct_trash_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
+    """Trash a media item over the wire without a browser."""
+    from gflow_cli.api.transports._media_trash_wire import (
+        build_trash_payload,
+        parse_trash_response,
+    )
+
+    payload = build_trash_payload(media_id, project_id)
+    response, elapsed = await _execute_direct_rpc(profile_dir, "pGCYOe", payload=payload)
+    frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
+    if not frames:
+        _tokens.pop(profile_dir, None)
+        if codes := [e.code for e in rpc_errors(response.text) if e.code is not None]:
+            log.info("media.trash_wire_rpc_error", codes=codes)
+        raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
+    result = parse_trash_response(frames[0], expected_media_id=media_id)
+    log.info("media.trash_wire", ms=round(elapsed * 1000), media_id=media_id)
+    return result
+
+
+async def direct_restore_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
+    """Restore a media item over the wire without a browser."""
+    from gflow_cli.api.transports._media_trash_wire import (
+        build_restore_payload,
+        parse_restore_response,
+    )
+
+    payload = build_restore_payload(media_id, project_id)
+    response, elapsed = await _execute_direct_rpc(profile_dir, "pGCYOe", payload=payload)
+    frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
+    if not frames:
+        _tokens.pop(profile_dir, None)
+        if codes := [e.code for e in rpc_errors(response.text) if e.code is not None]:
+            log.info("media.restore_wire_rpc_error", codes=codes)
+        raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
+    result = parse_restore_response(frames[0], expected_media_id=media_id)
+    log.info("media.restore_wire", ms=round(elapsed * 1000), media_id=media_id)
+    return result
 
 
 def session_recovered(profile_dir: Path) -> None:

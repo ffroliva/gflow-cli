@@ -751,6 +751,34 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         if cancelled is not None:
             raise cancelled
 
+    async def trash_media(self, media_id: str, project_id: str) -> dict[str, Any]:
+        """Move a media item to Flow's restorable Trash via pGCYOe.
+
+        Operates via browser page-context evaluation when the direct wire path
+        falls back.
+        """
+        from gflow_cli.api.transports import _media_trash_wire  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            return await _media_trash_wire.page_trash_media(page, media_id, project_id)
+        finally:
+            self._checkin_page(page)
+
+    async def restore_media(self, media_id: str, project_id: str) -> dict[str, Any]:
+        """Restore a media item from Flow's Trash via pGCYOe.
+
+        Operates via browser page-context evaluation when the direct wire path
+        falls back.
+        """
+        from gflow_cli.api.transports import _media_trash_wire  # noqa: PLC0415
+
+        page = await self._checkout_page()
+        try:
+            return await _media_trash_wire.page_restore_media(page, media_id, project_id)
+        finally:
+            self._checkin_page(page)
+
     async def health_check(self) -> bool:
         """Return True if the browser context is alive and on a Google domain.
 
