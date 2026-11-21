@@ -256,18 +256,11 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 def _stream_start_seconds(stream: Any) -> float:
-    if stream is None or stream.start_time is None or stream.time_base is None:
+    start_time = getattr(stream, "start_time", None)
+    time_base = getattr(stream, "time_base", None)
+    if start_time is None or time_base is None:
         return 0.0
-    return float(stream.start_time * stream.time_base)
-
-
-def _frame_start_seconds(frame: Any, stream: Any, cursor_s: float, *, is_first: bool) -> float:
-    tb = frame.time_base or stream.time_base
-    if frame.pts is not None and tb is not None:
-        return float(frame.pts * tb)
-    if is_first:
-        return _stream_start_seconds(stream)
-    return cursor_s
+    return float(start_time * time_base)
 
 
 def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
@@ -282,27 +275,32 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
                 )
             stream = container.streams.audio[0]
             video = container.streams.video[0] if container.streams.video else None
-            cursor_s = _stream_start_seconds(video)
-            decoded_frames = 0
+            video_origin = _stream_start_seconds(video)
             resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
             samples: list[bytes] = []
+            written_samples = 0
             duration = float(container.duration or 0) / av.time_base
-            for frame in container.decode(stream):
-                frame_start_s = _frame_start_seconds(
-                    frame, stream, cursor_s, is_first=decoded_frames == 0
-                )
-                gap_s = frame_start_s - cursor_s
-                if (
-                    gap_s > (0.0 if decoded_frames == 0 else 0.01)
-                    and (gap_samples := round(gap_s * 16000)) > 0
-                ):
-                    samples.append(bytes(gap_samples * 2))
-                rate = float(frame.sample_rate or stream.rate or 16000)
-                cursor_s = max(cursor_s, frame_start_s) + (frame.samples / rate)
-                for converted in resampler.resample(frame):
-                    decoded_frames += 1
-                    samples.append(bytes(converted.planes[0])[: converted.samples * 2])
-            if not decoded_frames:
+            for raw_frame in (*container.decode(stream), None):
+                if raw_frame is not None and raw_frame.time_base is None:
+                    raw_frame.time_base = stream.time_base
+                for frame in resampler.resample(raw_frame):
+                    tb = frame.time_base or stream.time_base
+                    target_sample = (
+                        round((float(frame.pts * tb) - video_origin) * 16000)
+                        if frame.pts is not None and tb is not None
+                        else written_samples
+                    )
+                    if target_sample > written_samples:
+                        gap = target_sample - written_samples
+                        samples.append(bytes(gap * 2))
+                        written_samples += gap
+                    chunk = bytes(frame.planes[0])[: frame.samples * 2]
+                    if target_sample < written_samples:
+                        chunk = chunk[(written_samples - target_sample) * 2 :]
+                    if chunk:
+                        samples.append(chunk)
+                        written_samples += len(chunk) // 2
+            if not written_samples:
                 raise ConfigurationError(
                     detail="Video audio track contains no decodable audio.",
                     charged="no",
@@ -465,14 +463,20 @@ def _render_video(
                 else output.add_stream(template=audio_stream)
             )
         duration = float(input_container.duration or 0) / av.time_base
+        video_origin = _stream_start_seconds(video)
         overlays: dict[str, tuple[Any, int]] = {}
         for frame in input_container.decode(video):
             frames += 1
-            seconds = (
-                float(frame.pts * video.time_base)
-                if frame.pts is not None
-                else (frames - 1) / float(video.average_rate or 25)
+            frame_time = (
+                float(frame.time)
+                if getattr(frame, "time", None) is not None
+                else (
+                    float(frame.pts * video.time_base)
+                    if frame.pts is not None and video.time_base is not None
+                    else (frames - 1) / float(video.average_rate or 25) + video_origin
+                )
             )
+            seconds = frame_time - video_origin
             text = next((e.text for e in entries if e.start_s <= seconds <= e.end_s), None)
             if text:
                 burned += 1

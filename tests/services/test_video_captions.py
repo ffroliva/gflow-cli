@@ -315,6 +315,121 @@ def test_extract_wav_bytes_preserves_leading_audio_offset_and_gaps(
         assert zero_decoded.getnframes() == 1600
 
 
+def test_non_zero_start_time_aligns_wav_tone_and_caption_overlay(tmp_path: Path) -> None:
+    import wave
+
+    av = pytest.importorskip("av")
+    shifted = tmp_path / "shifted.mkv"
+    with av.open(str(shifted), mode="w", format="matroska") as output:
+        video = output.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
+        audio = output.add_stream("pcm_s16le", rate=16000)
+        audio.layout = "mono"
+        for index in range(20):
+            vframe = av.VideoFrame(160, 90, "rgb24")
+            vframe.planes[0].update(bytes([120]) * vframe.planes[0].buffer_size)
+            vframe.pts = 50 + index
+            vframe.time_base = Fraction(1, 10)
+            for packet in video.encode(vframe):
+                output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
+        for start_sample, payload in ((80000, bytes(16000 * 2)), (96000, b"\x10\x20" * 8000)):
+            aframe = av.AudioFrame(format="s16", layout="mono", samples=len(payload) // 2)
+            aframe.sample_rate = 16000
+            aframe.pts = start_sample
+            aframe.time_base = Fraction(1, 16000)
+            aframe.planes[0].update(payload)
+            for packet in audio.encode(aframe):
+                output.mux(packet)
+        for packet in audio.encode():
+            output.mux(packet)
+
+    wav, _ = extract_wav_bytes(shifted)
+    with wave.open(io.BytesIO(wav)) as decoded:
+        pcm = decoded.readframes(decoded.getnframes())
+    assert pcm[: 16000 * 2] == bytes(16000 * 2)
+    assert any(pcm[16000 * 2 : 24000 * 2])
+
+    srt = tmp_path / "shifted.srt"
+    srt.write_text("1\n00:00:00,950 --> 00:00:01,050\nShifted cue\n", encoding="utf-8")
+    rendered = caption_video(str(shifted), srt_path=srt)
+    assert rendered.frames_burned == 1
+    with av.open(str(rendered.output_file)) as container:
+        decoded_frames = [frame.to_image() for frame in container.decode(video=0)]
+    assert decoded_frames[10].tobytes() != decoded_frames[0].tobytes()
+
+
+def test_extract_wav_bytes_small_gaps_do_not_accumulate_drift(tmp_path: Path) -> None:
+    import wave
+
+    av = pytest.importorskip("av")
+    gapped = tmp_path / "gapped.mkv"
+    with av.open(str(gapped), mode="w", format="matroska") as output:
+        video = output.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
+        audio = output.add_stream("pcm_s16le", rate=16000)
+        audio.layout = "mono"
+        for index in range(100):
+            vframe = av.VideoFrame(160, 90, "rgb24")
+            vframe.pts = index
+            vframe.time_base = Fraction(1, 10)
+            for packet in video.encode(vframe):
+                output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
+        for index in range(400):
+            aframe = av.AudioFrame(format="s16", layout="mono", samples=320)
+            aframe.sample_rate = 16000
+            aframe.pts = index * 400
+            aframe.time_base = Fraction(1, 16000)
+            payload = b"\x40\x20" * 320 if index == 360 else bytes(320 * 2)
+            aframe.planes[0].update(payload)
+            for packet in audio.encode(aframe):
+                output.mux(packet)
+        for packet in audio.encode():
+            output.mux(packet)
+
+    wav, _ = extract_wav_bytes(gapped)
+    with wave.open(io.BytesIO(wav)) as decoded:
+        pcm = decoded.readframes(decoded.getnframes())
+    first_nonzero_byte = next(i for i, b in enumerate(pcm) if b != 0)
+    tone_seconds = (first_nonzero_byte // 2) / 16000
+    assert tone_seconds == pytest.approx(9.0, abs=0.03)
+
+
+def test_extract_wav_bytes_flushes_buffered_resampler_on_very_short_clip(tmp_path: Path) -> None:
+    import wave
+
+    av = pytest.importorskip("av")
+    short = tmp_path / "short.mkv"
+    with av.open(str(short), mode="w", format="matroska") as output:
+        video = output.add_stream("libx264", rate=10)
+        video.width, video.height, video.pix_fmt = 160, 90, "yuv420p"
+        audio = output.add_stream("pcm_s16le", rate=48000)
+        audio.layout = "mono"
+        vframe = av.VideoFrame(160, 90, "rgb24")
+        vframe.pts = 0
+        vframe.time_base = Fraction(1, 10)
+        for packet in video.encode(vframe):
+            output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
+        aframe = av.AudioFrame(format="s16", layout="mono", samples=72)
+        aframe.sample_rate = 48000
+        aframe.pts = 0
+        aframe.time_base = Fraction(1, 48000)
+        aframe.planes[0].update(b"\x10\x20" * 72)
+        for packet in audio.encode(aframe):
+            output.mux(packet)
+        for packet in audio.encode():
+            output.mux(packet)
+
+    wav, _ = extract_wav_bytes(short)
+    with wave.open(io.BytesIO(wav)) as decoded:
+        assert decoded.getnframes() > 0
+
+
 def test_audio_decode_failure_has_media_processing_error(tmp_path: Path) -> None:
     from gflow_cli.services.video_captions import extract_wav_bytes
 
