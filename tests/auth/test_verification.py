@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.auth.verification import (
     FlowSessionOutcome,
@@ -15,7 +16,7 @@ from gflow_cli.auth.verification import (
     verify_flow_profile,
     verify_flow_session,
 )
-from gflow_cli.errors import SecurityError
+from gflow_cli.errors import ProfileLockedError, SecurityError
 from tests.fixtures.settings_mock import NO_PROXY
 
 # Representative authenticated /api/auth/session body. Sanitised — no real
@@ -515,14 +516,20 @@ class TestVerifyFlowSession:
     async def test_v11_jar_verifies_through_the_browser_read(
         self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
     ) -> None:
-        """#1400: current Chrome on macOS writes every cookie as v11, and
-        browser_cookie3 0.20.1 asserts "v11 keys should only appear on Linux." on
-        them. `auth status` and the post-login probe reported that as a network
-        problem. macOS never asks browser_cookie3; elsewhere the assertion is a
-        decryption failure, so both routes verify through the headless Chrome read."""
+        """A jar browser_cookie3 0.20.1 refuses with its v11 assertion still
+        verifies end to end. macOS never asks browser_cookie3 (#1397), so it runs
+        the store check on a real SQLite file and goes to the headless Chrome read;
+        elsewhere the assertion (which browser_cookie3 raises only off Linux, and
+        win32 returns before it) is a decryption failure that falls back."""
+        import sqlite3
+
         monkeypatch.setattr("gflow_cli.auth.cookies._SKIP_DIRECT_READ", macos)
         profile = gflow_home / "profile_default"
-        profile.mkdir()
+        jar = profile / "Default" / "Network" / "Cookies"
+        jar.parent.mkdir(parents=True)
+        conn = sqlite3.connect(jar)
+        conn.execute("create table cookies(x)")
+        conn.close()
         (profile / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
 
         class BrowserCookieError(Exception):
@@ -553,10 +560,6 @@ class TestVerifyFlowSession:
 
         with (
             patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
-            patch(
-                "gflow_cli.auth.cookies.get_cookies_path",
-                return_value=Path("/fake/Cookies"),
-            ),
             patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
             patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
         ):
@@ -566,6 +569,41 @@ class TestVerifyFlowSession:
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "test.user@example.com"
         assert fake_bc3.chrome.called is not macos
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            ProfileLockedError("Chrome reports the profile dir is already in use"),
+            PlaywrightError("Chromium distribution 'chrome' is not found"),
+        ],
+        ids=["profile-locked", "chrome-cannot-start"],
+    )
+    async def test_a_local_cookie_read_failure_names_the_profile_not_the_network(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+    ) -> None:
+        """#1400 item 1: when the headless Chrome cookie read cannot run (the profile
+        is still held by Chrome, or Chrome cannot start), the cause is on this
+        machine. It was reported as VERIFICATION_ERROR, "often a network problem"."""
+        from gflow_cli.auth import cookies as cookies_mod
+
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", False)
+        monkeypatch.setattr(
+            cookies_mod, "_get_chrome_cookies3", MagicMock(side_effect=PermissionError("x"))
+        )
+        monkeypatch.setattr(
+            cookies_mod, "_get_chrome_cookies_playwright", AsyncMock(side_effect=failure)
+        )
+
+        with patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings:
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile, source="status")
+
+        assert status.outcome is FlowSessionOutcome.PROFILE_UNAVAILABLE
+        assert "network" not in status.detail.lower()
+        assert "in use" in status.detail
 
     @pytest.mark.asyncio
     async def test_httpx_retryable_status_retried_then_verification_error(

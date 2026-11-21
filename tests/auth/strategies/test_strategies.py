@@ -191,6 +191,7 @@ class TestRealChromeStrategy:
             FlowSessionOutcome.NO_SESSION,
             FlowSessionOutcome.VERIFICATION_ERROR,
             FlowSessionOutcome.COOKIE_STORE_UNREADABLE,  # #796: no KeyError on login
+            FlowSessionOutcome.PROFILE_UNAVAILABLE,  # #1400: same
         ],
     )
     async def test_real_chrome_unverified_raises_auth_missing(

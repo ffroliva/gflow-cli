@@ -84,6 +84,21 @@ def test_exit_1_on_verification_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "connectivity" in result.output
 
 
+def test_exit_1_naming_chrome_when_the_profile_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400: Chrome holding the profile (or not starting) is local, not the network."""
+    _make_profile("probed")
+    _mock_probe(monkeypatch, FlowSessionOutcome.PROFILE_UNAVAILABLE)
+
+    result = CliRunner().invoke(main, ["auth", "status", "--profile", "probed"])
+
+    assert result.exit_code == 1
+    assert "connectivity" not in result.output
+    assert "in use" in result.output
+    assert "Google Chrome" in result.output
+
+
 @pytest.mark.skipif(
     sys.platform != "win32",
     reason=(

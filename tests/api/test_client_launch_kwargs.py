@@ -430,22 +430,27 @@ def test_preread_flow_session_cookies_best_effort(
 def test_preread_reads_a_v11_jar_through_the_browser(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
 ) -> None:
-    """#1400: browser_cookie3 asserts on a v11 jar. The pre-read must still get the
-    cookies, from the headless Chrome read, on macOS (which skips browser_cookie3)
-    and elsewhere (where the assertion is a decryption failure)."""
+    """#1400: the pre-read gets a jar browser_cookie3 refuses from the headless
+    Chrome read: on macOS, which skips browser_cookie3 and checks the real SQLite
+    store first (#1397), and elsewhere, where the v11 assertion falls back."""
     import asyncio
+    import sqlite3
 
     from gflow_cli.auth import cookies as cookies_mod
 
     network = tmp_path / "Default" / "Network"
     network.mkdir(parents=True)
-    (network / "Cookies").write_bytes(b"")
+    conn = sqlite3.connect(network / "Cookies")
+    conn.execute("create table cookies(x)")
+    conn.close()
     monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", macos)
+    if not macos:
 
-    def _v11(**_: object) -> object:
-        raise AssertionError("v11 keys should only appear on Linux.")
+        def _v11(**_: object) -> object:
+            raise AssertionError("v11 keys should only appear on Linux.")
 
-    monkeypatch.setattr("browser_cookie3.chrome", _v11)
+        # Through the loader, so shadowcopy (WMI) is never imported (#1229).
+        monkeypatch.setattr(cookies_mod._browser_cookie3(), "chrome", _v11)  # noqa: SLF001
     snap = cookies_mod.ChromeCookieSnapshot(
         httpx_cookies={"__Secure-next-auth.session-token": "tok"}, google_session=True
     )

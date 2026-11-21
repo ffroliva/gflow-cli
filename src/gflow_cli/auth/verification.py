@@ -22,9 +22,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.config import BrowserEngine, get_settings
-from gflow_cli.errors import SecurityError
+from gflow_cli.errors import ProfileLockedError, SecurityError
 from gflow_cli.profile_lease import ProfileLease
 
 from .cookies import get_chrome_cookie_snapshot
@@ -77,6 +78,10 @@ class FlowSessionOutcome(StrEnum):
     #: database at all), so it cannot be read (#796). Local file state, not the
     #: network — and not retried through Playwright, which would raze the file.
     COOKIE_STORE_UNREADABLE = "cookie_store_unreadable"
+    #: The headless Chrome cookie read could not run: Chrome still holds the profile,
+    #: or Chrome could not start (#1400). Local, not the network, and not a corrupt
+    #: store: deleting the cookie file (that outcome's last resort) would not help.
+    PROFILE_UNAVAILABLE = "profile_unavailable"
 
 
 _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
@@ -89,6 +94,9 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
     ),
     FlowSessionOutcome.COOKIE_STORE_UNREADABLE: (
         "This profile's cookie store is corrupt or unreadable."
+    ),
+    FlowSessionOutcome.PROFILE_UNAVAILABLE: (
+        "This profile's cookies could not be read: Chrome has it in use, or could not start."
     ),
 }
 
@@ -654,6 +662,16 @@ async def verify_flow_profile(
         logger.warning("auth_cookie_store_unreadable", source=source, error=type(exc).__name__)
         return FlowSessionStatus(
             outcome=FlowSessionOutcome.COOKIE_STORE_UNREADABLE,
+            user_email=None,
+            source=source,
+        )
+
+    # #1400: the headless cookie read could not run. Inside this `try` only that read
+    # drives Playwright (the probe itself is httpx), so a Playwright error is local too.
+    except (ProfileLockedError, PlaywrightError) as exc:
+        logger.warning("auth_profile_unavailable", source=source, error=type(exc).__name__)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.PROFILE_UNAVAILABLE,
             user_email=None,
             source=source,
         )

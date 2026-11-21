@@ -130,3 +130,25 @@ async def test_an_unreadable_cookie_store_is_not_retryable_and_not_a_network_fau
     assert result["error"]["status"] == 409
     assert "connectivity" not in result["error"]["remediation_hint"]
     assert "gflow auth login" in result["error"]["remediation_hint"]
+
+
+async def test_an_unavailable_profile_is_local_and_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400 + MCP parity: Chrome holding the profile (or failing to start) is local,
+    so not the 503 network envelope, and retryable once Chrome lets go of it."""
+    from gflow_cli.mcp import tools
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(
+        tools.verification,
+        "verify_flow_profile",
+        _probe(FlowSessionOutcome.PROFILE_UNAVAILABLE),
+    )
+    result = await tools.gflow_auth_status()
+    assert result["status"] == "profile_unavailable"
+    assert result["error"]["type"] == "https://gflow-cli.dev/errors/profile-unavailable"
+    assert result["error"]["status"] == 409
+    assert (result["error"]["charged"], result["error"]["next_action"]) == ("no", "retry")
+    assert result["error"]["retryable"] is True
+    assert "connectivity" not in result["error"]["remediation_hint"]

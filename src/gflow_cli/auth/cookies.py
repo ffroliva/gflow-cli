@@ -98,9 +98,7 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     """Fast path: extract cookies directly from the SQLite store via browser_cookie3.
 
     Raises `PermissionError` on browser-cookie3 decryption failures so callers
-    can fall back to the Playwright browser path, including the ``AssertionError``
-    browser-cookie3 raises for a ``v11`` cookie off Linux (#1400). Other errors
-    are not masked.
+    can fall back to the Playwright browser path. Other errors are not masked.
 
     On Windows, `browser-cookie3` may raise `RuntimeError` (specifically
     ``'Failed to decrypt the cipher text with DPAPI'``) when the DPAPI master
@@ -154,9 +152,12 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
         # Treat it as a decryption failure so the Playwright fallback runs.
         raise PermissionError(f"Failed to read Chrome keyring key: {exc}") from exc
     except AssertionError as exc:
-        # #1400: browser_cookie3 asserts "v11 keys should only appear on Linux." when a
-        # jar holds v11 cookies it has no key for (current Chrome on macOS writes them).
-        # A decryption failure like the others, not a network fault: fall back.
+        # Defensive (#1400): browser_cookie3 0.20.1 asserts "v11 keys should only
+        # appear on Linux." for a v11 cookie when it has no v11 key. Only its macOS
+        # branch leaves that key unset, and macOS skips this read; should it ever
+        # run there, it is a decryption failure. Any other assertion is not masked.
+        if "v11" not in str(exc):
+            raise
         raise PermissionError(f"Failed to decrypt Chrome cookies: {exc}") from exc
 
     return ChromeCookieSnapshot(
@@ -282,8 +283,12 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:
         return _get_chrome_cookies3(profile_dir=profile_dir)
-    except PermissionError:
-        logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
+    except PermissionError as exc:
+        logger.info(
+            "cookie_decryption_failed_falling_back_to_playwright",
+            profile=str(profile_dir),
+            error=type(exc.__cause__ or exc).__name__,  # the class only, never its text
+        )
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
 
 

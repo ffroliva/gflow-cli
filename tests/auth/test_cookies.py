@@ -53,19 +53,24 @@ def test_get_chrome_cookies3_maps_browsercookieerror_to_permissionerror(
         _get_chrome_cookies3(profile)
 
 
-def test_get_chrome_cookies3_maps_v11_assertion_to_permissionerror(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("message", "falls_back"),
+    [("v11 keys should only appear on Linux.", True), ("something else", False)],
+)
+def test_get_chrome_cookies3_maps_only_the_v11_assertion_to_permissionerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str, falls_back: bool
 ) -> None:
-    """#1400: browser_cookie3 0.20.1 asserts on a v11 cookie it holds no key for.
-    That is a decryption failure, so it must reach the Playwright fallback."""
+    """Defensive: browser_cookie3 0.20.1 asserts on a v11 cookie when it holds no
+    v11 key, which only its macOS branch leaves unset (and macOS skips this read).
+    That assertion is a decryption failure; any other assertion is not masked."""
     profile = _make_profile_with_cookies(tmp_path)
 
     def _raise(**_: object) -> object:
-        raise AssertionError("v11 keys should only appear on Linux.")
+        raise AssertionError(message)
 
-    monkeypatch.setattr("browser_cookie3.chrome", _raise)
+    monkeypatch.setattr(cookies_mod._browser_cookie3(), "chrome", _raise)  # noqa: SLF001
 
-    with pytest.raises(PermissionError, match="v11 keys"):
+    with pytest.raises(PermissionError if falls_back else AssertionError, match=message):
         _get_chrome_cookies3(profile)
 
 
@@ -224,6 +229,35 @@ async def test_snapshot_on_macos_skips_browser_cookie3_keychain_read(
     assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
     direct.assert_not_called()
     browser.assert_awaited_once_with(profile_dir=profile)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_logs_why_the_direct_read_fell_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback log names the direct read's failure by class only, never its text."""
+    from structlog.testing import capture_logs
+
+    profile = _make_profile_with_cookies(tmp_path)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", False)
+    secret = "cookie-value-that-must-not-be-logged"
+    try:
+        raise KeyError(secret)
+    except KeyError as cause:
+        failure = PermissionError("Failed to read Chrome keyring key")
+        failure.__cause__ = cause
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies3", MagicMock(side_effect=failure))
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+    monkeypatch.setattr(
+        cookies_mod, "_get_chrome_cookies_playwright", AsyncMock(return_value=expected)
+    )
+
+    with capture_logs() as logs:
+        assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+
+    (entry,) = [e for e in logs if e["event"].startswith("cookie_decryption_failed")]
+    assert entry["error"] == "KeyError"
+    assert secret not in str(logs)
 
 
 @pytest.mark.asyncio

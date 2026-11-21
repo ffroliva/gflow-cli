@@ -430,6 +430,13 @@ def auth_status(profile: str | None) -> None:
                 "Close any Chrome window using this profile, then re-run "
                 f"[bold]gflow auth login --profile {name}[/bold].",
             )
+        elif status_result.outcome is verification.FlowSessionOutcome.PROFILE_UNAVAILABLE:
+            # #1400: the cookie read could not open the profile; local, not the network.
+            console.print(
+                f"[yellow]{escape(str(status_result.detail))}[/yellow] "
+                "Close any Chrome window using this profile and check that Google Chrome "
+                "is installed, then retry.",
+            )
         elif status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
             # Re-login cannot fix an unreachable endpoint — don't send the
             # user into an interactive browser flow for a network problem.

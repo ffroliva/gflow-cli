@@ -310,6 +310,7 @@ def test_hand_built_envelopes_carry_the_members_and_their_doc_rows(
     [
         ("https://gflow-cli.dev/errors/profile-marker-missing", ("no", "reauth")),
         ("https://gflow-cli.dev/errors/cookie-store-unreadable", ("no", "reauth")),
+        ("https://gflow-cli.dev/errors/profile-unavailable", ("no", "retry")),
         ("https://gflow-cli.dev/errors/verification-error", ("no", "retry")),
     ],
 )
