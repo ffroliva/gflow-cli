@@ -639,10 +639,7 @@ class AgentOnlyComposer:
         try:
             # The gate whose title was read, not ``.last``: with two live at once, the
             # newer one's count was never checked (#988 review).
-            try:
-                handle = await approve_row.element_handle()
-            except (TypeError, AttributeError):
-                handle = None
+            handle = await approve_row.element_handle(timeout=5000)
             await approve_row.click(timeout=5000)
         except PlaywrightError as exc:
             # After the submit: whether the gate took the click is unknown, so never retry.
@@ -652,15 +649,13 @@ class AgentOnlyComposer:
                 remediation_hint=_AFTER_SUBMIT_HINT,
             ) from exc
         try:
-            if handle is not None and type(handle).__name__ != "MagicMock":
-                await page.wait_for_function(
-                    "el => el.classList.contains('read-only') || !el.isConnected",
-                    arg=handle,
-                    timeout=GATE_SETTLE_S * 1000,
-                )
-            else:
-                settled = page.locator(LIVE_GATE).nth(baseline_gates)
-                await settled.wait_for(state="detached", timeout=GATE_SETTLE_S * 1000)
+            # Wait on the approved gate's own element: an index locator re-resolves to the
+            # NEXT gate when Flow opens one quickly, and then times out (CI, #1355).
+            await page.wait_for_function(
+                "el => el.classList.contains('read-only') || !el.isConnected",
+                arg=handle,
+                timeout=GATE_SETTLE_S * 1000,
+            )
         except PlaywrightError as exc:
             raise UiSelectorDriftError(
                 detail="agent-only composer: an approved credit gate did not turn read-only"

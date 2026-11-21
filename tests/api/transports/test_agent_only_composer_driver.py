@@ -1262,7 +1262,9 @@ def _clicks_time_out() -> MagicMock:
     loc.last = loc.first = loc
     loc.locator.return_value = loc
     loc.nth.return_value = loc
+    loc.element_handle = AsyncMock(return_value=MagicMock(name="approved_gate_handle"))
     page.locator.return_value = loc
+    page.wait_for_function = AsyncMock()
     return page
 
 
@@ -1306,11 +1308,13 @@ async def test_an_approved_gate_that_never_turns_read_only_is_drift() -> None:
     loc = page.locator.return_value
     loc.click = AsyncMock()
     loc.nth.return_value = loc
-    loc.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout exceeded"))
+    page.wait_for_function = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout exceeded"))
     with pytest.raises(UiSelectorDriftError, match="did not turn read-only"):
         await aoc.AgentOnlyComposer()._approve_gate(page, 0)  # pyright: ignore[reportPrivateUsage]
     assert {c.args for c in loc.nth.call_args_list} == {(0,)}  # the gate that was read
-    assert loc.wait_for.await_args.kwargs["state"] == "detached"
+    # It waits on the approved gate's own element, not an index that can re-resolve.
+    assert page.wait_for_function.await_args.kwargs["arg"] is loc.element_handle.return_value
+    assert loc.element_handle.await_args.kwargs["timeout"] == 5000
 
 
 @pytest.mark.asyncio
