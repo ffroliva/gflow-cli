@@ -141,3 +141,44 @@ def test_mcp_catalog_lookup_leaves_profile_unscoped_by_default() -> None:
     from gflow_cli.mcp.video_captions_tools import _profile
 
     assert _profile("11111111-2222-3333-4444-555555555555", None) is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_refuses_explicit_out_file_under_cloud_storage_and_allows_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.mcp import video_captions_tools as tools
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    monkeypatch.setenv("GFLOW_CLI_STORAGE_URI", "s3://bucket/output")
+    reset_settings()
+    try:
+        transcribe_err = await gflow_video_transcribe("clip.mp4", out_file="custom.srt")
+        assert transcribe_err["status"] == "error"
+        assert "GFLOW_CLI_STORAGE_URI" in transcribe_err["error"]["detail"]
+        assert transcribe_err["error"]["charged"] == "no"
+
+        captions_err = await gflow_video_captions(
+            "clip.mp4", srt=str(tmp_path / "a.srt"), out_file="custom.mp4"
+        )
+        assert captions_err["status"] == "error"
+        assert "GFLOW_CLI_STORAGE_URI" in captions_err["error"]["detail"]
+        assert captions_err["error"]["charged"] == "no"
+
+        monkeypatch.setattr(
+            tools,
+            "caption_video",
+            lambda file, **kwargs: SimpleNamespace(
+                source_file=Path(file),
+                output_file=kwargs["out_file"],
+                srt_file=kwargs["srt_path"],
+                duration_seconds=1.0,
+                total_frames=1,
+                frames_burned=1,
+                bytes=10,
+            ),
+        )
+        plain_ok = await gflow_video_captions("clip.mp4", srt=str(tmp_path / "a.srt"))
+        assert plain_ok["status"] == "ok"
+    finally:
+        reset_settings()

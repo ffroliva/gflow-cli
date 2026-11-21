@@ -28,6 +28,7 @@ from gflow_cli.errors import (
 from gflow_cli.services.media_recovery import resolve_asset
 from gflow_cli.services.speech_ports import Transcriber, TranscriptionRequest
 from gflow_cli.services.transcribers.openai_compatible import make_transcriber
+from gflow_cli.storage import refuse_cloud_storage_for_local_file
 
 log = structlog.get_logger(__name__)
 _TIMESTAMP = re.compile(r"(\d{2}):(\d{2}):(\d{2})[,.](\d{3})")
@@ -200,6 +201,13 @@ def resolve_video_source(file_or_id: str, *, profile: str | None, route: str) ->
 
 def _srt_destination(source: Path, out_file: Path | None) -> Path:
     return (out_file or source.with_suffix(".srt")).expanduser().resolve()
+
+
+def reject_explicit_out_file_under_cloud_storage(
+    out_file: Path | str | None, flag: str = "--out-file"
+) -> None:
+    if out_file is not None:
+        refuse_cloud_storage_for_local_file(get_settings().storage_uri, flag)
 
 
 def _prepare_output_parent(destination: Path) -> None:

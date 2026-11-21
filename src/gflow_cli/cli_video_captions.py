@@ -20,7 +20,12 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     spends_credits,
 )
-from gflow_cli.services.video_captions import caption_video, result_payload, transcribe_video
+from gflow_cli.services.video_captions import (
+    caption_video,
+    reject_explicit_out_file_under_cloud_storage,
+    result_payload,
+    transcribe_video,
+)
 
 console = Console()
 log = structlog.get_logger(__name__)
@@ -66,6 +71,7 @@ def transcribe(
     is_json = as_json or output_format == OutputFormat.JSON.value
 
     async def execute() -> None:
+        reject_explicit_out_file_under_cloud_storage(output_file)
         result = await asyncio.to_thread(
             transcribe_video, file, out_file=output_file, language=language, profile=profile
         )
@@ -105,6 +111,7 @@ def captions(
     is_json = as_json or output_format == OutputFormat.JSON.value
 
     async def execute() -> None:
+        reject_explicit_out_file_under_cloud_storage(output_file)
         result = await asyncio.to_thread(
             caption_video,
             file,

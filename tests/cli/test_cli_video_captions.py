@@ -46,3 +46,58 @@ def test_video_captions_table_escapes_bracketed_output_paths(tmp_path: Path) -> 
         output = CliRunner().invoke(video, ["captions", str(source), "--srt", "captions.srt"])
     assert output.exit_code == 0, output.exception
     assert output.exit_code == 0
+
+
+def test_cli_caption_commands_refuse_explicit_out_file_under_cloud_storage(
+    tmp_path: Path,
+) -> None:
+    import pytest
+
+    from gflow_cli.cli import main
+    from gflow_cli.config import reset_settings
+
+    mp = pytest.MonkeyPatch()
+    mp.setenv("GFLOW_CLI_STORAGE_URI", "s3://bucket/output")
+    reset_settings()
+    source = tmp_path / "clip.mp4"
+    srt = tmp_path / "captions.srt"
+    caption_res = CaptionsResult(source, tmp_path / "clip-captions.mp4", srt, 1.0, 10, 2, 500)
+    transcribe_res = TranscribeResult(source, srt, "en", 1.0, ())
+    try:
+        with (
+            patch("gflow_cli.cli_video_captions.transcribe_video", return_value=transcribe_res),
+            patch("gflow_cli.cli_video_captions.caption_video", return_value=caption_res),
+        ):
+            for args in (
+                [
+                    "video",
+                    "transcribe",
+                    str(source),
+                    "--out-file",
+                    str(tmp_path / "out.srt"),
+                    "--json",
+                ],
+                [
+                    "video",
+                    "captions",
+                    str(source),
+                    "--srt",
+                    str(srt),
+                    "--out-file",
+                    str(tmp_path / "out.mp4"),
+                    "--json",
+                ],
+            ):
+                response = CliRunner().invoke(main, args)
+                assert response.exit_code == 11, response.stdout
+                error = json.loads(response.stdout)["error"]
+                assert "GFLOW_CLI_STORAGE_URI" in error["detail"]
+                assert error["charged"] == "no"
+
+            plain = CliRunner().invoke(
+                main, ["video", "captions", str(source), "--srt", str(srt), "--json"]
+            )
+            assert plain.exit_code == 0, plain.stdout
+    finally:
+        mp.undo()
+        reset_settings()

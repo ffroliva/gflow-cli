@@ -10,7 +10,12 @@ from gflow_cli.api.video import is_media_uuid
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.server import server
-from gflow_cli.services.video_captions import caption_video, result_payload, transcribe_video
+from gflow_cli.services.video_captions import (
+    caption_video,
+    reject_explicit_out_file_under_cloud_storage,
+    result_payload,
+    transcribe_video,
+)
 
 
 def _profile(file: str, profile: str | None) -> str | None | dict[str, Any]:
@@ -20,6 +25,7 @@ def _profile(file: str, profile: str | None) -> str | None | dict[str, Any]:
 
 
 def _output(out_file: str | None, default_name: str) -> str | dict[str, Any]:
+    reject_explicit_out_file_under_cloud_storage(out_file, "out_file")
     path = common._resolve_out_file(out_file, local_only=True)  # pyright: ignore[reportPrivateUsage]
     if path is not None:
         return path
