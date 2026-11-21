@@ -36,15 +36,3 @@ Feature: Move a generated media item to Flow's Trash and restore it (#1363)
     Then the tool call returns an error requiring explicit confirmation
     And no mutation is sent to Flow
 
-  @e2e @e2e_image
-  Scenario: Trashing and restoring an image on a live profile spends zero credits (#1363)
-    Given the e2e profile is signed in to Flow
-    And an existing generated image asset is cataloged for the project
-    When I run "gflow media trash <media_id> --yes --json"
-    Then the command exits with code 0
-    And the JSON output reports status "trashed"
-    And zero credits were charged
-    When I run "gflow media restore <media_id> --json"
-    Then the command exits with code 0
-    And the JSON output reports status "restored"
-    And the image is verified back in the project

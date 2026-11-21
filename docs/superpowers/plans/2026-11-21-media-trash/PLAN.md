@@ -113,17 +113,17 @@ request using `scripts/dev/spike_1363_trash.py --show-mask`, define it as a cons
 - `tests/services/test_media_trash.py`
 
 **Steps:**
-- [ ] Run `python scripts/dev/spike_1363_trash.py --show-mask` or inspect Flow frontend bundle to record the literal 17-character field mask string.
-- [ ] Create `src/gflow_cli/api/transports/_media_trash_wire.py` declaring `TRASH_RPC = "pGCYOe"`, `TRASH_FIELD_MASK = "<literal>"`, `RESTORE_FIELD_MASKS = ("<literal>", "collection_id")`.
-- [ ] Write `build_trash_payload(media_id, project_id)` and `build_restore_payload(media_id, project_id)`.
-- [ ] Write `parse_trash_response(frame)` and `parse_restore_response(frame)` asserting slot `[0][0][3][2]`.
-- [ ] Create `tests/services/test_media_trash.py` asserting exact payload shapes, field mask lists, and response parsing.
+- [x] Run `python scripts/dev/spike_1363_trash.py --show-mask` or inspect Flow frontend bundle to record the literal 17-character field mask string. (Captured 2026-11-21: `metadata.archived`)
+- [x] Define constants and payload builder signatures (implemented in Task 3).
+- [x] Write `build_trash_payload(media_id, project_id)` and `build_restore_payload(media_id, project_id)`.
+- [x] Write `parse_trash_response(frame)` and `parse_restore_response(frame)` asserting slot `[0][0][3][2]`.
+- [x] Create `tests/services/test_media_trash.py` asserting exact payload shapes, field mask lists, and response parsing.
 
 **Tests created (red):**
-- [ ] `test_build_trash_payload_matches_measured_shape` — asserts exact inner `pGCYOe` list structure for trash.
-- [ ] `test_build_restore_payload_matches_measured_shape` — asserts exact inner `pGCYOe` list structure for restore.
-- [ ] `test_parse_trash_response_validates_trashed_state` — asserts `[0][0][3][2] is True` indicates successful trash.
-- [ ] `test_parse_restore_response_validates_restored_state` — asserts `[0][0][3][2] is None` indicates successful restore.
+- [x] `test_build_trash_payload_matches_measured_shape` — asserts exact inner `pGCYOe` list structure for trash.
+- [x] `test_build_restore_payload_matches_measured_shape` — asserts exact inner `pGCYOe` list structure for restore.
+- [x] `test_parse_trash_response_validates_trashed_state` — asserts `[0][0][3][2] is True` indicates successful trash.
+- [x] `test_parse_restore_response_validates_restored_state` — asserts `[0][0][3][2] is None` indicates successful restore.
 
 ---
 
@@ -136,12 +136,12 @@ binding all offline scenarios from `tests/features/media_trash.feature`.
 - `tests/features/test_media_trash_steps.py`
 
 **Steps:**
-- [ ] Create `tests/features/test_media_trash_steps.py` referencing `tests/features/media_trash.feature`.
-- [ ] Implement step definitions for catalog mocking, CLI execution, exit code assertions, and RPC payload matching.
-- [ ] Mark tests as failing (red) until service and CLI layers are implemented in Tasks 3–5.
+- [x] Create `tests/features/test_media_trash_steps.py` referencing `tests/features/media_trash.feature`.
+- [x] Implement step definitions for catalog mocking, CLI execution, exit code assertions, and RPC payload matching.
+- [x] Mark tests as failing (red) until service and CLI layers are implemented in Tasks 3–5.
 
 **Tests created (red):**
-- [ ] `test_media_trash_bdd_scenarios` — executes all offline BDD scenarios from `tests/features/media_trash.feature`.
+- [x] `test_media_trash_bdd_scenarios` — executes all offline BDD scenarios from `tests/features/media_trash.feature`.
 
 ---
 
