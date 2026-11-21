@@ -1591,12 +1591,14 @@ Flow's 2026-11-20 build replaced the Agent chip (`button.agent-mode-chip`) with 
 `close`; gflow matches both builds. On the 2026-11-20 build an account with no classic arm at
 all has not been observed. If one exists, it is reported as selector drift (exit 23) rather
 than driven, because this composer's settings button is measured only on the older build
-([spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-20-agent-mode-switch-and-panel-rendering.md)).
+([spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-20-agent-mode-switch-and-panel-rendering.md)). Porting the
+driver to the 2026-11-20 build is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387)
+([spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-20-agent-only-driver-on-the-new-build.md)).
 
 The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
 discriminator more than a guess: a healthy migrated composer carries its Agent toggle
-**present and un-pressed** with its settings trigger visible. So a migrated account normally
-has a toggle, and having none, with the panel closed, is the anomaly this keys on.
+**present and un-pressed** with its settings trigger visible. So a composer served from
+flow.google.com normally has a toggle, and having none, with the panel closed, is the anomaly this keys on.
 
 ---
 
@@ -1624,7 +1626,7 @@ workaround anyone needs to discover.
 
 ### Flow's agent-mode chip hides the settings trigger on `flow.google.com` (exit 23)
 
-- **Status:** Mitigated · **Severity:** High while it lasts (every video run on the account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0 · **Tracked:** [#749](https://github.com/ffroliva/gflow-cli/issues/749), follow-up [#752](https://github.com/ffroliva/gflow-cli/issues/752)
+- **Status:** Mitigated · **Severity:** High while it lasts (every video run on the account fails) · **Affects:** the migrated `flow.google.com` host, all versions through 0.71.0; on Flow's 2026-11-20 build v0.71.1–0.103.0, fixed in 0.103.1 · **Tracked:** [#749](https://github.com/ffroliva/gflow-cli/issues/749), follow-up [#752](https://github.com/ffroliva/gflow-cli/issues/752), [#1384](https://github.com/ffroliva/gflow-cli/issues/1384), [#1374](https://github.com/ffroliva/gflow-cli/issues/1374)
 
 The migrated composer has an **Agent** chip (a switch, `flow-agent-mode-switch`, since Flow's
 2026-11-20 build, [#1384](https://github.com/ffroliva/gflow-cli/issues/1384)). Pressed, Flow swaps the prompt box and
@@ -1634,7 +1636,7 @@ single click in a browser made every later `gflow video` run on that account die
 as `UiSelectorDriftError` (exit 23), telling the user to file a frontend-drift bug about
 a frontend that was working correctly.
 
-**Mitigation** (v0.71.1): the readiness gate leaves agent mode by
+**Mitigation** (v0.71.1; agent panel and switch v0.103.1): the readiness gate leaves agent mode by
 itself, so an account parked there recovers with no user action. If it cannot, the error
 now names which of three things happened rather than blaming drift:
 
@@ -1649,7 +1651,8 @@ now names which of three things happened rather than blaming drift:
 | `the model picker (arrow_drop_down) is hidden in the settings pane` (since v0.89.1, [#788](https://github.com/ffroliva/gflow-cli/issues/788)) | the pane opened but its model picker is hidden, so `--model` cannot be checked; nothing was submitted | if agent mode is on, close the agent panel and switch **Agent** off in a browser; re-run |
 
 **On 0.71.0 and earlier there is no recovery.** Open the project on
-`flow.google.com`, click the **Agent** chip off, and the account works again.
+`flow.google.com`, switch **Agent** off (a chip on builds before 2026-11-20), and the account
+works again.
 
 **Follow-up ([#776](https://github.com/ffroliva/gflow-cli/issues/776)) — the same
 confusion survived one gate later, on the *click*.** The table above covers the readiness

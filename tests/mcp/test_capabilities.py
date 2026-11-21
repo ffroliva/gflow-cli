@@ -107,6 +107,7 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "tools show": None,
     "update": None,
     "video upscale": None,
+    "video assemble": None,
 }
 
 

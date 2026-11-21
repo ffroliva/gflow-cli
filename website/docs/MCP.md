@@ -84,6 +84,8 @@ Both Click CLI (`src/gflow_cli/cli.py`) and MCP Server (`src/gflow_cli/mcp/`) ar
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
+* `gflow_video_assemble(clips, out_file, music, voiceover, clip_volume, music_volume, voiceover_volume, duck, profile)`: Direct, credit-free local processing; joins local files or catalog video IDs with verified local copies, optionally mixes local music and voiceover audio files, and returns the same result fields as `gflow video assemble --json`. Ducking lowers music and clip audio while voiceover is present by default. `out_file` must be inside the configured output directory, uses the first clip's size and frame rate, and refuses existing files. It runs in-process on a background thread, not through the worker queue.
+  Example: `{"clips":["clip-a.mp4","clip-b.mp4"],"out_file":"assembled.mp4","music":"score.wav","voiceover":"narration.wav","duck":true}`. `out_file` is relative to the configured output directory; music and voiceover are local audio paths.
 
 `gflow_generate_video` adds `max_credits: int | null = null` as a per-command cap. The worker checks
 Flow's own pre-submit quote and returns `CreditCapExceededError` (exit 45, `charged: no`) if
@@ -556,7 +558,7 @@ The migrated composer itself also comes in more than one shape. An account whose
 is **agent-only** — no classic composer at all — is driven through its chat agent for
 `gflow_generate_image` (text-to-image) and `gflow_generate_video` (text-to-video): aspect,
 count and model are set in Agent settings for the run and restored afterwards, and
-"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. Other forms on
+"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. On Flow's 2026-11-20 build the agent-only driver stops before submit with exit 23, because its settings button is not rendered there; porting it is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387). Other forms on
 that composer (references, image-to-video, instructions, Omni 1.2 Flash, more than one video)
 return an exit-36-equivalent envelope before anything is clicked
 ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), after up to three free page reloads in

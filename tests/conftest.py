@@ -22,6 +22,8 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
+import av
+import numpy as np
 import pytest
 import structlog
 
@@ -29,6 +31,57 @@ import structlog
 # tests/fixtures/doctor_env.py; re-exported here so pytest registers it for
 # both tests/services/test_doctor.py and tests/cli/test_cli_doctor.py.
 from tests.fixtures.doctor_env import healthy_doctor_env  # noqa: F401
+
+
+@pytest.fixture(scope="session")
+def assembly_media(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    """Generate deterministic 4-second H.264/AAC clips and auxiliary tones."""
+    root = tmp_path_factory.mktemp("assembly-media")
+    rate, frames = 24, 96
+
+    def write_audio(path: Path, frequency: int, level: float, *, bursts: bool = False) -> None:
+        samples = np.arange(rate * 4 * 44100 // rate, dtype=np.float32) / 44100
+        signal = level * np.sin(2 * np.pi * frequency * samples)
+        if bursts:
+            signal *= (samples % 1) < 0.5
+        with av.open(str(path), "w", format="mp4") as output:
+            stream = output.add_stream("aac", rate=44100)
+            stream.layout, stream.format = "stereo", "fltp"
+            for start in range(0, len(signal), 1024):
+                block = np.vstack([signal[start : start + 1024]] * 2)
+                frame = av.AudioFrame.from_ndarray(block, format="fltp", layout="stereo")
+                frame.sample_rate, frame.pts = 44100, start
+                for packet in stream.encode(frame):
+                    output.mux(packet)
+            for packet in stream.encode():
+                output.mux(packet)
+
+    clip = root / "clip.mp4"
+    with av.open(str(clip), "w", format="mp4") as output:
+        video = output.add_stream("libx264", rate=rate)
+        video.width, video.height, video.pix_fmt = 1280, 720, "yuv420p"
+        audio = output.add_stream("aac", rate=44100)
+        audio.layout, audio.format = "stereo", "fltp"
+        for index in range(frames):
+            frame = av.VideoFrame(1280, 720, "yuv420p")
+            frame.pts = index
+            for packet in video.encode(frame):
+                output.mux(packet)
+        for packet in video.encode():
+            output.mux(packet)
+        tone = 0.6 * np.sin(2 * np.pi * 440 * np.arange(44100 * 4) / 44100)
+        for start in range(0, len(tone), 1024):
+            block = np.vstack([tone[start : start + 1024]] * 2).astype(np.float32)
+            frame = av.AudioFrame.from_ndarray(block, format="fltp", layout="stereo")
+            frame.sample_rate, frame.pts = 44100, start
+            for packet in audio.encode(frame):
+                output.mux(packet)
+        for packet in audio.encode():
+            output.mux(packet)
+    music, voice = root / "music.m4a", root / "voice.m4a"
+    write_audio(music, 220, 0.6)
+    write_audio(voice, 880, 0.6, bursts=True)
+    return {"clip": clip, "music": music, "voice": voice}
 
 
 def _assert_source_under_test_is_this_tree() -> None:

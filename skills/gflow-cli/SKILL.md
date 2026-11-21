@@ -111,6 +111,7 @@ gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--re
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
 gflow video generate "<prompt>" [--initial-frame F | --ref IMG] [...]  # bridge: none -> t2v, frame -> i2v, --ref -> r2v; frame AND --ref = exit 2 (#1193)
 gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
+gflow video assemble <clip|catalog-id>... --out-file <path.mp4> [--music FILE] [--voiceover FILE] [--clip-volume 0..1] [--music-volume 0..1] [--voiceover-volume 0..1] [--duck|--no-duck]  # local, credit-free; normalizes to first clip's size and frame rate
 # `gflow video` has no `batch` subcommand — that stub never worked and was
 # removed. For multi-clip runs, loop `gflow video t2v`/`i2v` from the shell.
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \

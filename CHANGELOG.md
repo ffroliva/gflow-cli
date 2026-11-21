@@ -9,7 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`gflow video assemble` joins clips with a music bed and a voiceover, locally and free ([#1359](https://github.com/ffroliva/gflow-cli/issues/1359)).** Clips are local files or catalogued media ids; `--music` and `--voiceover` mix in with per-track volume, and `--duck` lowers the music under the voiceover. Output takes the first clip's size and frame rate; a clip with a different aspect ratio is refused rather than stretched. It runs on PyAV from the `chain` extra, needs no system ffmpeg, contacts no Flow surface and spends no credits. The MCP twin `gflow_video_assemble` stays available under `--no-spend`.
 - **Hard per-command video credit caps ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)).** Pass `--max-credits N` to billed video commands or set `GFLOW_CLI_MAX_CREDITS=N`; use `--no-max-credits` to clear that default for one CLI call. MCP agents can pass `max_credits`, but cannot clear the environment default per call. gflow reads Flow's pre-submit quote, refuses an unreadable or over-limit quote with exit 45, and tracks spend across chain, extend, and movie runs.
+
+### Fixed
+
+- **The landing page meets WCAG AA contrast in both themes.**
+  - The light theme's amber, grey and red text measured 2.4:1 to 4.0:1, and the primary button's hover state 3.7:1. Every text colour now measures at least 4.5:1 on the backgrounds it is used on.
+  - The light theme's background is a neutral light grey instead of cream, and on the darker amber the primary button's text is white.
+  - In the dark theme, the faint text (the terminal titles and the footer note) now passes 4.5:1 too.
+  - On phones the hero section has side margins again: its padding had removed the page gutters, so the headline touched the screen edge.
+  - The small uppercase labels above section headings are removed; the hero's "beta" status moved into the opening paragraph.
+- **The README's models table renders as one table again.** A note about the 2026-12-05 retirements sat between its rows, so Veo 3.1 Lite and every image model lost the table header.
+- **The README comparison table adds kodelyx/flow-agent**, with two rows where it goes further than gflow-cli: an OpenAI-compatible API and credit pooling across Google accounts. `llms.txt` now claims only what still holds with it counted: gflow-cli is the only tool in that table that installs from PyPI and is listed in the official MCP Registry.
+- **The README, `llms.txt` and the landing page say which gflow-cli this is.** Other projects use the name, including Node.js packages on npm and JSR; this one is the Python package on PyPI.
+
+## [0.103.1] — 2026-11-20
 
 ### Fixed
 
@@ -21,7 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - turns agent mode off;
     - continues on the classic composer.
   - **Flow keeps that change across reloads**, so agent mode stays off until it is switched on again. The run logs `migrated.agent_mode_exited` at warning level when it happens.
-  - **Messages** that asked users to turn "the Agent chip" off now say to close the agent panel and switch Agent off.
+  - **Messages** that asked users to turn "the Agent chip" off now say to close the agent panel and switch Agent off. The error table in `KNOWN_ISSUES.md`, the exit-23 row in USAGE and the agent-only section of the MCP guide describe the switch and the panel ([#1389](https://github.com/ffroliva/gflow-cli/pull/1389)).
+  - **gflow never guesses at the panel's close button.** If more than one control matches, or none does, nothing is clicked and the run stops before submit with exit 23, charged nothing ([#1389](https://github.com/ffroliva/gflow-cli/pull/1389)).
+- **#1369 (the agent-only chat answering the previous request) is closed as stale.** On Flow's 2026-11-20 build the agent-only driver stops at its settings button before sending anything, so the carry-over cannot occur there. The check moves to [#1387](https://github.com/ffroliva/gflow-cli/issues/1387), which ports the driver to that build ([spike](docs/superpowers/spikes/2026-11-20-agent-only-driver-on-the-new-build.md)).
 
 ## [0.103.0] — 2026-11-19
 
@@ -7301,7 +7318,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.103.1...HEAD
+[0.103.1]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...v0.103.1
 [0.103.0]: https://github.com/ffroliva/gflow-cli/compare/v0.102.1...v0.103.0
 [0.102.1]: https://github.com/ffroliva/gflow-cli/compare/v0.102.0...v0.102.1
 [0.102.0]: https://github.com/ffroliva/gflow-cli/compare/v0.101.2...v0.102.0

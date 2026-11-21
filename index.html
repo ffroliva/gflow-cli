@@ -38,6 +38,8 @@
       "mainEntity": [
         {"@type": "Question", "name": "Is gflow-cli an official Google tool?",
          "acceptedAnswer": {"@type": "Answer", "text": "No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session."}},
+        {"@type": "Question", "name": "Is this the gflow-cli package on npm or JSR?",
+         "acceptedAnswer": {"@type": "Answer", "text": "No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at github.com/ffroliva/gflow-cli and listed in the MCP Registry as io.github.ffroliva/gflow-cli."}},
         {"@type": "Question", "name": "Do I need a Gemini or Vertex AI API key?",
          "acceptedAnswer": {"@type": "Answer", "text": "No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API."}},
         {"@type": "Question", "name": "How do I connect Claude or Cursor to Google Flow?",
@@ -52,8 +54,8 @@
 <style>
   :root{
     --ground:#0e1014; --surface:#161a21; --raised:#1c212a; --hair:#272d38;
-    --ink:#ecebe5; --muted:#8c939d; --faint:#5c636e;
-    --accent:#ffb03a; --accent-dim:#c9852c; --accent-ghost:rgba(255,176,58,.12);
+    --ink:#ecebe5; --muted:#8c939d; --faint:#858b96;
+    --accent:#ffb03a; --accent-dim:#c9852c; --accent-ghost:rgba(255,176,58,.12); --on-accent:#0e1014;
     --risk:#e5674f; --risk-ghost:rgba(229,103,79,.10);
     --mono:ui-monospace,"Cascadia Code","SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
     --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif;
@@ -61,23 +63,23 @@
   }
   @media (prefers-color-scheme: light){
     :root{
-      --ground:#f6f3ec; --surface:#fffefa; --raised:#fbf8f1; --hair:#e5e0d4;
-      --ink:#1b1d22; --muted:#6a7079; --faint:#9aa0a7;
-      --accent:#b9740f; --accent-dim:#9c610b; --accent-ghost:rgba(185,116,15,.10);
-      --risk:#c4442c; --risk-ghost:rgba(196,68,44,.08);
+      --ground:#f4f5f7; --surface:#ffffff; --raised:#f8f9fa; --hair:#e1e4e9;
+      --ink:#1b1d22; --muted:#5a606a; --faint:#666c75;
+      --accent:#8a5200; --accent-dim:#6e4100; --accent-ghost:rgba(138,82,0,.10); --on-accent:#ffffff;
+      --risk:#a5341f; --risk-ghost:rgba(165,52,31,.08);
     }
   }
   :root[data-theme="dark"]{
     --ground:#0e1014; --surface:#161a21; --raised:#1c212a; --hair:#272d38;
-    --ink:#ecebe5; --muted:#8c939d; --faint:#5c636e;
-    --accent:#ffb03a; --accent-dim:#c9852c; --accent-ghost:rgba(255,176,58,.12);
+    --ink:#ecebe5; --muted:#8c939d; --faint:#858b96;
+    --accent:#ffb03a; --accent-dim:#c9852c; --accent-ghost:rgba(255,176,58,.12); --on-accent:#0e1014;
     --risk:#e5674f; --risk-ghost:rgba(229,103,79,.10);
   }
   :root[data-theme="light"]{
-    --ground:#f6f3ec; --surface:#fffefa; --raised:#fbf8f1; --hair:#e5e0d4;
-    --ink:#1b1d22; --muted:#6a7079; --faint:#9aa0a7;
-    --accent:#b9740f; --accent-dim:#9c610b; --accent-ghost:rgba(185,116,15,.10);
-    --risk:#c4442c; --risk-ghost:rgba(196,68,44,.08);
+    --ground:#f4f5f7; --surface:#ffffff; --raised:#f8f9fa; --hair:#e1e4e9;
+    --ink:#1b1d22; --muted:#5a606a; --faint:#666c75;
+    --accent:#8a5200; --accent-dim:#6e4100; --accent-ghost:rgba(138,82,0,.10); --on-accent:#ffffff;
+    --risk:#a5341f; --risk-ghost:rgba(165,52,31,.08);
   }
   *{box-sizing:border-box}
   html{-webkit-text-size-adjust:100%}
@@ -93,7 +95,6 @@
   a:hover{text-decoration:underline; text-underline-offset:3px}
   :focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:3px}
   h1,h2,h3{font-family:var(--mono); font-weight:600; letter-spacing:-.01em; text-wrap:balance; line-height:1.15; margin:0}
-  .eyebrow{font-family:var(--mono); font-size:12.5px; letter-spacing:.18em; text-transform:uppercase; color:var(--accent-dim); margin:0 0 18px}
   .muted{color:var(--muted)}
 
   /* top bar */
@@ -109,7 +110,7 @@
   @media(max-width:720px){ .bar nav{display:none} }
 
   /* hero */
-  .hero{padding:76px 0 34px}
+  .hero{padding-top:76px; padding-bottom:34px}
   .hero h1{font-size:clamp(30px,5.4vw,52px)}
   .hero h1 .amber{color:var(--accent)}
   .lede{font-size:clamp(17px,2.2vw,20px); color:var(--muted); margin:22px 0 0; max-width:60ch; line-height:1.55}
@@ -134,7 +135,7 @@
   .install button{font-family:var(--mono); font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); background:transparent; border:1px solid var(--hair); border-radius:6px; padding:5px 9px; cursor:pointer}
   .install button:hover{color:var(--ink); border-color:var(--accent)}
   .btn{display:inline-flex; align-items:center; gap:9px; font-family:var(--mono); font-size:14.5px; font-weight:600; padding:12px 18px; border-radius:10px; cursor:pointer; border:1px solid transparent}
-  .btn.primary{background:var(--accent); color:#0e1014}
+  .btn.primary{background:var(--accent); color:var(--on-accent)}
   .btn.primary:hover{background:var(--accent-dim); text-decoration:none}
   .btn.line{border-color:var(--hair); color:var(--ink)}
   .btn.line:hover{border-color:var(--accent); text-decoration:none}
@@ -164,16 +165,15 @@
 
   /* honest band */
   .honest{background:var(--risk-ghost); border-top:1px solid var(--hair); border-bottom:1px solid var(--hair)}
-  .honest .eyebrow{color:var(--risk)}
   .honest ul{list-style:none; margin:22px 0 0; padding:0; display:grid; grid-template-columns:repeat(2,1fr); gap:14px 34px}
   @media(max-width:720px){ .honest ul{grid-template-columns:1fr} }
   .honest li{display:flex; gap:11px; font-size:15px; color:var(--ink); align-items:flex-start}
-  .honest li::before{content:"—"; color:var(--risk); font-family:var(--mono); flex:none}
+  .honest li::before{content:""; width:7px; height:7px; margin-top:.62em; border-radius:50%; background:var(--risk); flex:none}
   .honest strong{font-family:var(--mono); font-weight:600}
 
   /* demo */
   .demo-card{display:flex; align-items:center; gap:20px; flex-wrap:wrap; background:var(--surface); border:1px solid var(--hair); border-radius:14px; padding:24px; margin-top:28px}
-  .play{width:52px; height:52px; border-radius:50%; background:var(--accent); color:#0e1014; display:grid; place-items:center; flex:none; font-size:18px}
+  .play{width:52px; height:52px; border-radius:50%; background:var(--accent); color:var(--on-accent); display:grid; place-items:center; flex:none; font-size:18px}
   .demo-card .t{flex:1; min-width:220px}
   .demo-card .t b{font-family:var(--mono)}
   .demo-card .t p{margin:4px 0 0; color:var(--muted); font-size:15px}
@@ -205,12 +205,11 @@
 
 <main>
   <div class="wrap hero">
-    <p class="eyebrow">Open source · Beta · MCP-native</p>
     <h1>The MCP server and CLI for Google Flow.<br><span class="amber">Drive it from your terminal, or let your AI assistant drive it.</span></h1>
-    <p class="lede">gflow-cli is an open-source MCP server and command-line tool for Google Flow: generate Veo 3.1 and Omni video and Nano Banana images instead of clicking through the web UI. Point Claude, Cursor, or Copilot at it and the agent picks the models, prompt tooling, and settings for you.</p>
+    <p class="lede">gflow-cli is an open-source MCP server and command-line tool for Google Flow, now in beta: generate Veo 3.1 and Omni video and Nano Banana images instead of clicking through the web UI. Point Claude, Cursor, or Copilot at it and the agent picks the models, prompt tooling, and settings for you.</p>
 
     <div class="term" role="img" aria-label="Terminal: an agent runs gflow to generate a Veo clip">
-      <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">claude — gflow mcp</span></div>
+      <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">claude · gflow mcp</span></div>
       <div class="term-body" id="term">
         <span class="ln"><span class="out"># you, to your assistant:</span></span>
         <span class="ln"><span class="cmd">"make a 9:16 clip of a lighthouse in a storm, moody, slow push-in"</span></span>
@@ -239,9 +238,8 @@
     <div class="wrap">
       <div class="drive">
         <div class="sec-head">
-          <p class="eyebrow">The agent-native part</p>
           <h2>You describe it. The agent runs it.</h2>
-          <p>gflow-cli ships an MCP server, so an AI assistant connects to it natively — no pasting docs, no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.</p>
+          <p>gflow-cli ships an MCP server, so an AI assistant connects to it natively, with no pasting docs and no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.</p>
           <ol class="steps">
             <li><span class="n">01</span><div><b>gflow mcp setup</b><br><span>One command writes the server entry into Claude Desktop, Cursor, or VS Code.</span></div></li>
             <li><span class="n">02</span><div><b>Ask in plain language</b><br><span>The agent picks the Veo, Omni or Nano Banana model, the aspect and the prompt tooling.</span></div></li>
@@ -249,13 +247,13 @@
           </ol>
         </div>
         <div class="term" aria-hidden="true">
-          <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">~/.config — AGENTS.md</span></div>
+          <div class="term-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="term-title">~/.config · AGENTS.md</span></div>
           <div class="term-body">
 <span class="ln"><span class="out">$</span> <span class="cmd">gflow mcp run</span></span>
-<span class="ln"><span class="out">  serving 20 tools over stdio, including:</span></span>
+<span class="ln"><span class="out">  serving 21 tools over stdio, including:</span></span>
 <span class="ln"><span class="ok">  • gflow_generate_image</span></span>
 <span class="ln"><span class="ok">  • gflow_generate_video</span></span>
-<span class="ln"><span class="out">  ready — your assistant can drive Flow.</span></span>
+<span class="ln"><span class="out">  ready: your assistant can drive Flow.</span></span>
           </div>
         </div>
       </div>
@@ -265,26 +263,24 @@
   <section id="features">
     <div class="wrap">
       <div class="sec-head">
-        <p class="eyebrow">What it handles for you</p>
         <h2>Built for real runs, not just a demo.</h2>
         <p>The knobs an agent (or you) leans on, plus the reliability work that keeps batch jobs and big projects from falling over.</p>
       </div>
       <div class="grid">
         <div class="cell"><code>--tool creative-director</code><h3>Prompt-crafting, built in</h3><p>Rewrites a terse line with Google's 5-component formula before a single credit is spent.</p></div>
         <div class="cell"><code>gflow instructions</code><h3>Instruction cards</h3><p>Persistent, credit-free brief cards that steer look and tone across every generation.</p></div>
-        <div class="cell"><code>reuse by UUID</code><h3>Reference an asset, don't re-upload</h3><p>Chain a still into a video by its id — no duplicate uploads, no shuffling files.</p></div>
-        <div class="cell"><code>gflow character create</code><h3>The same face, shot after shot</h3><p>Mint a Flow Character once and the same person carries across every generation — instead of re-rolling until the face matches.</p></div>
+        <div class="cell"><code>reuse by UUID</code><h3>Reference an asset, don't re-upload</h3><p>Chain a still into a video by its id: no duplicate uploads, no shuffling files.</p></div>
+        <div class="cell"><code>gflow character create</code><h3>The same face, shot after shot</h3><p>Mint a Flow Character once and the same person carries across every generation, instead of re-rolling until the face matches.</p></div>
         <div class="cell"><code>exit 23</code><h3>A broken run costs a message, not credits</h3><p>A billed request is sent once and never retried automatically, and a drifting UI aborts with a distinct exit code instead of resubmitting into a stale state. Nothing generated, nothing spent.</p></div>
         <div class="cell"><code>nightly drift probe</code><h3>It notices when Flow moves</h3><p>A selector registry plus a nightly CI probe against the live UI, so breakage is caught by a scheduled run rather than by your batch job.</p></div>
         <div class="cell"><code>GFLOW_CLI_JITTER_RANGE</code><h3>Configurable batch pacing</h3><p>Tunable jitter between submissions so multi-prompt runs stop tripping rate limits.</p></div>
-        <div class="cell"><code>movie.toml</code><h3>Multi-scene pipeline</h3><p>Direct a whole sequence from one manifest — chain clips, compose scenes, render.</p></div>
+        <div class="cell"><code>movie.toml</code><h3>Multi-scene pipeline</h3><p>Direct a whole sequence from one manifest: chain clips, compose scenes, render.</p></div>
       </div>
     </div>
   </section>
 
   <section class="honest" id="honest">
     <div class="wrap">
-      <p class="eyebrow">Read this before you install</p>
       <h2 class="sec-head" style="font-size:clamp(22px,3vw,28px)">Independent, in beta, and honest about it.</h2>
       <ul>
         <li><span><strong>Not affiliated with Google.</strong> gflow-cli is an independent project. Flow, Veo, and Imagen are Google's.</span></li>
@@ -298,12 +294,11 @@
   <section>
     <div class="wrap">
       <div class="sec-head">
-        <p class="eyebrow">See it move</p>
         <h2>A short made entirely with it.</h2>
       </div>
       <a class="demo-card" href="https://www.youtube.com/shorts/SyJb2jfLMrw">
         <span class="play" aria-hidden="true">▶</span>
-        <span class="t"><b>Watch the 100-second demo</b><p>Generated end to end through gflow-cli — YouTube Shorts.</p></span>
+        <span class="t"><b>Watch the 100-second demo</b><p>Generated end to end through gflow-cli, on YouTube Shorts.</p></span>
         <span class="btn line" aria-hidden="true">Open ↗</span>
       </a>
       <div class="cta-row" style="margin-top:34px">
@@ -315,11 +310,11 @@
   <section id="faq">
     <div class="wrap">
       <div class="sec-head">
-        <p class="eyebrow">FAQ</p>
-        <h2>Common questions</h2>
+        <h2>Frequently asked questions</h2>
       </div>
       <div class="grid">
         <div class="cell"><h3>Is gflow-cli an official Google tool?</h3><p>No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.</p></div>
+        <div class="cell"><h3>Is this the gflow-cli package on npm or JSR?</h3><p>No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at github.com/ffroliva/gflow-cli and listed in the MCP Registry as io.github.ffroliva/gflow-cli.</p></div>
         <div class="cell"><h3>Do I need a Gemini or Vertex AI API key?</h3><p>No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.</p></div>
         <div class="cell"><h3>How do I connect Claude or Cursor to Google Flow?</h3><p>Install with uv tool install gflow-cli, sign in once with gflow auth login --browser chrome, then run gflow mcp setup (Claude Desktop), gflow mcp setup --target cursor, or install the Claude Code plugin.</p></div>
         <div class="cell"><h3>Can an AI agent spend my Flow credits without asking?</h3><p>Not when the server runs as gflow mcp run --no-spend: the credit-spending tools are never registered. Image generation spends no credits (it counts against a daily image quota); only video spends credits.</p></div>

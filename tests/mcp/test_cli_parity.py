@@ -64,6 +64,7 @@ CLI_TO_MCP: dict[str, str] = {
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
     "video generate": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
+    "video assemble": "gflow_video_assemble",  # local, credit-free media processing
     "models": "gflow_list_models",  # bare `gflow models` is `models list` (#1196)
     "models list": "gflow_list_models",
     "models show": "gflow_list_models",  # the catalog carries every model's show detail

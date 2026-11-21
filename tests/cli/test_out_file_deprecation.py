@@ -45,7 +45,7 @@ _NINE_COMMANDS = (
 
 # New verbs (the #1193 bridges): --out-file and no -o/--output PATH spelling at all.
 # The walk sees every registered name, so the `gen` alias is listed too.
-_OUT_FILE_ONLY = {"image generate", "video generate", "image gen", "video gen"}
+_OUT_FILE_ONLY = {"image generate", "video generate", "image gen", "video gen", "video assemble"}
 
 
 def _get_command(path: tuple[str, ...]) -> click.Command:
