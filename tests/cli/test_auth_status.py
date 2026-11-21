@@ -84,6 +84,46 @@ def test_exit_1_on_verification_error(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "connectivity" in result.output
 
 
+def test_exit_1_with_a_local_hint_when_the_cookie_read_could_not_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400: the headless cookie read failed on this machine, not the network."""
+    _make_profile("probed")
+    _mock_probe(monkeypatch, FlowSessionOutcome.PROFILE_UNAVAILABLE)
+
+    result = CliRunner().invoke(main, ["auth", "status", "--profile", "probed"])
+
+    assert result.exit_code == 1
+    assert "connectivity" not in result.output
+    assert "could not run" in result.output
+    assert "retry" in result.output
+
+
+def test_a_held_profile_shows_the_lock_and_its_own_remediation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400: another gflow process (or a Chrome window) holding the profile is reported
+    as the profile lock, with the remediation its raise site wrote, not as the network."""
+    from gflow_cli.errors import ProfileLockedError, exit_code_for
+
+    _make_profile("probed")
+    held = ProfileLockedError(
+        detail="profile is locked (held)",
+        remediation_hint="Set GFLOW_CLI_LEASE_WAIT_SECONDS to wait for the holder.",
+    )
+
+    async def fake_probe(profile_dir: Path, *, source: str = "chrome") -> FlowSessionStatus:
+        raise held
+
+    monkeypatch.setattr("gflow_cli.auth.verification.verify_flow_profile", fake_probe)
+
+    result = CliRunner().invoke(main, ["auth", "status", "--profile", "probed"])
+
+    assert result.exit_code == exit_code_for(held)
+    assert "GFLOW_CLI_LEASE_WAIT_SECONDS" in result.output
+    assert "connectivity" not in result.output
+
+
 @pytest.mark.skipif(
     sys.platform != "win32",
     reason=(

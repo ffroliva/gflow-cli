@@ -22,9 +22,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.config import BrowserEngine, get_settings
-from gflow_cli.errors import SecurityError
+from gflow_cli.errors import ProfileLockedError, SecurityError
 from gflow_cli.profile_lease import ProfileLease
 
 from .cookies import get_chrome_cookie_snapshot
@@ -77,6 +78,11 @@ class FlowSessionOutcome(StrEnum):
     #: database at all), so it cannot be read (#796). Local file state, not the
     #: network — and not retried through Playwright, which would raze the file.
     COOKIE_STORE_UNREADABLE = "cookie_store_unreadable"
+    #: The headless Chrome cookie read could not run: a Playwright error from its
+    #: launch or its read (#1400). Local, not the network, and not a corrupt store:
+    #: deleting the cookie file (that outcome's last resort) would not help. A profile
+    #: something else holds is not this outcome: its ProfileLockedError propagates.
+    PROFILE_UNAVAILABLE = "profile_unavailable"
 
 
 _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
@@ -90,6 +96,9 @@ _DETAIL_BY_OUTCOME: dict[FlowSessionOutcome, str] = {
     FlowSessionOutcome.COOKIE_STORE_UNREADABLE: (
         "This profile's cookie store is corrupt or unreadable."
     ),
+    FlowSessionOutcome.PROFILE_UNAVAILABLE: (
+        "The headless Chrome read of this profile's cookies could not run."
+    ),
 }
 
 
@@ -98,18 +107,21 @@ class FlowSessionStatus:
     """The verdict of a Flow-session probe.
 
     `detail` is a derived property — always one of the fixed strings in
-    `_DETAIL_BY_OUTCOME`, never built from response, cookie, or exception
-    content. Deriving it (rather than storing a free string) makes it
-    structurally impossible to leak a secret through this field.
+    `_DETAIL_BY_OUTCOME`, plus the class name in `cause` when one is set, never
+    built from response, cookie, or exception content. Deriving it (rather than
+    storing a free string) makes it structurally impossible to leak a secret
+    through this field.
     """
 
     outcome: FlowSessionOutcome
     user_email: str | None
     source: str  # caller-supplied log label ("chrome"/"internal"); never from response/cookie data
+    cause: str | None = None  # class name of a local failure, never its message
 
     @property
     def detail(self) -> str:
-        return _DETAIL_BY_OUTCOME[self.outcome]
+        base = _DETAIL_BY_OUTCOME[self.outcome]
+        return f"{base[:-1]} ({self.cause})." if self.cause else base
 
     @property
     def authenticated(self) -> bool:
@@ -620,9 +632,14 @@ async def verify_flow_profile(
     """Probe `profile_dir` for a usable Flow app session via the fast httpx path.
 
     Reads Chrome cookies directly from the SQLite store using browser_cookie3
-    (falling back to a marker-gated Playwright context on decryption failure),
-    then calls the NextAuth session endpoint with up to `_MAX_ATTEMPTS` attempts.
-    Fail-closed: any failure yields VERIFICATION_ERROR, never AUTHENTICATED.
+    (falling back to a marker-gated Playwright context on decryption failure;
+    on macOS the Playwright read is the only one), then calls the NextAuth session
+    endpoint with up to `_MAX_ATTEMPTS` attempts. Fail-closed: no failure yields
+    AUTHENTICATED. Local causes get their own outcome: PROFILE_MARKER_MISSING (no
+    Chrome-strategy marker), COOKIE_STORE_UNREADABLE (a corrupt cookie database) and
+    PROFILE_UNAVAILABLE (the headless read could not run). A profile another process
+    holds raises its ProfileLockedError. Only unclassified failures become
+    VERIFICATION_ERROR.
 
     ai4u delta (2026-09-12): when the labs oracle yields GOOGLE_SESSION_ONLY,
     a migrated-host fallback probe runs (see _verify_migrated_host_fallback).
@@ -656,6 +673,23 @@ async def verify_flow_profile(
             outcome=FlowSessionOutcome.COOKIE_STORE_UNREADABLE,
             user_email=None,
             source=source,
+        )
+
+    # #1400: another gflow process leases the profile, or a Chrome window holds it.
+    # Each raise site wrote its own remediation (the lease's owner and wait setting, or
+    # the Chrome window), so the typed error reaches the caller unchanged.
+    except ProfileLockedError:
+        raise
+
+    # #1400: the headless cookie read could not run. Inside this `try` only that read
+    # drives Playwright (the probe itself is httpx), so a Playwright error is local too.
+    except PlaywrightError as exc:
+        logger.warning("auth_profile_unavailable", source=source, error=type(exc).__name__)
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome.PROFILE_UNAVAILABLE,
+            user_email=None,
+            source=source,
+            cause=type(exc).__name__,
         )
 
     # Fail-closed: any failure here yields VERIFICATION_ERROR, never AUTHENTICATED.

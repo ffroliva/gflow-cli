@@ -19,6 +19,7 @@ from gflow_cli.errors import (
     AuthLoginTimeoutError,
     AuthMissingError,
     IdentityRecheckPendingError,
+    ProfileLockedError,
     SecurityError,
 )
 from gflow_cli.profile_lease import ProfileLease
@@ -30,7 +31,7 @@ from .internal_chromium import (
     login_launch_kwargs,
     poll_session_until_authenticated,
 )
-from .verification import record_account, verify_flow_profile
+from .verification import FlowSessionOutcome, record_account, verify_flow_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -464,6 +465,10 @@ class RealChromeStrategy(AuthStrategy):
         marker_preexisted = marker.exists()
         marker.write_text("chrome", encoding="utf-8")
         verified = False
+        # #1400: the check could not run (the cookie read failed, or the profile is
+        # held). That is no evidence of a missing session, and a rollback here sent
+        # later commands to the bundled Chromium (ProfileEngineDowngradeError).
+        unchecked = False
         # Bound before the `try` so the `finally` can log it even when an
         # interrupt cuts the probe short and `status` never gets assigned.
         outcome: str | None = None
@@ -471,12 +476,16 @@ class RealChromeStrategy(AuthStrategy):
             status = await verify_flow_profile(profile_dir, source=self.name)
             verified = status.authenticated
             outcome = status.outcome.value
+            unchecked = status.outcome is FlowSessionOutcome.PROFILE_UNAVAILABLE
+        except ProfileLockedError:
+            unchecked = True
+            raise
         finally:
             # `finally` (not `except`) so an interrupt — KeyboardInterrupt /
             # asyncio.CancelledError, both BaseException — also rolls back a
             # speculative write and never leaves an unverified profile claiming
             # the chrome strategy.
-            if not verified and not marker_preexisted:
+            if not verified and not marker_preexisted and not unchecked:
                 marker.unlink(missing_ok=True)
                 # #644: this rollback flips channel_for_profile away from
                 # 'chrome', silently downgrading generation to bundled

@@ -52,6 +52,7 @@ from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
+from gflow_cli.mcp.auth_status_errors import auth_status_error
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -2196,58 +2197,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "user_email": status.user_email,
             "wire": wire,
         }
-    if status.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
-        # #796: a local profile-state fault. Not retryable (the marker will not
-        # reappear on its own) and not an expired session, so neither 503 nor 401
-        # describes it — an agent that retries or re-logins here learns nothing.
-        error = {
-            "type": "https://gflow-cli.dev/errors/profile-marker-missing",
-            "title": "Profile is missing its browser-strategy marker",
-            "status": 409,
-            "detail": status.detail,
-            "message": status.detail,
-            **outcome_members("no", "reauth"),
-            "remediation_hint": (
-                "This profile has no `.gflow_browser_strategy` marker, so its "
-                "cookies cannot be read. Re-run `gflow auth login --browser "
-                "chrome` for this profile to rewrite it."
-            ),
-        }
-    elif status.outcome is verification.FlowSessionOutcome.COOKIE_STORE_UNREADABLE:
-        # #796: local file state like the marker case — a retry re-reads the
-        # same broken file, so not retryable, and not a network 503.
-        error = {
-            "type": "https://gflow-cli.dev/errors/cookie-store-unreadable",
-            "title": "Profile cookie store is unreadable",
-            "status": 409,
-            "detail": status.detail,
-            "message": status.detail,
-            **outcome_members("no", "reauth"),
-            "remediation_hint": (
-                "This profile's Chrome cookie database is corrupt or unreadable. "
-                "Close any Chrome window using this profile, then re-run "
-                "`gflow auth login` for it."
-            ),
-        }
-    elif status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
-        # A network/endpoint problem is not fixed by re-login — the
-        # machine-readable discriminators must say so too (post-merge review:
-        # labeling this 401/auth-expired sent type-dispatching agents into an
-        # unnecessary interactive re-login on every network blip).
-        error: dict[str, Any] = {
-            "type": "https://gflow-cli.dev/errors/verification-error",
-            "title": "Flow session verification failed",
-            "status": 503,
-            "detail": status.detail,
-            "message": status.detail,
-            **outcome_members("no", "retry"),
-            "remediation_hint": (
-                "Could not verify the Flow session (network or endpoint "
-                "problem). Check connectivity and retry; re-login is only "
-                "needed if the session is actually dead."
-            ),
-        }
-    else:
+    error = auth_status_error(status)
+    if error is None:
         from gflow_cli.errors import AuthExpiredError
 
         error = {

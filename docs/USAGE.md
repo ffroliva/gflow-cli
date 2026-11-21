@@ -301,6 +301,27 @@ Notes:
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
 
+## `gflow audio narrate`
+
+Create a local narration track from text with the keyless Edge provider or Gemini TTS. The
+narration text is sent to the selected provider; this opens no browser and uses no Flow credits.
+Provide exactly one of positional `TEXT` or `--text-file FILE` (UTF-8). The output file must not
+exist and its parent directory must already exist. Edge writes MP3; Gemini writes WAV. Then pass
+that file to `gflow video assemble --voiceover`.
+
+```text
+gflow audio narrate TEXT --out-file FILE [--text-file UTF8_FILE] [--provider edge|gemini]
+  [--voice ID] [--rate +/-N%] [--pitch +/-NHz] [--json]
+```
+
+Install Edge support with `pip install 'gflow-cli[tts]'`; it defaults to `en-US-AndrewNeural`.
+`--rate` and `--pitch` apply to Edge. It uses Microsoft's unofficial consumer Read Aloud
+endpoint, with no SLA; Microsoft may change it. The optional `edge-tts` package has its own
+LGPL/GPL license terms.
+Gemini defaults to the `Algieba` voice and requires the dedicated
+`GFLOW_CLI_GEMINI_TTS_API_KEY`; it does not reuse `GFLOW_CLI_LLM_API_KEY`. Gemini does not support
+custom rate or pitch. Provider errors are typed and do not expose the narration text or key.
+
 ## `gflow video transcribe` and `gflow video captions`
 
 Transcribe a local video or catalog media UUID to SubRip (`.srt`), then optionally burn those

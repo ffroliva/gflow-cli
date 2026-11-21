@@ -223,6 +223,7 @@ members. They have no exit code of their own.
 | `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/profile-marker-missing` | MCP `gflow_auth_status` | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/cookie-store-unreadable` | MCP `gflow_auth_status` | — | `no` | `reauth` |
+| `https://gflow-cli.dev/errors/profile-unavailable` | MCP `gflow_auth_status`, the headless Chrome cookie read could not run (`detail` names the error class) | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |

@@ -211,6 +211,35 @@ async def test_snapshot_on_macos_skips_browser_cookie3_keychain_read(
 
 
 @pytest.mark.asyncio
+async def test_snapshot_logs_why_the_direct_read_fell_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback log names the direct read's failure by class only, never its text."""
+    from structlog.testing import capture_logs
+
+    profile = _make_profile_with_cookies(tmp_path)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", False)
+    secret = "cookie-value-that-must-not-be-logged"
+    try:
+        raise KeyError(secret)
+    except KeyError as cause:
+        failure = PermissionError("Failed to read Chrome keyring key")
+        failure.__cause__ = cause
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies3", MagicMock(side_effect=failure))
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+    monkeypatch.setattr(
+        cookies_mod, "_get_chrome_cookies_playwright", AsyncMock(return_value=expected)
+    )
+
+    with capture_logs() as logs:
+        assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+
+    (entry,) = [e for e in logs if e["event"].startswith("cookie_decryption_failed")]
+    assert entry["error"] == "KeyError"
+    assert secret not in str(logs)
+
+
+@pytest.mark.asyncio
 async def test_snapshot_off_macos_still_tries_browser_cookie3_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

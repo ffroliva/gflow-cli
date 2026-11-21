@@ -451,6 +451,13 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_LLM_API_KEY."
         ),
     )
+    gemini_tts_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Dedicated credential for Gemini text-to-speech. It is not shared with the "
+            "prompt-tools LLM key. Override via GFLOW_CLI_GEMINI_TTS_API_KEY."
+        ),
+    )
     llm_model: str | None = Field(
         default=None,
         description=(

@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 # Rule: True means the command submits a new Flow generation (video spends Veo credits,
 # image spends the daily image quota). Reads, exports, upscales and local work are False.
 EXPECTED_TREE: dict[str, bool] = {
+    "audio narrate": False,
     "auth": False,
     "auth login": False,
     "auth status": False,
