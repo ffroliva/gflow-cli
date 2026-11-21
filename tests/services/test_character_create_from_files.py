@@ -77,3 +77,54 @@ async def test_a_catalog_failure_after_the_create_still_returns_the_character(
 
     assert result.entity_id == "entity-1"
     recorder.record_character_completed.assert_called_once()
+
+
+async def test_a_row_the_catalog_could_not_complete_is_not_left_for_a_resume(
+    tmp_path: Path,
+) -> None:
+    """A STARTED row would be resumed by the next prompt-generated create of the same name,
+    which spends credits on an entity this run already finished. It is marked failed."""
+    from gflow_cli.errors import DataStoreError
+
+    client = MagicMock()
+    client.create_character_from_files = AsyncMock(return_value=_CREATED)
+    recorder = MagicMock()
+    recorder.record_character_started.return_value = "row-1"
+    failure = DataStoreError(detail="database is locked")
+    recorder.record_character_completed.side_effect = failure
+
+    await character_create_from_files(
+        client,
+        recorder,
+        profile_name="default",
+        profile_dir=tmp_path / "profile_default",
+        project_id="proj-1",
+        name="Nora",
+        portrait=tmp_path / "face.jpg",
+    )
+
+    recorder.record_character_abandoned.assert_called_once_with(row_id="row-1", exc=failure)
+
+
+async def test_a_catalog_that_cannot_start_the_row_leaves_nothing_to_mark(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli.errors import DataStoreError
+
+    client = MagicMock()
+    client.create_character_from_files = AsyncMock(return_value=_CREATED)
+    recorder = MagicMock()
+    recorder.record_character_started.side_effect = DataStoreError(detail="read-only")
+
+    result = await character_create_from_files(
+        client,
+        recorder,
+        profile_name="default",
+        profile_dir=tmp_path / "profile_default",
+        project_id="proj-1",
+        name="Nora",
+        portrait=tmp_path / "face.jpg",
+    )
+
+    assert result.entity_id == "entity-1"
+    recorder.record_character_abandoned.assert_not_called()

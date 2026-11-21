@@ -22,6 +22,7 @@ from gflow_cli.api.character import (
     Character,
     CharacterCreateResult,
     CharacterImageRequest,
+    canonical_voice,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
@@ -49,8 +50,7 @@ def _normalize_voice(value: str | None) -> str | None:
     """
     if value is None:
         return None
-    by_lower = {v.name.lower(): v.name for v in VOICES}
-    canonical = by_lower.get(value.strip().lower())
+    canonical = canonical_voice(value)
     if canonical is None:
         raise click.BadParameter(
             f"unknown voice: {value!r} — run `gflow character voices` for valid names",
@@ -172,6 +172,8 @@ def create(
     files instead: uploaded through Flow's character editor on flow.google.com, then
     named and given the voice and personality. Nothing is generated.
     """
+    if not name.strip():
+        raise click.UsageError("--name must not be blank")
     _check_create_sources(face_prompt, image, body_image, body_prompt, format_prompt, locale)
     voice = _normalize_voice(voice)
     profile_name = _resolve_profile(profile)

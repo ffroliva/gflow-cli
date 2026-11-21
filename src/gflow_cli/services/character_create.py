@@ -28,6 +28,7 @@ Scenario coverage (mirrors the plan's test-scenario numbering):
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 from typing import TYPE_CHECKING, cast
 
@@ -391,6 +392,7 @@ async def character_create_from_files(
         voice=voice,
         personality=personality,
     )
+    row_id: str | None = None
     try:
         row_id = recorder.record_character_started(
             profile_name=profile_name,
@@ -415,6 +417,11 @@ async def character_create_from_files(
             detail=exc.detail,
             entity_id=created.entity_id,
         )
+        # A row left STARTED would be resumed by the next prompt-generated create of the
+        # same name, which spends credits on an entity this run already finished.
+        if row_id is not None:
+            with contextlib.suppress(DataStoreError):
+                recorder.record_character_abandoned(row_id=row_id, exc=exc)
     log.info(
         "character_create.from_files_completed",
         entity_id=created.entity_id,

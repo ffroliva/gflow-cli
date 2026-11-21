@@ -184,6 +184,8 @@ def _no_characters_yet(monkeypatch: pytest.MonkeyPatch) -> None:
         return set()
 
     monkeypatch.setattr(mc, "_character_ids", none)
+    monkeypatch.setattr(mc, "READ_SETTLE_S", 0.0)
+    monkeypatch.setattr(mc, "_REREAD_S", 0.0)
 
 
 async def _create(page: _Page, tmp_path: Path, **kwargs: Any) -> mc.CreatedCharacter:
@@ -292,7 +294,7 @@ class TestCreateFromFilesHappyPath:
         monkeypatch.setattr(mc, "_settled_refs", settled)
 
         created = await _create(_Page(), tmp_path)
-        assert created == mc.CreatedCharacter(EID, ("wf-portrait",), ())
+        assert created == mc.CreatedCharacter(EID, ("wf-portrait",), ("",))
 
     async def test_a_portrait_never_bound_is_refused_with_the_orphan_id(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -551,7 +553,7 @@ class TestPickVoice:
         await mc._pick_voice(page, EID, "aoede", timeout_s=1)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
         assert page.clicks == 0
 
-    async def test_a_voice_the_picker_does_not_offer_is_refused(
+    async def test_a_voice_the_picker_does_not_show_is_drift_exit_23(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         page = _VoicePage()
@@ -560,7 +562,7 @@ class TestPickVoice:
             return _VoiceLocator(page, page.shown), []
 
         monkeypatch.setattr(mc, "_voice_hits", no_hit)
-        with pytest.raises(ReferenceNotFoundError, match="0 option"):
+        with pytest.raises(UiSelectorDriftError, match="no single settled option"):
             await mc._pick_voice(page, EID, "Nobody", timeout_s=1)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
         assert page.escapes == 1
 
@@ -828,25 +830,18 @@ class TestEditorWaits:
 
 
 class _Options:
-    def __init__(self, texts: list[str]) -> None:
-        self.texts = texts
+    """Each read returns the next snapshot; the last one then sticks."""
 
-    async def count(self) -> int:
-        return len(self.texts)
+    def __init__(self, *snapshots: list[str]) -> None:
+        self.snapshots = list(snapshots)
 
-    def nth(self, i: int) -> Any:
-        texts = self.texts
-
-        class _Option:
-            async def inner_text(self) -> str:
-                return texts[i]
-
-        return _Option()
+    async def all_inner_texts(self) -> list[str]:
+        return self.snapshots.pop(0) if len(self.snapshots) > 1 else self.snapshots[0]
 
 
 class _Dialog:
-    def __init__(self, texts: list[str]) -> None:
-        self.options = _Options(texts)
+    def __init__(self, *snapshots: list[str]) -> None:
+        self.options = _Options(*snapshots)
 
     def locator(self, _: str) -> _Options:
         return self.options
@@ -858,8 +853,20 @@ class TestVoiceHits:
         _, hits = await mc._voice_hits(dialog, "aoede", timeout_s=1)  # pyright: ignore[reportPrivateUsage]
         assert hits == [0]
 
+    async def test_the_index_comes_from_the_settled_filtered_list(self) -> None:
+        # The unfiltered list names Aoede at 2; once the search has filtered it, at 0.
+        unfiltered = ["Charon\nMale", "Puck\nMale", "Aoede\nFemale"]
+        dialog = _Dialog(unfiltered, ["Aoede\nFemale"])
+        _, hits = await mc._voice_hits(dialog, "Aoede", timeout_s=1)  # pyright: ignore[reportPrivateUsage]
+        assert hits == [0]
+
+    async def test_a_list_that_never_settles_is_no_hit(self) -> None:
+        dialog = _Dialog(*[[f"Aoede\n{i}", *["x"] * i] for i in range(20)])
+        _, hits = await mc._voice_hits(dialog, "Aoede", timeout_s=0.5)  # pyright: ignore[reportPrivateUsage]
+        assert hits == []
+
     async def test_no_matching_line_is_no_hit(self) -> None:
-        _, hits = await mc._voice_hits(_Dialog(["Charon\nMale"]), "Aoede", timeout_s=0.3)  # pyright: ignore[reportPrivateUsage]
+        _, hits = await mc._voice_hits(_Dialog(["Charon\nMale"]), "Aoede", timeout_s=0.6)  # pyright: ignore[reportPrivateUsage]
         assert hits == []
 
 
@@ -887,7 +894,7 @@ class TestSettledRefs:
             return next(reads)
 
         monkeypatch.setattr(mc, "read_project", read)
-        monkeypatch.setattr(mc, "_REREAD_S", 0.0)
+        monkeypatch.setattr(mc, "READ_SETTLE_S", 5.0)
         refs = await mc._settled_refs(_Page(), PID, EID, want=2)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
         assert refs == ("wf-0", "wf-1")
 
@@ -900,3 +907,270 @@ class TestSettledRefs:
         monkeypatch.setattr(mc, "read_project", read)
         monkeypatch.setattr(mc, "READ_SETTLE_S", 0.0)
         assert await mc._settled_refs(_Page(), PID, EID, want=1) == ()  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+
+# --- review round on #1405 ------------------------------------------------------------
+
+
+class _DelayedWirePage(_WirePage):
+    """Delivers ``(delay_s, response)`` pairs in the background, as a slow upload would."""
+
+    def __init__(self, *timed: tuple[float, _Response]) -> None:
+        super().__init__()
+        self.timed = timed
+        self.tasks: list[Any] = []
+
+    async def act(self) -> None:
+        import asyncio
+
+        async def later(delay: float, response: _Response) -> None:
+            await asyncio.sleep(delay)
+            await self.listener(response)
+
+        self.tasks = [asyncio.ensure_future(later(d, r)) for d, r in self.timed]
+
+
+def _refusal_body(rpcid: str) -> str:
+    import json
+
+    row = ["wrb.fr", rpcid, None, None, None, [3, None, [["x", ["IMAGE_REJECTED"]]]], "generic"]
+    return ")]}'\n" + json.dumps([row]) + "\n"
+
+
+class TestUploadBudget:
+    async def test_a_create_reply_first_does_not_cut_the_upload_short(self) -> None:
+        """``C4BZMd`` can answer before a large portrait finishes uploading; the upload's
+        reply is still waited for, past the grace, on the full budget."""
+        page = _DelayedWirePage(
+            (0.0, _Response("https://x/batchexecute", _body(("C4BZMd", [1])))),
+            (0.2, _Response("https://x/batchexecute", _body(("maseQ", [2])))),
+        )
+        got = await mc._rpc_replies(  # pyright: ignore[reportPrivateUsage]
+            page,  # type: ignore[arg-type]
+            ("C4BZMd", "maseQ"),
+            page.act,
+            timeout_s=5,
+            grace_s=0.01,
+        )
+        assert got == {"C4BZMd": [1], "maseQ": [2]}
+
+
+class TestRefusedRpc:
+    async def test_an_error_frame_ends_the_wait_with_flows_reason(self) -> None:
+        import time
+
+        page = _WirePage(_Response("https://x/batchexecute", _refusal_body("maseQ")))
+        started = time.monotonic()
+        got = await mc._rpc_replies(page, ("C4BZMd", "maseQ"), page.act, timeout_s=5)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+        assert time.monotonic() - started < 1
+        assert isinstance(got["maseQ"], mc.RpcError)
+
+    async def test_a_refused_portrait_upload_is_not_retried_and_says_why(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from gflow_cli.api.transports.batchexecute import rpc_errors
+
+        attempts: list[int] = []
+        err = rpc_errors(_refusal_body("maseQ"))[0]
+
+        async def refused(*_: Any, **__: Any) -> dict[str, Any]:
+            attempts.append(1)
+            return {"maseQ": err}
+
+        monkeypatch.setattr(mc, "_rpc_replies", refused)
+        with pytest.raises(MediaUploadRejectedError, match="refused maseQ") as exc:
+            await _create(_Page(), tmp_path)
+        assert attempts == [1]
+        assert "IMAGE_REJECTED" in str(exc.value)
+        assert exc.value.retryable is False
+
+    async def test_a_refused_create_is_raised_with_its_code(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from gflow_cli.api.transports.batchexecute import rpc_errors
+
+        err = rpc_errors(_refusal_body("C4BZMd"))[0]
+        monkeypatch.setattr(mc, "_rpc_replies", _replies({"C4BZMd": err}))
+        with pytest.raises(WireFormatError, match="refused C4BZMd"):
+            await _create(_Page(), tmp_path)
+
+
+class _DialogPage(_Page):
+    """``[role='dialog']`` counts ``before`` until the file is chosen, then ``after``."""
+
+    def __init__(self, before: int, after: int) -> None:
+        super().__init__()
+        self.counts = [before, after]
+
+    def locator(self, selector: str) -> Any:
+        page = self
+
+        class _Counted(_Locator):
+            async def count(self) -> int:
+                return page.counts.pop(0) if len(page.counts) > 1 else page.counts[0]
+
+        return _Counted(self) if selector == mc.DIALOG else _Locator(self)
+
+
+class TestUploadTermsDialog:
+    async def test_a_dialog_with_no_reply_is_the_terms_dialog_not_a_retry(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        attempts: list[int] = []
+
+        async def silent(*_: Any, **__: Any) -> dict[str, Any]:
+            attempts.append(1)
+            return {}
+
+        monkeypatch.setattr(mc, "_rpc_replies", silent)
+        with pytest.raises(MediaUploadRejectedError, match="upload-terms") as exc:
+            await _create(_DialogPage(before=0, after=1), tmp_path)
+        assert attempts == [1]
+        assert exc.value.remediation_hint == mc.UPLOAD_TERMS_REMEDIATION
+
+    async def test_no_new_dialog_is_not_blamed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(mc, "_rpc_replies", _replies({}))
+        with pytest.raises(WireFormatError, match="created no character"):
+            await _create(_DialogPage(before=1, after=1), tmp_path)
+
+
+class TestNoBlindRetryAfterTheUpload:
+    async def test_an_unbound_upload_with_no_create_reply_is_read_back_not_repeated(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        page = _Page()
+        page.editor_error = PlaywrightTimeoutError("stop after recovery")
+        uploads: list[int] = []
+        reads = iter([set(), {EID}])
+
+        async def unbound(*_: Any, **__: Any) -> dict[str, Any]:
+            uploads.append(1)
+            return {"maseQ": _upload_reply(None)}
+
+        async def ids(*_: Any) -> set[str]:
+            return next(reads)
+
+        monkeypatch.setattr(mc, "_rpc_replies", unbound)
+        monkeypatch.setattr(mc, "_character_ids", ids)
+        with pytest.raises(UiSelectorDriftError) as exc:  # stops at the next step, by design
+            await _create(page, tmp_path)
+        assert uploads == [1]
+        assert EID in (exc.value.remediation_hint or "")
+
+    async def test_a_create_reply_for_another_project_says_a_character_may_exist(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        other = [["00000000-0000-4000-8000-0000000000ff", EID, None, [1, "x", []]]]
+        monkeypatch.setattr(mc, "_rpc_replies", _replies({"C4BZMd": other}))
+        with pytest.raises(WireFormatError) as exc:
+            await _create(_Page(), tmp_path)
+        assert "may have created a character" in (exc.value.remediation_hint or "")
+        assert (exc.value.retryable, exc.value.next_action) == (False, "reconcile")
+
+    async def test_a_read_that_times_out_after_the_upload_is_not_retryable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        calls = iter([set()])
+
+        async def ids(*_: Any) -> set[str]:
+            try:
+                return next(calls)
+            except StopIteration:
+                raise PlaywrightTimeoutError("Timeout 45000ms exceeded") from None
+
+        monkeypatch.setattr(mc, "_rpc_replies", _replies({}))
+        monkeypatch.setattr(mc, "_character_ids", ids)
+        with pytest.raises(UiSelectorDriftError, match="after the portrait upload") as exc:
+            await _create(_Page(), tmp_path)
+        assert exc.value.retryable is False
+
+
+class TestOrphanIsNotRetryable:
+    async def test_a_timeout_after_the_create_says_reconcile_not_retry(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        async def nothing(*_: Any) -> None:
+            return None
+
+        async def unanswered(*_: Any, **__: Any) -> None:
+            raise TransportTimeoutError(detail="no rzMKMb in 30s")
+
+        monkeypatch.setattr(mc, "_rpc_replies", _replies({"C4BZMd": _create_reply()}))
+        monkeypatch.setattr(mc, "_open_editor", nothing)
+        monkeypatch.setattr(mc, "patch_character", unanswered)
+        with pytest.raises(TransportTimeoutError) as exc:
+            await _create(_Page(), tmp_path)
+        assert (exc.value.retryable, exc.value.next_action) == (False, "reconcile")
+        assert EID in (exc.value.remediation_hint or "")
+
+
+class TestDraftLanding:
+    async def test_a_sign_in_landing_is_diagnosed_not_called_unported(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from gflow_cli.errors import AuthExpiredError
+
+        page = _Page(url="https://accounts.google.com/v3/signin")
+
+        async def landing(*_: Any, **__: Any) -> None:
+            raise AuthExpiredError(detail="landed on the Google sign-in page")
+
+        async def footer_missing(*_: Any, **__: Any) -> dict[str, Any]:
+            raise PlaywrightTimeoutError("waiting for footer upload")
+
+        monkeypatch.setattr(mc, "_create_attempt", footer_missing)
+        monkeypatch.setattr(mc, "raise_if_known_landing", landing)
+        with pytest.raises(AuthExpiredError):
+            await _create(page, tmp_path)
+
+
+class TestBrowserErrors:
+    def test_a_closed_page_is_a_closed_session_not_drift(self) -> None:
+        from playwright.async_api import Error as PlaywrightError
+
+        from gflow_cli.errors import BrowserSessionClosedError
+
+        exc = PlaywrightError("Target page, context or browser has been closed")
+        assert isinstance(mc._browser_error(exc, "x"), BrowserSessionClosedError)  # pyright: ignore[reportPrivateUsage]
+
+    def test_a_network_failure_is_a_network_error(self) -> None:
+        from playwright.async_api import Error as PlaywrightError
+
+        from gflow_cli.errors import NetworkError
+
+        exc = PlaywrightError("page.goto: net::ERR_INTERNET_DISCONNECTED at https://x")
+        assert isinstance(mc._browser_error(exc, "x"), NetworkError)  # pyright: ignore[reportPrivateUsage]
+
+    def test_a_timeout_is_drift(self) -> None:
+        exc = PlaywrightTimeoutError("Timeout 30000ms exceeded")
+        assert exit_code_for(mc._browser_error(exc, "x")) == 23  # pyright: ignore[reportPrivateUsage]
+
+
+class _TypedBox(_FieldLocator):
+    typed: list[str] = []
+
+    async def fill(self, value: str) -> None:
+        _TypedBox.typed.append(value)
+
+
+class TestPersonalityLineEnds:
+    async def test_crlf_is_typed_and_compared_as_lf(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _TypedBox.typed = []
+
+        class _TypingPage(_Page):
+            def locator(self, _: str) -> Any:
+                return _TypedBox(self)
+
+        async def reply(_page: Any, _rpc: str, action: Any, **__: Any) -> Any:
+            await action()
+            return [[PID, EID, None, [1, "Nora", [[], None, "calm\nprecise"]]]]
+
+        async def loaded(_: Any) -> None:
+            return None
+
+        monkeypatch.setattr(migrated_composer, "rpc_reply", reply)
+        monkeypatch.setattr(mc, "_wait_form_loaded", loaded)
+        await mc.patch_character(_TypingPage(), PID, EID, personality="calm\r\nprecise")  # type: ignore[arg-type]
+        assert _TypedBox.typed == ["calm\nprecise"]

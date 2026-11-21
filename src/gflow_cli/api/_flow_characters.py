@@ -228,12 +228,17 @@ class CharacterSurface(MediaEditSurface):
         """
         from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
 
+        if self.settings.flow_host == "labs.google":
+            raise ConfigurationError(
+                detail="building a character from local files is driven on flow.google.com; "
+                "GFLOW_CLI_FLOW_HOST pins labs.google, where it is not ported yet (#639)"
+            )
         for path in (portrait, body):
             if path is None:
                 continue
             try:
                 await validate_image_file(path)
-            except (FileNotFoundError, ValueError) as exc:
+            except (OSError, ValueError) as exc:
                 raise ConfigurationError(
                     detail=f"cannot use {path.name} as a character image: {exc}"
                 ) from exc

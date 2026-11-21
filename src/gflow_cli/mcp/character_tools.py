@@ -12,7 +12,7 @@ from typing import Any
 
 import structlog
 
-from gflow_cli.api.character import VOICES
+from gflow_cli.api.character import canonical_voice
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.data.recorder import OperationRecorder
@@ -21,6 +21,30 @@ from gflow_cli.mcp.server import server
 from gflow_cli.services.character_create import character_create_from_files
 
 log = structlog.get_logger(__name__)
+
+
+def _check_inputs(
+    project: str, name: str, image: str, body_image: str | None
+) -> tuple[dict[str, Any] | None, Path, Path | None]:
+    """The refusal for a bad project id, blank name or missing image file, else the paths.
+
+    Checked before any browser opens, so a bad argument costs nothing."""
+    none = (Path(), None)
+    if (bad := common._validate_project(project)) is not None:  # pyright: ignore[reportPrivateUsage]
+        return bad, *none
+    if not name.strip():
+        return common._bad_param("Blank Name", "name must not be blank."), *none  # pyright: ignore[reportPrivateUsage]
+    portrait, bad = common._resolve_image_path(image, title="Invalid Image", label="image")  # pyright: ignore[reportPrivateUsage]
+    if bad is not None or portrait is None:
+        return bad, *none
+    if body_image is None:
+        return None, Path(portrait), None
+    body, bad = common._resolve_image_path(  # pyright: ignore[reportPrivateUsage]
+        body_image, title="Invalid Body Image", label="body_image"
+    )
+    if bad is not None or body is None:
+        return bad, *none
+    return None, Path(portrait), Path(body)
 
 
 @server.tool(
@@ -60,14 +84,15 @@ async def gflow_character_create(
         ``{"status": "ok", "project": ..., "character": {entity_id, name, voice,
         workflow_ids, primary_media_ids}}``.
     """
-    canonical_voice: str | None = None
-    if voice is not None:
-        canonical_voice = {v.name.casefold(): v.name for v in VOICES}.get(voice.strip().casefold())
-        if canonical_voice is None:
-            return common._bad_param(  # pyright: ignore[reportPrivateUsage]
-                "Unknown Voice",
-                f"unknown voice: {voice!r}; call gflow_character_voices for valid names.",
-            )
+    refusal, portrait, body = _check_inputs(project, name, image, body_image)
+    if refusal is not None:
+        return refusal
+    voice_name = canonical_voice(voice) if voice is not None else None
+    if voice is not None and voice_name is None:
+        return common._bad_param(  # pyright: ignore[reportPrivateUsage]
+            "Unknown Voice",
+            f"unknown voice: {voice!r}; call gflow_character_voices for valid names.",
+        )
     log.info("mcp.tool.character_create", project=project, body=body_image is not None)
     resolved = common._resolve_and_validate_profile(profile)  # pyright: ignore[reportPrivateUsage]
     if isinstance(resolved, dict):
@@ -87,9 +112,9 @@ async def gflow_character_create(
                 profile_dir=profile_dir,
                 project_id=project,
                 name=name,
-                portrait=Path(image),
-                body=Path(body_image) if body_image else None,
-                voice=canonical_voice,
+                portrait=portrait,
+                body=body,
+                voice=voice_name,
                 personality=personality,
             )
         finally:

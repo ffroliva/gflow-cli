@@ -786,3 +786,18 @@ def test_a_missing_image_file_is_a_usage_error(tmp_path: Path) -> None:
     out, files_saga, _ = _invoke_files(tmp_path, "--image", str(tmp_path / "nope.jpg"))
     assert out.exit_code == 2  # type: ignore[attr-defined]
     files_saga.assert_not_awaited()
+
+
+def test_a_blank_name_is_refused_before_any_client(tmp_path: Path) -> None:
+    face = _jpeg(tmp_path / "face.jpg")
+    out, files_saga, _ = _invoke_files(tmp_path, "--image", str(face), "--name", "   ")
+    assert out.exit_code == 2  # type: ignore[attr-defined]
+    assert "blank" in out.output  # type: ignore[attr-defined]
+    files_saga.assert_not_awaited()
+
+
+def test_canonical_voice_is_case_and_space_insensitive() -> None:
+    from gflow_cli.api.character import canonical_voice
+
+    assert canonical_voice("  aOEDE ") == "Aoede"
+    assert canonical_voice("Nobody") is None

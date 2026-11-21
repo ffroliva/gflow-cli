@@ -402,3 +402,25 @@ async def test_valid_images_are_handed_to_the_editor_and_the_page_returned(
         "voice": "Aoede",
     }
     c._checkin_page.assert_called_once_with(page)  # type: ignore[attr-defined]
+
+
+async def test_a_pinned_labs_host_is_refused_before_any_page_is_used(tmp_path: Path) -> None:
+    from PIL import Image
+
+    face = tmp_path / "face.png"
+    Image.new("RGB", (8, 8)).save(face)
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings(flow_host="labs.google"))
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ConfigurationError, match="pins labs.google"):
+        await c.create_character_from_files(PID, name="Nora", portrait=face)
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+async def test_an_unreadable_image_is_a_configuration_error(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings())
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ConfigurationError):
+        await c.create_character_from_files(PID, name="Nora", portrait=tmp_path)  # a directory
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]

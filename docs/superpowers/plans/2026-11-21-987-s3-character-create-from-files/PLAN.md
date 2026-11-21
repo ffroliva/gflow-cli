@@ -32,3 +32,7 @@
 - [x] Offline tests: `tests/api/transports/test_migrated_character_create.py`, `tests/api/test_client_character_host.py`, `tests/services/test_character_create_from_files.py`, `tests/cli/test_cli_character_create.py`, `tests/mcp/test_character_create_tool.py`, `tests/mcp/test_cli_parity.py`.
 - [x] E2E: `tests/features/character_create_from_files.feature` bound by `tests/e2e/test_character_create_from_files_bdd.py` (CLI and MCP, `e2e_character`, credit-free).
 - [x] Docs: CHANGELOG, USAGE, CHARACTER, MCP, KNOWN_ISSUES, ROADMAP, AGENTS.md overview, the `gflow-cli` skill; generated mirrors regenerated.
+
+## Known gaps
+- **Voice picker, one locale measured.** The option is matched by the voice's own name, an untranslated proper noun; the picker has been measured on one locale only. A miss is reported as selector drift (exit 23), not as a missing voice, until a second locale is measured.
+- **Cold-profile paths.** The retries for an unanswered edit, a voice confirm that never enables, both create replies lost, an upload refused by an error frame and the one-time upload-terms dialog are modelled offline from the measured replies; the live e2e runs did not hit them.
