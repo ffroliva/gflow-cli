@@ -103,13 +103,18 @@ async def _assert_media_listing_state(
                 and found_entry[3][2] in (True, 1)
             )
             assert is_archived, (
-                f"Media {media_id} was expected to be archived in Zzl0ze, but was active: {found_entry}"
+                f"Media {media_id} was expected to be archived in Zzl0ze: {found_entry}"
             )
         else:
             assert found_entry is not None, (
                 f"Media {media_id} was expected in Zzl0ze listing after restore, but was not found"
             )
-            if len(found_entry) > 3 and isinstance(found_entry[3], list) and len(found_entry[3]) > 2:
+            has_meta = (
+                len(found_entry) > 3
+                and isinstance(found_entry[3], list)
+                and len(found_entry[3]) > 2
+            )
+            if has_meta:
                 assert found_entry[3][2] not in (True, 1), (
                     f"Media {media_id} still has archived flag in Zzl0ze: {found_entry}"
                 )
