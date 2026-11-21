@@ -556,4 +556,39 @@ async def test_all_media_trash_errors_charge_no_and_have_correct_remediation(
     assert exc_info2.value.charged == "no"
 
 
+@pytest.mark.asyncio
+async def test_direct_trash_flow_refusal_raises_flow_api_error_without_fallback(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rpc_error_body = (
+        ')]}\'\n\n[["wrb.fr","pGCYOe",null,null,null,[7,null,["PermissionDenied"]]]]\n'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=_SHELL)
+        return httpx.Response(200, text=rpc_error_body)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_client(**{**kw, "transport": httpx.MockTransport(handler)}),
+    )
+
+    client_mock = MagicMock()
+    monkeypatch.setattr("gflow_cli.services.media_trash.FlowApiClient", client_mock)
+
+    from gflow_cli.errors import FlowApiError
+
+    with pytest.raises(FlowApiError) as exc_info:
+        await flow_wire.direct_trash_media(profile_dir, "m-1", "proj-1")
+
+    err = exc_info.value
+    assert getattr(err, "code", getattr(err, "status", None)) == 7
+    assert err.charged == "no"
+    client_mock.assert_not_called()
+
+
+
 

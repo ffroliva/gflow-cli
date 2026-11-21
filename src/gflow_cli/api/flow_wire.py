@@ -39,7 +39,7 @@ from gflow_cli.api.transports.batchexecute import parse_frames, rpc_errors
 from gflow_cli.auth.cookies import CookieStoreUnreadable, read_cookies_for, require_in_home
 from gflow_cli.browser_manager import profile_last_version
 from gflow_cli.config import Settings, get_settings
-from gflow_cli.errors import NetworkError, RateLimitError, SecurityError
+from gflow_cli.errors import FlowApiError, NetworkError, RateLimitError, SecurityError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -349,8 +349,17 @@ async def direct_trash_media(profile_dir: Path, media_id: str, project_id: str) 
     frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
     if not frames:
         _tokens.pop(profile_dir, None)
-        if codes := [e.code for e in rpc_errors(response.text) if e.code is not None]:
-            log.info("media.trash_wire_rpc_error", codes=codes)
+        errors = rpc_errors(response.text)
+        if errors and any(e.code is not None for e in errors):
+            code = next(e.code for e in errors if e.code is not None)
+            log.info("media.trash_wire_rpc_error", codes=[e.code for e in errors])
+            raise FlowApiError(
+                f"pGCYOe mutation rejected by Flow (code={code})",
+                status=response.status_code,
+                code=code,
+                route="pGCYOe",
+                charged="no",
+            )
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
     result = parse_trash_response(frames[0], expected_media_id=media_id)
     log.info("media.trash_wire", ms=round(elapsed * 1000), media_id=media_id)
@@ -369,8 +378,17 @@ async def direct_restore_media(profile_dir: Path, media_id: str, project_id: str
     frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
     if not frames:
         _tokens.pop(profile_dir, None)
-        if codes := [e.code for e in rpc_errors(response.text) if e.code is not None]:
-            log.info("media.restore_wire_rpc_error", codes=codes)
+        errors = rpc_errors(response.text)
+        if errors and any(e.code is not None for e in errors):
+            code = next(e.code for e in errors if e.code is not None)
+            log.info("media.restore_wire_rpc_error", codes=[e.code for e in errors])
+            raise FlowApiError(
+                f"pGCYOe mutation rejected by Flow (code={code})",
+                status=response.status_code,
+                code=code,
+                route="pGCYOe",
+                charged="no",
+            )
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
     result = parse_restore_response(frames[0], expected_media_id=media_id)
     log.info("media.restore_wire", ms=round(elapsed * 1000), media_id=media_id)

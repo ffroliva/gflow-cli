@@ -286,7 +286,8 @@ class FlowApiError(GFlowError):
         "Check request parameters and network connection, then retry the API call."
     )
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, code: int | None = None, **kwargs: Any) -> None:
+        self.code = code
         # `bool` is a subclass of `int`, so `isinstance(True, int)` is True.
         # Exclude bools explicitly so an accidental FlowApiError(True, ...) takes
         # the new-style path (and surfaces as a TypeError downstream) instead of
