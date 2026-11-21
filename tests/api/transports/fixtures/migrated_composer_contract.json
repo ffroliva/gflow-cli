@@ -57,7 +57,7 @@
     "ABORTED_BEFORE_SEND": "str: 'Blocked before it left the browser: Flow received nothing and billed nothing. Safe to re-run; if it repeats, file a bug with the detail above.'",
     "AGENT_MODE_CHIP": "str: \"button.agent-mode-chip[aria-pressed='true'], flow-agent-mode-switch button.switch[aria-pressed='true']\"",
     "AGENT_MODE_CHIP_ANY": "str: 'button.agent-mode-chip, flow-agent-mode-switch button.switch'",
-    "AGENT_ONLY_ANCHOR": "str: \"flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune')), flow-creative-agent-prompt-box button.agent-action-button:has(mat-icon:text-is('settings_2')), flow-agent-panel button:not(flow-creative-agent-prompt-box button):has(mat-icon:text-is('settings_2'))\"",
+    "AGENT_ONLY_ANCHOR": "str: \"flow-creative-agent-prompt-box button:has(mat-icon:text-is('tune'))\"",
     "AGENT_ONLY_EARLY_S": "float: 5.0",
     "AGENT_ONLY_RELOADS": "int: 3",
     "ANCHOR_TIMEOUT_S": "float: 30.0",

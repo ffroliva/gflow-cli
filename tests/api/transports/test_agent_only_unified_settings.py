@@ -674,13 +674,17 @@ async def test_a_panel_that_does_not_open_is_drift_and_charges_nothing(page: Pag
 
 
 @pytest.mark.asyncio
-async def test_the_new_build_with_no_switch_is_the_agent_only_composer(
+async def test_the_new_build_with_no_switch_is_not_called_agent_only_on_the_gear_alone(
     page: Page, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The gear renders on recoverable accounts in agent mode too, and no account without the
+    switch has been observed on this build: with only absences and the gear, the verdict
+    stays fail-closed (drift), so a recoverable account whose switch is missing or late never
+    gets its Agent-settings defaults written."""
     from gflow_cli.api.transports import _mc_agent_mode
 
     monkeypatch.setattr(_mc_agent_mode, "AGENT_ONLY_SETTLE_S", 0.1)
-    assert await _verdict(page, NEW_BUILD_NO_SWITCH)
+    assert not await _verdict(page, NEW_BUILD_NO_SWITCH)
 
 
 @pytest.mark.asyncio

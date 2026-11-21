@@ -160,7 +160,10 @@ AGENT_SETTINGS_GEAR = ", ".join(
         ":has(mat-icon:text-is('settings_2'))",
     )
 )
-AGENT_ONLY_ANCHOR = f"{AGENT_SETTINGS_TUNE}, {AGENT_SETTINGS_GEAR}"
+#: The agent-only verdict's one presence. Not the 2026-11-20 gear: it also renders on
+#: recoverable accounts in agent mode, and no account without the Agent switch has been seen
+#: on that build, so a gear-only page stays drift (#1387) until one is measured.
+AGENT_ONLY_ANCHOR = AGENT_SETTINGS_TUNE
 #: What `ensure_editor` found: the classic migrated composer, or #799's agent-only one.
 ComposerKind = Literal["classic", "agent_only"]
 #: What :meth:`MigratedComposer._exit_agent_mode` did. `"blocked"` — the chip was there

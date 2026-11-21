@@ -1589,13 +1589,15 @@ composer is reported only when no toggle appears after the panel is closed.
 Flow's 2026-11-20 build replaced the Agent chip (`button.agent-mode-chip`) with a switch
 (`flow-agent-mode-switch`), and closes the panel through `right_panel_close` instead of
 `close`; gflow matches both builds. On the 2026-11-20 build an account with no classic arm at
-all has still not been observed. If one exists, it is reported as this composer and driven
-([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)): its settings button there is a
-`settings_2` gear, in the compact agent prompt box while the panel is closed or in the panel
-header while it is open, and its settings pane saves every click through a queue, which gflow
-waits out before it submits. It also opens a closed agent panel before the submit: submitted
-from the compact prompt box alone, a run saw no credit gate and timed out. That port was measured on a
-recoverable account held in agent mode, not on such an account
+all has still not been observed. If one exists, it is still reported as selector drift (exit
+23), not driven ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)). That build's
+Agent-settings opener, a `settings_2` gear, also renders on recoverable accounts in agent mode,
+so it is not evidence that an account has no classic arm; calling a recoverable account whose
+switch is missing or late agent-only would write its Agent-settings defaults. The driver itself
+is ported to that build: it opens Agent settings through the gear, waits out the pane's queued
+saves before it submits, and opens a closed agent panel first (submitted from the compact prompt
+box alone, a run saw no credit gate and timed out). That port was measured on a recoverable
+account held in agent mode, not on such an account
 ([spike](docs/superpowers/spikes/2026-11-21-agent-settings-on-the-new-build.md)).
 
 The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the

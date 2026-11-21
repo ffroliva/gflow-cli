@@ -164,13 +164,14 @@ async def test_new_build_healthy_classic_page_is_not_touched(page: Page) -> None
 
 
 @pytest.mark.asyncio
-async def test_new_build_with_no_classic_arm_is_the_agent_only_composer(page: Page) -> None:
-    """Unobserved on the new build: an account with no switch at all (#1387). The panel is
-    closed once and no switch appears; the compact prompt box's `settings_2` gear is the
-    agent-only composer's own settings button, so the verdict is agent-only. Before #1387
-    the check looked only for the older build's `tune`, and the run ended as drift."""
-    kind, clicks, _ = await _run(page, build="new", agent=True, panel=True, classicArm=False)
-    assert kind == "agent_only"
+async def test_new_build_with_no_classic_arm_fails_closed_as_drift(page: Page) -> None:
+    """Unobserved on the new build: an account with no switch at all. The panel is closed
+    once and no switch appears. The compact box's `settings_2` gear also renders on
+    recoverable accounts in agent mode, so it is not evidence of the agent-only composer:
+    the run is drift, never a guessed agent-only verdict."""
+    with pytest.raises(UiSelectorDriftError):
+        await _run(page, build="new", agent=True, panel=True, classicArm=False)
+    clicks: list[str] = await page.evaluate("window.CLICKS")
     assert clicks == ["flow-agent-panel:right_panel_close"]
 
 

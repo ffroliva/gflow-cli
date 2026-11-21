@@ -567,7 +567,7 @@ The migrated composer itself also comes in more than one shape. An account whose
 is **agent-only** — no classic composer at all — is driven through its chat agent for
 `gflow_generate_image` (text-to-image) and `gflow_generate_video` (text-to-video): aspect,
 count and model are set in Agent settings for the run and restored afterwards, and
-"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. On Flow's 2026-11-20 build the driver opens Agent settings through the `settings_2` gear that build renders instead ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)). Other forms on
+"Confirm before generating" follows the server's `GFLOW_CLI_AGENT_CONFIRM`. On Flow's 2026-11-20 build an account with no Agent switch is still reported as selector drift (exit 23) before submit: none has been observed there ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)). Other forms on
 that composer (references, image-to-video, instructions, Omni 1.2 Flash, more than one video)
 return an exit-36-equivalent envelope before anything is clicked
 ([#799](https://github.com/ffroliva/gflow-cli/issues/799)), after up to three free page reloads in
