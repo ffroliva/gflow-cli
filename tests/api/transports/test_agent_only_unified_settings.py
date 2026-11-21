@@ -35,7 +35,7 @@ from gflow_cli.api.transports.migrated_composer import (
     MigratedComposer,
 )
 from gflow_cli.api.video import VideoModel
-from gflow_cli.errors import UiSelectorDriftError
+from gflow_cli.errors import ConfigurationError, UiSelectorDriftError
 
 if TYPE_CHECKING:  # pragma: no cover
     from playwright.async_api import Page
@@ -148,14 +148,21 @@ def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def _load(
-    page: Page, *, save_delay_s: float = 0.0, fail_saves: bool = False, **scenario: Any
+    page: Page,
+    *,
+    save_delay_s: float = 0.0,
+    fail_saves: bool = False,
+    fail_first: int = 0,
+    **scenario: Any,
 ) -> list[dict[str, Any]]:
-    """Serve the fixture; answer its saves after `save_delay_s` (or fail them) and return the
-    list of saves that reached the "server", in arrival order."""
+    """Serve the fixture; answer its saves after `save_delay_s` (or fail them all, or the
+    first `fail_first`) and return the saves that reached the "server", in arrival order."""
     landed: list[dict[str, Any]] = []
+    seen = [0]
 
     async def answer(route: Any) -> None:
-        if fail_saves:
+        seen[0] += 1
+        if fail_saves or seen[0] <= fail_first:
             await route.abort()
             return
         await asyncio.sleep(save_delay_s)
@@ -341,6 +348,39 @@ async def test_restore_returns_only_once_its_saves_have_landed(page: Page) -> No
         page, section="video", aspect_ligature="crop_9_16", count=3, model=None, confirm="never"
     )
     await composer.restore_defaults(page, snapshot)
+    assert landed[-1] == ORIGINAL
+
+
+@pytest.mark.asyncio
+async def test_a_failed_apply_waits_for_its_own_saves_before_the_rollback_returns(
+    page: Page,
+) -> None:
+    """The apply's aspect and count saves are still queued when its model choice fails, and
+    the rollback's saves queue behind them. A rollback that counted only its own requests saw
+    the queue quiet between two slow saves and returned with the originals still unsent."""
+    landed = await _load(page, save_delay_s=0.5)
+    with pytest.raises(ConfigurationError, match="matched 0"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page,
+            section="video",
+            aspect_ligature="crop_9_16",
+            count=2,
+            model=IMAGE_MODEL_MENU_MATCHERS[ImageModel.GEM_PIX_2],  # offered for images only
+            confirm="account",
+        )
+    assert len(landed) == (await _log(page))["writes"] == 4
+    assert landed[-1] == ORIGINAL
+
+
+@pytest.mark.asyncio
+async def test_an_apply_save_that_failed_does_not_cut_the_rollback_short(page: Page) -> None:
+    """The rollback shares the apply's watch; the apply's failed save is the apply's error,
+    so the rollback still waits for its own saves to land."""
+    landed = await _load(page, save_delay_s=0.3, fail_first=1)
+    with pytest.raises(UiSelectorDriftError, match="saves .Kcr7Ub. failed while applying"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page, section="video", aspect_ligature="crop_9_16", count=2, model=None, confirm="never"
+        )
     assert landed[-1] == ORIGINAL
 
 

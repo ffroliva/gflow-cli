@@ -926,8 +926,8 @@ class _AgentSettingsMixin:
             raise UiSelectorDriftError(
                 detail=f"agent-only composer: the {section} model choice is unreadable"
             )
-        try:
-            with _SaveWatch(page) as saves:
+        with _SaveWatch(page) as saves:
+            try:
                 await self._check_radio(
                     page, 0, aspect_ligature, "aspect", groups=DEFAULTS_TOGGLE_GROUP
                 )
@@ -946,12 +946,13 @@ class _AgentSettingsMixin:
                 # The row is the pane's own state; the run's defaults are the account's only
                 # once every queued save has been answered.
                 await saves.settled(f"applying the {section} defaults")
-        except Exception:
-            # No Save and no discard on this build: whatever was clicked is already the
-            # account's. Write the originals back before failing, so the next run does not
-            # snapshot this run's values as them.
-            await self._rollback_unified(page, snapshot)
-            raise
+            except Exception:
+                # No Save and no discard on this build: whatever was clicked is already the
+                # account's. Write the originals back before failing, so the next run does not
+                # snapshot this run's values as them. The same watch, so the apply's saves
+                # still queued count too: the originals queue behind them (CodeRabbit, #1402).
+                await self._rollback_unified(page, snapshot, saves)
+                raise
         log.info(
             "migrated.agent_only.defaults_applied",
             section=section,
@@ -962,9 +963,13 @@ class _AgentSettingsMixin:
         )
         return snapshot
 
-    async def _rollback_unified(self, page: Page, snapshot: DefaultsSnapshot) -> None:
+    async def _rollback_unified(
+        self, page: Page, snapshot: DefaultsSnapshot, saves: _SaveWatch
+    ) -> None:
+        # The apply's failed saves are in the error it raises; the rollback judges its own.
+        saves.failed.clear()
         try:
-            await self._restore_unified(page, snapshot)
+            await self._write_back(page, snapshot, saves)
         except Exception as exc:  # noqa: BLE001 - the apply's own failure is the one raised
             log.warning(
                 "migrated.agent_only.defaults_rollback_failed",
@@ -982,22 +987,26 @@ class _AgentSettingsMixin:
 
     async def _restore_unified(self, page: Page, snapshot: DefaultsSnapshot) -> None:
         with _SaveWatch(page) as saves:
-            await self._open_unified(page)
-            if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
-                await self._set_unified_confirm(page, snapshot.confirm_value)
-            await self._open_defaults(page, snapshot.section)
-            if snapshot.aspect_index >= 0:
-                await self._check_radio(
-                    page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
-                )
-            if snapshot.count_index >= 0:
-                await self._check_radio(
-                    page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
-                )
-            await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
-            await self._leave_unified(page)
-            await saves.settled(f"restoring the {snapshot.section} defaults")
+            await self._write_back(page, snapshot, saves)
         log.info("migrated.agent_only.defaults_restored", section=snapshot.section)
+
+    async def _write_back(self, page: Page, snapshot: DefaultsSnapshot, saves: _SaveWatch) -> None:
+        """Click the originals back and wait until `saves` has seen every queued save land."""
+        await self._open_unified(page)
+        if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
+            await self._set_unified_confirm(page, snapshot.confirm_value)
+        await self._open_defaults(page, snapshot.section)
+        if snapshot.aspect_index >= 0:
+            await self._check_radio(
+                page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
+            )
+        if snapshot.count_index >= 0:
+            await self._check_radio(
+                page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
+            )
+        await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
+        await self._leave_unified(page)
+        await saves.settled(f"restoring the {snapshot.section} defaults")
 
 
 class AgentOnlyComposer(_AgentSettingsMixin):
