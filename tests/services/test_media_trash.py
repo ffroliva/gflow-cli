@@ -150,6 +150,22 @@ def test_parse_invalid_frame_structure_raises() -> None:
         parse_restore_response([[]], expected_media_id="media-123")
 
 
+def test_parse_mutation_response_tolerant_to_integer_flags_and_trimmed_nulls() -> None:
+    # Trash response with integer 1 and trimmed trailing nulls
+    frame_trash = [[["media-123", None, None, ["meta", None, 1]]]]
+    parsed_trash = parse_trash_response(frame_trash, expected_media_id="media-123")
+    assert parsed_trash["media_id"] == "media-123"
+    assert parsed_trash["archived"] is True
+    assert parsed_trash["project_id"] == ""
+    assert parsed_trash["workflow_id"] == ""
+
+    # Restore response with integer 0 / None and trimmed trailing metadata
+    frame_restore = [[["media-123", None, None, []]]]
+    parsed_restore = parse_restore_response(frame_restore, expected_media_id="media-123")
+    assert parsed_restore["media_id"] == "media-123"
+    assert parsed_restore["archived"] is False
+
+
 # ---------------------------------------------------------------------------
 # Task 3: Direct wire dispatch and fallback
 # ---------------------------------------------------------------------------

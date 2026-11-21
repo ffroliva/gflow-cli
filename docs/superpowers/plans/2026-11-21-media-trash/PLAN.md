@@ -315,3 +315,8 @@ against a live Flow account at zero credit cost.
 - **2026-11-21:** Decided to implement wire-first mutation (`pGCYOe`) rather than UI automation clicks. Rationale: The live spike proved that Flow's Angular CDK virtual scroller unmounts off-screen tiles, making DOM selector lookups for items deeper in project history impossible without fragile scrolling hacks. `pGCYOe` operates directly on `<media_id>` and `<project_id>` with no DOM dependencies.
 - **2026-11-21:** Decided to implement both `media trash` and `media restore` together in this milestone. Rationale: Both operations use the identical RPC (`pGCYOe`) with minor shape adjustments. Providing `restore` ensures e2e tests can clean up after themselves and prevents users from being locked out of recovering accidentally trashed items from the CLI.
 - **2026-11-21:** Decided to require an explicit `confirm: bool = True` parameter on MCP `media_trash`. Rationale: Prevents autonomous agents from accidentally trashing media assets without intentional confirmation.
+- **2026-11-21 (TODO / Live-unverified items):**
+  - **Restoring a never-trashed item:** Verify live Flow API response when restoring an active item (does Flow return error or succeed idempotently?).
+  - **Trailing-null trimming in replies:** Parser tolerant of missing trailing elements implemented in `parse_mutation_response`; verify stability across varied live project sizes.
+  - **Project-cover `o8DA4` thumbnail reset:** Verify whether trashing a media asset used as project thumbnail automatically clears/resets the thumbnail.
+  - **Idempotency:** Verify live Flow behavior when trashing an already-trashed item or restoring an already-restored item.

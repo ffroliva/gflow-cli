@@ -100,12 +100,12 @@ def parse_mutation_response(
     is_archived: object = metadata[2] if (metadata is not None and len(metadata) > 2) else None
 
     if archived:
-        if is_archived is not True:
+        if is_archived not in (True, 1):
             raise WireFormatError(
                 f"pGCYOe response did not set archived flag to True: {is_archived!r}", charged="no"
             )
     else:
-        if is_archived is not None:
+        if is_archived not in (None, False, 0):
             raise WireFormatError(
                 f"pGCYOe response did not clear archived flag: {is_archived!r}", charged="no"
             )
