@@ -462,15 +462,18 @@ class _SaveWatch:
     async def settled(self, what: str) -> None:
         deadline = time.monotonic() + SAVE_BUDGET_S
         while True:
-            if self.failed:
-                raise UiSelectorDriftError(
-                    detail=(
-                        f"agent-only composer: {len(self.failed)} of {self.sent} Agent-settings "
-                        f"saves ({AGENT_SETTINGS_SAVE_RPC}) failed while {what}: {self.failed[0]}"
-                    )
-                )
             quiet = time.monotonic() - self._last >= SAVE_QUIET_S
             if self.answered >= self.sent and quiet:
+                # A failure is reported only once the queue has drained: each save carries the
+                # whole section, so the ones behind a failed save still land the values.
+                if self.failed:
+                    raise UiSelectorDriftError(
+                        detail=(
+                            f"agent-only composer: {len(self.failed)} of {self.sent} "
+                            f"Agent-settings saves ({AGENT_SETTINGS_SAVE_RPC}) failed while "
+                            f"{what}: {self.failed[0]}"
+                        )
+                    )
                 return
             if time.monotonic() >= deadline:
                 raise UiSelectorDriftError(
@@ -920,12 +923,17 @@ class _AgentSettingsMixin:
             model_text=await self._unified_model(page),
             confirm_value=confirm_value,
         )
-        if not snapshot.model_text:
-            # Nothing changed yet; with no original to restore, nothing may be changed.
-            await self._leave_unified(page)
-            raise UiSelectorDriftError(
-                detail=f"agent-only composer: the {section} model choice is unreadable"
-            )
+        for name, readable in (
+            ("model", bool(snapshot.model_text)),
+            ("aspect", snapshot.aspect_index >= 0),
+            ("count", snapshot.count_index >= 0),
+        ):
+            if not readable:
+                # Nothing changed yet; with no original to restore, nothing may be changed.
+                await self._leave_unified(page)
+                raise UiSelectorDriftError(
+                    detail=f"agent-only composer: the {section} {name} choice is unreadable"
+                )
         with _SaveWatch(page) as saves:
             try:
                 await self._check_radio(

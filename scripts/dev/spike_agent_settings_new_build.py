@@ -305,10 +305,12 @@ async def main(
             if not leave:
                 snaps["restored_classic"] = await _classic(page)
         finally:
-            (out / "snapshots.json").write_text(
-                json.dumps(snaps, indent=1, ensure_ascii=False), encoding="utf-8"
-            )
-            await transport.teardown()
+            try:
+                (out / "snapshots.json").write_text(
+                    json.dumps(snaps, indent=1, ensure_ascii=False), encoding="utf-8"
+                )
+            finally:
+                await transport.teardown()
     print(json.dumps(snaps, indent=1, ensure_ascii=False))
     print("evidence:", out)
 

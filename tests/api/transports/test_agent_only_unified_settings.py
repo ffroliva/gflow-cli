@@ -45,7 +45,7 @@ FIXTURE = r"""
 <div id="root"></div>
 <script>
 const S = Object.assign({panelOpen: true, lagMs: 0, deadCount: false, staleRow: false,
-  twoGears: false, unlabelledModel: false, openControl: true, openFails: false}, window.SCENARIO || {});
+  twoGears: false, unlabelledModel: false, openControl: true, openFails: false, noCount: false}, window.SCENARIO || {});
 window.log = {gridGear: 0, compactGear: 0, panelGear: 0, openPanel: 0, writes: 0};
 let saves = Promise.resolve();
 function save() {  // Flow's queue: one Kcr7Ub at a time, each carrying the current values
@@ -90,7 +90,7 @@ function body() {
     (S.unlabelledModel ? m : `<span class="radio-option-label">${m}</span>`) + '</span></label>').join('');
   return `<flow-generation-defaults-view><flow-radio-group class="model-radio-group">${models}</flow-radio-group>` +
     toggles('aspect', LIGS[k].map(l => `<mat-icon>${l}</mat-icon>${TEXT[l]}`), s.aspect) +
-    toggles('count', ['x1', 'x2', 'x3', 'x4'], s.count) +
+    toggles('count', ['x1', 'x2', 'x3', 'x4'], S.noCount ? -1 : s.count) +
     (k === 'image' ? toggles('thinking', ['Low', 'High'], 0) : '') + '</flow-generation-defaults-view>';
 }
 function render() {
@@ -152,17 +152,17 @@ async def _load(
     *,
     save_delay_s: float = 0.0,
     fail_saves: bool = False,
-    fail_first: int = 0,
+    fail: tuple[int, ...] = (),
     **scenario: Any,
 ) -> list[dict[str, Any]]:
     """Serve the fixture; answer its saves after `save_delay_s` (or fail them all, or the
-    first `fail_first`) and return the saves that reached the "server", in arrival order."""
+    1-based saves in `fail`) and return the saves that reached the "server", in order."""
     landed: list[dict[str, Any]] = []
     seen = [0]
 
     async def answer(route: Any) -> None:
         seen[0] += 1
-        if fail_saves or seen[0] <= fail_first:
+        if fail_saves or seen[0] in fail:
             await route.abort()
             return
         await asyncio.sleep(save_delay_s)
@@ -376,12 +376,43 @@ async def test_a_failed_apply_waits_for_its_own_saves_before_the_rollback_return
 async def test_an_apply_save_that_failed_does_not_cut_the_rollback_short(page: Page) -> None:
     """The rollback shares the apply's watch; the apply's failed save is the apply's error,
     so the rollback still waits for its own saves to land."""
-    landed = await _load(page, save_delay_s=0.3, fail_first=1)
+    landed = await _load(page, save_delay_s=0.3, fail=(1,))
     with pytest.raises(UiSelectorDriftError, match="saves .Kcr7Ub. failed while applying"):
         await aoc.AgentOnlyComposer().apply_defaults(
             page, section="video", aspect_ligature="crop_9_16", count=2, model=None, confirm="never"
         )
     assert landed[-1] == ORIGINAL
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_save_that_fails_does_not_strand_the_ones_behind_it(
+    page: Page,
+) -> None:
+    """Each save carries the whole section, so the last one queued restores the originals
+    even when an earlier one failed; the rollback waits for it before giving up."""
+    landed = await _load(page, save_delay_s=0.5, fail=(3,))  # the rollback's first save
+    with pytest.raises(ConfigurationError, match="matched 0"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page,
+            section="video",
+            aspect_ligature="crop_9_16",
+            count=2,
+            model=IMAGE_MODEL_MENU_MATCHERS[ImageModel.GEM_PIX_2],
+            confirm="account",
+        )
+    assert landed[-1] == ORIGINAL
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_count_changes_nothing(page: Page) -> None:
+    """A group with no checked radio has no original to restore, so nothing may be clicked."""
+    await _load(page, noCount=True)
+    with pytest.raises(UiSelectorDriftError, match="count choice is unreadable"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page, section="video", aspect_ligature="crop_9_16", count=2, model=None, confirm="never"
+        )
+    assert (await _log(page))["writes"] == 0
+    assert await _in_chat(page)
 
 
 @pytest.mark.asyncio
