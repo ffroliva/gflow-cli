@@ -211,6 +211,12 @@ def _prepare_output_parent(destination: Path) -> None:
             charged="no",
             remediation_hint="Choose an --out-file path inside a writable directory.",
         ) from exc
+    if (destination.exists() or destination.is_symlink()) and not destination.is_file():
+        raise ConfigurationError(
+            detail=f"Output path {destination.name!r} exists and is not a regular file.",
+            charged="no",
+            remediation_hint="Remove the existing non-file path or choose a different --out-file.",
+        )
 
 
 def _srt_exists_error(destination: Path) -> ConfigurationError:

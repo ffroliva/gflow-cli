@@ -322,6 +322,37 @@ def test_outputs_and_parents_validated_before_transcriber(
     assert exc_collide.value.charged == "no"
 
 
+def test_default_output_directories_rejected_before_transcription(
+    media_files: tuple[Path, Path],
+) -> None:
+    source, _ = media_files
+    default_mp4 = source.with_name(f"{source.stem}-captions.mp4")
+    default_srt = source.with_suffix(".srt")
+
+    class ForbiddenTranscriber:
+        def transcribe(self, _request: TranscriptionRequest) -> Transcript:
+            pytest.fail("transcriber should not be called when default output is a directory")
+
+    default_mp4.mkdir()
+    try:
+        with pytest.raises(ConfigurationError, match="not a regular file") as exc_mp4:
+            caption_video(str(source), transcriber=ForbiddenTranscriber())
+        assert exc_mp4.value.charged == "no"
+    finally:
+        default_mp4.rmdir()
+
+    default_srt.mkdir()
+    try:
+        with pytest.raises(ConfigurationError, match="not a regular file") as exc_srt_caption:
+            caption_video(str(source), transcriber=ForbiddenTranscriber())
+        assert exc_srt_caption.value.charged == "no"
+        with pytest.raises(ConfigurationError, match="not a regular file") as exc_srt_transcribe:
+            transcribe_video(str(source), transcriber=ForbiddenTranscriber())
+        assert exc_srt_transcribe.value.charged == "no"
+    finally:
+        default_srt.rmdir()
+
+
 def test_transcribe_refuses_video_without_audio(media_files: tuple[Path, Path]) -> None:
     class UnreachableTranscriber:
         def transcribe(self, _request: TranscriptionRequest) -> Transcript:
