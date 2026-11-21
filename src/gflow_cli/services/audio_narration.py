@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import io
 import os
 import re
 import tempfile
-import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import ConfigurationError, VideoAssemblyError
-from gflow_cli.services.speech_ports import SpeechSynthesizer, SynthesisRequest, SynthesisResult
+from gflow_cli.services.speech_ports import SpeechSynthesizer, SynthesisRequest
 from gflow_cli.services.speech_synthesizers import EdgeTtsSynthesizer, GeminiTtsSynthesizer
 from gflow_cli.services.video_assembly import publish_output
 
@@ -56,8 +54,7 @@ def narrate(
                 charged="no",
                 remediation_hint="Check that the input text contains speakable words.",
             )
-        audio_bytes, media_type = _container_audio(result)
-        temporary.write_bytes(audio_bytes)
+        temporary.write_bytes(result.audio_bytes)
         try:
             mask = os.umask(0)
             os.umask(mask)
@@ -81,7 +78,7 @@ def narrate(
                 charged="no",
                 remediation_hint="Choose an --out-file path inside a writable directory.",
             ) from exc
-        return NarrationResult(out_file, provider, media_type)
+        return NarrationResult(out_file, provider, result.media_type)
     except ConfigurationError:
         raise
     except OSError as exc:
@@ -136,18 +133,6 @@ def _make_synthesizer(provider: Provider, settings: Settings) -> SpeechSynthesiz
         return EdgeTtsSynthesizer()
     key = settings.gemini_tts_api_key.get_secret_value() if settings.gemini_tts_api_key else None
     return GeminiTtsSynthesizer(api_key=key)
-
-
-def _container_audio(result: SynthesisResult) -> tuple[bytes, str]:
-    if result.media_type.lower().startswith("audio/l16"):
-        output = io.BytesIO()
-        with wave.open(output, "wb") as wav:
-            wav.setnchannels(1)
-            wav.setsampwidth(2)
-            wav.setframerate(24000)
-            wav.writeframes(result.audio_bytes)
-        return output.getvalue(), "audio/wav"
-    return result.audio_bytes, result.media_type
 
 
 def _valid_rate(rate: str) -> bool:

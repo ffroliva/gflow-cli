@@ -240,6 +240,59 @@ def test_gemini_malformed_and_timeout_responses_are_typed_and_redacted(
     assert "secret-key" not in str(raised.value)
 
 
+def test_gemini_api_key_masked_in_repr() -> None:
+    synthesizer = GeminiTtsSynthesizer(api_key="my-super-secret-key")
+    rep = repr(synthesizer)
+    assert "my-super-secret-key" not in rep
+
+
+def test_gemini_converts_l16_pcm_to_wav_with_parsed_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    import io
+    import wave
+
+    raw_pcm = b"\x00\x00" * 100
+    b64_pcm = base64.b64encode(raw_pcm).decode("ascii")
+    payload = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "inlineData": {
+                                "mimeType": "audio/L16;codec=pcm;rate=24000",
+                                "data": b64_pcm,
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    class Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def post(self, *_: Any, **__: Any) -> httpx.Response:
+            return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr("gflow_cli.services.speech_synthesizers.gemini.httpx.Client", Client)
+    synthesizer = GeminiTtsSynthesizer(api_key="test-key")
+    result = synthesizer.synthesize(SynthesisRequest("hello", "Algieba"))
+    assert result.media_type == "audio/wav"
+    with wave.open(io.BytesIO(result.audio_bytes), "rb") as reader:
+        assert reader.getnchannels() == 1
+        assert reader.getsampwidth() == 2
+        assert reader.getframerate() == 24000
+        assert reader.getnframes() == 100
+
+
 def test_edge_timeout_raises_transport_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
     class TimeoutCommunicate:
         def __init__(self, *args: Any, **kwargs: Any) -> None:

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import dataclass
+import io
+import re
+import wave
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 import httpx
@@ -22,7 +25,7 @@ _HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 @dataclass(frozen=True)
 class GeminiTtsSynthesizer:
-    api_key: str | None
+    api_key: str | None = field(default=None, repr=False)
     model: str = _MODEL
 
     def synthesize(self, request: SynthesisRequest) -> SynthesisResult:
@@ -122,4 +125,15 @@ def _parse_audio(payload: Any) -> SynthesisResult:
     media_type = audio.get("mimeType", "audio/wav")
     if not data or not isinstance(media_type, str) or not media_type.startswith("audio/"):
         raise ValueError("invalid audio payload")
+    if media_type.lower().startswith("audio/l16"):
+        rate_match = re.search(r"rate=(\d+)", media_type, re.IGNORECASE)
+        sample_rate = int(rate_match.group(1)) if rate_match else 24000
+        output = io.BytesIO()
+        with wave.open(output, "wb") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate)
+            wav.writeframes(data)
+        data = output.getvalue()
+        media_type = "audio/wav"
     return SynthesisResult(data, media_type)
