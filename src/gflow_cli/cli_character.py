@@ -146,8 +146,8 @@ def character() -> None:
     "accounts to the wrong route and Flow bounces them back mid-prompt.",
 )
 @output_format_option()
-def create(  # NOSONAR - one parameter per Click option
-    project_id: str,
+def create(
+    project_id: str,  # NOSONAR(S107) - one parameter per Click option
     name: str,
     face_prompt: str | None,
     image: Path | None,
