@@ -37,6 +37,7 @@ from gflow_cli.services.media_trash import (
     restore_media_service,
     trash_media_service,
 )
+from tests.e2e.test_media_trash_e2e import cleanup_e2e_media_trash
 
 _FAKE_COOKIES = [("SID", "fake-sid"), ("OSID", "fake-osid")]
 _FAKE_AT = "AFAKEATTOKEN:1700000000000"
@@ -151,19 +152,89 @@ def test_parse_invalid_frame_structure_raises() -> None:
 
 
 def test_parse_mutation_response_tolerant_to_integer_flags_and_trimmed_nulls() -> None:
+    # Full trash response shape (from spike capture)
+    frame_trash_full = [
+        [
+            [
+                "media-123",
+                None,
+                None,
+                ["meta", [1, 1], True, None, "wf-123", "u-123", [1, 1]],
+                "proj-123",
+            ]
+        ]
+    ]
+    parsed_full = parse_trash_response(frame_trash_full, expected_media_id="media-123")
+    assert parsed_full["media_id"] == "media-123"
+    assert parsed_full["archived"] is True
+    assert parsed_full["status"] == "trashed"
+    assert parsed_full["project_id"] == "proj-123"
+    assert parsed_full["workflow_id"] == "wf-123"
+
     # Trash response with integer 1 and trimmed trailing nulls
-    frame_trash = [[["media-123", None, None, ["meta", None, 1]]]]
-    parsed_trash = parse_trash_response(frame_trash, expected_media_id="media-123")
+    frame_trash_trimmed = [[["media-123", None, None, ["meta", None, 1]]]]
+    parsed_trash = parse_trash_response(frame_trash_trimmed, expected_media_id="media-123")
     assert parsed_trash["media_id"] == "media-123"
     assert parsed_trash["archived"] is True
     assert parsed_trash["project_id"] == ""
     assert parsed_trash["workflow_id"] == ""
 
-    # Restore response with integer 0 / None and trimmed trailing metadata
-    frame_restore = [[["media-123", None, None, []]]]
-    parsed_restore = parse_restore_response(frame_restore, expected_media_id="media-123")
+    # Full restore response shape (from spike capture, null at [0][0][3][2])
+    frame_restore_full = [
+        [
+            [
+                "media-123",
+                None,
+                None,
+                ["meta", [1, 1], None, None, "wf-123", "u-123", [1, 1]],
+                "proj-123",
+            ]
+        ]
+    ]
+    parsed_restore_full = parse_restore_response(frame_restore_full, expected_media_id="media-123")
+    assert parsed_restore_full["media_id"] == "media-123"
+    assert parsed_restore_full["archived"] is False
+    assert parsed_restore_full["status"] == "restored"
+
+    # Restore response with trailing-null trimmed metadata (len 2, slot 2 missing)
+    frame_restore_trimmed_meta = [[["media-123", None, None, ["meta", [1, 1]]]]]
+    parsed_trimmed_meta = parse_restore_response(
+        frame_restore_trimmed_meta, expected_media_id="media-123"
+    )
+    assert parsed_trimmed_meta["media_id"] == "media-123"
+    assert parsed_trimmed_meta["archived"] is False
+
+    # Restore response with empty metadata list
+    frame_restore_empty_meta = [[["media-123", None, None, []]]]
+    parsed_restore = parse_restore_response(frame_restore_empty_meta, expected_media_id="media-123")
     assert parsed_restore["media_id"] == "media-123"
     assert parsed_restore["archived"] is False
+
+    # Restore response with item-level trailing-null trimming (slot 3 missing)
+    frame_restore_trimmed_item = [[["media-123"]]]
+    parsed_trimmed_item = parse_restore_response(
+        frame_restore_trimmed_item, expected_media_id="media-123"
+    )
+    assert parsed_trimmed_item["media_id"] == "media-123"
+    assert parsed_trimmed_item["archived"] is False
+
+    # Trash response where archived is missing/None/False -> refused with typed error
+    for invalid_meta in (
+        ["meta", [1, 1], None],
+        ["meta", [1, 1], False],
+        ["meta", [1, 1]],  # trimmed before slot 2
+        [],  # empty metadata
+    ):
+        with pytest.raises(WireFormatError, match="did not set archived flag to True") as exc_info:
+            parse_trash_response(
+                [[["media-123", None, None, invalid_meta]]], expected_media_id="media-123"
+            )
+        assert exc_info.value.charged == "no"
+
+    # Trash response with item-level trimmed structure (no metadata slot)
+    with pytest.raises(WireFormatError, match="did not set archived flag to True") as exc_info_item:
+        parse_trash_response([[["media-123"]]], expected_media_id="media-123")
+    assert exc_info_item.value.charged == "no"
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +473,7 @@ async def test_trash_media_service_fallback_to_client_on_wire_unavailable(
         "media_id": "m-flow-1",
         "project_id": "p-flow-1",
         "status": "trashed",
+        "archived": True,
     }
     monkeypatch.setattr(
         "gflow_cli.services.media_trash.FlowApiClient",
@@ -441,6 +513,7 @@ async def test_restore_media_service_fallback_to_client_on_wire_unavailable(
         "media_id": "m-flow-1",
         "project_id": "p-flow-1",
         "status": "restored",
+        "archived": False,
     }
     monkeypatch.setattr(
         "gflow_cli.services.media_trash.FlowApiClient",
@@ -524,7 +597,12 @@ async def test_media_trash_service_resolves_local_id(
     )
 
     mock_trash = AsyncMock(
-        return_value={"media_id": "m-flow-1", "project_id": "p-flow-1", "status": "trashed"}
+        return_value={
+            "media_id": "m-flow-1",
+            "project_id": "p-flow-1",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -568,13 +646,19 @@ async def test_media_trash_service_refuses_cross_profile_ambiguity(
     assert "--profile" in exc_info.value.detail
 
     mock_trash = AsyncMock(
-        return_value={"media_id": "m-shared", "project_id": "p-a", "status": "trashed"}
+        return_value={
+            "media_id": "m-shared",
+            "project_id": "p-a",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
     res = await trash_media_service("m-shared", profile="prof-a")
     assert res.profile_name == "prof-a"
     assert res.media_id == "m-shared"
+    assert res.archived is True
 
 
 @pytest.mark.asyncio
@@ -595,10 +679,20 @@ async def test_media_trash_service_leaves_catalog_status_unchanged(
     )
 
     mock_trash = AsyncMock(
-        return_value={"media_id": "m-100", "project_id": "p-100", "status": "trashed"}
+        return_value={
+            "media_id": "m-100",
+            "project_id": "p-100",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     mock_restore = AsyncMock(
-        return_value={"media_id": "m-100", "project_id": "p-100", "status": "restored"}
+        return_value={
+            "media_id": "m-100",
+            "project_id": "p-100",
+            "status": "restored",
+            "archived": False,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
     monkeypatch.setattr(flow_wire, "direct_restore_media", mock_restore)
@@ -706,7 +800,12 @@ async def test_media_trash_service_with_explicit_project_bypasses_catalog(
     reset_settings()
 
     mock_trash = AsyncMock(
-        return_value={"media_id": "uncataloged-id", "project_id": "proj-999", "status": "trashed"}
+        return_value={
+            "media_id": "uncataloged-id",
+            "project_id": "proj-999",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -802,3 +901,140 @@ async def test_direct_trash_429_has_own_route_and_does_not_throttle_credits(
     assert err.charged == "no"
     # Crucial: _throttled window must NOT be set on credits throttle
     assert profile_dir not in flow_wire._throttled
+
+
+# ---------------------------------------------------------------------------
+# Offline tests for e2e cleanup helper (#1363 Defect 1)
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_e2e_media_trash_call_shape_with_fake_service() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def fake_restore(
+        target_id: str, *, project_id: str | None = None, profile: str | None = None
+    ) -> Any:
+        calls.append({"target_id": target_id, "project_id": project_id, "profile": profile})
+
+    state = {
+        "needs_restore": True,
+        "media_id": "media-test-123",
+        "project_id": "proj-test-456",
+        "profile": "prof-test",
+    }
+    cleanup_e2e_media_trash(state, restore_fn=fake_restore)
+    assert calls == [
+        {
+            "target_id": "media-test-123",
+            "project_id": "proj-test-456",
+            "profile": "prof-test",
+        }
+    ]
+
+
+def test_cleanup_e2e_media_trash_signature_matches_restore_media_service() -> None:
+    import inspect
+
+    sig = inspect.signature(restore_media_service)
+    bound = sig.bind(
+        target_id="media-test-123",
+        project_id="proj-test-456",
+        profile="prof-test",
+    )
+    assert bound.arguments["target_id"] == "media-test-123"
+    assert bound.arguments["project_id"] == "proj-test-456"
+    assert bound.arguments["profile"] == "prof-test"
+
+
+def test_cleanup_e2e_media_trash_loud_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    async def failing_restore(
+        target_id: str, *, project_id: str | None = None, profile: str | None = None
+    ) -> Any:
+        raise RuntimeError("Network failure restoring media")
+
+    state = {
+        "needs_restore": True,
+        "media_id": "loud-media-999",
+        "project_id": "loud-proj-888",
+        "profile": "loud-prof-777",
+    }
+    with pytest.raises(RuntimeError, match="Network failure restoring media"):
+        cleanup_e2e_media_trash(state, restore_fn=failing_restore)
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "[E2E CLEANUP FAILURE]" in output
+    assert "loud-media-999" in output
+    assert (
+        "gflow media restore loud-media-999 --project loud-proj-888 --profile loud-prof-777"
+        in output
+    )
+
+
+# ---------------------------------------------------------------------------
+# Offline tests for archived result field & refusal (#1363 Defect 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_returns_archived_in_result_and_as_json(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    mock_trash = AsyncMock(
+        return_value={
+            "media_id": "m-arch-1",
+            "project_id": "proj-arch-1",
+            "workflow_id": "wf-arch-1",
+            "status": "trashed",
+            "archived": True,
+        }
+    )
+    mock_restore = AsyncMock(
+        return_value={
+            "media_id": "m-arch-1",
+            "project_id": "proj-arch-1",
+            "workflow_id": "wf-arch-1",
+            "status": "restored",
+            "archived": False,
+        }
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+    monkeypatch.setattr(flow_wire, "direct_restore_media", mock_restore)
+
+    res_trash = await trash_media_service("m-arch-1", project_id="proj-arch-1", profile="test_prof")
+    assert res_trash.archived is True
+    assert res_trash.as_json()["archived"] is True
+
+    res_restore = await restore_media_service(
+        "m-arch-1", project_id="proj-arch-1", profile="test_prof"
+    )
+    assert res_restore.archived is False
+    assert res_restore.as_json()["archived"] is False
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_refuses_when_trash_did_not_set_archived(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    # When wire/client returns mutation response without archived flag set to True
+    mock_trash = AsyncMock(
+        return_value={
+            "media_id": "m-arch-bad",
+            "project_id": "proj-bad",
+            "status": "trashed",
+            "archived": False,
+        }
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    with pytest.raises(WireFormatError, match="did not set archived flag to True") as exc_info:
+        await trash_media_service("m-arch-bad", project_id="proj-bad", profile="test_prof")
+    assert exc_info.value.charged == "no"

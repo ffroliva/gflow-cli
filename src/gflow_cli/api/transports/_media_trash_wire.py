@@ -120,7 +120,7 @@ def parse_mutation_response(
         "media_id": media_id,
         "project_id": project_id,
         "workflow_id": workflow_id,
-        "archived": archived,
+        "archived": True if is_archived in (True, 1) else False,
         "status": "trashed" if archived else "restored",
     }
 

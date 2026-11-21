@@ -93,7 +93,12 @@ def test_cli_media_trash_with_yes_succeeds(
     runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mock_trash = AsyncMock(
-        return_value={"media_id": "media-123", "project_id": "p-123", "status": "trashed"}
+        return_value={
+            "media_id": "media-123",
+            "project_id": "p-123",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -103,6 +108,7 @@ def test_cli_media_trash_with_yes_succeeds(
     assert data["status"] == "trashed"
     assert data["media_id"] == "media-123"
     assert data["project_id"] == "p-123"
+    assert data["archived"] is True
     assert data["charged"] == "no"
     assert "restore_hint" in data
     mock_trash.assert_awaited_once()
@@ -112,7 +118,12 @@ def test_cli_media_restore_succeeds(
     runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mock_restore = AsyncMock(
-        return_value={"media_id": "media-123", "project_id": "p-123", "status": "restored"}
+        return_value={
+            "media_id": "media-123",
+            "project_id": "p-123",
+            "status": "restored",
+            "archived": False,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_restore_media", mock_restore)
 
@@ -122,6 +133,7 @@ def test_cli_media_restore_succeeds(
     assert data["status"] == "restored"
     assert data["media_id"] == "media-123"
     assert data["project_id"] == "p-123"
+    assert data["archived"] is False
     assert data["charged"] == "no"
     mock_restore.assert_awaited_once()
 
@@ -141,7 +153,12 @@ def test_cli_media_trash_interactive_confirm(
 ) -> None:
     monkeypatch.setattr("gflow_cli.cli_media._is_interactive", lambda: True)
     mock_trash = AsyncMock(
-        return_value={"media_id": "media-123", "project_id": "p-123", "status": "trashed"}
+        return_value={
+            "media_id": "media-123",
+            "project_id": "p-123",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -156,7 +173,12 @@ def test_cli_media_trash_output_format_id(
     runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mock_trash = AsyncMock(
-        return_value={"media_id": "media-123", "project_id": "p-123", "status": "trashed"}
+        return_value={
+            "media_id": "media-123",
+            "project_id": "p-123",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -181,7 +203,12 @@ def test_cli_media_trash_with_project_flag_succeeds_without_catalog(
     runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mock_trash = AsyncMock(
-        return_value={"media_id": "uncataloged-m", "project_id": "p-ext", "status": "trashed"}
+        return_value={
+            "media_id": "uncataloged-m",
+            "project_id": "p-ext",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -194,6 +221,7 @@ def test_cli_media_trash_with_project_flag_succeeds_without_catalog(
     assert data["status"] == "trashed"
     assert data["media_id"] == "uncataloged-m"
     assert data["project_id"] == "p-ext"
+    assert data["archived"] is True
     mock_trash.assert_awaited_once()
 
 
@@ -202,7 +230,12 @@ def test_cli_media_trash_confirms_after_resolution_with_details(
 ) -> None:
     monkeypatch.setattr("gflow_cli.cli_media._is_interactive", lambda: True)
     mock_trash = AsyncMock(
-        return_value={"media_id": "media-123", "project_id": "p-123", "status": "trashed"}
+        return_value={
+            "media_id": "media-123",
+            "project_id": "p-123",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 

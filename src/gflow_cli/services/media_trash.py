@@ -21,7 +21,7 @@ from gflow_cli.config import get_settings
 from gflow_cli.data.models import AssetLookup
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import DataStoreError, WireFormatError
 
 log = structlog.get_logger(__name__)
 
@@ -35,6 +35,7 @@ class MediaTrashResult:
     workflow_id: str
     profile_name: str
     status: str  # "trashed" or "restored"
+    archived: bool = False
     restore_hint: str | None = None
     charged: str = "no"
 
@@ -46,6 +47,7 @@ class MediaTrashResult:
             "workflow_id": self.workflow_id,
             "profile": self.profile_name,
             "status": self.status,
+            "archived": self.archived,
             "charged": self.charged,
         }
         if self.restore_hint is not None:
@@ -235,6 +237,17 @@ async def set_archived_media_service(
         headless=settings.headless,
     )
 
+    res_archived = wire_res.get("archived")
+    if archived:
+        if res_archived is not True:
+            raise WireFormatError(
+                f"pGCYOe response did not set archived flag to True: {res_archived!r}",
+                charged="no",
+            )
+        final_archived = True
+    else:
+        final_archived = bool(res_archived) if res_archived is not None else False
+
     restore_hint = None
     if archived:
         restore_cmd = f"gflow media restore {media_id}"
@@ -250,6 +263,7 @@ async def set_archived_media_service(
         workflow_id=wire_res.get("workflow_id") or workflow_id,
         profile_name=profile_name,
         status="trashed" if archived else "restored",
+        archived=final_archived,
         restore_hint=restore_hint,
     )
 

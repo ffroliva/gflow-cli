@@ -89,7 +89,12 @@ async def test_mcp_media_trash_confirmed_succeeds(
     mcp_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mock_trash = AsyncMock(
-        return_value={"media_id": "media-uuid-1", "project_id": "proj-uuid-1", "status": "trashed"}
+        return_value={
+            "media_id": "media-uuid-1",
+            "project_id": "proj-uuid-1",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -97,6 +102,7 @@ async def test_mcp_media_trash_confirmed_succeeds(
     assert res.get("status") == "trashed"
     assert res.get("media_id") == "media-uuid-1"
     assert res.get("project_id") == "proj-uuid-1"
+    assert res.get("archived") is True
     assert res.get("charged") == "no"
     assert "restore_hint" in res
     mock_trash.assert_awaited_once()
@@ -105,7 +111,12 @@ async def test_mcp_media_trash_confirmed_succeeds(
 @pytest.mark.asyncio
 async def test_mcp_media_restore_succeeds(mcp_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mock_restore = AsyncMock(
-        return_value={"media_id": "media-uuid-1", "project_id": "proj-uuid-1", "status": "restored"}
+        return_value={
+            "media_id": "media-uuid-1",
+            "project_id": "proj-uuid-1",
+            "status": "restored",
+            "archived": False,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_restore_media", mock_restore)
 
@@ -113,6 +124,7 @@ async def test_mcp_media_restore_succeeds(mcp_env: Path, monkeypatch: pytest.Mon
     assert res.get("status") == "restored"
     assert res.get("media_id") == "media-uuid-1"
     assert res.get("project_id") == "proj-uuid-1"
+    assert res.get("archived") is False
     assert res.get("charged") == "no"
     mock_restore.assert_awaited_once()
 
@@ -138,7 +150,12 @@ async def test_mcp_media_trash_with_project_id_succeeds_without_catalog(
     mcp_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     mock_trash = AsyncMock(
-        return_value={"media_id": "uncataloged-m", "project_id": "proj-ext", "status": "trashed"}
+        return_value={
+            "media_id": "uncataloged-m",
+            "project_id": "proj-ext",
+            "status": "trashed",
+            "archived": True,
+        }
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
@@ -146,6 +163,7 @@ async def test_mcp_media_trash_with_project_id_succeeds_without_catalog(
     assert res.get("status") == "trashed"
     assert res.get("media_id") == "uncataloged-m"
     assert res.get("project_id") == "proj-ext"
+    assert res.get("archived") is True
     mock_trash.assert_awaited_once()
 
 

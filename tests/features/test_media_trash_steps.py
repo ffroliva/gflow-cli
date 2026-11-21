@@ -85,7 +85,12 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                     "action": "trash",
                 }
             )
-            return {"media_id": media_id, "project_id": project_id, "status": "trashed"}
+            return {
+                "media_id": media_id,
+                "project_id": project_id,
+                "status": "trashed",
+                "archived": True,
+            }
 
         async def fake_direct_restore(
             profile_dir: Path, media_id: str, project_id: str
@@ -99,7 +104,12 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                     "restore": True,
                 }
             )
-            return {"media_id": media_id, "project_id": project_id, "status": "restored"}
+            return {
+                "media_id": media_id,
+                "project_id": project_id,
+                "status": "restored",
+                "archived": False,
+            }
 
         async def fake_client_trash(self: Any, media_id: str, project_id: str) -> dict[str, Any]:
             return await fake_direct_trash(Path("/fake"), media_id, project_id)
