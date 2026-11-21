@@ -402,6 +402,11 @@ async def _report_video_started(
     return started
 
 
+def _bare(model: str) -> str:
+    """A model name as a summary row and the model list both show it: no banana, no comma."""
+    return model.replace("\N{BANANA}", "").strip().rstrip(",\N{FULLWIDTH COMMA}、").strip()
+
+
 def _tile_key(tile: dict[str, str]) -> str:
     return tile["video"] or tile["img"]
 
@@ -561,13 +566,14 @@ class _AgentSettingsMixin:
             ) from exc
 
     async def _checked_index(self, page: Page, group: int, *, groups: str = TOGGLE_GROUP) -> int:
-        index = (
-            await page.locator(groups)
-            .nth(group)
-            .evaluate(
-                "g => [...g.querySelectorAll(\"button[role='radio']\")]"
-                ".findIndex(b => b.getAttribute('aria-checked') === 'true')"
-            )
+        """The checked radio's position in the group, or -1 (none checked, or no such group)."""
+        located = page.locator(groups)
+        # Counted first: `evaluate` on a missing group would wait out Playwright's 30 s.
+        if await located.count() <= group:
+            return -1
+        index = await located.nth(group).evaluate(
+            "g => [...g.querySelectorAll(\"button[role='radio']\")]"
+            ".findIndex(b => b.getAttribute('aria-checked') === 'true')"
         )
         return int(index)
 
@@ -850,11 +856,12 @@ class _AgentSettingsMixin:
             ) from exc
 
     async def _unified_confirm_value(self, page: Page) -> str:
+        """The confirm choice's value, or "" when it cannot be read."""
         index = await self._checked_index(page, 0, groups=UNIFIED_TOGGLE_GROUP)
         for value, position in _UNIFIED_CONFIRM_INDEX.items():
             if index == position:
                 return value
-        raise UiSelectorDriftError(detail="agent-only composer: confirm choice is unreadable")
+        return ""
 
     async def _set_unified_confirm(self, page: Page, value: str) -> bool:
         return await self._check_radio(
@@ -916,17 +923,22 @@ class _AgentSettingsMixin:
         log.info("migrated.agent_only.model_selected", section=section, model=offered[hits[0]])
         return True
 
-    async def _checked_aspect_label(self, page: Page) -> str:
-        """The checked aspect radio's own text ("16:9"), without its `crop_*` ligature."""
+    async def _aspect_label(self, page: Page, ligature: str) -> str:
+        """The ``ligature`` radio's own text ("16:9") while it is checked, else ""."""
         checked = (
             page.locator(DEFAULTS_TOGGLE_GROUP)
             .nth(0)
             .locator(f"{TOGGLE_RADIO}[aria-checked='true']")
+            .filter(has=page.locator(f"mat-icon:text-is('{ligature}')"))
         )
-        if not await checked.count():
+        if await checked.count() != 1:
             return ""
-        text = await checked.first.inner_text()
-        return " ".join(re.sub(r"crop_[a-z0-9_]+", " ", text).split())
+        # Without the ligature's node: its text runs straight into the label ("crop_16_916:9").
+        text = await checked.evaluate(
+            "b => { const c = b.cloneNode(true);"
+            " c.querySelectorAll('mat-icon').forEach(i => i.remove()); return c.textContent; }"
+        )
+        return " ".join(str(text).split())
 
     async def _verify_row(
         self, page: Page, section: Section, *, model: str, aspect: str, count: int
@@ -943,11 +955,14 @@ class _AgentSettingsMixin:
             )
         text = " ".join((await caption.first.inner_text()).split())
         wrong: list[str] = []
-        if not model or model not in text:
+        shown = bool(aspect) and aspect in text
+        # The model is the whole caption before the aspect, not a substring of it: "Veo 3.1 -
+        # Lite" must not pass for "Veo 3.1 - Lite [Lower Priority]".
+        if not model or not shown or _bare(text.split(aspect, 1)[0]) != _bare(model):
             wrong.append(f"model {model!r}")
-        if not aspect or aspect not in text:
+        if not shown:
             wrong.append(f"aspect {aspect!r}")
-        numbers = _NUMBER_RE.findall(text.split(aspect, 1)[1]) if aspect and aspect in text else []
+        numbers = _NUMBER_RE.findall(text.split(aspect, 1)[1]) if shown else []
         if not numbers or int(numbers[0]) != count:
             wrong.append(f"count {count}")
         if wrong:
@@ -958,6 +973,15 @@ class _AgentSettingsMixin:
                 )
             )
         return text
+
+    async def _set_aspect_and_count(self, page: Page, aspect_ligature: str, count: int) -> bool:
+        clicked = await self._check_radio(
+            page, 0, aspect_ligature, "aspect", groups=DEFAULTS_TOGGLE_GROUP
+        )
+        return (
+            await self._check_radio(page, 1, count - 1, "count", groups=DEFAULTS_TOGGLE_GROUP)
+            or clicked
+        )
 
     async def _apply_unified(
         self,
@@ -980,6 +1004,7 @@ class _AgentSettingsMixin:
             confirm_value=confirm_value,
         )
         for name, readable in (
+            ("confirm", bool(confirm_value)),
             ("model", bool(snapshot.model_text)),
             ("aspect", snapshot.aspect_index >= 0),
             ("count", snapshot.count_index >= 0),
@@ -992,15 +1017,12 @@ class _AgentSettingsMixin:
                 )
         with _SaveWatch(page) as saves:
             try:
-                clicked = await self._check_radio(
-                    page, 0, aspect_ligature, "aspect", groups=DEFAULTS_TOGGLE_GROUP
-                )
-                clicked |= await self._check_radio(
-                    page, 1, count - 1, "count", groups=DEFAULTS_TOGGLE_GROUP
-                )
-                if model is not None:
-                    clicked |= await self._choose_unified_model(page, section, model)
-                aspect = await self._checked_aspect_label(page)
+                clicked = await self._set_aspect_and_count(page, aspect_ligature, count)
+                if model is not None and await self._choose_unified_model(page, section, model):
+                    # A model switch can put the aspect and count back to that model's own.
+                    await self._set_aspect_and_count(page, aspect_ligature, count)
+                    clicked = True
+                aspect = await self._aspect_label(page, aspect_ligature)
                 chosen = await self._unified_model(page)
                 await self._open_unified(page)
                 if confirm != "account":
@@ -1063,6 +1085,8 @@ class _AgentSettingsMixin:
         if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
             clicked = await self._set_unified_confirm(page, snapshot.confirm_value)
         await self._open_defaults(page, snapshot.section)
+        # The model first: switching it can put the aspect and count back to its own.
+        clicked |= await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
         if snapshot.aspect_index >= 0:
             clicked |= await self._check_radio(
                 page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
@@ -1071,7 +1095,6 @@ class _AgentSettingsMixin:
             clicked |= await self._check_radio(
                 page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
             )
-        clicked |= await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
         await self._leave_unified(page)
         await saves.settled(f"restoring the {snapshot.section} defaults", clicked=clicked)
 

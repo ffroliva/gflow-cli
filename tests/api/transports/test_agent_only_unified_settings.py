@@ -70,7 +70,7 @@ const box = gear => `<flow-creative-agent-prompt-box><div class="ProseMirror" co
   '<button class="agent-action-button"><mat-icon>add_2</mat-icon></button></flow-creative-agent-prompt-box>';
 function caption(k) {
   const s = state[k];
-  const text = `${k === 'image' ? '\u{1F34C} ' : ''}${s.model}, ${TEXT[LIGS[k][s.aspect]]}, ${s.count + 1} output${s.count ? 's' : ''}`;
+  const text = `${k === 'image' ? '\u{1F34C} ' : ''}${s.model}${S.captionModelSuffix || ''}, ${TEXT[LIGS[k][s.aspect]]}, ${s.count + 1} output${s.count ? 's' : ''}`;
   if (!(k in frozen)) frozen[k] = text;
   return S.staleRow ? frozen[k] : text;
 }
@@ -81,7 +81,7 @@ function toggles(name, labels, checked) {
 }
 function body() {
   if (view === 'chat') return box(false);
-  if (view === 'unified') return `<flow-unified-settings-view>${toggles('confirm', ['Always', 'Never'], state.confirm)}` +
+  if (view === 'unified') return `<flow-unified-settings-view>${S.noConfirm ? '' : toggles('confirm', ['Always', 'Never'], state.confirm)}` +
     ['image', 'video'].map(k => `<button class="${k}-defaults-row"><span class="defaults-row-title">${k}</span>` +
       `<span class="defaults-row-caption">${caption(k)}</span></button>`).join('') + '</flow-unified-settings-view>';
   const k = view, s = state[k];
@@ -116,7 +116,11 @@ function render() {
   root.querySelectorAll('.image-defaults-row, .video-defaults-row').forEach(r =>
     r.onclick = () => { view = r.className.split('-')[0]; render(); });
   root.querySelectorAll('label.radio-option').forEach(l =>
-    l.onclick = () => { state[view].model = l.dataset.model; save(); render(); });
+    l.onclick = () => {
+      state[view].model = l.dataset.model;
+      if (S.modelResetsAspect != null) state[view].aspect = S.modelResetsAspect;  // a model's own default
+      save(); render();
+    });
   root.querySelectorAll('button[role=radio]').forEach(btn => btn.onclick = () => {
     const g = btn.dataset.group, i = +btn.dataset.i;
     if (g === 'count' && S.deadCount) return;
@@ -320,6 +324,63 @@ async def test_an_unreadable_model_changes_nothing(page: Page) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("section", "ligature", "label"),
+    [
+        ("video", "crop_16_9", "16:9"),
+        ("video", "crop_9_16", "9:16"),
+        ("image", "crop_square", "1:1"),
+    ],
+)
+async def test_the_aspect_label_is_read_whole(
+    page: Page, section: aoc.Section, ligature: str, label: str
+) -> None:
+    """The radio's text runs its ligature into the label ("crop_16_916:9"); the label is read
+    without the ligature's own node, never by trimming a pattern off the joined text."""
+    await _load(page)
+    composer = aoc.AgentOnlyComposer()
+    await composer._open_defaults(page, section)  # pyright: ignore[reportPrivateUsage]
+    await composer._check_radio(page, 0, ligature, "aspect", groups=aoc.DEFAULTS_TOGGLE_GROUP)  # pyright: ignore[reportPrivateUsage]
+    assert await composer._aspect_label(page, ligature) == label  # pyright: ignore[reportPrivateUsage]
+    assert await composer._aspect_label(page, "crop_landscape") == ""  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_resets_the_aspect_still_gets_the_run_and_the_restore_right(
+    page: Page,
+) -> None:
+    """Switching the model can put the aspect back to that model's own default."""
+    await _load(page, modelResetsAspect=2)
+    composer = aoc.AgentOnlyComposer()
+    snapshot = await composer.apply_defaults(
+        page,
+        section="image",
+        aspect_ligature="crop_portrait",
+        count=3,
+        model=IMAGE_MODEL_MENU_MATCHERS[ImageModel.GEM_PIX_2],
+        confirm="account",
+    )
+    assert (await _state(page))["image"] == {"aspect": 3, "count": 2, "model": "Nano Banana Pro"}
+    await composer.restore_defaults(page, snapshot)
+    assert await _state(page) == ORIGINAL
+
+
+@pytest.mark.asyncio
+async def test_a_row_naming_a_longer_model_is_not_the_chosen_model(page: Page) -> None:
+    await _load(page, captionModelSuffix=" [Lower Priority]")
+    with pytest.raises(UiSelectorDriftError, match="does not show model 'Veo 3.1 - Lite'"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page,
+            section="video",
+            aspect_ligature="crop_9_16",
+            count=1,
+            model=VIDEO_MODEL_MENU_MATCHERS[VideoModel.VEO_3_1_LITE],
+            confirm="account",
+        )
+    assert await _state(page) == ORIGINAL
+
+
+@pytest.mark.asyncio
 async def test_the_older_pane_keeps_its_own_path(page: Page) -> None:
     await page.set_content(
         "<flow-creative-agent-prompt-box><button class='agent-action-button'>"
@@ -417,6 +478,20 @@ async def test_an_unreadable_count_changes_nothing(page: Page) -> None:
     with pytest.raises(UiSelectorDriftError, match="count choice is unreadable"):
         await aoc.AgentOnlyComposer().apply_defaults(
             page, section="video", aspect_ligature="crop_9_16", count=2, model=None, confirm="never"
+        )
+    assert (await _log(page))["writes"] == 0
+    assert await _in_chat(page)
+
+
+@pytest.mark.asyncio
+async def test_a_missing_confirm_group_is_drift_at_once_and_changes_nothing(page: Page) -> None:
+    """Counted first: `.nth(group).evaluate` on a missing group waits out Playwright's default
+    timeout and raises a bare TimeoutError, not drift."""
+    await _load(page, noConfirm=True)
+    page.set_default_timeout(1000)
+    with pytest.raises(UiSelectorDriftError, match="confirm choice is unreadable"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page, section="video", aspect_ligature="crop_9_16", count=1, model=None, confirm="never"
         )
     assert (await _log(page))["writes"] == 0
     assert await _in_chat(page)
