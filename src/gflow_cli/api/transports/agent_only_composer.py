@@ -422,7 +422,10 @@ class _SaveWatch:
 
     def __init__(self, page: Page) -> None:
         self._page = page
-        self.sent = self.answered = 0
+        self.sent = 0
+        # The saves themselves, not a count: Playwright fires `response` and then
+        # `requestfailed` for a save whose body breaks after its headers.
+        self._pending: set[Any] = set()
         self.failed: list[str] = []
         self._last = time.monotonic()
 
@@ -444,18 +447,19 @@ class _SaveWatch:
     def _on_request(self, request: Any) -> None:
         if self._is_save(request.url):
             self.sent += 1
+            self._pending.add(request)
             self._last = time.monotonic()
 
     def _on_response(self, response: Any) -> None:
         if self._is_save(response.url):
-            self.answered += 1
+            self._pending.discard(response.request)
             self._last = time.monotonic()
             if response.status >= 400:
                 self.failed.append(f"HTTP {response.status}")
 
     def _on_failed(self, request: Any) -> None:
         if self._is_save(request.url):
-            self.answered += 1
+            self._pending.discard(request)
             self._last = time.monotonic()
             self.failed.append(str(request.failure or "failed"))
 
@@ -463,7 +467,7 @@ class _SaveWatch:
         deadline = time.monotonic() + SAVE_BUDGET_S
         while True:
             quiet = time.monotonic() - self._last >= SAVE_QUIET_S
-            if self.answered >= self.sent and quiet:
+            if not self._pending and quiet:
                 # A failure is reported only once the queue has drained: each save carries the
                 # whole section, so the ones behind a failed save still land the values.
                 if self.failed:
@@ -478,7 +482,7 @@ class _SaveWatch:
             if time.monotonic() >= deadline:
                 raise UiSelectorDriftError(
                     detail=(
-                        f"agent-only composer: {self.sent - self.answered} Agent-settings saves "
+                        f"agent-only composer: {len(self._pending)} Agent-settings saves "
                         f"({AGENT_SETTINGS_SAVE_RPC}) unanswered {SAVE_BUDGET_S:.0f}s after {what}"
                     )
                 )
@@ -954,7 +958,7 @@ class _AgentSettingsMixin:
                 # The row is the pane's own state; the run's defaults are the account's only
                 # once every queued save has been answered.
                 await saves.settled(f"applying the {section} defaults")
-            except Exception:
+            except BaseException:  # a cancel too: every click here is already saved
                 # No Save and no discard on this build: whatever was clicked is already the
                 # account's. Write the originals back before failing, so the next run does not
                 # snapshot this run's values as them. The same watch, so the apply's saves

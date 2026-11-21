@@ -532,3 +532,84 @@ async def test_a_gear_that_mounts_before_the_switch_does_not_hide_the_switch(pag
     state, error = await MigratedComposer._exit_agent_mode(page)  # pyright: ignore[reportPrivateUsage]
     assert (state, error) == ("clicked", None)
     assert await page.evaluate("window.leftAgentMode === true")
+
+
+class _EventPage:
+    """Just enough of a Page for `_SaveWatch`: handlers by event name."""
+
+    def __init__(self) -> None:
+        self.handlers: dict[str, Any] = {}
+
+    def on(self, event: str, handler: Any) -> None:
+        self.handlers[event] = handler
+
+    def remove_listener(self, event: str, handler: Any) -> None:
+        self.handlers.pop(event, None)
+
+
+async def test_a_save_answered_twice_does_not_end_the_wait_for_another(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Playwright fires `response` and then `requestfailed` for a save whose body breaks
+    # after its headers: counted twice, it would cover a second save still in flight.
+    monkeypatch.setattr(aoc, "SAVE_QUIET_S", 0.0)
+    monkeypatch.setattr(aoc, "SAVE_BUDGET_S", 0.3)
+    from types import SimpleNamespace
+
+    class _Request:  # hashable by identity, like Playwright's Request
+        def __init__(self, url: str, failure: str | None = None) -> None:
+            self.url, self.failure = url, failure
+
+    url = f"https://labs.google/x?rpcids={aoc.AGENT_SETTINGS_SAVE_RPC}"
+    first, second = _Request(url, failure="aborted"), _Request(url)
+    page = _EventPage()
+    with aoc._SaveWatch(page) as saves:  # type: ignore[arg-type]
+        page.handlers["request"](first)
+        page.handlers["request"](second)
+        page.handlers["response"](SimpleNamespace(url=url, status=200, request=first))
+        page.handlers["requestfailed"](first)
+        with pytest.raises(UiSelectorDriftError, match="unanswered"):
+            await saves.settled("applying the image defaults")
+
+
+async def test_a_cancelled_apply_still_writes_the_originals_back() -> None:
+    # Every click on the 2026-11-20 pane is already the account's, so Ctrl+C or an MCP
+    # cancel mid-apply must roll back like any other failure.
+    rolled_back: list[bool] = []
+
+    async def nothing(*_a: Any, **_k: Any) -> None:
+        return None
+
+    async def zero(*_a: Any, **_k: Any) -> int:
+        return 0
+
+    async def model(*_a: Any, **_k: Any) -> str:
+        return "Nano Banana Pro"
+
+    async def cancelled(*_a: Any, **_k: Any) -> None:
+        raise asyncio.CancelledError
+
+    async def rollback(*_a: Any, **_k: Any) -> None:
+        rolled_back.append(True)
+
+    driver = aoc._AgentSettingsMixin()
+    for name, fn in {
+        "_open_unified": nothing,
+        "_unified_confirm_value": model,
+        "_open_defaults": nothing,
+        "_checked_index": zero,
+        "_unified_model": model,
+        "_check_radio": cancelled,
+        "_rollback_unified": rollback,
+    }.items():
+        setattr(driver, name, fn)
+    with pytest.raises(asyncio.CancelledError):
+        await driver._apply_unified(
+            _EventPage(),  # type: ignore[arg-type]
+            section="image",
+            aspect_ligature="crop_square",
+            count=1,
+            model=None,
+            confirm="account",
+        )
+    assert rolled_back == [True]
