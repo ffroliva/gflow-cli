@@ -161,15 +161,15 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `tests/services/test_audio_narration.py`.
 
 **Steps:**
-- [ ] Cover text positional input and mutually exclusive UTF-8 text-file input.
-- [ ] Cover empty input, unreadable input, invalid provider options, and parent path errors.
-- [ ] Cover existing destination preservation and no partial destination after provider/write failure.
+- [x] Cover text positional input and mutually exclusive UTF-8 text-file input.
+- [x] Cover empty input, unreadable input, invalid provider options, and parent path errors.
+- [x] Cover existing destination preservation and no partial destination after provider/write failure.
 
 **Tests created (red):**
-- [ ] `test_empty_text_is_rejected_before_provider_call`.
-- [ ] `test_text_file_reads_utf8_and_preserves_unicode`.
-- [ ] `test_existing_output_is_not_overwritten`.
-- [ ] `test_failed_synthesis_leaves_no_output_file`.
+- [x] `test_empty_text_is_rejected_before_provider_call`.
+- [x] `test_text_file_reads_utf8_and_preserves_unicode`.
+- [x] `test_existing_output_is_not_overwritten`.
+- [x] `test_failed_synthesis_leaves_no_output_file`.
 
 ## Task 6 — Narration service
 
