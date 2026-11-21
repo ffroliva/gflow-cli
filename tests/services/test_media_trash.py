@@ -562,7 +562,7 @@ async def test_media_trash_service_refuses_cross_profile_ambiguity(
 
 
 @pytest.mark.asyncio
-async def test_media_trash_service_updates_local_catalog_status(
+async def test_media_trash_service_leaves_catalog_status_unchanged(
     profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = profile_dir.parent.parent / "catalog.db"
@@ -594,12 +594,12 @@ async def test_media_trash_service_updates_local_catalog_status(
         repo = DataRepository(store)
         row_trashed = repo.find_assets_by_any_id("m-100")[0]
         assert row_trashed.flow_media_id == "m-100"
-        # Check status in database directly
+        # Status in database must NOT be changed to 'trashed' (catalog status untouched)
         db_status = store.conn.execute(
             "SELECT status FROM assets WHERE flow_media_id = ?", ("m-100",)
         ).fetchone()
         assert db_status is not None
-        assert db_status[0] == "trashed"
+        assert db_status[0] == "ready"  # untouched
 
     res_restore = await restore_media_service("m-100")
     assert res_restore.status == "restored"

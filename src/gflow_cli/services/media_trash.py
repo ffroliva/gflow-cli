@@ -196,11 +196,6 @@ async def trash_media_service(
         async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
             wire_res = await client.trash_media(media_id, resolved_project_id)
 
-    if asset is not None:
-        with DataStore.open(settings.resolved_db_path()) as store:
-            repo = DataRepository(store)
-            repo.update_asset_status(asset.profile_name, media_id, "trashed")
-
     restore_cmd = f"gflow media restore {media_id}"
     if project_id:
         restore_cmd += f" --project {resolved_project_id}"
@@ -279,11 +274,6 @@ async def restore_media_service(
     if not wire_success or wire_res is None:
         async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
             wire_res = await client.restore_media(media_id, resolved_project_id)
-
-    if asset is not None:
-        with DataStore.open(settings.resolved_db_path()) as store:
-            repo = DataRepository(store)
-            repo.update_asset_status(asset.profile_name, media_id, "ready")
 
     return MediaTrashResult(
         media_id=media_id,
