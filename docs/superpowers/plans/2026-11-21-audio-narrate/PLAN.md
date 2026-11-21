@@ -262,15 +262,15 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `docs/USAGE.md`, `docs/MCP.md`, `docs/CONFIGURATION.md`, `.env.template`, `README.md`, `CHANGELOG.md`, `docs/CAPABILITIES.md` and its source if applicable, `skills/gflow-cli/SKILL.md` and generated plugin byte copy.
 
 **Steps:**
-- [ ] Document `gflow audio narrate`, options, supported formats, output behavior, and `gflow video assemble --voiceover` workflow.
-- [ ] Document Gemini key name and that it is separate from `GFLOW_CLI_LLM_API_KEY`.
-- [ ] State edge-tts uses Microsoft's unofficial consumer Read Aloud endpoint, is best-effort/no SLA, can break, and is an optional install with a distinct license; provide Gemini alternative.
-- [ ] Document third-party text transfer in CLI/MCP guides and provider errors as not using Flow credits.
-- [ ] Update README comparison from Planned to `Yes (audio narrate: edge-tts or Gemini voices)`; update capabilities only if catalog enumerates this feature.
-- [ ] Update changelog Unreleased > Added and regenerate/check the plugin byte copy.
+- [x] Document `gflow audio narrate`, options, supported formats, output behavior, and `gflow video assemble --voiceover` workflow.
+- [x] Document Gemini key name and that it is separate from `GFLOW_CLI_LLM_API_KEY`.
+- [x] State edge-tts uses Microsoft's unofficial consumer Read Aloud endpoint, is best-effort/no SLA, can break, and is an optional install with a distinct license; provide Gemini alternative.
+- [x] Document third-party text transfer in CLI/MCP guides and provider errors as not using Flow credits.
+- [x] Update README comparison from Planned to `Yes (audio narrate: edge-tts or Gemini voices)`; update capabilities only if catalog enumerates this feature.
+- [x] Update changelog Unreleased > Added and regenerate/check the plugin byte copy.
 
 **Tests:**
-- [ ] Doc link, website mirror, skill-copy, and capability checks pass.
+- [x] Doc link, website mirror, skill-copy, and capability checks pass.
 
 ## Task 12 — Full gates and Flow-surface classification
 

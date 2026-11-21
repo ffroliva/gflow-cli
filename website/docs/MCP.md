@@ -1,6 +1,6 @@
 # Model Context Protocol (MCP) Server for gflow-cli
 
-The gflow-cli MCP server connects Claude Code, Claude Desktop, Cursor, VS Code, Codex and any other MCP client to Google Flow. Its tools generate Veo 3.1 and Omni video and Nano Banana and Imagen images, manage reusable Characters, upscale, download, and read the Flow credit balance, over stdio (`gflow mcp run`) or Streamable HTTP (`gflow serve`). `gflow mcp run --no-spend` registers no credit-spending tool. Quick setup: `uv tool install gflow-cli`, `gflow auth login --browser chrome`, then `gflow mcp setup` (Claude Desktop) or the Claude Code plugin ([§ 4](#4-setup-instructions)).
+The gflow-cli MCP server connects Claude Code, Claude Desktop, Cursor, VS Code, Codex and any other MCP client to Google Flow. Its tools generate Veo 3.1 and Omni video and Nano Banana and Imagen images, create local speech narration, manage reusable Characters, upscale, download, and read the Flow credit balance, over stdio (`gflow mcp run`) or Streamable HTTP (`gflow serve`). `gflow mcp run --no-spend` registers no credit-spending tool. Quick setup: `uv tool install gflow-cli`, `gflow auth login --browser chrome`, then `gflow mcp setup` (Claude Desktop) or the Claude Code plugin ([§ 4](#4-setup-instructions)).
 
 This document describes the design, configuration, security model, and developer setup for the `gflow-cli` MCP server.
 
@@ -87,6 +87,11 @@ route. `gflow_video_captions(file, srt, language, out_file, profile)` burns an a
 into a local clip or transcribes first when `srt` is omitted. Both tools are direct,
 credit-free calls; output files stay inside `GFLOW_CLI_OUTPUT_DIR`. The Google Gemini default
 is refused before audio is sent. Configure an OpenAI, Groq, or local Whisper-compatible URL.
+
+`gflow_narrate(text, text_file, out_file, provider, voice, rate, pitch)` is the direct,
+credit-free twin of `gflow audio narrate`. It stays registered under `--no-spend`. Narration text
+is sent to the selected provider, Edge Read Aloud or Gemini; Gemini uses the separate
+`GFLOW_CLI_GEMINI_TTS_API_KEY`. Output paths are confined to `GFLOW_CLI_OUTPUT_DIR`.
 
 The server registers three protocol surfaces:
 

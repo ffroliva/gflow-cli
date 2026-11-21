@@ -2,7 +2,7 @@
 name: gflow-cli
 version: "1.2"
 skillopt_epoch: 0
-description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) from the terminal or a script — including text-to-video, image-to-video, image-to-image, batch image pipelines, or spending Flow credits programmatically. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Drives the real Flow web UI through a headed Chrome session (Playwright) after a one-time browser sign-in — it does not bypass the UI, it automates it.
+description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Flow commands drive the real Flow web UI through headed Chrome; audio narration uses an external TTS provider and needs no Flow account.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'
@@ -29,13 +29,14 @@ The user wants to:
 - Create a reusable, project-scoped Flow **Character** (a named subject with reference images, optional voice + personality) for consistent subjects across generations (`gflow character`)
 - Compose ordered clips into a **scene** and optionally render a credit-free server-side extended video (`gflow scene`)
 - Stitch a multi-clip story where each clip is seeded by the previous clip's last frame (`gflow video chain`)
+- Create a local narration track with Edge TTS or Gemini TTS (`gflow audio narrate`)
 - Use their Flow credits via script instead of clicking through the UI
 - Automate Flow inside a content pipeline, AI video production stack, or research project
 
 **Do NOT use this skill** when:
 
 - The user wants production-grade reliability with SLAs — recommend the [official Gen AI SDK](https://github.com/googleapis/python-genai) instead.
-- The user asks about audio, music, or anything outside Flow's video/image surface — wrong tool.
+- The user asks for audio or music generation unrelated to text narration — wrong tool.
 
 ## Prerequisites
 
@@ -46,8 +47,8 @@ Before any gflow-cli invocation, verify:
 3. **gflow-cli** is installed OR available via uvx:
    - Quick: `uvx --from gflow-cli gflow --help` (no install)
    - Persistent: `uv tool install gflow-cli && gflow --help`
-4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB).
-5. **A signed-in profile** exists: `gflow auth status` should print `Flow session verified` and exit 0 (it probes the live session, with no credits, and may open a short-lived headless browser; exit 1 means dead or missing session). If not, run `gflow auth login` and walk the user through the one-time browser sign-in.
+4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB), for Flow commands. `gflow audio narrate` does not need Chromium.
+5. **A signed-in profile** exists for Flow commands: `gflow auth status` should print `Flow session verified` and exit 0. `gflow audio narrate` does not need a Flow profile or account.
 6. **The user has Flow access** — any Google account with Flow rolled out works. If `gflow image upload` returns 403, missing Flow access is the cause.
 
 ## Core commands
@@ -106,6 +107,10 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # project. Set it once when looping, instead of leaving one project per call.
 
 # Video generation (Veo 3.1)
+# Audio narration (no Flow account/browser/credits; text is sent to the selected provider)
+gflow audio narrate "A clear voice speaks." --out-file voice.mp3 [--provider edge|gemini] [--voice ID]
+# Edge is keyless but requires `gflow-cli[tts]`; Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY.
+# Edge uses Microsoft's unofficial Read Aloud endpoint; Gemini rejects custom --rate/--pitch.
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: Omni models only; without --project a project is created first, on either host (#864); durations: 4/6/8 Veo, 4/6/8/10 omni-flash, 3-15 omni-1.2-flash
 # Flow retires omni-flash, veo-fast and veo-quality on 2026-12-05 (`retires_on` in `gflow models --json`): use veo-lite or omni-1.2
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
