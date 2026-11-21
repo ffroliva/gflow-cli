@@ -51,7 +51,7 @@ let saves = Promise.resolve();
 function save() {  // Flow's queue: one Kcr7Ub at a time, each carrying the current values
   window.log.writes++;
   const body = JSON.stringify({confirm: state.confirm, image: state.image, video: state.video});
-  saves = saves.then(() => fetch('https://flow.google.com/_/LabsSandboxUi/data/batchexecute?rpcids=Kcr7Ub',
+  saves = saves.then(() => fetch(`https://flow.google.com/_/LabsSandboxUi/data/batchexecute?rpcids=${S.rpcids || 'Kcr7Ub'}`,
     {method: 'POST', mode: 'no-cors', body}).catch(() => {}));
 }
 const LIGS = {image: ['crop_16_9', 'crop_landscape', 'crop_square', 'crop_portrait', 'crop_9_16'],
@@ -132,6 +132,7 @@ render();
 </script>
 """
 
+REFUSED = ')]}\'\n[["wrb.fr","Kcr7Ub",null,null,null,[3],"generic"]]'
 ORIGINAL = {
     "confirm": 0,
     "image": {"aspect": 0, "count": 1, "model": "Nano Banana 2.1"},
@@ -153,10 +154,12 @@ async def _load(
     save_delay_s: float = 0.0,
     fail_saves: bool = False,
     fail: tuple[int, ...] = (),
+    refuse: tuple[int, ...] = (),
     **scenario: Any,
 ) -> list[dict[str, Any]]:
     """Serve the fixture; answer its saves after `save_delay_s` (or fail them all, or the
-    1-based saves in `fail`) and return the saves that reached the "server", in order."""
+    1-based saves in `fail`, or refuse the ones in `refuse` inside an HTTP 200) and return
+    the saves that reached the "server", in order."""
     landed: list[dict[str, Any]] = []
     seen = [0]
 
@@ -166,10 +169,14 @@ async def _load(
             await route.abort()
             return
         await asyncio.sleep(save_delay_s)
+        if seen[0] in refuse:
+            # batchexecute's per-RPC failure: a `wrb.fr` frame with a null payload and a status.
+            await route.fulfill(status=200, body=REFUSED)
+            return
         landed.append(json.loads(route.request.post_data or "{}"))
         await route.fulfill(status=200, body=")]}'\n[]")
 
-    await page.route("**/*rpcids=Kcr7Ub*", answer)
+    await page.route("**/batchexecute*", answer)
     await page.set_content(f"<script>window.SCENARIO={json.dumps(scenario)}</script>{FIXTURE}")
     return landed
 
@@ -424,6 +431,55 @@ async def test_a_save_that_fails_is_drift_before_the_submit(page: Page) -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_a_save_refused_inside_an_http_200_is_drift_before_the_submit(page: Page) -> None:
+    """batchexecute answers a failed RPC with HTTP 200 and an error frame in the body."""
+    landed = await _load(page, refuse=(1, 2))
+    with pytest.raises(UiSelectorDriftError, match="failed while applying.*Kcr7Ub status 3"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page, section="video", aspect_ligature="crop_9_16", count=1, model=None, confirm="never"
+        )
+    assert landed[-1] == ORIGINAL  # the rollback's own saves
+
+
+@pytest.mark.asyncio
+async def test_a_batched_save_is_still_a_save(page: Page) -> None:
+    landed = await _load(page, save_delay_s=0.4, rpcids="DA4VGb%2CKcr7Ub")
+    await aoc.AgentOnlyComposer().apply_defaults(
+        page, section="video", aspect_ligature="crop_9_16", count=2, model=None, confirm="never"
+    )
+    assert len(landed) == (await _log(page))["writes"] == 3
+
+
+@pytest.mark.asyncio
+async def test_clicks_that_send_no_save_are_drift(page: Page) -> None:
+    """A save under another RPC would leave the watch nothing to wait for, and the run would
+    return before Flow had stored anything."""
+    await _load(page, rpcids="Other")
+    with pytest.raises(UiSelectorDriftError, match="no Agent-settings save"):
+        await aoc.AgentOnlyComposer().apply_defaults(
+            page, section="video", aspect_ligature="crop_9_16", count=1, model=None, confirm="never"
+        )
+
+
+def test_only_the_save_rpc_is_a_save() -> None:
+    is_save = aoc._SaveWatch._is_save  # pyright: ignore[reportPrivateUsage]
+    base = "https://flow.google.com/_/LabsSandboxUi/data/batchexecute?rpcids="
+    assert is_save(f"{base}Kcr7Ub&source-path=%2Fproject")
+    assert is_save(f"{base}DA4VGb%2CKcr7Ub")
+    assert not is_save(f"{base}Kcr7Ubx")
+    assert not is_save("https://flow.google.com/x?q=rpcids%3DKcr7Ub")
+
+
+async def test_a_rollback_is_judged_on_its_own_saves_and_keeps_the_applys() -> None:
+    page = _EventPage()
+    with aoc._SaveWatch(page) as saves:  # type: ignore[arg-type]
+        saves.failed.append("HTTP 500")
+        saves.judge_from_here()
+        await saves.settled("rolling back", clicked=False)
+    assert saves.failed == ["HTTP 500"]
+
+
 # --- the agent-only verdict on the new build -------------------------------------------------
 
 #: The 2026-11-20 build in agent mode with the panel closed: the classic trigger hidden,
@@ -569,7 +625,7 @@ async def test_a_save_answered_twice_does_not_end_the_wait_for_another(
         page.handlers["response"](SimpleNamespace(url=url, status=200, request=first))
         page.handlers["requestfailed"](first)
         with pytest.raises(UiSelectorDriftError, match="unanswered"):
-            await saves.settled("applying the image defaults")
+            await saves.settled("applying the image defaults", clicked=True)
 
 
 async def test_a_cancelled_apply_still_writes_the_originals_back() -> None:

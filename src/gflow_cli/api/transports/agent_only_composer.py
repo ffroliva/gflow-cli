@@ -44,7 +44,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
@@ -62,7 +62,11 @@ from gflow_cli.api.transports._mc_common import (
     PROMPT_MATCH_MARGIN_S,
 )
 from gflow_cli.api.transports._mc_submit_observe import read_project_listing
-from gflow_cli.api.transports.batchexecute import asb_token, generation_record_by_poster
+from gflow_cli.api.transports.batchexecute import (
+    asb_token,
+    generation_record_by_poster,
+    rpc_errors,
+)
 from gflow_cli.api.transports.migrated_composer import (
     ASPECT_LIGATURE,
     IMAGE_ASPECT_LIGATURE,
@@ -426,8 +430,10 @@ class _SaveWatch:
         # The saves themselves, not a count: Playwright fires `response` and then
         # `requestfailed` for a save whose body breaks after its headers.
         self._pending: set[Any] = set()
+        self._reads: set[asyncio.Task[None]] = set()
         self.failed: list[str] = []
         self._last = time.monotonic()
+        self._sent_from = self._failed_from = 0
 
     def __enter__(self) -> _SaveWatch:
         self._page.on("request", self._on_request)
@@ -439,10 +445,26 @@ class _SaveWatch:
         self._page.remove_listener("request", self._on_request)
         self._page.remove_listener("response", self._on_response)
         self._page.remove_listener("requestfailed", self._on_failed)
+        for read in self._reads:
+            read.cancel()
 
     @staticmethod
     def _is_save(url: str) -> bool:
-        return f"rpcids={AGENT_SETTINGS_SAVE_RPC}" in url
+        """Kcr7Ub anywhere in the decoded `rpcids` list: batchexecute can batch RPCs."""
+        rpcids = parse_qs(urlsplit(url).query).get("rpcids", [])
+        return any(AGENT_SETTINGS_SAVE_RPC in ids.split(",") for ids in rpcids)
+
+    def judge_from_here(self) -> None:
+        """Judge `settled` on what follows only: a rollback keeps the apply's record."""
+        self._sent_from, self._failed_from = self.sent, len(self.failed)
+
+    def _resolve(self, request: Any, failure: str | None) -> None:
+        if request not in self._pending:
+            return
+        self._pending.discard(request)
+        self._last = time.monotonic()
+        if failure:
+            self.failed.append(failure)
 
     def _on_request(self, request: Any) -> None:
         if self._is_save(request.url):
@@ -451,31 +473,55 @@ class _SaveWatch:
             self._last = time.monotonic()
 
     def _on_response(self, response: Any) -> None:
-        if self._is_save(response.url):
-            self._pending.discard(response.request)
-            self._last = time.monotonic()
-            if response.status >= 400:
-                self.failed.append(f"HTTP {response.status}")
+        if not self._is_save(response.url):
+            return
+        if response.status >= 400:
+            self._resolve(response.request, f"HTTP {response.status}")
+            return
+        # batchexecute reports an RPC's own failure inside a 200, so the save stays pending
+        # until its body has been read.
+        read = asyncio.ensure_future(self._read(response))
+        self._reads.add(read)
+        read.add_done_callback(self._reads.discard)
+
+    async def _read(self, response: Any) -> None:
+        try:
+            body = await response.text()
+        except Exception as exc:  # noqa: BLE001 - an unread reply is not a landed save
+            self._resolve(response.request, f"unreadable reply: {str(exc)[:120]}")
+            return
+        refused = next((e for e in rpc_errors(body) if e.rpcid == AGENT_SETTINGS_SAVE_RPC), None)
+        failure = None
+        if refused is not None:
+            failure = " ".join([f"{refused.rpcid} status {refused.code}", *refused.reasons])
+        self._resolve(response.request, failure)
 
     def _on_failed(self, request: Any) -> None:
         if self._is_save(request.url):
-            self._pending.discard(request)
-            self._last = time.monotonic()
-            self.failed.append(str(request.failure or "failed"))
+            self._resolve(request, str(request.failure or "failed"))
 
-    async def settled(self, what: str) -> None:
+    async def settled(self, what: str, *, clicked: bool) -> None:
+        """Wait for the queue to drain. ``clicked``: this step made clicks, so saves are due."""
         deadline = time.monotonic() + SAVE_BUDGET_S
         while True:
             quiet = time.monotonic() - self._last >= SAVE_QUIET_S
             if not self._pending and quiet:
+                failed = self.failed[self._failed_from :]
                 # A failure is reported only once the queue has drained: each save carries the
                 # whole section, so the ones behind a failed save still land the values.
-                if self.failed:
+                if failed:
                     raise UiSelectorDriftError(
                         detail=(
-                            f"agent-only composer: {len(self.failed)} of {self.sent} "
+                            f"agent-only composer: {len(failed)} of {self.sent - self._sent_from} "
                             f"Agent-settings saves ({AGENT_SETTINGS_SAVE_RPC}) failed while "
-                            f"{what}: {self.failed[0]}"
+                            f"{what}: {failed[0]}"
+                        )
+                    )
+                if clicked and self.sent == self._sent_from:
+                    raise UiSelectorDriftError(
+                        detail=(
+                            f"agent-only composer: Agent settings were clicked while {what}, "
+                            f"but no Agent-settings save ({AGENT_SETTINGS_SAVE_RPC}) was sent"
                         )
                     )
                 return
@@ -527,8 +573,10 @@ class _AgentSettingsMixin:
 
     async def _check_radio(
         self, page: Page, group: int, radio: str | int, named: str, *, groups: str = TOGGLE_GROUP
-    ) -> None:
-        """Check one radio, by ligature (aspect) or by position (count, confirm, restore)."""
+    ) -> bool:
+        """Check one radio, by ligature (aspect) or by position (count, confirm, restore).
+
+        True when it had to be clicked."""
         radios = page.locator(groups).nth(group).locator(TOGGLE_RADIO)
         if isinstance(radio, str):
             target = radios.filter(has=page.locator(f"mat-icon:text-is('{radio}')"))
@@ -540,7 +588,7 @@ class _AgentSettingsMixin:
             )
         first = target.first
         if await first.get_attribute("aria-checked") == "true":
-            return
+            return False
         await _click(first, f"the {named} radio {radio!r}")
         # Angular re-renders `aria-checked` after the click, not during it — a read in the
         # same tick saw the old value on a live restore (2026-09-15) and left the account
@@ -552,6 +600,7 @@ class _AgentSettingsMixin:
                     detail=f"agent-only composer: {named} radio {radio!r} did not become checked"
                 )
             await asyncio.sleep(0.1)
+        return True
 
     async def _choose_model(
         self, page: Page, section: Section, wants: ModelMenuMatcher | str
@@ -807,8 +856,8 @@ class _AgentSettingsMixin:
                 return value
         raise UiSelectorDriftError(detail="agent-only composer: confirm choice is unreadable")
 
-    async def _set_unified_confirm(self, page: Page, value: str) -> None:
-        await self._check_radio(
+    async def _set_unified_confirm(self, page: Page, value: str) -> bool:
+        return await self._check_radio(
             page, 0, _UNIFIED_CONFIRM_INDEX[value], "confirm", groups=UNIFIED_TOGGLE_GROUP
         )
 
@@ -824,14 +873,16 @@ class _AgentSettingsMixin:
 
     async def _choose_unified_model(
         self, page: Page, section: Section, wants: ModelMenuMatcher | str
-    ) -> None:
+    ) -> bool:
+        """Select the model; True when it had to be clicked."""
+
         def hit(text: str) -> bool:
             if isinstance(wants, str):
                 return text == wants
             return bool(text) and wants.matches(text)
 
         if hit(await self._unified_model(page)):
-            return
+            return False
         options = page.locator(MODEL_OPTION)
         offered = [t.strip() for t in await options.locator(MODEL_OPTION_LABEL).all_inner_texts()]
         if len(offered) != await options.count():
@@ -863,6 +914,7 @@ class _AgentSettingsMixin:
                 )
             await asyncio.sleep(0.1)
         log.info("migrated.agent_only.model_selected", section=section, model=offered[hits[0]])
+        return True
 
     async def _checked_aspect_label(self, page: Page) -> str:
         """The checked aspect radio's own text ("16:9"), without its `crop_*` ligature."""
@@ -940,24 +992,26 @@ class _AgentSettingsMixin:
                 )
         with _SaveWatch(page) as saves:
             try:
-                await self._check_radio(
+                clicked = await self._check_radio(
                     page, 0, aspect_ligature, "aspect", groups=DEFAULTS_TOGGLE_GROUP
                 )
-                await self._check_radio(page, 1, count - 1, "count", groups=DEFAULTS_TOGGLE_GROUP)
+                clicked |= await self._check_radio(
+                    page, 1, count - 1, "count", groups=DEFAULTS_TOGGLE_GROUP
+                )
                 if model is not None:
-                    await self._choose_unified_model(page, section, model)
+                    clicked |= await self._choose_unified_model(page, section, model)
                 aspect = await self._checked_aspect_label(page)
                 chosen = await self._unified_model(page)
                 await self._open_unified(page)
                 if confirm != "account":
-                    await self._set_unified_confirm(page, _CONFIRM_VALUE[confirm])
+                    clicked |= await self._set_unified_confirm(page, _CONFIRM_VALUE[confirm])
                 row = await self._verify_row(
                     page, section, model=chosen, aspect=aspect, count=count
                 )
                 await self._leave_unified(page)
                 # The row is the pane's own state; the run's defaults are the account's only
                 # once every queued save has been answered.
-                await saves.settled(f"applying the {section} defaults")
+                await saves.settled(f"applying the {section} defaults", clicked=clicked)
             except BaseException:  # a cancel too: every click here is already saved
                 # No Save and no discard on this build: whatever was clicked is already the
                 # account's. Write the originals back before failing, so the next run does not
@@ -979,7 +1033,7 @@ class _AgentSettingsMixin:
         self, page: Page, snapshot: DefaultsSnapshot, saves: _SaveWatch
     ) -> None:
         # The apply's failed saves are in the error it raises; the rollback judges its own.
-        saves.failed.clear()
+        saves.judge_from_here()
         try:
             await self._write_back(page, snapshot, saves)
         except Exception as exc:  # noqa: BLE001 - the apply's own failure is the one raised
@@ -1005,20 +1059,21 @@ class _AgentSettingsMixin:
     async def _write_back(self, page: Page, snapshot: DefaultsSnapshot, saves: _SaveWatch) -> None:
         """Click the originals back and wait until `saves` has seen every queued save land."""
         await self._open_unified(page)
+        clicked = False
         if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
-            await self._set_unified_confirm(page, snapshot.confirm_value)
+            clicked = await self._set_unified_confirm(page, snapshot.confirm_value)
         await self._open_defaults(page, snapshot.section)
         if snapshot.aspect_index >= 0:
-            await self._check_radio(
+            clicked |= await self._check_radio(
                 page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
             )
         if snapshot.count_index >= 0:
-            await self._check_radio(
+            clicked |= await self._check_radio(
                 page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
             )
-        await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
+        clicked |= await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
         await self._leave_unified(page)
-        await saves.settled(f"restoring the {snapshot.section} defaults")
+        await saves.settled(f"restoring the {snapshot.section} defaults", clicked=clicked)
 
 
 class AgentOnlyComposer(_AgentSettingsMixin):
