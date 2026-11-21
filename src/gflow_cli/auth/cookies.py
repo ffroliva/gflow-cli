@@ -216,20 +216,40 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
 _SKIP_DIRECT_READ = sys.platform == "darwin"
 
 
-def _reject_unreadable_jar(cookies_file: Path, header: bytes) -> None:
-    """#796: Chrome razes a cookie store it cannot read, so a corrupt one must not reach it.
+def _macos_store_is_missing(profile_dir: Path) -> bool:
+    """Check the macOS cookie store before the headless read; True when there is none.
 
-    Raises ``sqlite3.DatabaseError`` for a non-SQLite header or a malformed body, as the
-    browser_cookie3 read did before Chrome launched. The query is read-only and
-    ``immutable``, so a store held by a running Chrome is neither locked nor changed.
+    #796: Chrome razes a store it cannot read, so a corrupt one must not reach it. A
+    non-SQLite header or a malformed body raises ``sqlite3.DatabaseError``, as the
+    browser_cookie3 read did before Chrome launched. A store this process cannot open,
+    or one another process holds locked, is left to the headless read: that is what the
+    direct read did, and its profile lease reports a running Chrome by name.
     """
+    try:
+        cookies_file = get_cookies_path(profile_dir)
+    except FileNotFoundError:
+        return True
+    try:
+        with open(cookies_file, "rb") as jar:
+            header = jar.read(16)
+    except OSError:
+        logger.info("cookie_store_unreadable_falling_back", profile=str(profile_dir))
+        return False
+    if not header:  # an empty store is a fresh profile: Chrome initialises it
+        return False
     if header != b"SQLite format 3\x00":
         raise sqlite3.DatabaseError("file is not a database")
-    conn = sqlite3.connect(f"{cookies_file.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+    uri = f"{cookies_file.resolve().as_uri()}?mode=ro"
     try:
-        conn.execute("SELECT count(*) FROM cookies").fetchone()
-    finally:
-        conn.close()
+        conn = sqlite3.connect(uri, uri=True, timeout=2)
+        try:
+            conn.execute("SELECT count(*) FROM cookies").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.OperationalError:
+        # Locked or busy (a running Chrome), not corrupt: let the lease say so.
+        logger.info("cookie_store_busy_falling_back", profile=str(profile_dir))
+    return False
 
 
 async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
@@ -245,19 +265,8 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     ``wire_reads`` is off by default on macOS.
     """
     if _SKIP_DIRECT_READ:
-        try:
-            cookies_file = get_cookies_path(profile_dir)
-        except FileNotFoundError:
+        if _macos_store_is_missing(profile_dir):
             return ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
-        try:
-            with open(cookies_file, "rb") as jar:
-                header = jar.read(16)
-        except OSError:
-            # Unreadable here (permissions, not a file): the direct read fell back too.
-            logger.info("cookie_store_unreadable_falling_back", profile=str(profile_dir))
-            return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
-        if header:  # an empty jar is a fresh profile: Chrome initialises it
-            _reject_unreadable_jar(cookies_file, header)
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:
         return _get_chrome_cookies3(profile_dir=profile_dir)

@@ -313,6 +313,31 @@ async def test_snapshot_on_macos_falls_back_to_chrome_when_the_jar_cannot_be_ope
 
 
 @pytest.mark.asyncio
+async def test_snapshot_on_macos_does_not_call_a_locked_store_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store another process holds locked (a running Chrome writing it) is busy,
+    not corrupt: it goes on to the headless read, whose lease names the holder."""
+    import sqlite3
+
+    profile = _make_profile_with_cookies(tmp_path)
+    jar = profile / "Default" / "Network" / "Cookies"
+    _write_cookie_db(jar)
+    holder = sqlite3.connect(jar)
+    holder.execute("BEGIN EXCLUSIVE")
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+    browser = AsyncMock(return_value=expected)
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+    try:
+        assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+    finally:
+        holder.rollback()
+        holder.close()
+    browser.assert_awaited_once_with(profile_dir=profile)
+
+
+@pytest.mark.asyncio
 async def test_snapshot_on_macos_without_a_jar_is_an_empty_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
