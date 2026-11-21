@@ -919,13 +919,14 @@ class CreditCapExceededError(GFlowError):
 
     def __init__(
         self,
+        detail: str = "",
         *,
-        quoted: int | None,
-        max_credits: int,
+        quoted: int | None = None,
+        max_credits: int = 0,
         route: str = "",
         completed_media_ids: list[str] | None = None,
     ) -> None:
-        detail = (
+        detail = detail or (
             f"Flow quoted {quoted} credits, exceeding the maximum of {max_credits}."
             if quoted is not None
             else f"Flow's credit quote was unavailable; the maximum is {max_credits}."
