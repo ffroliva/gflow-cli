@@ -59,6 +59,7 @@ def test_no_spend_removes_both_generate_tools(
     assert "gflow_list_tools" in names
     assert "gflow_list_models" in names
     assert "gflow_video_assemble" in names
+    assert "gflow_narrate" in names
 
 
 @pytest.mark.parametrize("value", ["0", "false", ""])

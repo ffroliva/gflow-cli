@@ -227,15 +227,15 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `src/gflow_cli/mcp/audio_tools.py`, `src/gflow_cli/mcp/server.py`, `tests/mcp/test_audio_narrate.py`, `tests/mcp/test_cli_parity.py`, `tests/mcp/test_server.py`.
 
 **Steps:**
-- [ ] Register direct tool with `text`, `out_file`, `provider`, `voice`, `rate`, and `pitch` fields mapped to service inputs.
-- [ ] State in the tool description that narration text is sent to the selected third-party provider; state that Flow credits are not used.
-- [ ] Keep tool out of `_SPEND_TOOLS`, and import/register it under `--no-spend`.
-- [ ] Add CLI leaf mapping and assert each CLI option reaches the corresponding MCP field; no queued payload is introduced.
+- [x] Register direct tool with `text`, `out_file`, `provider`, `voice`, `rate`, and `pitch` fields mapped to service inputs.
+- [x] State in the tool description that narration text is sent to the selected third-party provider; state that Flow credits are not used.
+- [x] Keep tool out of `_SPEND_TOOLS`, and import/register it under `--no-spend`.
+- [x] Add CLI leaf mapping and assert each CLI option reaches the corresponding MCP field; no queued payload is introduced.
 
 **Tests:**
-- [ ] `test_gflow_narrate_is_registered_under_no_spend`.
-- [ ] `test_mcp_narration_provider_errors_are_typed_and_redacted`.
-- [ ] CLI parity and MCP schema tests pass.
+- [x] `test_gflow_narrate_is_registered_under_no_spend`.
+- [x] `test_mcp_narration_provider_errors_are_typed_and_redacted`.
+- [x] CLI parity and MCP schema tests pass.
 
 ## Task 10 — Network E2E marker and BDD binding
 

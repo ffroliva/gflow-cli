@@ -52,6 +52,7 @@ from tests.mcp._cli_tree import cli_leaves
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
 CLI_TO_MCP: dict[str, str] = {
+    "audio narrate": "gflow_narrate",
     "character list": "gflow_character_list",
     "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
