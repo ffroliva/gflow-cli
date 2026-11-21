@@ -143,6 +143,9 @@ class _Locator:
     async def is_visible(self) -> bool:
         return False
 
+    async def count(self) -> int:
+        return 0
+
 
 class _Page:
     def __init__(self, url: str = f"https://flow.google.com/project/{PID}/character") -> None:
