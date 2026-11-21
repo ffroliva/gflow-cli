@@ -185,3 +185,60 @@ async def test_playwright_read_on_a_profile_held_by_chrome_is_a_profile_lock(
 
     with pytest.raises(ProfileLockedError):
         await _get_chrome_cookies_playwright(_make_profile_with_cookies(tmp_path))
+
+
+# --- macOS: browser_cookie3 asks the Keychain, then cannot decrypt anyway ---
+
+
+@pytest.mark.asyncio
+async def test_snapshot_on_macos_skips_browser_cookie3_keychain_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On macOS the browser_cookie3 read fetches "Chrome Safe Storage" from the
+    Keychain (a password prompt per call) and still fails to decrypt the jar,
+    so every call ends in the Playwright read. Go there directly."""
+    profile = _make_profile_with_cookies(tmp_path)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    direct = MagicMock(side_effect=AssertionError("browser_cookie3 read on macOS"))
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies3", direct)
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={"a": "b"}, google_session=True)
+    browser = AsyncMock(return_value=expected)
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+    direct.assert_not_called()
+    browser.assert_awaited_once_with(profile_dir=profile)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_off_macos_still_tries_browser_cookie3_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = _make_profile_with_cookies(tmp_path)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", False)
+    expected = cookies_mod.ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies3", MagicMock(return_value=expected))
+    browser = AsyncMock()
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    assert await cookies_mod.get_chrome_cookie_snapshot(profile) is expected
+    browser.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_on_macos_keeps_a_corrupt_jar_away_from_chrome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#796 on the macOS route: a jar that is not SQLite is reported as such,
+    and Chrome (which would raze it) never opens the profile."""
+    import sqlite3
+
+    profile = _make_profile_with_cookies(tmp_path)
+    (profile / "Default" / "Network" / "Cookies").write_bytes(b"x" * 32)
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    browser = AsyncMock()
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        await cookies_mod.get_chrome_cookie_snapshot(profile)
+    browser.assert_not_awaited()

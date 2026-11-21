@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -211,13 +212,34 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
     )
 
 
+# macOS: browser_cookie3 raises a Keychain prompt per read and cannot decrypt our jar.
+_SKIP_DIRECT_READ = sys.platform == "darwin"
+
+
 async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     """Return the Chrome cookies needed by the Flow session probe.
 
     Strategy:
     1. browser_cookie3 direct SQLite read, with httpx cookies filtered to labs.google.
     2. marker-gated Playwright fallback when browser-cookie3 reports decryption failure.
+
+    On macOS step 1 is skipped: browser_cookie3 fetches "Chrome Safe Storage" from the
+    Keychain (a password prompt on every call) and then fails to decrypt this profile's
+    jar anyway, so the Playwright read is the one that decrypts there. Same reason
+    ``wire_reads`` is off by default on macOS.
     """
+    if _SKIP_DIRECT_READ:
+        try:
+            cookies_file = get_cookies_path(profile_dir)
+        except FileNotFoundError:
+            return ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+        with open(cookies_file, "rb") as jar:
+            header = jar.read(16)
+        # #796: a corrupt jar must not reach Chrome, which would raze it.
+        # shortcut: header check only; deeper corruption reaches Chrome as before #796.
+        if header and header != b"SQLite format 3\x00":
+            raise sqlite3.DatabaseError("file is not a database")
+        return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:
         return _get_chrome_cookies3(profile_dir=profile_dir)
     except PermissionError:
