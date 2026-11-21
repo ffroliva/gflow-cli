@@ -67,6 +67,8 @@ Usage
     python scripts/dev/spike_1363_trash.py --self-test
     python scripts/dev/spike_1363_trash.py --profile <profile> [--project <project-uuid>]
     python scripts/dev/spike_1363_trash.py --profile <profile> --project <project-uuid> \\
+        --media-id <media-uuid> --yes-trash-this --dry-run
+    python scripts/dev/spike_1363_trash.py --profile <profile> --project <project-uuid> \\
         --media-id <media-uuid> --yes-trash-this
 """
 
@@ -132,6 +134,20 @@ TOK_SLOT_RE = re.compile(r"^<tok:\d+>$")
 # Positional [role=menuitem] indices and display-text selectors are forbidden.
 # ---------------------------------------------------------------------------
 
+#: Custom-element boundaries that wrap a single grid tile on flow.google.com.
+TILE_CONTAINER_TAGS: tuple[str, ...] = (
+    "flow-grid-tile-container",
+    "flow-tile-container",
+    "flow-image-tile",
+    "flow-video-tile",
+)
+
+#: Shell readiness selector across project grid and Trash views.
+SHELL_READY_SELECTOR = (
+    "flow-project-nav-list, mat-nav-list, cdk-virtual-scroll-viewport, "
+    "img[data-media-id], flow-trash-action-bar"
+)
+
 #: Overflow menu triggers checked inside a hovered tile or detail toolbar.
 OVERFLOW_TRIGGER_SELECTORS: tuple[str, ...] = (
     "button[aria-haspopup='menu']:has(mat-icon:text-is('more_vert'))",
@@ -142,6 +158,24 @@ OVERFLOW_TRIGGER_SELECTORS: tuple[str, ...] = (
     "button[aria-haspopup='menu']:has(i.google-symbols:text-is('more_horiz'))",
     "button:has(i.google-symbols:text-is('more_vert'))",
     "button:has(i.google-symbols:text-is('more_horiz'))",
+)
+
+#: Tile-inner overflow trigger candidates (scoped inside TILE_CONTAINER_TAGS).
+TILE_OVERFLOW_INNER_SELECTORS: tuple[str, ...] = (
+    *OVERFLOW_TRIGGER_SELECTORS,
+    "flow-more-options-menu button",
+    "flow-tile-hover-footer button[aria-haspopup='menu']",
+    "flow-tile-hover-footer button[aria-haspopup]",
+    "button.mat-mdc-menu-trigger",
+)
+
+#: Non-header overflow triggers (excludes the two project-level more_vert buttons in top bars).
+NON_HEADER_OVERFLOW_SELECTORS: tuple[str, ...] = (
+    "xpath=//button[.//mat-icon[normalize-space()='more_vert' or normalize-space()='more_horiz']]"
+    "[not(ancestor::flow-navigation-header) and not(ancestor::flow-tile-view-header)]",
+    "xpath=//button[.//i[contains(@class,'google-symbols') and "
+    "(normalize-space()='more_vert' or normalize-space()='more_horiz')]]"
+    "[not(ancestor::flow-navigation-header) and not(ancestor::flow-tile-view-header)]",
 )
 
 #: Trash action inside an open menu overlay (anchored on the delete ligature, never item order).
@@ -407,6 +441,47 @@ def extract_asb_token(src: str | None) -> str:
     return match.group(1) if match else ""
 
 
+def filter_ligatures_for_kind(kind: str | None) -> tuple[str, ...]:
+    """Left-nav media-type filter ligature(s) for a catalog asset kind (or both if unknown)."""
+    normalized = (kind or "").strip().lower()
+    if normalized == "image":
+        return ("image",)
+    if normalized == "video":
+        return ("videocam",)
+    return ("image", "videocam")
+
+
+def left_nav_filter_selectors(ligature: str) -> tuple[str, ...]:
+    """Structural selectors for a left-nav media-type filter button by icon ligature.
+
+    Scoped to the left navigation list / list-item classes so they never match the
+    ``button[aria-haspopup='true']:has(mat-icon:text-is('image'))`` badges inside grid tiles.
+    """
+    return (
+        f"flow-project-nav-list button:has(mat-icon:text-is('{ligature}'))",
+        f"mat-nav-list button:has(mat-icon:text-is('{ligature}'))",
+        f"mat-sidenav button:has(mat-icon:text-is('{ligature}'))",
+        f"[role='navigation'] button.mat-mdc-list-item:has(mat-icon:text-is('{ligature}'))",
+        f"nav button.mat-mdc-list-item:has(mat-icon:text-is('{ligature}'))",
+        f"aside button.mat-mdc-list-item:has(mat-icon:text-is('{ligature}'))",
+        f"button.mat-mdc-list-item:has(mat-icon:text-is('{ligature}'))",
+        f"button.mdc-list-item:has(mat-icon:text-is('{ligature}'))",
+        f"flow-project-nav-list button:has(i.google-symbols:text-is('{ligature}'))",
+        f"mat-nav-list button:has(i.google-symbols:text-is('{ligature}'))",
+        f"button.mat-mdc-list-item:has(i.google-symbols:text-is('{ligature}'))",
+    )
+
+
+def tile_scoped_selectors(media_id: str, inner_selectors: tuple[str, ...]) -> tuple[str, ...]:
+    """Scope each selector in *inner_selectors* to the tile container for *media_id*."""
+    media_attr = f'[data-media-id="{media_id}"]'
+    scoped: list[str] = []
+    for tag in TILE_CONTAINER_TAGS:
+        for sel in inner_selectors:
+            scoped.append(f"{tag}:has({media_attr}) {sel}")
+    return tuple(scoped)
+
+
 # ---------------------------------------------------------------------------
 # Offline self-test (--self-test)
 # ---------------------------------------------------------------------------
@@ -493,7 +568,26 @@ def run_self_test() -> int:
         == "AbCdEf_12-34"
     )
 
-    print("self-test: ok (6 helper suites passed)", flush=True)
+    # 7. Filter ligature mapping, left-nav scoping, tile-scoped selectors, and --dry-run parser
+    assert filter_ligatures_for_kind("image") == ("image",)
+    assert filter_ligatures_for_kind("video") == ("videocam",)
+    assert filter_ligatures_for_kind("unknown") == ("image", "videocam")
+    assert filter_ligatures_for_kind(None) == ("image", "videocam")
+    img_nav_sels = left_nav_filter_selectors("image")
+    assert img_nav_sels[0] == "flow-project-nav-list button:has(mat-icon:text-is('image'))"
+    assert all("button:has(" != s[:11] for s in img_nav_sels)
+    scoped_sels = tile_scoped_selectors(media_id, ("button:has(mat-icon:text-is('more_vert'))",))
+    assert (
+        scoped_sels[0] == f'flow-grid-tile-container:has([data-media-id="{media_id}"]) '
+        "button:has(mat-icon:text-is('more_vert'))"
+    )
+    parsed_dry = build_parser().parse_args(
+        ["--media-id", media_id, "--yes-trash-this", "--dry-run"]
+    )
+    assert parsed_dry.dry_run is True
+    assert parsed_dry.yes_trash_this is True
+
+    print("self-test: ok (7 helper suites passed)", flush=True)
     return 0
 
 
@@ -531,7 +625,8 @@ _STRUCTURAL_INVENTORY_JS = r"""
     ).slice(0, 80) || null,
   });
 
-  const menuItems = [...document.querySelectorAll("[role='menuitem']")]
+  const menuSel = "[role='menuitem'], [role='menu'] button, .cdk-overlay-pane [role='option']";
+  const menuItems = [...document.querySelectorAll(menuSel)]
     .filter(visible).slice(0, 30).map(summarize);
   const dialogSel =
     "[role='dialog'] button, [role='alertdialog'] button, mat-dialog-container button";
@@ -541,7 +636,11 @@ _STRUCTURAL_INVENTORY_JS = r"""
     "nav a, nav button, aside a, aside button, [role='navigation'] a, [role='navigation'] button";
   const navLinks = [...document.querySelectorAll(navSel)]
     .filter(visible).slice(0, 30).map(summarize);
-  const overlaySel = ".cdk-overlay-pane button, .cdk-overlay-pane [role='menuitem']";
+  const overlaySel = [
+    ".cdk-overlay-pane button",
+    ".cdk-overlay-pane [role='menuitem']",
+    ".cdk-overlay-pane [role='option']",
+  ].join(", ");
   const overlayButtons = [...document.querySelectorAll(overlaySel)]
     .filter(visible).slice(0, 30).map(summarize);
   const pageButtons = [...document.querySelectorAll("button, a[href]")]
@@ -569,24 +668,32 @@ _TILE_CONTEXT_JS = r"""
   const sel = `img[data-media-id="${mediaId}"], [data-media-id="${mediaId}"]`;
   const el = document.querySelector(sel);
   if (!el) return { found: false };
+  const visible = (node) => {
+    const cs = getComputedStyle(node);
+    const r = node.getBoundingClientRect();
+    return cs.display !== "none" && cs.visibility !== "hidden" && r.width > 0 && r.height > 0;
+  };
   const ligatureOf = (node) =>
     [...node.querySelectorAll("mat-icon, i.google-symbols, i[class*='symbols']")]
       .map(i => (i.textContent || "").trim()).filter(Boolean).join(",");
   const structClasses = (node) =>
     [...(node.classList || [])]
-      .filter(c => /^(cdk|mat|mdc|flow|glue)-/.test(c))
-      .slice(0, 4)
+      .filter(c => !/^ng-(tns|star|trigger)/.test(c))
+      .slice(0, 5)
       .join(".");
   const ancestors = [];
   let cur = el.parentElement;
-  for (let depth = 0; cur && cur !== document.body && depth < 5; depth++, cur = cur.parentElement) {
-    const btnNodes = [...cur.querySelectorAll("button, [role='button'], a[href]")].slice(0, 15);
+  for (let depth = 0; cur && cur !== document.body && depth < 6; depth++, cur = cur.parentElement) {
+    const btnSel = "button, [role='button'], [role='menuitem'], [role='checkbox'], a[href]";
+    const btnNodes = [...cur.querySelectorAll(btnSel)].slice(0, 15);
     const buttons = btnNodes.map(b => ({
       tag: b.tagName.toLowerCase(),
       role: b.getAttribute("role"),
       classes: structClasses(b),
       ligature: ligatureOf(b),
       haspopup: b.getAttribute("aria-haspopup"),
+      disabled: b.hasAttribute("disabled") || b.getAttribute("aria-disabled") === "true",
+      visible: visible(b),
     }));
     ancestors.push({
       tag: cur.tagName.toLowerCase(),
@@ -598,7 +705,82 @@ _TILE_CONTEXT_JS = r"""
   return {
     found: true,
     tag: el.tagName.toLowerCase(),
+    visible: visible(el),
     ancestors,
+  };
+}
+"""
+
+_SCROLL_GRID_STEP_JS = r"""
+(arg) => {
+  const { reset } = arg || {};
+  const firstImg = document.querySelector("img[data-media-id], [data-media-id]");
+  const isScrollable = (node) => {
+    if (!node || node === document.body || node === document.documentElement) return false;
+    const tag = node.tagName ? node.tagName.toLowerCase() : "";
+    if (tag === "cdk-virtual-scroll-viewport") return true;
+    const cs = getComputedStyle(node);
+    const oy = cs.overflowY || cs.overflow || "";
+    return /(auto|scroll|overlay)/.test(oy) && node.scrollHeight > node.clientHeight + 2;
+  };
+  let container = null;
+  for (let cur = firstImg ? firstImg.parentElement : null; cur; cur = cur.parentElement) {
+    if (isScrollable(cur)) {
+      container = cur;
+      break;
+    }
+  }
+  if (!container) {
+    container =
+      document.querySelector("cdk-virtual-scroll-viewport") ||
+      document.querySelector("mat-sidenav-content") ||
+      document.scrollingElement ||
+      document.documentElement;
+  }
+  if (!container) {
+    return {
+      found_container: false,
+      moved: false,
+      before_top: 0,
+      after_top: 0,
+      scroll_height: 0,
+      client_height: 0,
+      container_tag: null,
+    };
+  }
+  const tag = container.tagName ? container.tagName.toLowerCase() : "document";
+  if (reset) {
+    const before = container.scrollTop || 0;
+    container.scrollTop = 0;
+    container.dispatchEvent(new Event("scroll", { bubbles: true }));
+    return {
+      found_container: true,
+      moved: before !== 0,
+      before_top: Math.round(before),
+      after_top: Math.round(container.scrollTop || 0),
+      scroll_height: Math.round(container.scrollHeight || 0),
+      client_height: Math.round(container.clientHeight || 0),
+      container_tag: tag,
+    };
+  }
+  const before = container.scrollTop || 0;
+  const ch = container.clientHeight || 600;
+  const delta = Math.max(250, Math.floor(ch * 0.65));
+  if (typeof container.scrollBy === "function") {
+    container.scrollBy({ top: delta, behavior: "instant" });
+  } else {
+    container.scrollTop = before + delta;
+  }
+  container.dispatchEvent(new Event("scroll", { bubbles: true }));
+  const after = container.scrollTop || 0;
+  return {
+    found_container: true,
+    moved: after > before + 0.5,
+    before_top: Math.round(before),
+    after_top: Math.round(after),
+    scroll_height: Math.round(container.scrollHeight || 0),
+    client_height: Math.round(ch),
+    container_tag: tag,
   };
 }
 """
@@ -807,20 +989,286 @@ async def _is_media_visible_in_dom(page: Any, media_id: str, asb_token: str = ""
         return False
 
 
+async def _is_media_attached_and_visible(page: Any, media_id: str, asb_token: str = "") -> bool:
+    """True when ``img[data-media-id="<id>"]`` is attached and visible."""
+    loc = page.locator(_tile_selector(media_id, asb_token)).first
+    try:
+        if await loc.count() == 0:
+            return False
+        if not await loc.is_visible():
+            with contextlib.suppress(Exception):
+                await loc.scroll_into_view_if_needed(timeout=2_500)
+        return await loc.is_visible()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _is_disabled(loc: Any) -> bool:
+    try:
+        return bool(await loc.is_disabled() or await loc.get_attribute("aria-disabled") == "true")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _first_visible_match(
     page: Any,
     selectors: tuple[str, ...],
     *,
     tried: list[str],
-    timeout_ms: int = 1_200,
+    timeout_ms: int = 800,
+    allow_disabled: bool = False,
 ) -> tuple[str | None, Any | None]:
     """Try each structural selector in order; return ``(selector, locator)`` on first match."""
-    for sel in selectors:
+    for idx, sel in enumerate(selectors):
         tried.append(sel)
-        loc = await wait_for_or_none(page, sel, timeout_ms)
+        wait_ms = timeout_ms if idx == 0 else min(timeout_ms, 150)
+        loc = await wait_for_or_none(page, sel, wait_ms)
         if loc is not None and await loc.is_visible():
+            if not allow_disabled and await _is_disabled(loc):
+                continue
             return sel, loc
     return None, None
+
+
+async def _expand_sidebar_if_collapsed(page: Any, tried: list[str]) -> None:
+    for exp_sel in SIDEBAR_EXPAND_SELECTORS:
+        exp_btn = await wait_for_or_none(page, exp_sel, 300)
+        if exp_btn is not None and await exp_btn.is_visible():
+            tried.append(f"expand:{exp_sel}")
+            await exp_btn.click()
+            await page.wait_for_timeout(450)
+            break
+
+
+async def _filter_and_scroll_to_tile(
+    page: Any,
+    *,
+    media_id: str,
+    asb_token: str = "",
+    media_kind: str = "image",
+    max_scroll_steps: int = 80,
+) -> dict[str, Any]:
+    """Click the left-nav media-type filter button and scroll the grid container to the tile.
+
+    1. Wait for the page shell to hydrate.
+    2. Expand the left sidebar if collapsed, then click the left-nav filter button whose
+       ligature matches *media_kind* (``image`` for images, ``videocam`` for videos, or try
+       both if unknown).
+    3. Scroll the scrollable ancestor of the first ``img[data-media-id]`` (typically
+       ``cdk-virtual-scroll-viewport``) in overlapping viewport steps until
+       ``img[data-media-id="<id>"]`` is attached and visible, or the scroll stops moving.
+    """
+    await wait_for_or_none(page, SHELL_READY_SELECTOR, 12_000)
+
+    ligatures_to_try = filter_ligatures_for_kind(media_kind)
+    ligatures_tried: list[str] = []
+    filter_selectors_tried: list[str] = []
+    clicked_ligature: str | None = None
+    matched_filter_sel: str | None = None
+    total_scroll_steps = 0
+    scroll_stopped = False
+    container_tag: str | None = None
+    last_scroll_top = 0
+    last_scroll_height = 0
+    tile_found = False
+
+    await _expand_sidebar_if_collapsed(page, filter_selectors_tried)
+
+    for ligature in ligatures_to_try:
+        ligatures_tried.append(ligature)
+        nav_sels = left_nav_filter_selectors(ligature)
+        sel, btn = await _first_visible_match(
+            page,
+            nav_sels,
+            tried=filter_selectors_tried,
+            timeout_ms=1_500,
+        )
+        if btn is not None:
+            clicked_ligature = ligature
+            matched_filter_sel = sel
+            await btn.click()
+            await page.wait_for_timeout(1_500)
+
+        # Wait briefly for the grid's initial tiles to render after any filter transition.
+        await wait_for_or_none(page, "img[data-media-id], [data-media-id]", 4_000)
+
+        if await _is_media_attached_and_visible(page, media_id, asb_token):
+            tile_found = True
+            meta = await page.evaluate(_SCROLL_GRID_STEP_JS, {"reset": False})
+            container_tag = meta.get("container_tag")
+            last_scroll_top = int(meta.get("before_top") or 0)
+            last_scroll_height = int(meta.get("scroll_height") or 0)
+            break
+
+        # Reset scroll container to top before scanning downwards in steps.
+        reset_info = await page.evaluate(_SCROLL_GRID_STEP_JS, {"reset": True})
+        container_tag = reset_info.get("container_tag")
+        last_scroll_top = int(reset_info.get("after_top") or 0)
+        last_scroll_height = int(reset_info.get("scroll_height") or 0)
+        if reset_info.get("moved"):
+            await page.wait_for_timeout(350)
+            if await _is_media_attached_and_visible(page, media_id, asb_token):
+                tile_found = True
+                break
+
+        scroll_stopped = False
+        for _step_idx in range(1, max_scroll_steps + 1):
+            step_info = await page.evaluate(_SCROLL_GRID_STEP_JS, {"reset": False})
+            total_scroll_steps += 1
+            container_tag = step_info.get("container_tag") or container_tag
+            last_scroll_top = int(step_info.get("after_top") or 0)
+            last_scroll_height = int(step_info.get("scroll_height") or 0)
+            await page.wait_for_timeout(400)
+
+            if await _is_media_attached_and_visible(page, media_id, asb_token):
+                tile_found = True
+                break
+
+            if not step_info.get("moved"):
+                # Allow one extra beat at the bottom in case lazy-load extends scrollHeight.
+                await page.wait_for_timeout(600)
+                if await _is_media_attached_and_visible(page, media_id, asb_token):
+                    tile_found = True
+                    break
+                retry_info = await page.evaluate(_SCROLL_GRID_STEP_JS, {"reset": False})
+                if not retry_info.get("moved"):
+                    scroll_stopped = True
+                    break
+                total_scroll_steps += 1
+                last_scroll_top = int(retry_info.get("after_top") or 0)
+                last_scroll_height = int(retry_info.get("scroll_height") or 0)
+                await page.wait_for_timeout(400)
+                if await _is_media_attached_and_visible(page, media_id, asb_token):
+                    tile_found = True
+                    break
+
+        if tile_found:
+            break
+
+    return {
+        "media_kind": media_kind,
+        "filter_ligatures_tried": ligatures_tried,
+        "filter_selectors_tried": filter_selectors_tried,
+        "filter_ligature_clicked": clicked_ligature,
+        "filter_selector_matched": matched_filter_sel,
+        "scroll_container_tag": container_tag,
+        "scroll_steps": total_scroll_steps,
+        "scroll_stopped": scroll_stopped,
+        "last_scroll_top": last_scroll_top,
+        "scroll_height": last_scroll_height,
+        "tile_found": tile_found,
+    }
+
+
+async def _is_menu_open(page: Any) -> bool:
+    menu_loc = page.locator(
+        ".cdk-overlay-pane [role='menuitem'], [role='menu'] [role='menuitem'], "
+        ".cdk-overlay-pane [role='menu']"
+    ).first
+    try:
+        return await menu_loc.count() > 0 and await menu_loc.is_visible()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _open_tile_overflow_or_context_menu(
+    page: Any,
+    *,
+    tile: Any,
+    media_id: str,
+    tried_triggers: list[str],
+) -> tuple[str | None, bool]:
+    """Open the hovered tile's overflow menu (or right-click context menu).
+
+    Returns ``(matched_trigger_selector, menu_opened)``.
+    """
+    overflow_candidates = (
+        *tile_scoped_selectors(media_id, TILE_OVERFLOW_INNER_SELECTORS),
+        *NON_HEADER_OVERFLOW_SELECTORS,
+    )
+    trig_sel, trig_loc = await _first_visible_match(
+        page, overflow_candidates, tried=tried_triggers, timeout_ms=800
+    )
+    if trig_loc is not None:
+        await trig_loc.click()
+        await page.wait_for_timeout(600)
+        if await _is_menu_open(page):
+            return trig_sel, True
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(300)
+
+    tried_triggers.append("tile.click(button='right')")
+    await tile.click(button="right")
+    await page.wait_for_timeout(600)
+    if await _is_menu_open(page):
+        return "tile.click(button='right')", True
+    return trig_sel, False
+
+
+async def _probe_tile_menu_dry_run(
+    page: Any,
+    *,
+    media_id: str,
+    asb_token: str,
+) -> dict[str, Any]:
+    """Hover the tile, open its overflow/context menu, record menu DOM inventory, and Escape."""
+    tried_triggers: list[str] = []
+    tried_actions: list[str] = []
+    tile_sel = _tile_selector(media_id, asb_token)
+    tile = await wait_for_or_none(page, tile_sel, 5_000)
+    if tile is None:
+        return {
+            "tile_found": False,
+            "tile_context": await page.evaluate(_TILE_CONTEXT_JS, media_id),
+            "menu_opened": False,
+            "trigger_tried": tried_triggers,
+            "trigger_matched": None,
+            "direct_trash_button_matched": None,
+            "candidate_trash_menuitem_matched": None,
+            "menu_items": [],
+            "overlay_buttons": [],
+            "dom_inventory": await page.evaluate(_STRUCTURAL_INVENTORY_JS),
+            "escaped": False,
+        }
+
+    await tile.scroll_into_view_if_needed(timeout=5_000)
+    await tile.hover(timeout=5_000)
+    await page.wait_for_timeout(500)
+    tile_context = await page.evaluate(_TILE_CONTEXT_JS, media_id)
+
+    scoped_direct = tile_scoped_selectors(media_id, TRASH_BUTTON_SELECTORS)
+    direct_trash_sel, _ = await _first_visible_match(
+        page, scoped_direct, tried=tried_actions, timeout_ms=400
+    )
+
+    matched_trigger, menu_opened = await _open_tile_overflow_or_context_menu(
+        page, tile=tile, media_id=media_id, tried_triggers=tried_triggers
+    )
+    dom_inventory = await page.evaluate(_STRUCTURAL_INVENTORY_JS)
+    candidate_trash_sel, _ = await _first_visible_match(
+        page,
+        TRASH_MENUITEM_SELECTORS,
+        tried=tried_actions,
+        timeout_ms=400,
+        allow_disabled=True,
+    )
+
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(400)
+
+    return {
+        "tile_found": True,
+        "tile_context": tile_context,
+        "menu_opened": menu_opened,
+        "trigger_tried": tried_triggers,
+        "trigger_matched": matched_trigger,
+        "direct_trash_button_matched": direct_trash_sel,
+        "candidate_trash_menuitem_matched": candidate_trash_sel,
+        "menu_items": dom_inventory.get("menuItems", []),
+        "overlay_buttons": dom_inventory.get("overlayButtons", []),
+        "dom_inventory": dom_inventory,
+        "escaped": True,
+    }
 
 
 async def _confirm_dialog_if_present(
@@ -860,12 +1308,11 @@ async def _trigger_tile_action(
         "confirm_dialog": None,
     }
     tile_sel = _tile_selector(media_id, asb_token)
-    tile = await wait_for_or_none(page, tile_sel, 10_000)
-    tile_context = await page.evaluate(_TILE_CONTEXT_JS, media_id)
+    tile = await wait_for_or_none(page, tile_sel, 5_000)
     if tile is None:
         return {
             "tile_found": False,
-            "tile_context": tile_context,
+            "tile_context": await page.evaluate(_TILE_CONTEXT_JS, media_id),
             "anchors_tried": {
                 "trigger": tried_triggers,
                 "action": tried_actions,
@@ -877,26 +1324,32 @@ async def _trigger_tile_action(
 
     await tile.scroll_into_view_if_needed(timeout=5_000)
     await tile.hover(timeout=5_000)
-    await page.wait_for_timeout(400)
+    await page.wait_for_timeout(500)
+    tile_context = await page.evaluate(_TILE_CONTEXT_JS, media_id)
 
-    # Strategy 1: direct action button visible on the hovered tile or current toolbar.
+    # Strategy 1: direct action button visible inside the hovered tile card.
+    scoped_direct = tile_scoped_selectors(media_id, direct_button_selectors)
     action_sel, action_loc = await _first_visible_match(
-        page, direct_button_selectors, tried=tried_actions, timeout_ms=800
+        page, scoped_direct, tried=tried_actions, timeout_ms=500
     )
     if action_loc is not None:
-        matched["trigger"] = "hover_direct"
+        matched["trigger"] = "hover_tile_direct"
         matched["action"] = action_sel
 
-    # Strategy 2: overflow menu button (`more_vert` / `more_horiz`), then menuitem with ligature.
+    # Strategy 2: tile-scoped (or non-header) overflow menu button, then menuitem with ligature.
     if action_loc is None:
+        overflow_candidates = (
+            *tile_scoped_selectors(media_id, TILE_OVERFLOW_INNER_SELECTORS),
+            *NON_HEADER_OVERFLOW_SELECTORS,
+        )
         trig_sel, trig_loc = await _first_visible_match(
-            page, OVERFLOW_TRIGGER_SELECTORS, tried=tried_triggers, timeout_ms=1_000
+            page, overflow_candidates, tried=tried_triggers, timeout_ms=800
         )
         if trig_loc is not None:
             await trig_loc.click()
             await page.wait_for_timeout(600)
             action_sel, action_loc = await _first_visible_match(
-                page, menuitem_selectors, tried=tried_actions, timeout_ms=1_500
+                page, menuitem_selectors, tried=tried_actions, timeout_ms=1_200
             )
             if action_loc is not None:
                 matched["trigger"] = trig_sel
@@ -911,7 +1364,7 @@ async def _trigger_tile_action(
         await tile.click(button="right")
         await page.wait_for_timeout(600)
         action_sel, action_loc = await _first_visible_match(
-            page, menuitem_selectors, tried=tried_actions, timeout_ms=1_500
+            page, menuitem_selectors, tried=tried_actions, timeout_ms=1_200
         )
         if action_loc is not None:
             matched["trigger"] = "tile.click(button='right')"
@@ -920,26 +1373,27 @@ async def _trigger_tile_action(
             await page.keyboard.press("Escape")
             await page.wait_for_timeout(300)
 
-    # Strategy 4: click the tile to open its detail view, then try direct button or overflow menu.
+    # Strategy 4: click the tile (opens detail view in project grid, or selects tile in Trash
+    # view enabling flow-trash-action-bar's undo button), then try enabled direct button or menu.
     if action_loc is None:
-        tried_triggers.append("tile.click() -> detail_view")
+        tried_triggers.append("tile.click() -> detail_or_select")
         await tile.click()
         await page.wait_for_timeout(1_200)
         action_sel, action_loc = await _first_visible_match(
-            page, direct_button_selectors, tried=tried_actions, timeout_ms=1_500
+            page, direct_button_selectors, tried=tried_actions, timeout_ms=1_200
         )
         if action_loc is not None:
-            matched["trigger"] = "tile.click() -> detail_view_direct"
+            matched["trigger"] = "tile.click() -> direct_button"
             matched["action"] = action_sel
         else:
             trig_sel, trig_loc = await _first_visible_match(
-                page, OVERFLOW_TRIGGER_SELECTORS, tried=tried_triggers, timeout_ms=1_200
+                page, NON_HEADER_OVERFLOW_SELECTORS, tried=tried_triggers, timeout_ms=1_000
             )
             if trig_loc is not None:
                 await trig_loc.click()
                 await page.wait_for_timeout(600)
                 action_sel, action_loc = await _first_visible_match(
-                    page, menuitem_selectors, tried=tried_actions, timeout_ms=1_500
+                    page, menuitem_selectors, tried=tried_actions, timeout_ms=1_200
                 )
                 if action_loc is not None:
                     matched["trigger"] = f"detail_view -> {trig_sel}"
@@ -976,14 +1430,7 @@ async def _navigate_to_trash_view(
 ) -> dict[str, Any]:
     """Navigate to the project's Trash view via structural nav anchor (or URL fallback)."""
     tried: list[str] = []
-    # Expand sidebar if collapsed.
-    for exp_sel in SIDEBAR_EXPAND_SELECTORS:
-        exp_btn = await wait_for_or_none(page, exp_sel, 600)
-        if exp_btn is not None and await exp_btn.is_visible():
-            tried.append(f"expand:{exp_sel}")
-            await exp_btn.click()
-            await page.wait_for_timeout(500)
-            break
+    await _expand_sidebar_if_collapsed(page, tried)
 
     matched_sel, nav_loc = await _first_visible_match(
         page, TRASH_NAV_SELECTORS, tried=tried, timeout_ms=1_000
@@ -1092,9 +1539,9 @@ def _print_candidates_and_refuse(
         )
     newest = rows[0]
     print(
-        "\nRe-run with an explicit --media-id and --yes-trash-this:\n"
+        "\nRe-run with --media-id and --yes-trash-this (add --dry-run to probe menu first):\n"
         f"  uv run python scripts/dev/spike_1363_trash.py --profile {newest.profile} "
-        f"--project {newest.project_id} --media-id {newest.media_id} --yes-trash-this",
+        f"--project {newest.project_id} --media-id {newest.media_id} --yes-trash-this --dry-run",
         file=sys.stderr,
         flush=True,
     )
@@ -1106,13 +1553,27 @@ def _print_candidates_and_refuse(
 # ---------------------------------------------------------------------------
 
 
+async def _extract_tile_asb_token(page: Any, media_id: str) -> str:
+    tile_loc = page.locator(_tile_selector(media_id)).first
+    if await tile_loc.count() == 0:
+        return ""
+    src_attr = await tile_loc.get_attribute("src")
+    if not src_attr:
+        img_child = tile_loc.locator("img").first
+        if await img_child.count() > 0:
+            src_attr = await img_child.get_attribute("src")
+    return extract_asb_token(src_attr)
+
+
 async def _run_live(
     *,
     profile: str,
     project_id: str,
     media_id: str,
     workflow_id: str,
+    media_kind: str,
     out_dir: Path,
+    dry_run: bool = False,
 ) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     profile_dir = resolve_profile_dir(profile)
@@ -1130,11 +1591,17 @@ async def _run_live(
     trash_url = f"https://flow.google.com/project/{project_id}/trash"
     host_served = "unknown"
     asb_token = ""
+    resolved_kind = media_kind
 
+    project_filter_scroll: dict[str, Any] = {}
+    trash_filter_scroll: dict[str, Any] = {}
+    verify_filter_scroll: dict[str, Any] = {}
+    dry_run_menu_info: dict[str, Any] = {}
     trash_action_info: dict[str, Any] = {}
     trash_nav_info: dict[str, Any] = {}
     restore_action_info: dict[str, Any] = {}
     grid_return_info: dict[str, Any] = {}
+    observed_in_unfiltered_top_grid = False
     observed_in_initial_grid = False
     observed_gone_from_grid = False
     observed_in_trash_view = False
@@ -1150,7 +1617,7 @@ async def _run_live(
         ctx.on("response", recorder.on_response)
 
         try:
-            # 1. Open the project using gflow's own MigratedComposer / project route
+            # 1. Open the project, apply left-nav media-type filter, and scroll grid to the tile
             t0 = time.monotonic()
             recorder.set_step("project_open")
             step("1", f"Opening project {project_id[:8]}…", prefix="1363")
@@ -1161,106 +1628,182 @@ async def _run_live(
             )
             await raise_if_known_landing(page, requested=f"project {project_id}", at="spike_1363")
             host_served = urlsplit(page.url).netloc or "unknown"
-            # Wait for the target tile to render in the grid (reloading once if needed).
-            tile_loc = await wait_for_or_none(page, _tile_selector(media_id), 15_000)
-            if tile_loc is None:
+            await wait_for_or_none(page, SHELL_READY_SELECTOR, 12_000)
+            await page.wait_for_timeout(1_500)
+
+            observed_in_unfiltered_top_grid = await _is_media_visible_in_dom(page, media_id)
+            if resolved_kind == "unknown" and recorder.listings:
+                clip = mx.source_record(recorder.listings[0], media_id)
+                if clip is not None and clip.kind in ("image", "video"):
+                    resolved_kind = clip.kind
+
+            step(
+                "1b",
+                f"Filtering left-nav ({resolved_kind}) and scrolling grid to {media_id[:8]}…",
+                prefix="1363",
+            )
+            project_filter_scroll = await _filter_and_scroll_to_tile(
+                page,
+                media_id=media_id,
+                asb_token=asb_token,
+                media_kind=resolved_kind,
+            )
+            if not project_filter_scroll.get("tile_found"):
                 await page.reload(wait_until="domcontentloaded", timeout=60_000)
-                tile_loc = await wait_for_or_none(page, _tile_selector(media_id), 15_000)
-            observed_in_initial_grid = tile_loc is not None and await tile_loc.is_visible()
-            if observed_in_initial_grid and tile_loc is not None:
-                src_attr = await tile_loc.get_attribute("src")
-                if not src_attr:
-                    img_child = tile_loc.locator("img").first
-                    if await img_child.count() > 0:
-                        src_attr = await img_child.get_attribute("src")
-                asb_token = extract_asb_token(src_attr)
+                await page.wait_for_timeout(1_500)
+                project_filter_scroll = await _filter_and_scroll_to_tile(
+                    page,
+                    media_id=media_id,
+                    asb_token=asb_token,
+                    media_kind=resolved_kind,
+                )
+
+            observed_in_initial_grid = bool(project_filter_scroll.get("tile_found"))
+            if observed_in_initial_grid:
+                asb_token = await _extract_tile_asb_token(page, media_id)
             timings_ms["project_open"] = round((time.monotonic() - t0) * 1000, 1)
 
-            # 2. Idle baseline window before Trash
-            t0 = time.monotonic()
-            recorder.set_step("idle_before_trash")
-            await page.wait_for_timeout(3_000)
-            timings_ms["idle_before_trash"] = round((time.monotonic() - t0) * 1000, 1)
-
-            # 3. Step (a) & (b): Open menu / toolbar on the item in the grid, click Trash, confirm
-            t0 = time.monotonic()
-            recorder.set_step("trash")
-            step("2", f"Moving media {media_id[:8]}… to Trash", prefix="1363")
-            item_may_be_trashed = True
-            trash_action_info = await _trigger_tile_action(
-                page,
-                media_id=media_id,
-                asb_token=asb_token,
-                menuitem_selectors=TRASH_MENUITEM_SELECTORS,
-                direct_button_selectors=TRASH_BUTTON_SELECTORS,
-            )
-            timings_ms["trash"] = round((time.monotonic() - t0) * 1000, 1)
-
-            # If we clicked from inside the detail view, return to the project grid to observe
-            matched_trigger = str(
-                (trash_action_info.get("anchors_matched") or {}).get("trigger") or ""
-            )
-            if "detail_view" in matched_trigger and "/edit/" in page.url:
-                await page.goto(
-                    mc.MIGRATED_PROJECT_URL.format(project_id=project_id),
-                    wait_until="domcontentloaded",
-                    timeout=45_000,
+            if dry_run:
+                t0 = time.monotonic()
+                recorder.set_step("dry_run_menu")
+                step(
+                    "2",
+                    f"Dry-run: opening overflow/context menu for {media_id[:8]}… (no Trash click)",
+                    prefix="1363",
                 )
-                await page.wait_for_timeout(2_500)
-
-            observed_gone_from_grid = not await _is_media_visible_in_dom(page, media_id, asb_token)
-            if trash_action_info.get("anchors_matched", {}).get("action") is None:
-                # No trash action was clicked at all, so the item was not moved.
-                item_may_be_trashed = False
-
-            # 4. Step (c): Navigate to Trash view via structural nav link and observe item present
-            t0 = time.monotonic()
-            recorder.set_step("trash_view_nav")
-            step("3", "Navigating to Trash view", prefix="1363")
-            trash_nav_info = await _navigate_to_trash_view(
-                page, project_id=project_id, targets=targets
-            )
-            observed_in_trash_view = await _is_media_visible_in_dom(page, media_id, asb_token)
-            timings_ms["trash_view_nav"] = round((time.monotonic() - t0) * 1000, 1)
-
-            # 5. Idle baseline window in Trash view before Restore
-            t0 = time.monotonic()
-            recorder.set_step("idle_before_restore")
-            await page.wait_for_timeout(2_000)
-            timings_ms["idle_before_restore"] = round((time.monotonic() - t0) * 1000, 1)
-
-            # 6. Step (d): Restore the item from the Trash view
-            t0 = time.monotonic()
-            recorder.set_step("restore")
-            step("4", f"Restoring media {media_id[:8]}… from Trash", prefix="1363")
-            restore_action_info = await _trigger_tile_action(
-                page,
-                media_id=media_id,
-                asb_token=asb_token,
-                menuitem_selectors=RESTORE_MENUITEM_SELECTORS,
-                direct_button_selectors=RESTORE_BUTTON_SELECTORS,
-            )
-            observed_gone_from_trash = not await _is_media_visible_in_dom(page, media_id, asb_token)
-            timings_ms["restore"] = round((time.monotonic() - t0) * 1000, 1)
-
-            # 7. Step (e): Return to project grid and observe item back
-            t0 = time.monotonic()
-            recorder.set_step("verify_back_in_grid")
-            step("5", "Verifying media returned to the project grid", prefix="1363")
-            grid_return_info = await _navigate_to_project_grid(
-                page, project_id=project_id, targets=targets
-            )
-            tile_back = await wait_for_or_none(page, _tile_selector(media_id, asb_token), 12_000)
-            if tile_back is None:
-                await page.reload(wait_until="domcontentloaded", timeout=45_000)
-                tile_back = await wait_for_or_none(
-                    page, _tile_selector(media_id, asb_token), 12_000
+                dry_run_menu_info = await _probe_tile_menu_dry_run(
+                    page,
+                    media_id=media_id,
+                    asb_token=asb_token,
                 )
-            observed_back_in_grid = tile_back is not None and await tile_back.is_visible()
-            if observed_back_in_grid:
-                item_may_be_trashed = False
-                restored_cleanly = True
-            timings_ms["verify_back_in_grid"] = round((time.monotonic() - t0) * 1000, 1)
+                timings_ms["dry_run_menu"] = round((time.monotonic() - t0) * 1000, 1)
+            else:
+                # 2. Idle baseline window before Trash
+                t0 = time.monotonic()
+                recorder.set_step("idle_before_trash")
+                await page.wait_for_timeout(3_000)
+                timings_ms["idle_before_trash"] = round((time.monotonic() - t0) * 1000, 1)
+
+                # 3. Step (a) & (b): Open menu/toolbar on the item in grid, click Trash, confirm
+                t0 = time.monotonic()
+                recorder.set_step("trash")
+                step("2", f"Moving media {media_id[:8]}… to Trash", prefix="1363")
+                if not await _is_media_attached_and_visible(page, media_id, asb_token):
+                    project_filter_scroll = await _filter_and_scroll_to_tile(
+                        page,
+                        media_id=media_id,
+                        asb_token=asb_token,
+                        media_kind=resolved_kind,
+                    )
+                item_may_be_trashed = True
+                trash_action_info = await _trigger_tile_action(
+                    page,
+                    media_id=media_id,
+                    asb_token=asb_token,
+                    menuitem_selectors=TRASH_MENUITEM_SELECTORS,
+                    direct_button_selectors=TRASH_BUTTON_SELECTORS,
+                )
+                trash_action_info["filter_scroll"] = project_filter_scroll
+                trash_action_info["scroll_steps"] = project_filter_scroll.get("scroll_steps", 0)
+                timings_ms["trash"] = round((time.monotonic() - t0) * 1000, 1)
+
+                # If we clicked from inside the detail view, return to the project grid to observe
+                matched_trigger = str(
+                    (trash_action_info.get("anchors_matched") or {}).get("trigger") or ""
+                )
+                if "detail" in matched_trigger and "/edit/" in page.url:
+                    await page.goto(
+                        mc.MIGRATED_PROJECT_URL.format(project_id=project_id),
+                        wait_until="domcontentloaded",
+                        timeout=45_000,
+                    )
+                    await page.wait_for_timeout(2_500)
+
+                observed_gone_from_grid = not await _is_media_visible_in_dom(
+                    page, media_id, asb_token
+                )
+                if trash_action_info.get("anchors_matched", {}).get("action") is None:
+                    # No trash action was clicked at all, so the item was not moved.
+                    item_may_be_trashed = False
+
+                # 4. Step (c): Navigate to Trash view, filter + scroll, and observe item present
+                t0 = time.monotonic()
+                recorder.set_step("trash_view_nav")
+                step("3", "Navigating to Trash view and filtering/scrolling to tile", prefix="1363")
+                trash_nav_info = await _navigate_to_trash_view(
+                    page, project_id=project_id, targets=targets
+                )
+                trash_filter_scroll = await _filter_and_scroll_to_tile(
+                    page,
+                    media_id=media_id,
+                    asb_token=asb_token,
+                    media_kind=resolved_kind,
+                )
+                trash_nav_info["filter_scroll"] = trash_filter_scroll
+                trash_nav_info["scroll_steps"] = trash_filter_scroll.get("scroll_steps", 0)
+                observed_in_trash_view = bool(trash_filter_scroll.get("tile_found"))
+                timings_ms["trash_view_nav"] = round((time.monotonic() - t0) * 1000, 1)
+
+                # 5. Idle baseline window in Trash view before Restore
+                t0 = time.monotonic()
+                recorder.set_step("idle_before_restore")
+                await page.wait_for_timeout(2_000)
+                timings_ms["idle_before_restore"] = round((time.monotonic() - t0) * 1000, 1)
+
+                # 6. Step (d): Restore the item from the Trash view
+                t0 = time.monotonic()
+                recorder.set_step("restore")
+                step("4", f"Restoring media {media_id[:8]}… from Trash", prefix="1363")
+                if not await _is_media_attached_and_visible(page, media_id, asb_token):
+                    trash_filter_scroll = await _filter_and_scroll_to_tile(
+                        page,
+                        media_id=media_id,
+                        asb_token=asb_token,
+                        media_kind=resolved_kind,
+                    )
+                restore_action_info = await _trigger_tile_action(
+                    page,
+                    media_id=media_id,
+                    asb_token=asb_token,
+                    menuitem_selectors=RESTORE_MENUITEM_SELECTORS,
+                    direct_button_selectors=RESTORE_BUTTON_SELECTORS,
+                )
+                restore_action_info["filter_scroll"] = trash_filter_scroll
+                restore_action_info["scroll_steps"] = trash_filter_scroll.get("scroll_steps", 0)
+                observed_gone_from_trash = not await _is_media_visible_in_dom(
+                    page, media_id, asb_token
+                )
+                timings_ms["restore"] = round((time.monotonic() - t0) * 1000, 1)
+
+                # 7. Step (e): Return to project grid, filter + scroll, and observe item back
+                t0 = time.monotonic()
+                recorder.set_step("verify_back_in_grid")
+                step("5", "Verifying media returned to the project grid", prefix="1363")
+                grid_return_info = await _navigate_to_project_grid(
+                    page, project_id=project_id, targets=targets
+                )
+                verify_filter_scroll = await _filter_and_scroll_to_tile(
+                    page,
+                    media_id=media_id,
+                    asb_token=asb_token,
+                    media_kind=resolved_kind,
+                )
+                if not verify_filter_scroll.get("tile_found"):
+                    await page.reload(wait_until="domcontentloaded", timeout=45_000)
+                    await page.wait_for_timeout(1_500)
+                    verify_filter_scroll = await _filter_and_scroll_to_tile(
+                        page,
+                        media_id=media_id,
+                        asb_token=asb_token,
+                        media_kind=resolved_kind,
+                    )
+                grid_return_info["filter_scroll"] = verify_filter_scroll
+                grid_return_info["scroll_steps"] = verify_filter_scroll.get("scroll_steps", 0)
+                observed_back_in_grid = bool(verify_filter_scroll.get("tile_found"))
+                if observed_back_in_grid:
+                    item_may_be_trashed = False
+                    restored_cleanly = True
+                timings_ms["verify_back_in_grid"] = round((time.monotonic() - t0) * 1000, 1)
 
         except BaseException as exc:
             run_error = f"{type(exc).__name__}: {str(exc)[:300]}"
@@ -1274,6 +1817,12 @@ async def _run_live(
                     if "/trash" not in page.url:
                         await page.goto(trash_url, wait_until="domcontentloaded", timeout=30_000)
                         await page.wait_for_timeout(2_500)
+                    await _filter_and_scroll_to_tile(
+                        page,
+                        media_id=media_id,
+                        asb_token=asb_token,
+                        media_kind=resolved_kind,
+                    )
                     await _trigger_tile_action(
                         page,
                         media_id=media_id,
@@ -1286,10 +1835,13 @@ async def _run_live(
                         wait_until="domcontentloaded",
                         timeout=30_000,
                     )
-                    back_loc = await wait_for_or_none(
-                        page, _tile_selector(media_id, asb_token), 10_000
+                    em_verify = await _filter_and_scroll_to_tile(
+                        page,
+                        media_id=media_id,
+                        asb_token=asb_token,
+                        media_kind=resolved_kind,
                     )
-                    if back_loc is not None and await back_loc.is_visible():
+                    if em_verify.get("tile_found"):
                         item_may_be_trashed = False
                         restored_cleanly = True
                         observed_back_in_grid = True
@@ -1309,41 +1861,56 @@ async def _run_live(
                 bool(find_id_positions(listing, {"media_id": media_id}).get("media_id"))
                 for listing in recorder.listings[:1]
             )
-            summary_doc = {
+            summary_doc: dict[str, Any] = {
                 "spike": "1363-media-trash-and-restore",
                 "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "host_served": host_served,
+                "dry_run": dry_run,
+                "media_kind": resolved_kind,
                 "positive_control": {
                     "zzl0ze_seen": bool(recorder.listings),
                     "media_in_initial_listing": initial_listing_matches,
+                    "media_in_unfiltered_top_grid": observed_in_unfiltered_top_grid,
                     "media_in_initial_grid": observed_in_initial_grid,
+                    "filter_ligature_clicked": project_filter_scroll.get("filter_ligature_clicked"),
+                    "scroll_steps": project_filter_scroll.get("scroll_steps", 0),
+                    "filter_scroll": project_filter_scroll,
                 },
-                "trash": {
+            }
+            if dry_run:
+                summary_doc["dry_run_menu"] = {
+                    **recorder.step_summary("dry_run_menu", set()),
+                    **dry_run_menu_info,
+                    "filter_scroll": project_filter_scroll,
+                    "scroll_steps": project_filter_scroll.get("scroll_steps", 0),
+                }
+            else:
+                summary_doc["trash"] = {
                     **recorder.step_summary("trash", idle_trash),
                     **trash_action_info,
                     "observed_gone_from_grid": observed_gone_from_grid,
                     "observed_in_trash_view": observed_in_trash_view,
-                },
-                "trash_view_nav": {
+                }
+                summary_doc["trash_view_nav"] = {
                     **recorder.step_summary("trash_view_nav", idle_trash),
                     **trash_nav_info,
-                },
-                "restore": {
+                }
+                summary_doc["restore"] = {
                     **recorder.step_summary("restore", idle_restore),
                     **restore_action_info,
                     "observed_gone_from_trash": observed_gone_from_trash,
                     "observed_back_in_grid": observed_back_in_grid,
-                },
-                "verify_back_in_grid": {
+                }
+                summary_doc["verify_back_in_grid"] = {
                     **recorder.step_summary("verify_back_in_grid", idle_restore),
                     **grid_return_info,
                     "observed_back_in_grid": observed_back_in_grid,
-                },
-                "timings_ms": timings_ms,
-                "restored_cleanly": restored_cleanly,
-                "manual_restore_needed": item_may_be_trashed,
-                "error": run_error,
-            }
+                }
+            summary_doc["timings_ms"] = timings_ms
+            summary_doc["restored_cleanly"] = restored_cleanly
+            summary_doc["manual_restore_needed"] = item_may_be_trashed
+            summary_doc["error"] = run_error
+
             summary_path = out_dir / "summary.json"
             summary_path.write_text(
                 json.dumps(summary_doc, indent=2, ensure_ascii=False) + "\n",
@@ -1359,6 +1926,8 @@ async def _run_live(
                     flush=True,
                 )
 
+    if dry_run:
+        return 0 if dry_run_menu_info.get("tile_found") else 1
     return 0 if restored_cleanly else 1
 
 
@@ -1400,6 +1969,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Confirm moving --media-id to Flow's Trash and restoring it in the same run.",
     )
     parser.add_argument(
+        "--dry-run",
+        dest="dry_run",
+        action="store_true",
+        help=(
+            "Open the project, apply the left-nav media filter, scroll to the tile, open its "
+            "overflow/context menu, record the menu's DOM inventory, press Escape, and exit "
+            "WITHOUT clicking Trash."
+        ),
+    )
+    parser.add_argument(
         "--allow-non-image",
         dest="allow_non_image",
         action="store_true",
@@ -1437,6 +2016,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = args.profile
     project_id = args.project
     workflow_id = ""
+    media_kind = "unknown"
     try:
         asset = resolve_asset(args.media_id, profile=profile, route="spike.1363")
     except DataStoreError as exc:
@@ -1462,6 +2042,7 @@ def main(argv: list[str] | None = None) -> int:
         profile = profile or asset.profile_name
         project_id = project_id or asset.flow_project_id
         workflow_id = asset.flow_workflow_id or ""
+        media_kind = asset.kind.value
 
     if not profile or not project_id:
         print(
@@ -1480,7 +2061,9 @@ def main(argv: list[str] | None = None) -> int:
             project_id=project_id,
             media_id=args.media_id,
             workflow_id=workflow_id,
+            media_kind=media_kind,
             out_dir=out_dir,
+            dry_run=bool(args.dry_run),
         )
     )
 
