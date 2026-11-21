@@ -20,7 +20,7 @@ Active: D6 (narration text is sensitive input and must not enter persisted histo
 | 10 | D13 | CLI and MCP outputs are assembled with a synthetic clip | High | Both produce a non-silent voice track through existing `video assemble --voiceover` behavior | E2E (`e2e_tts`) |
 | 11 | D7 | Gemini key absent | Medium | Configuration error names `GFLOW_CLI_GEMINI_TTS_API_KEY`; error is `charged: no` | Unit/BDD |
 | 12 | D13 | Gemini provider e2e key is unset | Low | E2E is skipped with the exact missing setting named; no network call is made | E2E (`e2e_tts`) |
-| 13 | D11 | Edge input contains curly quotes, non-breaking hyphens, or emoji | Low | Apply the documented speech-safe normalization before sending edge text; keep original text out of logs | Unit |
+| 13 | D11 | Edge input contains curly quotes, non-breaking hyphens, or emoji | Low | Send the text unchanged; keep it out of logs | Unit |
 
 ## Must-cover before merge (Critical + High)
 
@@ -92,4 +92,4 @@ The offline feature is bound once from `tests/features/test_audio_narrate_steps.
 
 ## Known-issues cross-reference
 
-No matching `KNOWN_ISSUES.md` entry was found. Issue #1357 requires a spike on whether Flow returns a standalone voice track; `.local/voice-ports-evaluation.md` answers that Flow exposes Character voice metadata/samples but no standalone text-to-audio endpoint, so local/external synthesis is the relevant path. Issue #1367 still lists #1357 open and places it after #1355/#1356 and before captions/assembly; its #1358 and #1359 checklist entries are complete, so no prerequisite remains in that tracking list.
+No matching `KNOWN_ISSUES.md` entry was found. Issue #1357 requires a spike on whether Flow returns a standalone voice track; the spike found that Flow exposes Character voice metadata/samples but no standalone text-to-audio endpoint, so local/external synthesis is the relevant path. Issue #1367 still lists #1357 open and places it after #1355/#1356 and before captions/assembly; its #1358 and #1359 checklist entries are complete, so no prerequisite remains in that tracking list.

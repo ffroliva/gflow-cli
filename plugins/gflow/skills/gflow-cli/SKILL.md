@@ -122,7 +122,8 @@ gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   # --out-file out/clip.mp4 writes link i to out/clip_<i>.mp4 (#1293)
 
 # Audio narration (no Flow account/browser/credits; text is sent to the selected provider)
-gflow audio narrate "A clear voice speaks." --out-file voice.mp3 [--provider edge|gemini] [--voice ID]
+gflow audio narrate "A clear voice speaks." --out-file voice.mp3 [--voice ID]                    # Edge: MP3
+gflow audio narrate "A clear voice speaks." --out-file voice.wav --provider gemini [--voice ID]  # Gemini: WAV
 # Edge is keyless but requires `gflow-cli[tts]`; Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY.
 # Edge uses Microsoft's unofficial Read Aloud endpoint; Gemini rejects custom --rate/--pitch.
 

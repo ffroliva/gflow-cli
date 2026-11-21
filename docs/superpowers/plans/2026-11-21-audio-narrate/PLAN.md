@@ -5,7 +5,7 @@
 
 **Goal:** Generate a local narration audio file with edge-tts or Gemini TTS and use it as the existing video assembly voiceover input.
 
-**Architecture:** The supplied spike confirms Flow provides Character voice metadata and samples but no standalone narration track endpoint, so use external TTS to create a local track. Add immutable speech request/result values and a `SpeechSynthesizer` Protocol to `services/speech_ports.py`, with isolated edge and Gemini adapters under `services/speech_synthesizers/`. A small narration service owns provider selection and output handling; `cli_audio.py` and `mcp/audio_tools.py` expose direct, no-Flow-credit paths. Keep `video assemble --voiceover` as the consumer and omit timing recovery from v1.
+**Architecture:** Flow provides Character voice metadata and samples but no standalone narration track endpoint, so use external TTS to create a local track. Add immutable speech request/result values and a `SpeechSynthesizer` Protocol to `services/speech_ports.py`, with isolated edge and Gemini adapters under `services/speech_synthesizers/`. A small narration service owns provider selection and output handling; `cli_audio.py` and `mcp/audio_tools.py` expose direct, no-Flow-credit paths. Keep `video assemble --voiceover` as the consumer and omit timing recovery from v1.
 
 **Predict verdict:** CAUTION — confidence 7/10
 
@@ -17,7 +17,7 @@
 | High | Provider failure could leave a corrupt/partial or misleading output | Validate before request, write atomically, refuse overwrite, expose typed network/configuration errors |
 | Medium | Gemini does not establish native rate/pitch controls | Reject non-default rate/pitch clearly for Gemini; pass natively to edge |
 | Medium | Network e2e can flap independently of Flow | Add `e2e_tts`, separate from local-only `e2e_media`, and run installed CLI and MCP paths against edge endpoint |
-| Low | Edge Read Aloud can vocalize typographic punctuation or emoji | Apply the evaluation-backed text normalization in the edge adapter and cover it with a small unit test |
+| Low | Edge Read Aloud can vocalize typographic punctuation or emoji | Send the text unchanged; a unit test pins that the adapter does not rewrite it (see Decision log) |
 
 ---
 
@@ -26,7 +26,7 @@
 ### New files
 ```text
 src/gflow_cli/services/speech_synthesizers/__init__.py
-  Provider adapters, lazy dependency checks, and edge text normalization.
+  Provider adapters and lazy dependency checks.
 src/gflow_cli/services/speech_synthesizers/edge.py
   edge-tts adapter with native rate/pitch and bounded NoAudioReceived retry.
 src/gflow_cli/services/speech_synthesizers/gemini.py
@@ -54,7 +54,7 @@ tests/features/audio_narrate_e2e.feature
 ### Modified files
 ```text
 src/gflow_cli/services/speech_ports.py
-  Add synthesis DTOs, word timing DTO, and SpeechSynthesizer Protocol.
+  Add synthesis DTOs and the SpeechSynthesizer Protocol.
 src/gflow_cli/config.py
   Add dedicated GFLOW_CLI_GEMINI_TTS_API_KEY SecretStr.
 src/gflow_cli/cli.py
@@ -62,7 +62,7 @@ src/gflow_cli/cli.py
 src/gflow_cli/mcp/server.py
   Import tool module without adding gflow_narrate to spend-gated tools.
 tests/mcp/test_cli_parity.py
-tests/mcp/test_server.py
+tests/mcp/test_no_spend.py
 tests/mcp/test_audio_narrate.py
   Map the CLI leaf and verify schema, disclosure, no-spend registration, and errors.
 pyproject.toml
@@ -87,17 +87,17 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 
 ## Task 1 — Synthesis port contract (red tests)
 
-**What:** Pin the provider-neutral request/result contract and verify an adapter can return audio plus optional timings.
+**What:** Pin the provider-neutral request/result contract and verify an adapter can return audio.
 
 **Files:** `tests/services/test_speech_ports.py` (new), `src/gflow_cli/services/speech_ports.py` (later task).
 
 **Steps:**
-- [x] Add frozen request, result, and optional word timing expectations to tests.
+- [x] Add frozen request and result expectations to tests.
 - [x] Assert protocol accepts a minimal fake synthesizer.
 
 **Tests created (red):**
 - [x] `test_synthesis_values_are_frozen` — values cannot be mutated.
-- [x] `test_synthesizer_returns_audio_and_optional_word_timings` — contract has no provider dependency.
+- [x] `test_synthesizer_returns_audio` — contract has no provider dependency.
 
 ## Task 2 — Adapter behavior tests (red)
 
@@ -107,16 +107,16 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 
 **Steps:**
 - [x] Test missing edge extra gives the install hint while importing the base CLI remains possible.
-- [x] Test edge stream audio chunks and word boundaries; test one transient `NoAudioReceived` retry and final failure.
-- [x] Test normalization of curly quotes/non-breaking hyphens and emoji before sending text to edge.
+- [x] Test edge stream audio chunks; test one transient `NoAudioReceived` retry and final failure.
+- [x] Test that edge receives the text unchanged, including curly quotes and emoji.
 - [x] Test Gemini request uses the configured dedicated key and voice, parses provider audio, and handles error/malformed/timeout responses.
 - [x] Assert captured logs/errors contain neither input text nor key/header values.
 
 **Tests created (red):**
 - [x] `test_edge_missing_extra_names_install_command`.
-- [x] `test_edge_retries_no_audio_received_with_bound`.
+- [x] `test_edge_retries_transient_no_audio`.
 - [x] `test_edge_returns_typed_error_after_retry_bound`.
-- [x] `test_edge_normalizes_typographic_punctuation_and_emoji`.
+- [x] `test_edge_preserves_text`.
 - [x] `test_gemini_uses_dedicated_key_and_parses_audio`.
 - [x] Gemini missing-key, malformed-response, timeout, and rate/pitch refusals.
 - [x] `test_provider_failures_are_typed_and_redacted`.
@@ -128,8 +128,8 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `src/gflow_cli/services/speech_ports.py`, `src/gflow_cli/config.py`, `tests/services/test_speech_ports.py`, `tests/test_config.py`.
 
 **Steps:**
-- [x] Add `SynthesisRequest`, `WordTiming`, `SynthesisResult`, and `SpeechSynthesizer`.
-- [x] Include rate and pitch in the request contract; use only fields needed for synthesis and optional provider timings.
+- [x] Add `SynthesisRequest`, `SynthesisResult`, and `SpeechSynthesizer`.
+- [x] Include rate and pitch in the request contract; use only fields needed for synthesis.
 - [x] Add `gemini_tts_api_key: SecretStr | None` mapped only to `GFLOW_CLI_GEMINI_TTS_API_KEY`.
 - [x] Do not fall back to `GFLOW_CLI_LLM_API_KEY`.
 
@@ -146,8 +146,8 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 
 **Steps:**
 - [x] Add `tts = ["edge-tts>=7.3.1"]`; lazy import edge-tts and raise a typed configuration error with the install hint when absent.
-- [x] Stream audio and optional edge word boundaries; retry only `NoAudioReceived` a small bounded number of times.
-- [x] Apply the evaluation-backed edge normalization for curly quotes/non-breaking hyphens and emoji.
+- [x] Stream audio; retry connection-class failures and `NoAudioReceived` a small bounded number of times, and let any other error propagate.
+- [x] Send edge text unchanged (no normalization).
 - [x] Call Gemini TTS with httpx, a bounded timeout, `gemini-3.8-flash-tts`, canonical voice IDs from `api.character.VOICES`, and the dedicated key.
 - [x] Reject non-default rate/pitch for Gemini before sending the request; edge passes both natively.
 - [x] Map provider failures to typed network errors without retaining raw text, key, headers, or response body in public details.
@@ -227,7 +227,7 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 
 **What:** Add direct `gflow_narrate` with matching fields, disclosure, and no-spend availability.
 
-**Files:** `src/gflow_cli/mcp/audio_tools.py`, `src/gflow_cli/mcp/server.py`, `tests/mcp/test_audio_narrate.py`, `tests/mcp/test_cli_parity.py`, `tests/mcp/test_server.py`.
+**Files:** `src/gflow_cli/mcp/audio_tools.py`, `src/gflow_cli/mcp/server.py`, `tests/mcp/test_audio_narrate.py`, `tests/mcp/test_cli_parity.py`, `tests/mcp/test_no_spend.py`.
 
 **Steps:**
 - [x] Register direct tool with `text`, `out_file`, `provider`, `voice`, `rate`, and `pitch` fields mapped to service inputs.
@@ -301,12 +301,13 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 - [x] Installed CLI and MCP network E2E each synthesize edge narration, assemble a synthetic clip, and verify non-silent voice audio; Gemini keyless run skips with a stated reason.
 - [x] No `# TODO` without a tracked issue link.
 - [x] Red tests fail on the missing implementation for the expected reason.
-- [x] Git status is clean; ignored local verification artifacts remain because cleanup was blocked by automatic review.
+- [x] Git status is clean.
 
 ## Decision log
 
 | Date | Decision | Why | Rejected |
 |---|---|---|---|
-| 2026-11-21 | Use `audio narrate`, a dedicated Gemini TTS key, and edge default | Matches existing noun command groups; prevents unrelated LLM credentials crossing to Gemini; keyless edge is the supplied v1 provider | Reuse `GFLOW_CLI_LLM_API_KEY` only with Google base URL; config-level provider defaults |
-| 2026-11-21 | Gemini rejects non-default rate/pitch; no timing recovery or `audio voices` in v1 | Supplied evidence establishes no native Gemini rate/pitch contract; timings are not required for assembly and voice listing adds provider-specific surface | Style prompt emulation, STT timing decorator, network voice catalog command |
+| 2026-11-21 | Use `audio narrate`, a dedicated Gemini TTS key, and edge default | Matches existing noun command groups; prevents unrelated LLM credentials crossing to Gemini; keyless edge is the v1 default provider | Reuse `GFLOW_CLI_LLM_API_KEY` only with Google base URL; config-level provider defaults |
+| 2026-11-21 | Gemini rejects non-default rate/pitch; no timing recovery or `audio voices` in v1 | The Gemini TTS API documents no native rate/pitch parameters; timings are not required for assembly and voice listing adds provider-specific surface | Style prompt emulation, STT timing decorator, network voice catalog command |
 | 2026-11-21 | Add `e2e_tts` | TTS requires network but no Flow profile or credits; `e2e_media` is explicitly local-only | Mislabel as `e2e_media`, which would hide its network dependency |
+| 2026-11-21 | Send edge text unchanged; no `WordTiming` or word-boundary metadata | Normalization would rewrite the caller's text, and nothing in v1 consumes timings | Typographic and emoji normalization; a timing type with no consumer |
