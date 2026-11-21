@@ -352,23 +352,25 @@ def test_edge_value_error_raises_configuration_error(monkeypatch: pytest.MonkeyP
         EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", "bad-shape"))
 
 
-def test_edge_unknown_voice_refuses_once_without_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def _no_audio_edge(
+    monkeypatch: pytest.MonkeyPatch, *, failures: int
+) -> tuple[type[Exception], list[int]]:
+    """Install a fake edge_tts whose first `failures` streams raise NoAudioReceived."""
+
     class NoAudioReceivedError(Exception):
         pass
 
-    calls = 0
+    calls = [0]
 
     class Communicate:
         def __init__(self, *_: Any, **__: Any) -> None:
             pass
 
         async def stream(self) -> AsyncIterator[dict[str, Any]]:
-            nonlocal calls
-            calls += 1
-            raise NoAudioReceivedError("No audio was received.")
-            yield {}
+            calls[0] += 1
+            if calls[0] <= failures:
+                raise NoAudioReceivedError("No audio was received.")
+            yield {"type": "audio", "data": b"audio"}
 
     monkeypatch.setitem(
         sys.modules,
@@ -378,9 +380,55 @@ def test_edge_unknown_voice_refuses_once_without_retry(
             exceptions=types.SimpleNamespace(NoAudioReceived=NoAudioReceivedError),
         ),
     )
+    return NoAudioReceivedError, calls
+
+
+def test_edge_retries_transient_no_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, calls = _no_audio_edge(monkeypatch, failures=1)
+
+    result = EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", None))
+
+    assert result.audio_bytes == b"audio"
+    assert calls == [2]
+
+
+def test_edge_persistent_no_audio_refuses_after_retry_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, calls = _no_audio_edge(monkeypatch, failures=99)
+
     with pytest.raises(ConfigurationError) as exc_info:
         EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", "xx-XX-NobodyNeural"))
 
-    assert calls == 1
+    assert calls == [3]
     assert "--voice" in exc_info.value.remediation_hint
     assert "edge-tts --list-voices" in exc_info.value.remediation_hint
+
+
+def test_edge_empty_stream_retries_then_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    class Communicate:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def stream(self) -> AsyncIterator[dict[str, Any]]:
+            nonlocal calls
+            calls += 1
+            for chunk in ():
+                yield chunk
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=Communicate,
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
+        ),
+    )
+    with pytest.raises(ConfigurationError, match="after 2 attempts"):
+        EdgeTtsSynthesizer(attempts=2).synthesize(SynthesisRequest("hello", None))
+
+    assert calls == 2
