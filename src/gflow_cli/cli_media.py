@@ -5,22 +5,22 @@ from __future__ import annotations
 import sys
 
 import click
-from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     OutputFormat,
+    _resolve_profile,
     output_format_option,
     run_with_handlers,
     spends_credits,
 )
+from gflow_cli.errors import ProblemDetails
 from gflow_cli.services.media_trash import (
     MediaTrashResult,
+    resolve_media_trash_target,
     restore_media_service,
     trash_media_service,
 )
-
-console = Console()
 
 
 def _is_interactive() -> bool:
@@ -89,26 +89,53 @@ def trash_subcommand(
         raise click.BadParameter("ID must not be empty or blank.", param_hint="ID")
     is_json = as_json or output_format == OutputFormat.JSON.value
 
-    if not yes:
-        if _is_interactive():
-            if not click.confirm(f"Move media {media_id} to Flow's Trash?", default=False):
+    async def _run() -> None:
+        if project_id:
+            resolved_media_id = media_id.strip()
+            resolved_project_id = project_id.strip()
+            resolved_profile = _resolve_profile(profile)
+            kind = "media"
+        else:
+            asset = resolve_media_trash_target(media_id, profile=profile, route="media trash")
+            resolved_media_id = asset.flow_media_id
+            resolved_project_id = asset.flow_project_id
+            resolved_profile = asset.profile_name
+            kind = asset.kind.value
+
+        if not yes:
+            if not _is_interactive():
+                if is_json:
+                    problem = ProblemDetails(
+                        type="https://gflow-cli.dev/errors/confirmation-required",
+                        title="Confirmation required",
+                        status=400,
+                        detail="--yes is required when running non-interactively to trash media.",
+                        charged="no",
+                    )
+                    json_output.emit(dict(problem))
+                    sys.exit(2)
+                click.echo(
+                    "Error: Invalid value for '--yes': "
+                    "--yes is required when running non-interactively to trash media.",
+                    err=True,
+                )
+                sys.exit(2)
+            prompt = (
+                f"Move {kind} {resolved_media_id} in project {resolved_project_id} "
+                f"(profile: {resolved_profile}) to Flow's Trash?"
+            )
+            if not click.confirm(prompt, default=False):
                 click.echo("Aborted.")
                 sys.exit(0)
-        else:
-            raise click.BadParameter(
-                "--yes is required when running non-interactively to trash media.",
-                param_hint="--yes",
-            )
 
-    async def _run() -> None:
         result = await trash_media_service(
-            media_id, profile=profile, project_id=project_id, route="media.trash"
+            media_id, profile=profile, project_id=project_id, route="media trash"
         )
         _emit_result(result, output_format, is_json)
 
     run_with_handlers(
         _run,
-        cli_command="media.trash",
+        cli_command="media trash",
         as_json=is_json,
         output_format=output_format,
     )
@@ -143,13 +170,13 @@ def restore_subcommand(
 
     async def _run() -> None:
         result = await restore_media_service(
-            media_id, profile=profile, project_id=project_id, route="media.restore"
+            media_id, profile=profile, project_id=project_id, route="media restore"
         )
         _emit_result(result, output_format, is_json)
 
     run_with_handlers(
         _run,
-        cli_command="media.restore",
+        cli_command="media restore",
         as_json=is_json,
         output_format=output_format,
     )

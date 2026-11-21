@@ -197,3 +197,27 @@ def test_cli_media_trash_with_project_flag_succeeds_without_catalog(
     mock_trash.assert_awaited_once()
 
 
+def test_cli_media_trash_confirms_after_resolution_with_details(
+    runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gflow_cli.cli_media._is_interactive", lambda: True)
+    mock_trash = AsyncMock(
+        return_value={"media_id": "media-123", "project_id": "p-123", "status": "trashed"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    # Supply 'y' to confirm prompt when referencing by catalog ID
+    res = runner.invoke(main, ["media", "trash", "asset-local-1"], input="y\n")
+    assert res.exit_code == 0
+    assert "Move image media-123 in project p-123 (profile: default) to Flow's Trash?" in res.output
+
+
+def test_cli_media_trash_non_interactive_json_returns_problem(
+    runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gflow_cli.cli_media._is_interactive", lambda: False)
+    res = runner.invoke(main, ["media", "trash", "media-123", "--json"])
+    assert res.exit_code == 2
+    data = json.loads(res.output)
+    assert data["type"] == "https://gflow-cli.dev/errors/confirmation-required"
+    assert data["charged"] == "no"
