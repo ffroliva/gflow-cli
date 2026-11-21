@@ -178,14 +178,14 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `src/gflow_cli/services/audio_narration.py`, `tests/services/test_audio_narration.py`.
 
 **Steps:**
-- [ ] Select edge by default and Gemini only when requested.
-- [ ] Validate text/provider/rate/pitch and output destination before network calls.
-- [ ] Write audio atomically without replacing an existing file; retain provider-native output unless conversion is required for WAV compatibility with the assembler.
-- [ ] Return path/provider and typed outcome; report `charged: no` for every error.
+- [x] Select edge by default and Gemini only when requested.
+- [x] Validate text/provider/rate/pitch and output destination before network calls.
+- [x] Write audio atomically without replacing an existing file; retain provider-native output unless conversion is required for WAV compatibility with the assembler.
+- [x] Return path/provider and typed outcome; report `charged: no` for every error.
 
 **Tests:**
-- [ ] Task 5 service tests pass with fake adapters and temporary files.
-- [ ] `test_provider_error_is_not_reported_as_success`.
+- [x] Task 5 service tests pass with fake adapters and temporary files.
+- [x] `test_provider_error_is_not_reported_as_success`.
 
 ## Task 7 — Offline BDD and CLI contract tests (red)
 

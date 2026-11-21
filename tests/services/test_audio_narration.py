@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from gflow_cli.services.audio_narration import narrate
 
 from gflow_cli.errors import ConfigurationError
+from gflow_cli.services.audio_narration import narrate
 from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult
 
 
@@ -56,6 +56,14 @@ def test_failed_synthesis_leaves_no_output_file(tmp_path: Path) -> None:
     assert not target.exists()
 
 
+def test_provider_error_is_not_reported_as_success(tmp_path: Path) -> None:
+    target = tmp_path / "voice.mp3"
+    error = ConfigurationError("provider rejected request", charged="no")
+    with pytest.raises(ConfigurationError, match="provider rejected"):
+        narrate(text="hello", out_file=target, synthesizer=FakeSynthesizer(error))
+    assert not target.exists()
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -66,7 +74,7 @@ def test_failed_synthesis_leaves_no_output_file(tmp_path: Path) -> None:
 def test_text_and_text_file_are_required_exclusive_inputs(
     tmp_path: Path, kwargs: dict[str, object]
 ) -> None:
-    with pytest.raises(ConfigurationError, match="provide exactly one"):
+    with pytest.raises(ConfigurationError, match="(?i)provide exactly one"):
         narrate(out_file=tmp_path / "voice.mp3", synthesizer=FakeSynthesizer(), **kwargs)
 
 
