@@ -142,12 +142,29 @@ async def test_mcp_media_trash_with_project_id_succeeds_without_catalog(
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
-    res = await gflow_media_trash(
-        media_id="uncataloged-m", project_id="proj-ext", confirm=True
-    )
+    res = await gflow_media_trash(media_id="uncataloged-m", project_id="proj-ext", confirm=True)
     assert res.get("status") == "trashed"
     assert res.get("media_id") == "uncataloged-m"
     assert res.get("project_id") == "proj-ext"
     mock_trash.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_mcp_media_trash_validates_profile(mcp_env: Path) -> None:
+    res = await gflow_media_trash(
+        media_id="media-uuid-1", profile="nonexistent-profile-xyz", confirm=True
+    )
+    assert res.get("status") == "error"
+    err = res.get("error", {})
+    assert "Profile" in err.get("title", "")
+
+
+def test_mcp_media_tools_use_shared_guarded_and_have_no_aliases() -> None:
+    import gflow_cli.mcp.media_trash_tools as mtt
+
+    assert getattr(mtt.gflow_media_trash, "__gflow_guarded__", False) is True
+    assert getattr(mtt.gflow_media_restore, "__gflow_guarded__", False) is True
+    assert "ctx" in mtt.gflow_media_trash.__annotations__
+    assert "ctx" in mtt.gflow_media_restore.__annotations__
+    assert "media_trash" not in mtt.__dict__
+    assert "media_restore" not in mtt.__dict__
