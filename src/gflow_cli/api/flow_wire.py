@@ -94,6 +94,9 @@ class _Tokens:
     bl: str | None
 
 
+Tokens = _Tokens
+
+
 # Per process, per profile: the shell's tokens, profiles Flow said are signed out (with the
 # reason it gave), throttle windows (monotonic deadline, the status that opened it), and one
 # lock each.
@@ -129,6 +132,9 @@ def _user_agent(profile_dir: Path) -> str | None:
 def _wiz(text: str, key: str) -> str | None:
     match = re.search(rf'"{key}":"([^"]*)"', text)
     return match.group(1) if match else None
+
+
+extract_wiz_token = _wiz
 
 
 def _throttled_error(status: int, retry_after: float) -> RateLimitError | NetworkError:
@@ -177,8 +183,7 @@ def _check(response: httpx.Response, profile_dir: Path, *, rpcid: str = "nzlxg")
                 route="media_trash_wire",
                 retry_after=window,
                 remediation_hint=(
-                    "Flow rate-limited media trash/restore operations. "
-                    "Wait before retrying."
+                    "Flow rate-limited media trash/restore operations. Wait before retrying."
                 ),
                 charged="no",
             )
@@ -228,6 +233,9 @@ def _rpc_request(
             "sec-fetch-dest": "empty",
         },
     )
+
+
+build_rpc_request = _rpc_request
 
 
 async def _shell_tokens(

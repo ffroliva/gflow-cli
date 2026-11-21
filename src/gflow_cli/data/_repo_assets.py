@@ -370,8 +370,8 @@ class AssetsRepo(RepositoryBase):
                 (flow_workflow_id = ? AND flow_workflow_id != '') OR
                 (id = ? AND id != '')
             )
-        """
-        params: list[Any] = [clean_id, clean_id, clean_id]
+        """  # noqa: S608
+        params: list[object] = [clean_id, clean_id, clean_id]
         if profile_name is not None:
             query += " AND profile_name = ?"
             params.append(profile_name)

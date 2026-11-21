@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -236,7 +237,15 @@ async def test_client_trash_media_page_evaluation(
 ) -> None:
     client = FlowApiClient(profile_dir=profile_dir, headless=True)
     fake_page = MagicMock()
-    fake_page.evaluate = AsyncMock(return_value={"status": 200, "text": _TRASH_REPLY_BODY})
+    fake_page.url = "https://flow.google.com"
+    fake_page.goto = AsyncMock()
+
+    async def mock_eval(script: Any, *args: Any) -> Any:
+        if "at" in str(script) and "bl" in str(script) and "fsid" in str(script):
+            return {"at": "token-1", "fsid": "1", "bl": "boq"}
+        return {"status": 200, "text": _TRASH_REPLY_BODY}
+
+    fake_page.evaluate = AsyncMock(side_effect=mock_eval)
 
     client._checkout_page = AsyncMock(return_value=fake_page)  # pyright: ignore[reportPrivateUsage]
     client._checkin_page = MagicMock()  # pyright: ignore[reportPrivateUsage]
@@ -244,7 +253,7 @@ async def test_client_trash_media_page_evaluation(
     res = await client.trash_media("m-1", "proj-1")
     assert res["status"] == "trashed"
     assert res["media_id"] == "m-1"
-    fake_page.evaluate.assert_awaited_once()
+    fake_page.goto.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -253,7 +262,15 @@ async def test_client_restore_media_page_evaluation(
 ) -> None:
     client = FlowApiClient(profile_dir=profile_dir, headless=True)
     fake_page = MagicMock()
-    fake_page.evaluate = AsyncMock(return_value={"status": 200, "text": _RESTORE_REPLY_BODY})
+    fake_page.url = "https://flow.google.com"
+    fake_page.goto = AsyncMock()
+
+    async def mock_eval(script: Any, *args: Any) -> Any:
+        if "at" in str(script) and "bl" in str(script) and "fsid" in str(script):
+            return {"at": "token-1", "fsid": "1", "bl": "boq"}
+        return {"status": 200, "text": _RESTORE_REPLY_BODY}
+
+    fake_page.evaluate = AsyncMock(side_effect=mock_eval)
 
     client._checkout_page = AsyncMock(return_value=fake_page)  # pyright: ignore[reportPrivateUsage]
     client._checkin_page = MagicMock()  # pyright: ignore[reportPrivateUsage]
@@ -261,7 +278,163 @@ async def test_client_restore_media_page_evaluation(
     res = await client.restore_media("m-1", "proj-1")
     assert res["status"] == "restored"
     assert res["media_id"] == "m-1"
-    fake_page.evaluate.assert_awaited_once()
+    fake_page.goto.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_page_trash_media_http_error(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports._media_trash_wire import page_trash_media
+    from gflow_cli.errors import FlowApiError
+
+    fake_page = MagicMock()
+    fake_page.url = "https://flow.google.com"
+    fake_page.goto = AsyncMock()
+
+    async def mock_eval(script: Any, *args: Any) -> Any:
+        if "at" in str(script) and "bl" in str(script) and "fsid" in str(script):
+            return {"at": "token-1", "fsid": "1", "bl": "boq"}
+        return {"status": 500, "text": "Server Error"}
+
+    fake_page.evaluate = AsyncMock(side_effect=mock_eval)
+
+    with pytest.raises(FlowApiError) as exc_info:
+        await page_trash_media(fake_page, "m-1", "proj-1")
+    assert exc_info.value.status == 500
+    assert "HTTP 500 from Flow page evaluation" in exc_info.value.detail
+    assert exc_info.value.charged == "no"
+
+
+@pytest.mark.asyncio
+async def test_page_trash_media_rejection_separate_fields(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports._media_trash_wire import page_trash_media
+    from gflow_cli.errors import FlowApiError
+
+    fake_page = MagicMock()
+    fake_page.url = "https://flow.google.com"
+    fake_page.goto = AsyncMock()
+
+    rejection_body = ')]}\'\n\n[["wrb.fr","pGCYOe",null,null,null,[7,null,["PermissionDenied"]]]]\n'
+
+    async def mock_eval(script: Any, *args: Any) -> Any:
+        if "at" in str(script) and "bl" in str(script) and "fsid" in str(script):
+            return {"at": "token-1", "fsid": "1", "bl": "boq"}
+        return {"status": 200, "text": rejection_body}
+
+    fake_page.evaluate = AsyncMock(side_effect=mock_eval)
+
+    with pytest.raises(FlowApiError) as exc_info:
+        await page_trash_media(fake_page, "m-1", "proj-1")
+
+    err = exc_info.value
+    assert err.status == 200  # HTTP status
+    assert getattr(err, "code", None) == 7  # gRPC code in separate field
+    assert err.charged == "no"
+    assert "PermissionDenied" not in err.detail  # redacted / no raw echo
+
+
+@pytest.mark.asyncio
+async def test_page_trash_media_empty_at_token_raises_auth_error(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports._media_trash_wire import page_trash_media
+    from gflow_cli.errors import AuthExpiredError
+
+    fake_page = MagicMock()
+    fake_page.url = "https://flow.google.com"
+    fake_page.goto = AsyncMock()
+
+    async def mock_eval(script: Any, *args: Any) -> Any:
+        # Empty 'at' token
+        return {"at": "", "fsid": "1", "bl": "boq"}
+
+    fake_page.evaluate = AsyncMock(side_effect=mock_eval)
+
+    with pytest.raises(AuthExpiredError) as exc_info:
+        await page_trash_media(fake_page, "m-1", "proj-1")
+    assert exc_info.value.charged == "no"
+    assert "remediation_hint" in dir(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_trash_media_service_fallback_to_client_on_wire_unavailable(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="local-uuid-1",
+        flow_media_id="m-flow-1",
+        flow_project_id="p-flow-1",
+        profile_name="test_prof",
+    )
+
+    # direct_trash_media raises WireReadUnavailable
+    mock_direct = AsyncMock(side_effect=WireReadUnavailable(WireFallbackReason.HTTP_401))
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_direct)
+
+    # client.trash_media is called
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.trash_media.return_value = {
+        "media_id": "m-flow-1",
+        "project_id": "p-flow-1",
+        "status": "trashed",
+    }
+    monkeypatch.setattr(
+        "gflow_cli.services.media_trash.FlowApiClient",
+        MagicMock(return_value=mock_client),
+    )
+
+    result = await trash_media_service("local-uuid-1")
+    assert result.status == "trashed"
+    mock_direct.assert_awaited_once()
+    mock_client.trash_media.assert_awaited_once_with("m-flow-1", "p-flow-1")
+
+
+@pytest.mark.asyncio
+async def test_restore_media_service_fallback_to_client_on_wire_unavailable(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="local-uuid-1",
+        flow_media_id="m-flow-1",
+        flow_project_id="p-flow-1",
+        profile_name="test_prof",
+    )
+
+    # direct_restore_media raises WireReadUnavailable
+    mock_direct = AsyncMock(side_effect=WireReadUnavailable(WireFallbackReason.HTTP_401))
+    monkeypatch.setattr(flow_wire, "direct_restore_media", mock_direct)
+
+    # client.restore_media is called
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.restore_media.return_value = {
+        "media_id": "m-flow-1",
+        "project_id": "p-flow-1",
+        "status": "restored",
+    }
+    monkeypatch.setattr(
+        "gflow_cli.services.media_trash.FlowApiClient",
+        MagicMock(return_value=mock_client),
+    )
+
+    result = await restore_media_service("local-uuid-1")
+    assert result.status == "restored"
+    mock_direct.assert_awaited_once()
+    mock_client.restore_media.assert_awaited_once_with("m-flow-1", "p-flow-1")
 
 
 # ---------------------------------------------------------------------------
@@ -522,9 +695,7 @@ async def test_media_trash_service_with_explicit_project_bypasses_catalog(
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
     # Calling with project_id should not query catalog and succeed
-    result = await trash_media_service(
-        "uncataloged-id", project_id="proj-999", profile="test_prof"
-    )
+    result = await trash_media_service("uncataloged-id", project_id="proj-999", profile="test_prof")
     assert result.media_id == "uncataloged-id"
     assert result.project_id == "proj-999"
     assert result.profile_name == "test_prof"
@@ -560,9 +731,7 @@ async def test_all_media_trash_errors_charge_no_and_have_correct_remediation(
 async def test_direct_trash_flow_refusal_raises_flow_api_error_without_fallback(
     profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    rpc_error_body = (
-        ')]}\'\n\n[["wrb.fr","pGCYOe",null,null,null,[7,null,["PermissionDenied"]]]]\n'
-    )
+    rpc_error_body = ')]}\'\n\n[["wrb.fr","pGCYOe",null,null,null,[7,null,["PermissionDenied"]]]]\n'
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -617,8 +786,3 @@ async def test_direct_trash_429_has_own_route_and_does_not_throttle_credits(
     assert err.charged == "no"
     # Crucial: _throttled window must NOT be set on credits throttle
     assert profile_dir not in flow_wire._throttled
-
-
-
-
-
