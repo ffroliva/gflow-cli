@@ -20,9 +20,8 @@ mode, renders the same agent surface. On that surface, does the ported driver:
    closed (the compact prompt box) and open (the panel header);
 2. leave the account's settings as it found them, read back from a fresh browser session;
 3. pass the credit gate, read the reply, name and download the clip, both when the panel is
-   open at the submit and when it is closed (the maintainer's risk 2 on #1387: #1388 closes
-   the panel before the agent-only verdict, so a genuinely agent-only page reaches the driver
-   closed);
+   open at the submit and when it is closed (#1388 closes the panel before the agent-only
+   verdict, so a genuinely agent-only page reaches the driver closed);
 4. keep each request's own aspect across two back-to-back requests (#1369's carry-over)?
 
 ## What the new build renders
@@ -124,7 +123,7 @@ generating, and the driver waited out its 600 s poll budget. No clip was produce
   settings survive into a new session.
 - Gate, reply, naming and download work through the driver on this surface once the panel is
   open, for video and for images. With the panel closed they do not (run B), so the driver now opens it before the
-  submit (run C). Risk 2 on #1387 was real and is covered.
+  submit (run C). The closed-panel case recorded on #1387 was real and is covered.
 - #1369's carry-over did not reproduce: in runs A and C each clip came out in its own aspect.
 - When the account's defaults cannot satisfy a request, the agent asks rather than
   generates, and the driver does not read that as an answer. That is a separate gap from

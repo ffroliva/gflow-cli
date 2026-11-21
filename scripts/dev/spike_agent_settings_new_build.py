@@ -5,14 +5,14 @@ recoverable account (one with the Agent switch) in agent mode renders the same a
 surface, so this probe puts one there and drives the driver's own code on it:
 
 1. `apply_defaults` / `restore_defaults` with the agent panel CLOSED, so the compact
-   prompt box's gear opens Agent settings (the maintainer's risk 2 on #1387: the driver
-   running on a page whose panel gflow just closed);
+   prompt box's gear opens Agent settings (#1387: the driver can run on a page whose
+   panel gflow just closed);
 2. the same with the panel OPEN, from the panel header's gear;
 3. with `--generate`, two back-to-back `run_agent_video` turns, 16:9 then 9:16, each 4 s,
    which exercise the credit gate, the reply and the clip download, and are #1369's
    carry-over check: the second clip must come out in its own aspect, not the first's.
-   `--generate-panel closed` starts them with the panel closed (risk 2: the reply and
-   gate anchors on a page whose panel gflow just closed); the default starts them open;
+   `--generate-panel closed` starts them with the panel closed (the reply and gate
+   anchors on a page whose panel gflow just closed); the default starts them open;
    `--generate-images` adds two `run_agent_images` turns from the same panel state
    (16:9 x2 on Nano Banana 2.1, then 9:16 x1 on Nano Banana Pro);
 4. the classic composer is restored in `finally`, unless `--leave-agent-mode`, which leaves
