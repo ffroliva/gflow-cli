@@ -1038,7 +1038,7 @@ class _AgentSettingsMixin:
                 # No Save and no discard on this build: whatever was clicked is already the
                 # account's. Write the originals back before failing, so the next run does not
                 # snapshot this run's values as them. The same watch, so the apply's saves
-                # still queued count too: the originals queue behind them (CodeRabbit, #1402).
+                # still queued count too: the originals queue behind them.
                 await self._rollback_unified(page, snapshot, saves)
                 raise
         log.info(
@@ -1068,10 +1068,6 @@ class _AgentSettingsMixin:
                 confirm=snapshot.confirm_value,
                 error=str(exc)[:200],
             )
-            try:
-                await self._leave_unified(page)
-            except Exception:  # noqa: BLE001, S110 - best effort back to the chat
-                pass
 
     async def _restore_unified(self, page: Page, snapshot: DefaultsSnapshot) -> None:
         with _SaveWatch(page) as saves:
@@ -1080,23 +1076,43 @@ class _AgentSettingsMixin:
 
     async def _write_back(self, page: Page, snapshot: DefaultsSnapshot, saves: _SaveWatch) -> None:
         """Click the originals back and wait until `saves` has seen every queued save land."""
-        await self._open_unified(page)
-        clicked = False
-        if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
-            clicked = await self._set_unified_confirm(page, snapshot.confirm_value)
-        await self._open_defaults(page, snapshot.section)
-        # The model first: switching it can put the aspect and count back to its own.
-        clicked |= await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
-        if snapshot.aspect_index >= 0:
-            clicked |= await self._check_radio(
-                page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
+        what = f"restoring the {snapshot.section} defaults"
+        try:
+            await self._open_unified(page)
+            clicked = False
+            if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
+                clicked = await self._set_unified_confirm(page, snapshot.confirm_value)
+            await self._open_defaults(page, snapshot.section)
+            # The model first: switching it can put the aspect and count back to its own.
+            clicked |= await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
+            if snapshot.aspect_index >= 0:
+                clicked |= await self._check_radio(
+                    page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
+                )
+            if snapshot.count_index >= 0:
+                clicked |= await self._check_radio(
+                    page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
+                )
+            await self._leave_unified(page)
+        except BaseException:
+            # The clicks made so far are queued saves: let them land and get back to the
+            # chat, or a browser closed after this failure drops them.
+            await self._drain(page, saves, what)
+            raise
+        await saves.settled(what, clicked=clicked)
+
+    async def _drain(self, page: Page, saves: _SaveWatch, what: str) -> None:
+        """Best effort after a failed write-back; the write-back's own error is the one raised."""
+        try:
+            await saves.settled(what, clicked=False)
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "migrated.agent_only.defaults_drain_failed", what=what, error=str(exc)[:200]
             )
-        if snapshot.count_index >= 0:
-            clicked |= await self._check_radio(
-                page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
-            )
-        await self._leave_unified(page)
-        await saves.settled(f"restoring the {snapshot.section} defaults", clicked=clicked)
+        try:
+            await self._leave_unified(page)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("migrated.agent_only.pane_leave_failed", error=str(exc)[:200])
 
 
 class AgentOnlyComposer(_AgentSettingsMixin):

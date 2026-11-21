@@ -420,6 +420,25 @@ async def test_restore_returns_only_once_its_saves_have_landed(page: Page) -> No
 
 
 @pytest.mark.asyncio
+async def test_a_restore_that_fails_halfway_lets_its_clicks_land_and_leaves_the_pane(
+    page: Page,
+) -> None:
+    """The clicks made before the failure are already queued; a run that returned with the
+    pane open, and a browser closed after it, would drop them."""
+    landed = await _load(page, save_delay_s=0.4)
+    composer = aoc.AgentOnlyComposer()
+    snapshot = await composer.apply_defaults(
+        page, section="video", aspect_ligature="crop_9_16", count=2, model=None, confirm="never"
+    )
+    await page.evaluate("S.deadCount = true")
+    with pytest.raises(UiSelectorDriftError, match="count radio"):
+        await composer.restore_defaults(page, snapshot)
+    assert len(landed) == (await _log(page))["writes"]
+    assert landed[-1]["video"]["aspect"] == ORIGINAL["video"]["aspect"]
+    assert await _in_chat(page)
+
+
+@pytest.mark.asyncio
 async def test_a_failed_apply_waits_for_its_own_saves_before_the_rollback_returns(
     page: Page,
 ) -> None:
