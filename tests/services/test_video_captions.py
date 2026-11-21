@@ -656,13 +656,14 @@ def test_realistic_video_transcription_decode_and_burn_preserve_media(
     srt = tmp_path / "captions.srt"
     srt.write_text("1\n00:00:00,200 --> 00:00:01,000\nA caption", encoding="utf-8")
     rendered = caption_video(str(realistic_media), srt_path=srt)
-    with av.open(str(realistic_media)) as source, av.open(str(rendered.output_file)) as output:
+    with av.open(str(realistic_media)) as source:
         assert len(list(source.decode(video=0))) == rendered.total_frames == 96
+    with av.open(str(realistic_media)) as source, av.open(str(rendered.output_file)) as output:
         source_audio = list(source.demux(audio=0))
         output_audio = list(output.demux(audio=0))
-        assert sum(packet.size > 0 for packet in output_audio) >= sum(
-            packet.size > 0 for packet in source_audio
-        )
+        source_audio_count = sum(packet.size > 0 for packet in source_audio)
+        assert source_audio_count > 0
+        assert sum(packet.size > 0 for packet in output_audio) >= source_audio_count
         assert output.duration / av.time_base == pytest.approx(source_duration, abs=0.1)
 
 
