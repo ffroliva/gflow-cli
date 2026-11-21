@@ -194,14 +194,14 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `tests/features/audio_narrate.feature`, `tests/features/test_audio_narrate_steps.py`, `tests/cli/test_cli_audio.py`.
 
 **Steps:**
-- [ ] Add untagged Gherkin scenarios for missing extra, existing output, unsupported Gemini controls, and redacted provider errors.
-- [ ] Bind feature exactly once; verify no `@e2e` tags.
-- [ ] Add Click runner contract tests for help, JSON output, text file input, and exit mapping.
+- [x] Add untagged Gherkin scenarios for missing extra, existing output, unsupported Gemini controls, and redacted provider errors.
+- [x] Bind feature exactly once; verify no `@e2e` tags.
+- [x] Add Click runner contract tests for help, JSON output, text file input, and exit mapping.
 
 **Tests created (red):**
-- [ ] Offline feature scenarios fail for the expected missing CLI command.
-- [ ] `test_audio_narrate_help_discloses_provider_data_transfer`.
-- [ ] `test_audio_narrate_json_reports_provider_and_output`.
+- [x] Offline feature scenarios fail for the expected missing CLI command.
+- [x] `test_audio_narrate_help_discloses_provider_data_transfer`.
+- [x] `test_audio_narrate_json_reports_provider_and_output`.
 
 ## Task 8 — CLI surface
 
