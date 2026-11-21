@@ -106,18 +106,18 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `tests/services/test_speech_synthesizers.py`.
 
 **Steps:**
-- [ ] Test missing edge extra gives the install hint while importing the base CLI remains possible.
-- [ ] Test edge stream audio chunks and word boundaries; test one transient `NoAudioReceived` retry and final failure.
-- [ ] Test normalization of curly quotes/non-breaking hyphens and emoji before sending text to edge.
-- [ ] Test Gemini request uses the configured dedicated key and voice, parses provider audio, and handles error/malformed/timeout responses.
-- [ ] Assert captured logs/errors contain neither input text nor key/header values.
+- [x] Test missing edge extra gives the install hint while importing the base CLI remains possible.
+- [x] Test edge stream audio chunks and word boundaries; test one transient `NoAudioReceived` retry and final failure.
+- [x] Test normalization of curly quotes/non-breaking hyphens and emoji before sending text to edge.
+- [x] Test Gemini request uses the configured dedicated key and voice, parses provider audio, and handles provider errors.
+- [x] Assert captured errors contain neither input text nor key/header values.
 
 **Tests created (red):**
-- [ ] `test_edge_missing_extra_names_install_command`.
-- [ ] `test_edge_retries_no_audio_received_with_bound`.
-- [ ] `test_edge_normalizes_typographic_punctuation_and_emoji`.
-- [ ] `test_gemini_uses_dedicated_key_and_parses_audio`.
-- [ ] `test_provider_failures_are_typed_and_redacted`.
+- [x] `test_edge_missing_extra_names_install_command`.
+- [x] `test_edge_retries_no_audio_received_with_bound`.
+- [x] `test_edge_normalizes_typographic_punctuation_and_emoji`.
+- [x] `test_gemini_uses_dedicated_key_and_parses_audio`.
+- [x] `test_provider_failures_are_typed_and_redacted`.
 
 ## Task 3 — Port and Gemini setting
 
