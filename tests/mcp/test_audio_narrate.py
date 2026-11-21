@@ -93,6 +93,21 @@ async def test_gflow_narrate_accepts_storage_uri_configured(
     config.reset_settings()
 
 
+@pytest.mark.asyncio
+async def test_gflow_narrate_rejects_path_traversal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from gflow_cli import config
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "sandbox"))
+    config.reset_settings()
+    response = await gflow_narrate(text="hello", out_file="../escape.mp3")
+    assert response["status"] == "error"
+    assert response["error"]["type"] == "https://gflow-cli.dev/errors/bad-parameter"
+    assert "output" in str(response).lower()
+    config.reset_settings()
+
+
 def test_gflow_narrate_is_registered_with_provider_disclosure(mcp_server) -> None:
     tool = mcp_server._tool_manager._tools["gflow_narrate"]
     properties = tool.parameters["properties"]

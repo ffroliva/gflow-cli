@@ -39,8 +39,25 @@ def existing_output(narration_case: dict[str, Any], name: str, contents: str) ->
 
 
 @given("Gemini TTS has a configured key")
-def gemini_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def gemini_key(monkeypatch: pytest.MonkeyPatch, narration_case: dict[str, Any]) -> None:
+    case = narration_case
+
+    class SpyClient:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> SpyClient:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def post(self, *_: object, **__: object) -> httpx.Response:
+            case["requests"] += 1
+            pytest.fail("Gemini request was sent unexpectedly")
+
     monkeypatch.setenv("GFLOW_CLI_GEMINI_TTS_API_KEY", "test-key")
+    monkeypatch.setattr("gflow_cli.services.speech_synthesizers.gemini.httpx.Client", SpyClient)
     config.reset_settings()
 
 
