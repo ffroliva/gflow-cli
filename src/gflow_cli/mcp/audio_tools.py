@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.server import server
-from gflow_cli.services.audio_narration import narrate
+from gflow_cli.services.audio_narration import narrate, validate_narration
 
 
 @server.tool(
@@ -22,7 +22,7 @@ from gflow_cli.services.audio_narration import narrate
 )
 @common._guarded  # pyright: ignore[reportPrivateUsage]
 async def gflow_narrate(
-    text: str | None = None,
+    text: str,
     *,
     out_file: str,
     provider: Literal["edge", "gemini"] = "edge",
@@ -31,11 +31,10 @@ async def gflow_narrate(
     pitch: str = "+0Hz",
 ) -> dict[str, Any]:
     """Create a narration file from text."""
-    output = common._resolve_out_file(out_file)  # pyright: ignore[reportPrivateUsage]
+    validate_narration(text, provider, rate, pitch)
+    output = common._confined_output_file(out_file)  # pyright: ignore[reportPrivateUsage]
     if isinstance(output, dict):
         return output
-    if output is None:
-        return common._bad_param("Invalid Output", "out_file is required.")  # pyright: ignore[reportPrivateUsage]
     out_path = Path(output)
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,9 +53,4 @@ async def gflow_narrate(
         rate=rate,
         pitch=pitch,
     )
-    return {
-        "status": "ok",
-        "out_file": str(result.out_file),
-        "provider": result.provider,
-        "media_type": result.media_type,
-    }
+    return result.payload()

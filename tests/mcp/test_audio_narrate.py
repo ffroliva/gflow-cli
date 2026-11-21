@@ -134,3 +134,20 @@ async def test_gflow_narrate_parent_that_is_a_file_is_a_bad_parameter(
     assert response["error"]["type"] == "https://gflow-cli.dev/errors/bad-parameter"
     assert "blocked" in response["error"]["detail"]
     config.reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_gflow_narrate_rejects_bad_input_before_creating_folders(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from gflow_cli import config
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    config.reset_settings()
+
+    response = await gflow_narrate(text="   ", out_file="nested/voice.mp3")
+
+    assert response["status"] == "error"
+    assert not (tmp_path / "nested").exists()
+    assert "--" not in str(response["error"].get("remediation_hint", ""))
+    config.reset_settings()

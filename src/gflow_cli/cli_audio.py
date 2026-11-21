@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import click
 
@@ -15,15 +14,7 @@ from gflow_cli._cli_helpers import (
     run_with_handlers,
     spends_credits,
 )
-from gflow_cli.services.audio_narration import NarrationResult, Provider, narrate
-
-
-def _payload(result: NarrationResult) -> dict[str, Any]:
-    return {
-        "out_file": str(result.out_file),
-        "provider": result.provider,
-        "media_type": result.media_type,
-    }
+from gflow_cli.services.audio_narration import Provider, narrate
 
 
 @click.group()
@@ -88,15 +79,17 @@ def narrate_command(
         result = await asyncio.to_thread(
             narrate,
             text=text,
-            text_file=text_file,
-            out_file=out_file,
+            text_file=text_file.expanduser() if text_file else None,
+            out_file=out_file.expanduser(),
             provider=provider,
             voice=voice,
             rate=rate,
             pitch=pitch,
         )
-        if is_json:
-            json_output.emit(_payload(result))
+        if output_format == OutputFormat.ID.value:
+            click.echo(result.out_file)
+        elif is_json:
+            json_output.emit(result.payload())
         else:
             click.echo(f"Narration saved to {result.out_file} ({result.provider}).")
 

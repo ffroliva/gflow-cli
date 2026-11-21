@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import re
 import secrets
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
@@ -17,7 +19,10 @@ from gflow_cli.services.video_assembly import publish_output
 
 Provider = Literal["edge", "gemini"]
 
-_WRITABLE_OUT_FILE_HINT = "Choose an --out-file path inside a writable directory."
+_WRITABLE_OUT_FILE_HINT = "Choose an output file path inside a writable directory."
+_EXISTING_OUT_FILE_HINT = (
+    "Choose an output file path that does not already exist, or remove the existing file."
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,15 @@ class NarrationResult:
     out_file: Path
     provider: Provider
     media_type: str
+
+    def payload(self) -> dict[str, str]:
+        """The success payload shared by the CLI and the MCP tool."""
+        return {
+            "status": "ok",
+            "out_file": str(self.out_file),
+            "provider": self.provider,
+            "media_type": self.media_type,
+        }
 
 
 def narrate(
@@ -40,7 +54,38 @@ def narrate(
     settings: Settings | None = None,
 ) -> NarrationResult:
     script = _read_script(text, text_file)
+    validate_narration(script, provider, rate, pitch)
     _validate_output(out_file)
+
+    adapter = synthesizer or _make_synthesizer(provider, settings or get_settings())
+    temporary, staging = _open_staging(out_file)
+    try:
+        with staging:
+            result = adapter.synthesize(SynthesisRequest(script, voice, rate, pitch))
+            if not result.audio_bytes:
+                raise ConfigurationError(
+                    "Speech provider returned empty audio.",
+                    charged="no",
+                    remediation_hint="Check that the input text contains speakable words.",
+                )
+            with _output_errors(out_file):
+                staging.write(result.audio_bytes)
+                staging.flush()
+        with _output_errors(out_file):
+            publish_output(temporary, out_file)
+        return NarrationResult(out_file, provider, result.media_type)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def validate_narration(text: str, provider: str, rate: str, pitch: str) -> None:
+    """Refuse bad input before any file, folder or provider call is made."""
+    if not text.strip():
+        raise ConfigurationError(
+            "Narration text cannot be empty.",
+            charged="no",
+            remediation_hint="Provide non-empty text to narrate.",
+        )
     if provider not in ("edge", "gemini"):
         raise ConfigurationError(
             "Provider must be edge or gemini.",
@@ -56,46 +101,24 @@ def narrate(
             ),
         )
 
-    adapter = synthesizer or _make_synthesizer(provider, settings or get_settings())
-    temporary, staging = _open_staging(out_file)
+
+@contextmanager
+def _output_errors(out_file: Path) -> Generator[None, None, None]:
+    """Map a failed write or publication of the output file to an actionable error."""
     try:
-        with staging:
-            result = adapter.synthesize(SynthesisRequest(script, voice, rate, pitch))
-            if not result.audio_bytes:
-                raise ConfigurationError(
-                    "Speech provider returned empty audio.",
-                    charged="no",
-                    remediation_hint="Check that the input text contains speakable words.",
-                )
-            staging.write(result.audio_bytes)
-        try:
-            publish_output(temporary, out_file)
-        except VideoAssemblyError as exc:
-            if "already exists" in str(exc):
-                raise ConfigurationError(
-                    f"Narration output already exists: {out_file}",
-                    charged="no",
-                    remediation_hint=(
-                        "Choose an --out-file path that does not already exist, "
-                        "or remove the existing file."
-                    ),
-                ) from exc
-            raise ConfigurationError(
-                f"Could not write narration output: {out_file}",
-                charged="no",
-                remediation_hint=_WRITABLE_OUT_FILE_HINT,
-            ) from exc
-        return NarrationResult(out_file, provider, result.media_type)
-    except ConfigurationError:
-        raise
+        yield
+    except VideoAssemblyError as exc:  # publish_output raises it only for an existing output
+        raise ConfigurationError(
+            f"Narration output already exists: {out_file}",
+            charged="no",
+            remediation_hint=_EXISTING_OUT_FILE_HINT,
+        ) from exc
     except OSError as exc:
         raise ConfigurationError(
             f"Could not write narration output: {out_file}",
             charged="no",
             remediation_hint=_WRITABLE_OUT_FILE_HINT,
         ) from exc
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def _read_script(text: str | None, text_file: Path | None) -> str:
@@ -104,7 +127,7 @@ def _read_script(text: str | None, text_file: Path | None) -> str:
             "Provide exactly one of text or text_file.",
             charged="no",
             remediation_hint=(
-                "Pass either narration text as an argument or --text-file pointing to a script."
+                "Pass either the narration text or a UTF-8 text file holding the script."
             ),
         )
     if text_file is not None:
@@ -119,12 +142,6 @@ def _read_script(text: str | None, text_file: Path | None) -> str:
                 ),
             ) from exc
     assert text is not None
-    if not text.strip():
-        raise ConfigurationError(
-            "Narration text cannot be empty.",
-            charged="no",
-            remediation_hint="Provide non-empty text to narrate.",
-        )
     return text
 
 
@@ -141,10 +158,7 @@ def _validate_output(path: Path) -> None:
         raise ConfigurationError(
             f"Narration output already exists: {path}",
             charged="no",
-            remediation_hint=(
-                "Choose an --out-file path that does not already exist, "
-                "or remove the existing file."
-            ),
+            remediation_hint=_EXISTING_OUT_FILE_HINT,
         )
 
 

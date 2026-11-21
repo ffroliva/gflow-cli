@@ -200,3 +200,43 @@ def test_narration_leaves_no_staging_file_behind(tmp_path: Path) -> None:
         )
 
     assert [p.name for p in tmp_path.iterdir()] == ["ok.mp3"]
+
+
+def test_provider_os_error_is_not_reported_as_an_output_failure(tmp_path: Path) -> None:
+    synthesizer = FakeSynthesizer(FileNotFoundError("CA bundle missing"))
+
+    with pytest.raises(FileNotFoundError, match="CA bundle"):
+        narrate(text="hello", out_file=tmp_path / "voice.mp3", synthesizer=synthesizer)
+
+
+def test_publish_failures_map_to_output_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.errors import VideoAssemblyError
+    from gflow_cli.services import audio_narration
+
+    def exists(*_: object) -> None:
+        raise VideoAssemblyError(detail="Output already exists: x", route="video.assemble")
+
+    def denied(*_: object) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(audio_narration, "publish_output", exists)
+    with pytest.raises(ConfigurationError, match="already exists"):
+        narrate(text="hello", out_file=tmp_path / "a.mp3", synthesizer=FakeSynthesizer())
+
+    monkeypatch.setattr(audio_narration, "publish_output", denied)
+    with pytest.raises(ConfigurationError, match="Could not write"):
+        narrate(text="hello", out_file=tmp_path / "b.mp3", synthesizer=FakeSynthesizer())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_result_payload_reports_status_ok(tmp_path: Path) -> None:
+    result = narrate(text="hello", out_file=tmp_path / "v.mp3", synthesizer=FakeSynthesizer())
+
+    assert result.payload() == {
+        "status": "ok",
+        "out_file": str(tmp_path / "v.mp3"),
+        "provider": "edge",
+        "media_type": "audio/mpeg",
+    }

@@ -22,8 +22,9 @@ from gflow_cli.services.speech_synthesizers import (
 def test_edge_missing_extra_names_install_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "edge_tts", None)
 
-    with pytest.raises(ConfigurationError, match="gflow-cli\\[tts\\]"):
+    with pytest.raises(ConfigurationError, match="tts extra") as raised:
         EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", None))
+    assert "tts]" in raised.value.remediation_hint
 
 
 def test_edge_retries_transient_network_error_with_bound(
@@ -80,7 +81,7 @@ def test_edge_returns_typed_error_after_retry_bound(monkeypatch: pytest.MonkeyPa
         EdgeTtsSynthesizer(attempts=2).synthesize(SynthesisRequest("hello", None))
 
 
-def test_edge_preserves_text_and_rejects_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_edge_preserves_text(monkeypatch: pytest.MonkeyPatch) -> None:
     sent_text = ""
 
     class CaptureCommunicate:
@@ -104,9 +105,6 @@ def test_edge_preserves_text_and_rejects_empty(monkeypatch: pytest.MonkeyPatch) 
     raw_text = "‘hello’ — don’t 😊"
     EdgeTtsSynthesizer().synthesize(SynthesisRequest(raw_text, "en-US-AndrewNeural"))
     assert sent_text == raw_text
-
-    with pytest.raises(ConfigurationError, match="empty"):
-        EdgeTtsSynthesizer().synthesize(SynthesisRequest("   ", "en-US-AndrewNeural"))
 
 
 def test_gemini_uses_dedicated_key_and_parses_audio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -401,7 +399,7 @@ def test_edge_persistent_no_audio_refuses_after_retry_bound(
         EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", "xx-XX-NobodyNeural"))
 
     assert calls == [3]
-    assert "--voice" in exc_info.value.remediation_hint
+    assert "voice name" in exc_info.value.remediation_hint
     assert "edge-tts --list-voices" in exc_info.value.remediation_hint
 
 
@@ -432,3 +430,146 @@ def test_edge_empty_stream_retries_then_refuses(monkeypatch: pytest.MonkeyPatch)
         EdgeTtsSynthesizer(attempts=2).synthesize(SynthesisRequest("hello", None))
 
     assert calls == 2
+
+
+def _failing_edge(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException, *, failures: int
+) -> list[int]:
+    """Install a fake edge_tts whose first `failures` streams raise `error`."""
+    calls = [0]
+
+    class Communicate:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def stream(self) -> AsyncIterator[dict[str, Any]]:
+            calls[0] += 1
+            if calls[0] <= failures:
+                raise error
+            yield {"type": "audio", "data": b"audio"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=Communicate,
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
+        ),
+    )
+    return calls
+
+
+def test_edge_retries_a_timeout_and_logs_the_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _failing_edge(monkeypatch, TimeoutError("read timed out"), failures=1)
+
+    with structlog.testing.capture_logs() as logs:
+        result = EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", None))
+
+    assert result.audio_bytes == b"audio"
+    assert calls == [2]
+    assert [entry.get("error") for entry in logs] == ["TimeoutError"]
+
+
+@pytest.mark.parametrize("error", [KeyError("audio"), TypeError("api changed")])
+def test_edge_unexpected_error_is_not_retried_or_called_a_network_failure(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    calls = _failing_edge(monkeypatch, error, failures=99)
+
+    with pytest.raises(type(error)):
+        EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", None))
+
+    assert calls == [1]
+
+
+def test_edge_value_error_mid_stream_is_not_an_invalid_voice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _failing_edge(monkeypatch, ValueError("bad frame"), failures=99)
+
+    with pytest.raises(ValueError, match="bad frame"):
+        EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", None))
+
+
+def _gemini_replies(monkeypatch: pytest.MonkeyPatch, reply: httpx.Response | Exception) -> None:
+    class Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def post(self, *_: object, **__: object) -> httpx.Response:
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+    monkeypatch.setattr("gflow_cli.services.speech_synthesizers.gemini.httpx.Client", Client)
+
+
+@pytest.mark.parametrize(("status", "hint"), [(404, "model"), (400, "shorter"), (403, "API key")])
+def test_gemini_rejection_names_the_status_and_a_matching_hint(
+    monkeypatch: pytest.MonkeyPatch, status: int, hint: str
+) -> None:
+    _gemini_replies(monkeypatch, httpx.Response(status, text="private text private-key"))
+
+    with pytest.raises(ConfigurationError) as raised:
+        GeminiTtsSynthesizer(api_key="private-key").synthesize(SynthesisRequest("hi", None))
+
+    assert f"(HTTP {status})" in str(raised.value)
+    assert hint in raised.value.remediation_hint
+    assert "private" not in str(raised.value)
+
+
+def test_gemini_rate_limit_carries_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli.errors import RateLimitError
+
+    _gemini_replies(monkeypatch, httpx.Response(429, headers={"Retry-After": "7"}))
+
+    with pytest.raises(RateLimitError) as raised:
+        GeminiTtsSynthesizer(api_key="k").synthesize(SynthesisRequest("hi", None))
+
+    assert raised.value.retry_after == 7.0
+
+
+@pytest.mark.parametrize(
+    ("reply", "charged"),
+    [
+        (httpx.ConnectError("refused"), "no"),
+        (httpx.ConnectTimeout("connect"), "no"),
+        (httpx.ReadTimeout("read"), "maybe"),
+        (httpx.Response(503), "maybe"),
+        (httpx.Response(200, json={"candidates": []}), "maybe"),
+    ],
+)
+def test_gemini_charged_is_no_only_when_nothing_was_sent(
+    monkeypatch: pytest.MonkeyPatch, reply: httpx.Response | Exception, charged: str
+) -> None:
+    _gemini_replies(monkeypatch, reply)
+
+    with pytest.raises(Exception) as raised:
+        GeminiTtsSynthesizer(api_key="k").synthesize(SynthesisRequest("hi", None))
+
+    assert getattr(raised.value, "charged", None) == charged
+
+
+def test_edge_missing_extra_hint_follows_the_installer(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gflow_cli import update_check
+
+    monkeypatch.setitem(sys.modules, "edge_tts", None)
+    monkeypatch.setattr(update_check, "_installed_extras", lambda: ("patchright",))
+    monkeypatch.setattr(
+        update_check,
+        "installer",
+        lambda: update_check.Installer("uv", ("uv", "tool", "upgrade", "gflow-cli")),
+    )
+
+    with pytest.raises(ConfigurationError) as raised:
+        EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", None))
+
+    assert 'uv tool install --force "gflow-cli[patchright,tts]"' in raised.value.remediation_hint

@@ -11,8 +11,15 @@ from typing import Any, cast
 
 import httpx
 
+from gflow_cli.api._retry import parse_retry_after
 from gflow_cli.api.character import VOICES
-from gflow_cli.errors import ConfigurationError, NetworkError, RateLimitError, TransportTimeoutError
+from gflow_cli.errors import (
+    Charged,
+    ConfigurationError,
+    NetworkError,
+    RateLimitError,
+    TransportTimeoutError,
+)
 from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult
 
 _BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -52,20 +59,20 @@ class GeminiTtsSynthesizer:
         except httpx.TimeoutException as exc:
             raise TransportTimeoutError(
                 "Gemini TTS endpoint timed out while generating audio.",
-                charged="no",
+                charged=_charged_after(exc),
                 remediation_hint="Check your network connection or try a shorter narration text.",
             ) from exc
         except httpx.HTTPError as exc:
             raise NetworkError(
                 "Gemini TTS endpoint could not be reached.",
-                charged="no",
+                charged=_charged_after(exc),
                 remediation_hint="Check connectivity to Google Generative Language API and retry.",
             ) from exc
         # ValueError also covers binascii.Error from the base64 decode.
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise ConfigurationError(
                 "Gemini TTS returned an invalid audio response.",
-                charged="no",
+                charged="maybe",
                 remediation_hint="Verify that the model returned audio content or retry.",
             ) from exc
 
@@ -83,7 +90,7 @@ def _validate_request(api_key: str | None, request: SynthesisRequest) -> None:
         raise ConfigurationError(
             "Gemini TTS does not support custom rate or pitch; use the edge provider.",
             charged="no",
-            remediation_hint="Remove --rate and --pitch, or use --provider edge.",
+            remediation_hint="Leave rate and pitch at their defaults, or use the edge provider.",
         )
 
 
@@ -94,24 +101,37 @@ def _check_response_status(response: httpx.Response) -> None:
             charged="no",
             remediation_hint="Verify the API endpoint URL.",
         )
-    if response.status_code == 429:
+    status = response.status_code
+    if status == 429:
         raise RateLimitError(
             "Gemini TTS rate limit reached.",
-            retry_after=None,
-            remediation_hint="Wait a moment before retrying, or switch to --provider edge.",
+            retry_after=parse_retry_after(response),
+            remediation_hint="Wait a moment before retrying, or use the edge provider.",
         )
-    if response.status_code >= 500:
+    if status >= 500:
         raise NetworkError(
-            "Gemini TTS endpoint failed.",
-            charged="no",
-            remediation_hint="Retry after a moment or use --provider edge.",
+            f"Gemini TTS endpoint failed (HTTP {status}).",
+            charged="maybe",
+            remediation_hint="Retry after a moment or use the edge provider.",
         )
-    if response.status_code >= 400:
+    if status >= 400:
         raise ConfigurationError(
-            "Gemini TTS request was rejected.",
+            f"Gemini TTS request was rejected (HTTP {status}).",
             charged="no",
-            remediation_hint="Check that your API key and voice parameter are valid.",
+            remediation_hint=_REJECTION_HINTS.get(status, _KEY_HINT),
         )
+
+
+_KEY_HINT = "Check that GFLOW_CLI_GEMINI_TTS_API_KEY is a valid API key with Gemini API access."
+_REJECTION_HINTS = {
+    400: "Check the voice name, or try a shorter narration text.",
+    404: f"The TTS model {_MODEL} is not available to this API key; use the edge provider.",
+}
+
+
+def _charged_after(exc: httpx.HTTPError) -> Charged:
+    """``no`` only when the request never left: Google bills a request it received."""
+    return "no" if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)) else "maybe"
 
 
 def _canonical_voice(value: str | None) -> str:

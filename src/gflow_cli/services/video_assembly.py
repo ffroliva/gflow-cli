@@ -509,9 +509,6 @@ def publish_output(temp_output: Path, output: Path) -> None:
         temp_output.unlink()
 
 
-_publish_output = publish_output
-
-
 def assemble_videos(
     clips: list[Path],
     output: Path,
@@ -566,7 +563,7 @@ def assemble_videos(
             voiceover=voiceover,
             av=_av,
         )
-        _publish_output(temp_output, output)
+        publish_output(temp_output, output)
         return AssemblyResult(
             output_file=output,
             duration_seconds=layout.total_frames / layout.frame_rate,

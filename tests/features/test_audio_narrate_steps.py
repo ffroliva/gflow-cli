@@ -129,7 +129,7 @@ def provider_error(narration_case: dict[str, Any]) -> None:
     assert result.exit_code == 6, result.stdout
     error = json.loads(result.stdout)["error"]
     assert error["type"] == "https://gflow-cli.dev/errors/network"
-    assert error["charged"] == "no"
+    assert error["charged"] == "maybe"  # the request reached Google, which may bill it
 
 
 @then("no narration file is created")

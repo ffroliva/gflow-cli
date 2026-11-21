@@ -267,7 +267,7 @@ def test_fallback_publish_removes_its_reservation_when_replace_fails(
     monkeypatch.setattr(video_assembly.os, "replace", replace_denied)
 
     with pytest.raises(PermissionError):
-        video_assembly._publish_output(temp_output, output)
+        video_assembly.publish_output(temp_output, output)
 
     assert not output.exists()
     assert temp_output.read_bytes() == b"rendered"
