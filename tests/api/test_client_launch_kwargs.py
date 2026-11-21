@@ -426,6 +426,38 @@ def test_preread_flow_session_cookies_best_effort(
     assert client._preread_flow_cookies == {}  # noqa: SLF001
 
 
+@pytest.mark.parametrize("macos", [True, False])
+def test_preread_reads_a_v11_jar_through_the_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
+) -> None:
+    """#1400: browser_cookie3 asserts on a v11 jar. The pre-read must still get the
+    cookies, from the headless Chrome read, on macOS (which skips browser_cookie3)
+    and elsewhere (where the assertion is a decryption failure)."""
+    import asyncio
+
+    from gflow_cli.auth import cookies as cookies_mod
+
+    network = tmp_path / "Default" / "Network"
+    network.mkdir(parents=True)
+    (network / "Cookies").write_bytes(b"")
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", macos)
+
+    def _v11(**_: object) -> object:
+        raise AssertionError("v11 keys should only appear on Linux.")
+
+    monkeypatch.setattr("browser_cookie3.chrome", _v11)
+    snap = cookies_mod.ChromeCookieSnapshot(
+        httpx_cookies={"__Secure-next-auth.session-token": "tok"}, google_session=True
+    )
+    browser = AsyncMock(return_value=snap)
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    asyncio.run(client._preread_flow_session_cookies())  # noqa: SLF001
+    assert client._preread_flow_cookies == {"__Secure-next-auth.session-token": "tok"}  # noqa: SLF001
+    browser.assert_awaited_once_with(profile_dir=tmp_path)
+
+
 # --- issue #477: profile-engine (Chromium version) downgrade guard ---------------
 
 

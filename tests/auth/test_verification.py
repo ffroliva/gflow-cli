@@ -511,6 +511,63 @@ class TestVerifyFlowSession:
         assert status.user_email == "test.user@example.com"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("macos", [True, False])
+    async def test_v11_jar_verifies_through_the_browser_read(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
+    ) -> None:
+        """#1400: current Chrome on macOS writes every cookie as v11, and
+        browser_cookie3 0.20.1 asserts "v11 keys should only appear on Linux." on
+        them. `auth status` and the post-login probe reported that as a network
+        problem. macOS never asks browser_cookie3; elsewhere the assertion is a
+        decryption failure, so both routes verify through the headless Chrome read."""
+        monkeypatch.setattr("gflow_cli.auth.cookies._SKIP_DIRECT_READ", macos)
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        (profile / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
+
+        class BrowserCookieError(Exception):
+            pass
+
+        fake_bc3 = MagicMock()
+        fake_bc3.BrowserCookieError = BrowserCookieError
+        fake_bc3.chrome.side_effect = AssertionError("v11 keys should only appear on Linux.")
+
+        fake_resp = MagicMock(status_code=200, text=AUTHENTICATED_BODY)
+        fake_client = MagicMock()
+        fake_client.__aenter__ = AsyncMock(return_value=fake_client)
+        fake_client.__aexit__ = AsyncMock(return_value=False)
+        fake_client.get = AsyncMock(return_value=fake_resp)
+        fake_httpx = MagicMock()
+        fake_httpx.AsyncClient.return_value = fake_client
+
+        mock_ap, _ = _build_verify_mock(
+            cookies=[
+                {"name": "SAPISID", "value": "google", "domain": ".google.com"},
+                {
+                    "name": "__Secure-next-auth.session-token",
+                    "value": "flow-session",
+                    "domain": "labs.google",
+                },
+            ]
+        )
+
+        with (
+            patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings,
+            patch(
+                "gflow_cli.auth.cookies.get_cookies_path",
+                return_value=Path("/fake/Cookies"),
+            ),
+            patch.dict(sys.modules, {"browser_cookie3": fake_bc3, "httpx": fake_httpx}),
+            patch("gflow_cli.auth.strategies.async_playwright", mock_ap),
+        ):
+            mock_settings.return_value.home = gflow_home
+            status = await verify_flow_profile(profile, source="status")
+
+        assert status.outcome is FlowSessionOutcome.AUTHENTICATED
+        assert status.user_email == "test.user@example.com"
+        assert fake_bc3.chrome.called is not macos
+
+    @pytest.mark.asyncio
     async def test_httpx_retryable_status_retried_then_verification_error(
         self, gflow_home: Path
     ) -> None:

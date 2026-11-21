@@ -98,7 +98,9 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
     """Fast path: extract cookies directly from the SQLite store via browser_cookie3.
 
     Raises `PermissionError` on browser-cookie3 decryption failures so callers
-    can fall back to the Playwright browser path. Other errors are not masked.
+    can fall back to the Playwright browser path, including the ``AssertionError``
+    browser-cookie3 raises for a ``v11`` cookie off Linux (#1400). Other errors
+    are not masked.
 
     On Windows, `browser-cookie3` may raise `RuntimeError` (specifically
     ``'Failed to decrypt the cipher text with DPAPI'``) when the DPAPI master
@@ -151,6 +153,11 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
         # session has settled, or in minimal desktop environments without a keyring.
         # Treat it as a decryption failure so the Playwright fallback runs.
         raise PermissionError(f"Failed to read Chrome keyring key: {exc}") from exc
+    except AssertionError as exc:
+        # #1400: browser_cookie3 asserts "v11 keys should only appear on Linux." when a
+        # jar holds v11 cookies it has no key for (current Chrome on macOS writes them).
+        # A decryption failure like the others, not a network fault: fall back.
+        raise PermissionError(f"Failed to decrypt Chrome cookies: {exc}") from exc
 
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(cookies, flow_only=True),

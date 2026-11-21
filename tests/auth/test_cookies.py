@@ -53,6 +53,22 @@ def test_get_chrome_cookies3_maps_browsercookieerror_to_permissionerror(
         _get_chrome_cookies3(profile)
 
 
+def test_get_chrome_cookies3_maps_v11_assertion_to_permissionerror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1400: browser_cookie3 0.20.1 asserts on a v11 cookie it holds no key for.
+    That is a decryption failure, so it must reach the Playwright fallback."""
+    profile = _make_profile_with_cookies(tmp_path)
+
+    def _raise(**_: object) -> object:
+        raise AssertionError("v11 keys should only appear on Linux.")
+
+    monkeypatch.setattr("browser_cookie3.chrome", _raise)
+
+    with pytest.raises(PermissionError, match="v11 keys"):
+        _get_chrome_cookies3(profile)
+
+
 # --- issue #222 / #230: /fx-scoped session token must survive the cookie read ---
 
 
