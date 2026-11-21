@@ -324,9 +324,12 @@ class GenerateVideoRequest:
     ui_mode: UiMode | None = None
     # Requested video resolution ("360p" or "720p", Omni models only); None -> Flow default
     resolution: str | None = None
+    max_credits: int | None = None
 
     def __post_init__(self) -> None:
         self._validate_prompt()
+        if self.max_credits is not None and self.max_credits < 0:
+            raise ValueError("max_credits must be >= 0")
         self._validate_duration()
         self._validate_resolution()
         self._validate_count()
@@ -576,6 +579,7 @@ class VideoResult:
     project_id: str | None = None
     flow_operation_id: str | None = None
     workflow_id: str | None = None  # see VideoStarted.workflow_id (#898)
+    quoted_credits: int | None = None
 
 
 # Callback type: invoked by the transport the moment a media_id becomes known,

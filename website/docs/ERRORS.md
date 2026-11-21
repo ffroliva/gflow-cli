@@ -22,11 +22,18 @@ same members, and the worker queue persists the same members for a queued task.
 | `next_action` | yes | What a caller should do (values below) |
 | `operation_id` | no | The local job or media id, when one exists, so a follow-up can find it |
 | `retry_after` | no | Seconds to wait, when Flow said so and `next_action` is `retry_after` |
-| `completed_media_ids` | no | A partial `video chain`: the media ids of the links Flow made and billed |
+| `completed_media_ids` | no | Media ids completed before a partial chain or a later per-command cap refusal |
+| `quoted` | `CreditCapExceededError` | Flow's pre-submit quote in credits, or `null` when unreadable |
+| `max_credits` | `CreditCapExceededError` | The caller's per-command credit ceiling |
 
 `charged`, `next_action`, `operation_id`, `retry_after` and `completed_media_ids` were added in
 [#1201](https://github.com/ffroliva/gflow-cli/issues/1201). They are additive: no
 existing member changed.
+
+`CreditCapExceededError` (exit 45) is gflow's refusal when Flow's pre-submit quote is missing
+or over the requested cap. It reports `quoted`, `max_credits`, `charged: no`, and
+`next_action: fix_input`; a cap refusal after completed chain/extend/movie work also carries
+the completed media ids and reads `charged: yes` / `reconcile`.
 
 ### Result-shaped failures
 
@@ -201,6 +208,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/insufficient-credits` | `InsufficientCreditsError` | 37 | `no` | `wait` |
 | `https://gflow-cli.dev/errors/flow-account-chooser` | `FlowAccountChooserError` | 38 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/flow-access-unavailable` | `FlowAccessUnavailableError` | 39 | `no` | `none` |
+| `https://gflow-cli.dev/errors/credit-cap-exceeded` | `CreditCapExceededError` | 45 | `no` | `fix_input` |
 
 ### Envelopes built without an error class
 

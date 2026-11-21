@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from gflow_cli.api import routes, video_extend
+from gflow_cli.api.credit_cap import enforce_credit_cap
 from gflow_cli.api.image_upscale import (
     TargetResolution,
     UpsampleImageRequest,
@@ -125,6 +126,7 @@ class MediaEditSurface(GenerationSurface):
         aspect: str = "16:9",
         seed: int | None = None,
         recaptcha_action: str = "VIDEO_GENERATION",
+        max_credits: int | None = None,
     ) -> ExtendStarted:
         """Continue an existing clip by another 8 seconds. Costs credits.
 
@@ -141,6 +143,7 @@ class MediaEditSurface(GenerationSurface):
         model_key, unit_cost = video_extend.resolve_extend_model(
             listing, service_tier=service_tier, aspect=aspect
         )
+        enforce_credit_cap(quoted=unit_cost, max_credits=max_credits, route="labs video extend")
         # When Flow moves the extend family again — it has moved once already —
         # this single line is the diagnosis. The raw creditMapping table is NOT
         # logged; only the decision and the inputs that produced it.
@@ -418,6 +421,7 @@ class MediaEditSurface(GenerationSurface):
         out_path: Path,
         on_started: ExtendStartedCallback | None = None,
         poll_timeout_s: float = 900.0,
+        max_credits: int | None = None,
     ) -> tuple[ExtendOutcome, AnyPath | None]:
         """One extend segment through Flow's own UI on flow.google.com. Costs credits.
 
@@ -426,6 +430,12 @@ class MediaEditSurface(GenerationSurface):
         written mp4 (``None`` when the generation did not finish).
         """
         from gflow_cli.api.transports.migrated_extend import run_extend
+
+        enforce_credit_cap(
+            quoted=None,
+            max_credits=max_credits,
+            route="flow.google.com video extend",
+        )
 
         try:
             page = await self._checkout_page()

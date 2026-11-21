@@ -30,10 +30,12 @@ from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports import _mc_submit_observe, _mc_upload_frame, migrated_composer
+from gflow_cli.api.transports._mc_settings_pane import CREDIT_COST_LABEL
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     ConfigurationError,
+    CreditCapExceededError,
     FlowHostMigratedError,
     InsufficientCreditsError,
     MediaDownloadError,
@@ -72,6 +74,7 @@ class Dom:
     model_label: str = "Omni 1.1 Flash"
     trigger_present: bool = True
     pane_open: bool = False
+    credit_label: str = "Generating will use 4 credits"
     menu_open: bool = False
     prompt: str = ""
     submit_clicked: int = 0
@@ -343,6 +346,13 @@ class FakeLocator:
     async def text_content(self) -> str | None:
         return str(self.items[0]) if self.items else None
 
+    async def inner_text(self, **_: Any) -> str:
+        if self.kind == "credit_cost":
+            if not self.items:
+                raise RealPlaywrightTimeoutError("waiting for credit_cost")
+            return self.page.dom.credit_label
+        return await self.text_content() or ""
+
     async def all_text_contents(self) -> list[str]:
         return [str(i) for i in self.items]
 
@@ -599,6 +609,7 @@ class FakePage:
         self.url = url
         self.keyboard = FakeKeyboard(self)
         self.gotos: list[str] = []
+        self.selector_calls: list[str] = []
         self._handlers: dict[str, list[Any]] = {"response": [], "request": []}
         self._pending_lig: re.Pattern[str] | None = None
         # (url, text) or (url, text, http_status) — the status defaults to 200, so an
@@ -670,6 +681,11 @@ class FakePage:
 
     def locator(self, css: str, *, scope: FakeLocator | None = None) -> FakeLocator:
         dom = self.dom
+        self.selector_calls.append(css)
+        if css == CREDIT_COST_LABEL or css == "flow-credit-cost-label.settings-credit-cost":
+            return FakeLocator(self, "credit_cost", ["quote"] if dom.pane_open else [])
+        if css == ".cdk-overlay-pane flow-prompt-box-settings":
+            return FakeLocator(self, "settings_pane", ["pane"] if dom.pane_open else [])
         if css == ".settings-trigger-button":
             # In agent mode it is still THERE (count 1) — just `hidden`. The reporter
             # counted 57 locator matches on an element that never became visible.
@@ -906,13 +922,59 @@ async def test_apply_video_settings_selects_each_axis_and_reads_back() -> None:
 
     page = FakePage()
     page.dom.groups["aspect"][0].checked, page.dom.groups["aspect"][1].checked = False, True
-    await MigratedComposer().apply_video_settings(
+    quoted = await MigratedComposer().apply_video_settings(
         page, _t2v(aspect=Aspect.LANDSCAPE, duration=6, count=2)
     )
     assert page.dom.groups["aspect"][0].checked  # 16:9
     assert page.dom.groups["duration"][1].checked  # 6s
     assert page.dom.groups["count"][1].checked  # x2
+    assert quoted is None
+    assert not any("flow-credit-cost-label" in selector for selector in page.selector_calls)
     assert not page.dom.pane_open  # closed afterwards
+
+
+async def test_apply_video_settings_refuses_quote_over_cap_before_closing_pane() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    with pytest.raises(CreditCapExceededError) as caught:
+        await MigratedComposer().apply_video_settings(page, _t2v(max_credits=3))
+    assert caught.value.quoted == 4
+    assert caught.value.max_credits == 3
+    assert caught.value.charged == "no"
+    assert ".cdk-overlay-pane flow-prompt-box-settings" in page.selector_calls
+
+
+async def test_apply_video_settings_fails_closed_when_quote_is_unreadable() -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage(Dom(groups=_default_dom().groups, credit_label=""))
+    with pytest.raises(CreditCapExceededError) as caught:
+        await MigratedComposer().apply_video_settings(page, _t2v(max_credits=10))
+    assert caught.value.quoted is None
+    assert caught.value.max_credits == 10
+    assert caught.value.charged == "no"
+
+
+async def test_refresh_credit_quote_reopens_settings_pane_and_checks_fresh_quote() -> None:
+    from gflow_cli.api.transports.migrated_composer import (
+        MigratedComposer,
+        _refresh_credit_quote,
+    )
+
+    page = FakePage()
+    composer = MigratedComposer()
+    quoted = await composer.apply_video_settings(page, _t2v(max_credits=10))
+    assert quoted == 4
+    assert not page.dom.pane_open
+    assert await _refresh_credit_quote(page, 10, quoted) == 4
+    assert not page.dom.pane_open
+
+    for bad_label in ("Generating will use 6 credits", ""):
+        page.dom.credit_label = bad_label
+        with pytest.raises(CreditCapExceededError):
+            await _refresh_credit_quote(page, 10, quoted)
+        assert not page.dom.pane_open
 
 
 @pytest.mark.parametrize("unit", ["s", " giây", " Sek."])

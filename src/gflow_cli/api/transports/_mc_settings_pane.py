@@ -11,7 +11,9 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
+from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.transports._mc_common import (
@@ -43,12 +45,35 @@ from gflow_cli.api.video import I2V_DEFAULT_MODEL, Mode, VideoModel
 from gflow_cli.errors import ConfigurationError, UiSelectorDriftError
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from playwright.async_api import Locator, Page
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest
 
 log = structlog.get_logger(__name__)
+CREDIT_COST_LABEL = (
+    ".cdk-overlay-pane flow-prompt-box-settings div.settings-content > "
+    "flow-credit-cost-label.settings-credit-cost"
+)
+
+
+async def _read_credit_quote(page: Page, max_credits: int | None) -> int | None:
+    if max_credits is None:
+        return None
+    try:
+        pane = page.locator(".cdk-overlay-pane flow-prompt-box-settings")
+        label = await pane.locator("flow-credit-cost-label.settings-credit-cost").first.inner_text(
+            timeout=2000
+        )
+    except PlaywrightError:
+        label = ""
+    quoted = parse_credit_quote(label)
+    log.info("migrated.credit_quote_checked", quoted=quoted, max_credits=max_credits)
+    return enforce_credit_cap(
+        quoted=quoted,
+        max_credits=max_credits,
+        route="flow.google.com settings pane",
+    )
 
 
 class SettingsPaneMixin(EditorGateMixin):
@@ -56,7 +81,45 @@ class SettingsPaneMixin(EditorGateMixin):
 
     # --- settings ---------------------------------------------------------------
 
-    async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> None:
+    async def _apply_duration_setting(
+        self,
+        page: Page,
+        pane: Locator,
+        request: GenerateVideoRequest,
+        model: VideoModel | None,
+    ) -> None:
+        if request.duration is not None:
+            if (
+                request.mode is Mode.R2V
+                and model not in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH)
+                and request.duration != R2V_DURATION_S
+            ):
+                raise ConfigurationError(
+                    detail=(
+                        "the SDK restricts Veo/unspecified-model "
+                        "reference-to-video to "
+                        f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
+                        "silently drops the references and submits a text-to-video run "
+                        "with their file names typed into the prompt — a full-price clip "
+                        "with none of the images on it"
+                    ),
+                    remediation_hint=(
+                        f"Drop --duration (r2v pins {R2V_DURATION_S}s on its own), pass "
+                        f"--duration {R2V_DURATION_S}, or run this length on labs with "
+                        "GFLOW_CLI_FLOW_HOST=labs.google."
+                    ),
+                )
+            if model is VideoModel.OMNI_1_2_FLASH:
+                await self._select_omni12_duration(page, pane, request.duration)
+            else:
+                await self._select(page, pane, axis="duration", text=f"{request.duration}s")
+        elif request.mode is Mode.R2V:
+            if model is VideoModel.OMNI_1_2_FLASH:
+                await self._select_omni12_duration(page, pane, R2V_DURATION_S)
+            else:
+                await self._pin_r2v_duration(page, pane)
+
+    async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> int | None:
         """Mode, model, aspect, duration, count — through the radios, with read-back.
 
         Model goes first: like on labs.google the duration row is model-state.
@@ -92,39 +155,11 @@ class SettingsPaneMixin(EditorGateMixin):
             if model is not None:
                 await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
-            if request.duration is not None:
-                if (
-                    request.mode is Mode.R2V
-                    and model not in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH)
-                    and request.duration != R2V_DURATION_S
-                ):
-                    raise ConfigurationError(
-                        detail=(
-                            "the SDK restricts Veo/unspecified-model "
-                            "reference-to-video to "
-                            f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
-                            "silently drops the references and submits a text-to-video run "
-                            "with their file names typed into the prompt — a full-price clip "
-                            "with none of the images on it"
-                        ),
-                        remediation_hint=(
-                            f"Drop --duration (r2v pins {R2V_DURATION_S}s on its own), pass "
-                            f"--duration {R2V_DURATION_S}, or run this length on labs with "
-                            "GFLOW_CLI_FLOW_HOST=labs.google."
-                        ),
-                    )
-                if model is VideoModel.OMNI_1_2_FLASH:
-                    await self._select_omni12_duration(page, pane, request.duration)
-                else:
-                    await self._select(page, pane, axis="duration", text=f"{request.duration}s")
-            elif request.mode is Mode.R2V:
-                if model is VideoModel.OMNI_1_2_FLASH:
-                    await self._select_omni12_duration(page, pane, R2V_DURATION_S)
-                else:
-                    await self._pin_r2v_duration(page, pane)
+            await self._apply_duration_setting(page, pane, request, model)
             if request.resolution is not None:
                 await _select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")
+            quoted = await _read_credit_quote(page, request.max_credits)
             log.info(
                 "migrated.settings_applied",
                 aspect=request.aspect.value,
@@ -144,6 +179,7 @@ class SettingsPaneMixin(EditorGateMixin):
             await self._close_pane(page, strict=False)
             raise
         await self._close_pane(page, strict=True)
+        return quoted
 
     async def apply_image_settings(self, page: Page, request: GenerateImageRequest) -> None:
         """Bind Image mode, model, aspect and count with read-back before submission."""
