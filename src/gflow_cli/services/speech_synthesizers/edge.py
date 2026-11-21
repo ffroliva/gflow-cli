@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from gflow_cli.errors import ConfigurationError, NetworkError, TransportTimeoutError
-from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult, WordTiming
+from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class EdgeTtsSynthesizer:
         voice = request.voice or "en-US-AndrewNeural"
         for attempt in range(self.attempts):
             try:
-                audio, words = asyncio.run(self._stream(edge_tts, request, voice))
+                audio = asyncio.run(self._stream(edge_tts, request, voice))
                 if not audio:
                     raise ConfigurationError(
                         f"Edge TTS returned no audio for voice {voice!r}.",
@@ -47,7 +47,7 @@ class EdgeTtsSynthesizer:
                             "Run `edge-tts --list-voices` to see all available voices."
                         ),
                     )
-                return SynthesisResult(audio, "audio/mpeg", tuple(words))
+                return SynthesisResult(audio, "audio/mpeg")
             except ValueError as exc:
                 raise ConfigurationError(
                     f"Invalid voice or speech parameters for Edge TTS: {exc}",
@@ -85,25 +85,17 @@ class EdgeTtsSynthesizer:
                     ) from exc
         raise AssertionError("bounded retry loop exhausted")
 
-    async def _stream(
-        self, edge_tts: Any, request: SynthesisRequest, voice: str
-    ) -> tuple[bytes, list[WordTiming]]:
+    async def _stream(self, edge_tts: Any, request: SynthesisRequest, voice: str) -> bytes:
         communicator = edge_tts.Communicate(
             request.text,
             voice=voice,
             rate=request.rate,
             pitch=request.pitch,
-            boundary="WordBoundary",
             connect_timeout=self.connect_timeout,
             receive_timeout=self.receive_timeout,
         )
         audio: list[bytes] = []
-        words: list[WordTiming] = []
         async for chunk in communicator.stream():
             if chunk.get("type") == "audio":
                 audio.append(cast(bytes, chunk["data"]))
-            elif chunk.get("type") == "WordBoundary":
-                offset = float(chunk.get("offset", 0)) / 10_000_000
-                duration = float(chunk.get("duration", 0)) / 10_000_000
-                words.append(WordTiming(str(chunk.get("text", "")), offset, offset + duration))
-        return b"".join(audio), words
+        return b"".join(audio)

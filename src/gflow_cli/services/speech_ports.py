@@ -36,17 +36,9 @@ class SynthesisRequest:
 
 
 @dataclass(frozen=True)
-class WordTiming:
-    text: str
-    start: float
-    end: float
-
-
-@dataclass(frozen=True)
 class SynthesisResult:
     audio_bytes: bytes
     media_type: str
-    words: tuple[WordTiming, ...] = ()
 
 
 class SpeechSynthesizer(Protocol):

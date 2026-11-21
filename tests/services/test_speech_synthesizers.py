@@ -41,7 +41,6 @@ def test_edge_retries_transient_network_error_with_bound(
             if calls == 1:
                 raise ConnectionError("connection dropped")
             yield {"type": "audio", "data": b"audio"}
-            yield {"type": "WordBoundary", "text": "hello", "offset": 0, "duration": 4_000_000}
 
     monkeypatch.setitem(
         sys.modules,
@@ -55,7 +54,6 @@ def test_edge_retries_transient_network_error_with_bound(
     )
     result = EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", "en-US-AndrewNeural"))
     assert result.audio_bytes == b"audio"
-    assert result.words[0].text == "hello"
     assert calls == 2
 
 
