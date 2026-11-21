@@ -29,7 +29,6 @@ __all__ = [
     "_free_rerender_hint",
     "_migrated_extend_payload",
     "_print_chain_plan",
-    "_report_chain_dry_run",
     "_print_extend_plan",
     "_report_migrated_extend",
 ]
@@ -353,40 +352,6 @@ def _print_chain_plan(
         link_model = spec.model.value if spec.model is not None else model.value
         status = " [dim](done)[/dim]" if idx < skipped else ""
         c.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
-
-
-def _report_chain_dry_run(
-    *,
-    links: Sequence[Any],
-    model: Any,
-    aspect: str,
-    skipped: int,
-    chain_id: str,
-    max_credits: int | None,
-    pending_links: int,
-    as_json: bool,
-    console: Console,
-) -> None:
-    """Emit a chain dry-run plan in its selected output format."""
-    if as_json:
-        json_output.emit(
-            {
-                "status": "dry_run",
-                "command": "video chain",
-                "pending_links": pending_links,
-                "max_credits": max_credits,
-            }
-        )
-        return
-    _print_chain_plan(
-        links=links,
-        model=model,
-        aspect=aspect,
-        skipped=skipped,
-        chain_id=chain_id,
-        max_credits=max_credits,
-    )
-    console.print("[dim]--dry-run: no video operations submitted, no clips generated.[/dim]")
 
 
 def _print_extend_plan(

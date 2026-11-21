@@ -57,7 +57,6 @@ from gflow_cli.cli_video_reporting import (
     _free_rerender_hint,
     _print_chain_plan,
     _print_extend_plan,
-    _report_chain_dry_run,
     _report_migrated_extend,
 )
 from gflow_cli.config import UiMode, get_settings
@@ -1053,17 +1052,15 @@ async def _run_chain(
     pending_operations = len(remaining_links)
 
     if dry_run:
-        _report_chain_dry_run(
+        _print_chain_plan(
             links=links,
             model=resolved_model,
             aspect=aspect,
             skipped=skipped,
             chain_id=chain_id,
             max_credits=effective_max_credits,
-            pending_links=pending_operations,
-            as_json=as_json or output_format == OutputFormat.JSON.value,
-            console=console,
         )
+        console.print("[dim]--dry-run: no video operations submitted, no clips generated.[/dim]")
         return
 
     quiet_output = as_json or output_format in (
@@ -2387,15 +2384,6 @@ def extend(  # noqa: PLR0913
             max_credits=effective_max_credits,
         )
     if dry_run:
-        if is_json:
-            json_output.emit(
-                {
-                    "status": "dry_run",
-                    "command": _EXTEND_COMMAND,
-                    "segments": count,
-                    "max_credits": effective_max_credits,
-                }
-            )
         return
     if migrated and effective_max_credits is not None:
         run_with_handlers(

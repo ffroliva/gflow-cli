@@ -65,6 +65,37 @@ def test_extend_dry_run_shows_max_credits() -> None:
     assert "max credits : 12" in result.output
 
 
+def test_chain_and_extend_dry_run_json_match_develop_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gflow_cli import cli_video
+
+    monkeypatch.setattr(cli_video, "_resolve_profile", lambda _profile: "test")
+    monkeypatch.setattr(cli_video, "_make_provider_dir", lambda _profile: tmp_path)
+    manifest = tmp_path / "chain.jsonl"
+    manifest.write_text('{"prompt":"one"}\n', encoding="utf-8")
+    chain_result = CliRunner().invoke(video, ["chain", str(manifest), "--dry-run", "--json"])
+    assert chain_result.exit_code == 0, chain_result.output
+    assert "Chain plan" in chain_result.output
+    assert "--dry-run: no video operations submitted, no clips generated." in chain_result.output
+    assert "max credits" not in chain_result.output
+
+    extend_result = CliRunner().invoke(
+        video,
+        [
+            "extend",
+            "b9458021-fc2d-4d95-ab53-cf844c6f1079",
+            "continue",
+            "--project",
+            "7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
+            "--dry-run",
+            "--json",
+        ],
+    )
+    assert extend_result.exit_code == 0, extend_result.output
+    assert extend_result.output == ""
+
+
 def test_no_max_credits_ignores_environment_default(monkeypatch: pytest.MonkeyPatch) -> None:
     from gflow_cli import cli_video
 
