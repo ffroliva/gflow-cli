@@ -287,6 +287,7 @@ _PARAM_ALIASES: dict[str, str] = {
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked
 #: admission, NOT an exemption: it exists so a known hole cannot widen unnoticed.
 _OPTION_EXEMPT: dict[str, str] = {
+    "audio narrate:text_file": "reads a local file; the tool takes the text directly",
     "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
     "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
     "image generate:prompts": "resolves to `image t2i`; same reason as `image t2i:prompts`",

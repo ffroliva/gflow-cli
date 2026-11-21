@@ -48,12 +48,56 @@ async def test_mcp_narration_provider_errors_are_typed_and_redacted(
     config.reset_settings()
 
 
+@pytest.mark.asyncio
+async def test_gflow_narrate_creates_missing_output_parent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from gflow_cli import config
+    from gflow_cli.services.audio_narration import NarrationResult
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    config.reset_settings()
+    target = tmp_path / "nested" / "sub" / "voice.mp3"
+    assert not target.parent.exists()
+
+    def fake_narrate(**kwargs):
+        assert kwargs["out_file"].parent.is_dir()
+        return NarrationResult(kwargs["out_file"], "edge", "audio/mpeg")
+
+    monkeypatch.setattr("gflow_cli.mcp.audio_tools.narrate", fake_narrate)
+    response = await gflow_narrate(text="hello", out_file="nested/sub/voice.mp3")
+    assert response["status"] == "ok"
+    assert target.parent.is_dir()
+    config.reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_gflow_narrate_accepts_storage_uri_configured(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from gflow_cli import config
+    from gflow_cli.services.audio_narration import NarrationResult
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_STORAGE_URI", "memory://test-bucket")
+    config.reset_settings()
+    result = NarrationResult(tmp_path / "voice.mp3", "edge", "audio/mpeg")
+    monkeypatch.setattr("gflow_cli.mcp.audio_tools.narrate", lambda **_: result)
+    response = await gflow_narrate(text="hello", out_file="voice.mp3")
+    assert response == {
+        "status": "ok",
+        "out_file": str(result.out_file),
+        "provider": "edge",
+        "media_type": "audio/mpeg",
+    }
+    config.reset_settings()
+
+
 def test_gflow_narrate_is_registered_with_provider_disclosure(mcp_server) -> None:
     tool = mcp_server._tool_manager._tools["gflow_narrate"]
     properties = tool.parameters["properties"]
-    assert {"text", "text_file", "out_file", "provider", "voice", "rate", "pitch"} <= set(
-        properties
-    )
+    assert {"text", "out_file", "provider", "voice", "rate", "pitch"} <= set(properties)
+    assert "text_file" not in properties
     assert {"out_file"} <= set(tool.parameters["required"])
     assert "text is sent to the selected provider" in tool.description.lower()
     assert "flow credits" in tool.description.lower()

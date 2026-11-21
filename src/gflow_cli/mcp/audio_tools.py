@@ -29,19 +29,19 @@ async def gflow_narrate(
     voice: str | None = None,
     rate: str = "+0%",
     pitch: str = "+0Hz",
-    text_file: str | None = None,
 ) -> dict[str, Any]:
-    """Create a narration file; provide exactly one of text or text_file."""
-    output = common._resolve_out_file(out_file, local_only=True)  # pyright: ignore[reportPrivateUsage]
+    """Create a narration file from text."""
+    output = common._resolve_out_file(out_file)  # pyright: ignore[reportPrivateUsage]
     if isinstance(output, dict):
         return output
     if output is None:
         return common._bad_param("Invalid Output", "out_file is required.")  # pyright: ignore[reportPrivateUsage]
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     result = await asyncio.to_thread(
         narrate,
         text=text,
-        text_file=Path(text_file) if text_file else None,
-        out_file=Path(output),
+        out_file=out_path,
         provider=provider,
         voice=voice,
         rate=rate,
