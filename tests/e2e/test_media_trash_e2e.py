@@ -9,9 +9,11 @@ in a finally block.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
-from collections.abc import Iterator
+import sys
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,41 @@ def _walk_lists(node: object) -> list[list[Any]]:
     return result
 
 
+def cleanup_e2e_media_trash(
+    state: dict[str, Any],
+    *,
+    restore_fn: Callable[..., Any] = restore_media_service,
+) -> None:
+    """Restore trashed media in e2e cleanup, failing loudly if restore fails."""
+    if not (state.get("needs_restore") and state.get("media_id") and state.get("project_id")):
+        return
+
+    media_id = str(state["media_id"])
+    project_id = str(state["project_id"])
+    profile = state.get("profile")
+
+    restore_cmd = f"gflow media restore {media_id} --project {project_id}"
+    if profile:
+        restore_cmd += f" --profile {profile}"
+
+    try:
+        coro = restore_fn(
+            target_id=media_id,
+            project_id=project_id,
+            profile=profile,
+        )
+        if inspect.iscoroutine(coro):
+            asyncio.run(coro)
+    except Exception as exc:  # noqa: BLE001
+        msg = (
+            f"\n[E2E CLEANUP FAILURE] Failed to restore media {media_id}: {exc}\n"
+            f"Please restore manually: {restore_cmd}\n"
+        )
+        print(msg, file=sys.stderr)
+        print(msg)
+        raise
+
+
 @pytest.fixture
 def world(e2e_profile_dir: Path) -> Iterator[dict[str, Any]]:
     profile = e2e_profile_dir.name.removeprefix("profile_")
@@ -55,22 +92,7 @@ def world(e2e_profile_dir: Path) -> Iterator[dict[str, Any]]:
         yield state
     finally:
         # Restore in a finally block through restore_media_service (direct, then browser)
-        if state.get("needs_restore") and state.get("media_id") and state.get("project_id"):
-            try:
-                asyncio.run(
-                    restore_media_service(
-                        target=state["media_id"],
-                        project=state["project_id"],
-                        profile=state["profile"],
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(
-                    f"\n[E2E CLEANUP FAILURE] Failed to restore media {state['media_id']}: {exc}\n"
-                    f"Please restore manually: gflow media restore {state['media_id']} "
-                    f"--project {state['project_id']} --profile {state['profile']}\n"
-                )
-                raise
+        cleanup_e2e_media_trash(state)
 
 
 async def _assert_media_listing_state(
@@ -335,3 +357,69 @@ def _zero_credits(world: dict[str, Any]) -> None:
         assert balance_after == world["credits_initial"], (
             f"Credits balance changed: initial={world['credits_initial']}, after={balance_after}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Offline tests for cleanup helper (ensures no signature drift)
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_e2e_media_trash_call_shape_with_fake_service() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def fake_restore(
+        target_id: str, *, project_id: str | None = None, profile: str | None = None
+    ) -> Any:
+        calls.append({"target_id": target_id, "project_id": project_id, "profile": profile})
+
+    state = {
+        "needs_restore": True,
+        "media_id": "media-test-123",
+        "project_id": "proj-test-456",
+        "profile": "prof-test",
+    }
+    cleanup_e2e_media_trash(state, restore_fn=fake_restore)
+    assert calls == [
+        {
+            "target_id": "media-test-123",
+            "project_id": "proj-test-456",
+            "profile": "prof-test",
+        }
+    ]
+
+
+def test_cleanup_e2e_media_trash_signature_matches_restore_media_service() -> None:
+    sig = inspect.signature(restore_media_service)
+    bound = sig.bind(
+        target_id="media-test-123",
+        project_id="proj-test-456",
+        profile="prof-test",
+    )
+    assert bound.arguments["target_id"] == "media-test-123"
+    assert bound.arguments["project_id"] == "proj-test-456"
+    assert bound.arguments["profile"] == "prof-test"
+
+
+def test_cleanup_e2e_media_trash_loud_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    async def failing_restore(
+        target_id: str, *, project_id: str | None = None, profile: str | None = None
+    ) -> Any:
+        raise RuntimeError("Network failure restoring media")
+
+    state = {
+        "needs_restore": True,
+        "media_id": "loud-media-999",
+        "project_id": "loud-proj-888",
+        "profile": "loud-prof-777",
+    }
+    with pytest.raises(RuntimeError, match="Network failure restoring media"):
+        cleanup_e2e_media_trash(state, restore_fn=failing_restore)
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert "[E2E CLEANUP FAILURE]" in output
+    assert "loud-media-999" in output
+    assert (
+        "gflow media restore loud-media-999 --project loud-proj-888 --profile loud-prof-777"
+        in output
+    )
