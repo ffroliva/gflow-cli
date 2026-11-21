@@ -104,6 +104,8 @@ from gflow_cli.api.transports.migrated_upscale import wait_for_or_none  # noqa: 
 from gflow_cli.config import get_settings  # noqa: E402
 from gflow_cli.data.models import AssetKind  # noqa: E402
 from gflow_cli.data.queries import ImageRow, list_images  # noqa: E402
+from gflow_cli.data.repository import DataRepository  # noqa: E402
+from gflow_cli.data.store import DataStore  # noqa: E402
 from gflow_cli.errors import DataStoreError  # noqa: E402
 from gflow_cli.services.media_recovery import resolve_asset  # noqa: E402
 
@@ -474,14 +476,139 @@ def left_nav_filter_selectors(ligature: str) -> tuple[str, ...]:
     )
 
 
-def tile_scoped_selectors(media_id: str, inner_selectors: tuple[str, ...]) -> tuple[str, ...]:
-    """Scope each selector in *inner_selectors* to the tile container for *media_id*."""
-    media_attr = f'[data-media-id="{media_id}"]'
+def tile_scoped_selectors(
+    tile_id: str | None = None,
+    inner_selectors: tuple[str, ...] = (),
+    *,
+    media_id: str | None = None,
+) -> tuple[str, ...]:
+    """Scope each selector in *inner_selectors* to the tile container for *tile_id*."""
+    target_id = tile_id or media_id or ""
+    media_attr = f'[data-media-id="{target_id}"]'
     scoped: list[str] = []
     for tag in TILE_CONTAINER_TAGS:
         for sel in inner_selectors:
             scoped.append(f"{tag}:has({media_attr}) {sel}")
     return tuple(scoped)
+
+
+@dataclass(frozen=True, slots=True)
+class TileResolution:
+    media_id: str
+    tile_id: str
+    tile_id_source: str
+
+
+def extract_listing_id_pairs(
+    listings: list[Any],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Extract media_id <-> workflow_id mappings from Zzl0ze listings.
+
+    Returns (media_to_wf, wf_to_media).
+    """
+    media_to_wf: dict[str, str] = {}
+    wf_to_media: dict[str, str] = {}
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, list):
+            if (
+                len(node) >= 6
+                and isinstance(node[5], list)
+                and all(
+                    isinstance(node[i], str) and bool(UUID_RE.fullmatch(node[i])) for i in (0, 1, 2)
+                )
+            ):
+                wf = str(node[0])
+                m = str(node[2])
+                media_to_wf[m] = wf
+                wf_to_media[wf] = m
+            for child in node:
+                _walk(child)
+        elif isinstance(node, dict):
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, str):
+            if node.startswith(("[", "{")):
+                with contextlib.suppress(Exception):
+                    _walk(json.loads(node))
+
+    for listing in listings:
+        _walk(listing)
+        if isinstance(listing, list) and len(listing) > 1 and isinstance(listing[1], list):
+            for entry in listing[1]:
+                m_id: str | None = None
+                wf_id: str | None = None
+                if (
+                    isinstance(entry, list)
+                    and len(entry) > 0
+                    and isinstance(entry[0], str)
+                    and UUID_RE.fullmatch(entry[0])
+                ):
+                    m_id = str(entry[0])
+                if (
+                    isinstance(entry, list)
+                    and len(entry) > 3
+                    and isinstance(entry[3], list)
+                    and len(entry[3]) > 4
+                    and isinstance(entry[3][4], str)
+                    and UUID_RE.fullmatch(entry[3][4])
+                ):
+                    wf_id = str(entry[3][4])
+                if m_id and wf_id:
+                    media_to_wf[m_id] = wf_id
+                    wf_to_media[wf_id] = m_id
+
+    return media_to_wf, wf_to_media
+
+
+def resolve_tile_id(
+    target_id: str,
+    listings: list[Any],
+    catalog_workflow_id: str | None = None,
+    *,
+    already_matches_tile: bool = False,
+) -> TileResolution | None:
+    """Resolve (media_id, tile_id, tile_id_source) before any DOM tile lookup.
+
+    1. Search Zzl0ze listings captured on project open:
+       - If target_id equals an entry's media_id, take its workflow_id (source='listing').
+       - If target_id equals an entry's workflow_id, take target_id as tile_id (source='listing').
+    2. If already_matches_tile is True, target_id already matches a tile in DOM (source='direct').
+    3. Fall back to catalog_workflow_id for that asset if provided (source='catalog').
+    4. If neither exists, return None.
+    """
+    media_to_wf, wf_to_media = extract_listing_id_pairs(listings)
+
+    if target_id in media_to_wf:
+        return TileResolution(
+            media_id=target_id,
+            tile_id=media_to_wf[target_id],
+            tile_id_source="listing",
+        )
+
+    if target_id in wf_to_media:
+        return TileResolution(
+            media_id=wf_to_media[target_id],
+            tile_id=target_id,
+            tile_id_source="listing",
+        )
+
+    if already_matches_tile:
+        return TileResolution(
+            media_id=target_id,
+            tile_id=target_id,
+            tile_id_source="direct",
+        )
+
+    cat_wf = (catalog_workflow_id or "").strip()
+    if cat_wf:
+        return TileResolution(
+            media_id=target_id,
+            tile_id=cat_wf,
+            tile_id_source="catalog",
+        )
+
+    return None
 
 
 def extract_listing_ids(listings: list[Any]) -> dict[str, set[str]]:
@@ -778,7 +905,46 @@ def run_self_test() -> int:
         ],
     )
 
-    print("self-test: ok (8 helper suites passed)", flush=True)
+    # 9. Tile ID resolution (listing hit, catalog fallback, none, either id accepted)
+    # 9a. Listing hit where target_id equals media_id -> takes workflow_id
+    res_listing = resolve_tile_id(media_id, [mock_listing], catalog_workflow_id=None)
+    assert res_listing is not None, "expected listing hit"
+    assert res_listing.media_id == media_id
+    assert res_listing.tile_id == workflow_id
+    assert res_listing.tile_id_source == "listing"
+
+    # 9b. Listing hit where target_id equals workflow_id (either id accepted)
+    res_wf = resolve_tile_id(workflow_id, [mock_listing], catalog_workflow_id=None)
+    assert res_wf is not None, "expected workflow id listing hit"
+    assert res_wf.media_id == media_id
+    assert res_wf.tile_id == workflow_id
+    assert res_wf.tile_id_source == "listing"
+
+    # 9c. Catalog fallback when listing does not contain target_id
+    cat_fallback_wf = "77777777-6666-5555-4444-333333333333"
+    res_cat = resolve_tile_id(media_id, [], catalog_workflow_id=cat_fallback_wf)
+    assert res_cat is not None, "expected catalog fallback"
+    assert res_cat.media_id == media_id
+    assert res_cat.tile_id == cat_fallback_wf
+    assert res_cat.tile_id_source == "catalog"
+
+    # 9d. None when neither listing nor catalog can resolve it
+    res_none = resolve_tile_id(
+        "00000000-0000-0000-0000-000000000000", [mock_listing], catalog_workflow_id=None
+    )
+    assert res_none is None, f"expected None, got {res_none}"
+    res_none_empty = resolve_tile_id(media_id, [], catalog_workflow_id="")
+    assert res_none_empty is None, f"expected None for empty catalog wf, got {res_none_empty}"
+
+    # 9e. Direct DOM match when already matching tile
+    res_direct = resolve_tile_id(
+        workflow_id, [], catalog_workflow_id=None, already_matches_tile=True
+    )
+    assert res_direct is not None, "expected direct match"
+    assert res_direct.tile_id == workflow_id
+    assert res_direct.tile_id_source == "direct"
+
+    print("self-test: ok (9 helper suites passed)", flush=True)
     return 0
 
 
@@ -1345,24 +1511,24 @@ class WireRecorder:
 # ---------------------------------------------------------------------------
 
 
-def _tile_selector(media_id: str, asb_token: str = "") -> str:
-    parts = [f'img[data-media-id="{media_id}"]', f'[data-media-id="{media_id}"]']
+def _tile_selector(tile_id: str, asb_token: str = "") -> str:
+    parts = [f'img[data-media-id="{tile_id}"]', f'[data-media-id="{tile_id}"]']
     if asb_token:
         parts.append(f'img[src*="/asb/{asb_token}"]')
     return ", ".join(parts)
 
 
-async def _is_media_visible_in_dom(page: Any, media_id: str, asb_token: str = "") -> bool:
-    loc = page.locator(_tile_selector(media_id, asb_token)).first
+async def _is_media_visible_in_dom(page: Any, tile_id: str, asb_token: str = "") -> bool:
+    loc = page.locator(_tile_selector(tile_id, asb_token)).first
     try:
         return await loc.is_visible()
     except Exception:  # noqa: BLE001
         return False
 
 
-async def _is_media_attached_and_visible(page: Any, media_id: str, asb_token: str = "") -> bool:
+async def _is_media_attached_and_visible(page: Any, tile_id: str, asb_token: str = "") -> bool:
     """True when ``img[data-media-id="<id>"]`` is attached and visible."""
-    loc = page.locator(_tile_selector(media_id, asb_token)).first
+    loc = page.locator(_tile_selector(tile_id, asb_token)).first
     try:
         if await loc.count() == 0:
             return False
@@ -1414,7 +1580,8 @@ async def _expand_sidebar_if_collapsed(page: Any, tried: list[str]) -> None:
 async def _filter_and_scroll_to_tile(
     page: Any,
     *,
-    media_id: str,
+    tile_id: str | None = None,
+    media_id: str | None = None,
     asb_token: str = "",
     media_kind: str = "image",
     max_scroll_steps: int = 80,
@@ -1429,6 +1596,7 @@ async def _filter_and_scroll_to_tile(
        ``cdk-virtual-scroll-viewport``) in overlapping viewport steps until
        ``img[data-media-id="<id>"]`` is attached and visible, or the scroll stops moving.
     """
+    target_id = tile_id or media_id or ""
     await wait_for_or_none(page, SHELL_READY_SELECTOR, 12_000)
 
     ligatures_to_try = filter_ligatures_for_kind(media_kind)
@@ -1463,7 +1631,7 @@ async def _filter_and_scroll_to_tile(
         # Wait briefly for the grid's initial tiles to render after any filter transition.
         await wait_for_or_none(page, "img[data-media-id], [data-media-id]", 4_000)
 
-        if await _is_media_attached_and_visible(page, media_id, asb_token):
+        if await _is_media_attached_and_visible(page, target_id, asb_token):
             tile_found = True
             meta = await page.evaluate(_SCROLL_GRID_STEP_JS, {"reset": False})
             container_tag = meta.get("container_tag")
@@ -1478,7 +1646,7 @@ async def _filter_and_scroll_to_tile(
         last_scroll_height = int(reset_info.get("scroll_height") or 0)
         if reset_info.get("moved"):
             await page.wait_for_timeout(350)
-            if await _is_media_attached_and_visible(page, media_id, asb_token):
+            if await _is_media_attached_and_visible(page, target_id, asb_token):
                 tile_found = True
                 break
 
@@ -1491,14 +1659,14 @@ async def _filter_and_scroll_to_tile(
             last_scroll_height = int(step_info.get("scroll_height") or 0)
             await page.wait_for_timeout(400)
 
-            if await _is_media_attached_and_visible(page, media_id, asb_token):
+            if await _is_media_attached_and_visible(page, target_id, asb_token):
                 tile_found = True
                 break
 
             if not step_info.get("moved"):
                 # Allow one extra beat at the bottom in case lazy-load extends scrollHeight.
                 await page.wait_for_timeout(600)
-                if await _is_media_attached_and_visible(page, media_id, asb_token):
+                if await _is_media_attached_and_visible(page, target_id, asb_token):
                     tile_found = True
                     break
                 retry_info = await page.evaluate(_SCROLL_GRID_STEP_JS, {"reset": False})
@@ -1509,7 +1677,7 @@ async def _filter_and_scroll_to_tile(
                 last_scroll_top = int(retry_info.get("after_top") or 0)
                 last_scroll_height = int(retry_info.get("scroll_height") or 0)
                 await page.wait_for_timeout(400)
-                if await _is_media_attached_and_visible(page, media_id, asb_token):
+                if await _is_media_attached_and_visible(page, target_id, asb_token):
                     tile_found = True
                     break
 
@@ -1546,15 +1714,17 @@ async def _open_tile_overflow_or_context_menu(
     page: Any,
     *,
     tile: Any,
-    media_id: str,
+    tile_id: str | None = None,
+    media_id: str | None = None,
     tried_triggers: list[str],
 ) -> tuple[str | None, bool]:
     """Open the hovered tile's overflow menu (or right-click context menu).
 
     Returns ``(matched_trigger_selector, menu_opened)``.
     """
+    target_id = tile_id or media_id or ""
     overflow_candidates = (
-        *tile_scoped_selectors(media_id, TILE_OVERFLOW_INNER_SELECTORS),
+        *tile_scoped_selectors(target_id, TILE_OVERFLOW_INNER_SELECTORS),
         *NON_HEADER_OVERFLOW_SELECTORS,
     )
     trig_sel, trig_loc = await _first_visible_match(
@@ -1579,18 +1749,20 @@ async def _open_tile_overflow_or_context_menu(
 async def _probe_tile_menu_dry_run(
     page: Any,
     *,
-    media_id: str,
+    tile_id: str | None = None,
+    media_id: str | None = None,
     asb_token: str,
 ) -> dict[str, Any]:
     """Hover the tile, open its overflow/context menu, record menu DOM inventory, and Escape."""
+    target_id = tile_id or media_id or ""
     tried_triggers: list[str] = []
     tried_actions: list[str] = []
-    tile_sel = _tile_selector(media_id, asb_token)
+    tile_sel = _tile_selector(target_id, asb_token)
     tile = await wait_for_or_none(page, tile_sel, 5_000)
     if tile is None:
         return {
             "tile_found": False,
-            "tile_context": await page.evaluate(_TILE_CONTEXT_JS, media_id),
+            "tile_context": await page.evaluate(_TILE_CONTEXT_JS, target_id),
             "menu_opened": False,
             "trigger_tried": tried_triggers,
             "trigger_matched": None,
@@ -1605,15 +1777,15 @@ async def _probe_tile_menu_dry_run(
     await tile.scroll_into_view_if_needed(timeout=5_000)
     await tile.hover(timeout=5_000)
     await page.wait_for_timeout(500)
-    tile_context = await page.evaluate(_TILE_CONTEXT_JS, media_id)
+    tile_context = await page.evaluate(_TILE_CONTEXT_JS, target_id)
 
-    scoped_direct = tile_scoped_selectors(media_id, TRASH_BUTTON_SELECTORS)
+    scoped_direct = tile_scoped_selectors(target_id, TRASH_BUTTON_SELECTORS)
     direct_trash_sel, _ = await _first_visible_match(
         page, scoped_direct, tried=tried_actions, timeout_ms=400
     )
 
     matched_trigger, menu_opened = await _open_tile_overflow_or_context_menu(
-        page, tile=tile, media_id=media_id, tried_triggers=tried_triggers
+        page, tile=tile, tile_id=target_id, tried_triggers=tried_triggers
     )
     dom_inventory = await page.evaluate(_STRUCTURAL_INVENTORY_JS)
     candidate_trash_sel, _ = await _first_visible_match(
@@ -1664,12 +1836,14 @@ async def _confirm_dialog_if_present(
 async def _trigger_tile_action(
     page: Any,
     *,
-    media_id: str,
+    tile_id: str | None = None,
+    media_id: str | None = None,
     asb_token: str,
     menuitem_selectors: tuple[str, ...],
     direct_button_selectors: tuple[str, ...],
 ) -> dict[str, Any]:
     """Open the item's menu or toolbar structurally and click the target action (Trash/Restore)."""
+    target_id = tile_id or media_id or ""
     tried_triggers: list[str] = []
     tried_actions: list[str] = []
     tried_dialogs: list[str] = []
@@ -1678,12 +1852,12 @@ async def _trigger_tile_action(
         "action": None,
         "confirm_dialog": None,
     }
-    tile_sel = _tile_selector(media_id, asb_token)
+    tile_sel = _tile_selector(target_id, asb_token)
     tile = await wait_for_or_none(page, tile_sel, 5_000)
     if tile is None:
         return {
             "tile_found": False,
-            "tile_context": await page.evaluate(_TILE_CONTEXT_JS, media_id),
+            "tile_context": await page.evaluate(_TILE_CONTEXT_JS, target_id),
             "anchors_tried": {
                 "trigger": tried_triggers,
                 "action": tried_actions,
@@ -1696,10 +1870,10 @@ async def _trigger_tile_action(
     await tile.scroll_into_view_if_needed(timeout=5_000)
     await tile.hover(timeout=5_000)
     await page.wait_for_timeout(500)
-    tile_context = await page.evaluate(_TILE_CONTEXT_JS, media_id)
+    tile_context = await page.evaluate(_TILE_CONTEXT_JS, target_id)
 
     # Strategy 1: direct action button visible inside the hovered tile card.
-    scoped_direct = tile_scoped_selectors(media_id, direct_button_selectors)
+    scoped_direct = tile_scoped_selectors(target_id, direct_button_selectors)
     action_sel, action_loc = await _first_visible_match(
         page, scoped_direct, tried=tried_actions, timeout_ms=500
     )
@@ -1710,7 +1884,7 @@ async def _trigger_tile_action(
     # Strategy 2: tile-scoped (or non-header) overflow menu button, then menuitem with ligature.
     if action_loc is None:
         overflow_candidates = (
-            *tile_scoped_selectors(media_id, TILE_OVERFLOW_INNER_SELECTORS),
+            *tile_scoped_selectors(target_id, TILE_OVERFLOW_INNER_SELECTORS),
             *NON_HEADER_OVERFLOW_SELECTORS,
         )
         trig_sel, trig_loc = await _first_visible_match(
@@ -1924,8 +2098,8 @@ def _print_candidates_and_refuse(
 # ---------------------------------------------------------------------------
 
 
-async def _extract_tile_asb_token(page: Any, media_id: str) -> str:
-    tile_loc = page.locator(_tile_selector(media_id)).first
+async def _extract_tile_asb_token(page: Any, tile_id: str) -> str:
+    tile_loc = page.locator(_tile_selector(tile_id)).first
     if await tile_loc.count() == 0:
         return ""
     src_attr = await tile_loc.get_attribute("src")
@@ -1963,6 +2137,9 @@ async def _run_live(
     host_served = "unknown"
     asb_token = ""
     resolved_kind = media_kind
+    resolved_media_id = media_id
+    tile_id = workflow_id or ""
+    tile_id_source: str | None = None
 
     project_filter_scroll: dict[str, Any] = {}
     trash_filter_scroll: dict[str, Any] = {}
@@ -2002,20 +2179,82 @@ async def _run_live(
             await wait_for_or_none(page, SHELL_READY_SELECTOR, 12_000)
             await page.wait_for_timeout(1_500)
 
-            observed_in_unfiltered_top_grid = await _is_media_visible_in_dom(page, media_id)
+            # Resolve the tile id before any DOM lookup
+            tile_already_visible = await _is_media_visible_in_dom(page, media_id)
+            resolution = resolve_tile_id(
+                media_id,
+                recorder.listings,
+                catalog_workflow_id=workflow_id or None,
+                already_matches_tile=tile_already_visible,
+            )
+            if resolution is None:
+                msg = (
+                    f"[spike-1363] REFUSED: could not resolve tile id for --media-id {media_id}: "
+                    "not found in Zzl0ze listing and no catalog flow_workflow_id (nothing clicked)."
+                )
+                print(msg, file=sys.stderr, flush=True)
+                run_error = msg
+                timings_ms["project_open"] = round((time.monotonic() - t0) * 1000, 1)
+                timings_ms["total"] = round((time.monotonic() - t_run_start) * 1000, 1)
+                summary_doc = {
+                    "spike": "1363-media-trash-and-restore",
+                    "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "host_served": host_served,
+                    "dry_run": dry_run,
+                    "media_kind": resolved_kind,
+                    "media_id": media_id,
+                    "tile_id": None,
+                    "tile_id_source": None,
+                    "positive_control": {
+                        "zzl0ze_seen": bool(recorder.listings),
+                        "media_in_initial_listing": False,
+                        "media_in_unfiltered_top_grid": False,
+                        "media_in_initial_grid": False,
+                        "filter_ligature_clicked": None,
+                        "scroll_steps": 0,
+                        "filter_scroll": {},
+                    },
+                    "timings_ms": timings_ms,
+                    "restored_cleanly": False,
+                    "manual_restore_needed": False,
+                    "error": run_error,
+                }
+                summary_path = out_dir / "summary.json"
+                summary_path.write_text(
+                    json.dumps(summary_doc, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                step("out", f"summary -> {summary_path}", prefix="1363")
+                return 1
+
+            resolved_media_id = resolution.media_id
+            tile_id = resolution.tile_id
+            tile_id_source = resolution.tile_id_source
+            targets["media_id"] = resolved_media_id
+            targets["workflow_id"] = tile_id
+            recorder.targets = targets
+
+            step(
+                "1a",
+                f"Resolved tile id {tile_id[:8]}… from {tile_id_source} "
+                f"(media_id: {resolved_media_id[:8]}…)",
+                prefix="1363",
+            )
+
+            observed_in_unfiltered_top_grid = await _is_media_visible_in_dom(page, tile_id)
             if resolved_kind == "unknown" and recorder.listings:
-                clip = mx.source_record(recorder.listings[0], media_id)
+                clip = mx.source_record(recorder.listings[0], resolved_media_id)
                 if clip is not None and clip.kind in ("image", "video"):
                     resolved_kind = clip.kind
 
             step(
                 "1b",
-                f"Filtering left-nav ({resolved_kind}) and scrolling grid to {media_id[:8]}…",
+                f"Filtering left-nav ({resolved_kind}) and scrolling grid to {tile_id[:8]}…",
                 prefix="1363",
             )
             project_filter_scroll = await _filter_and_scroll_to_tile(
                 page,
-                media_id=media_id,
+                tile_id=tile_id,
                 asb_token=asb_token,
                 media_kind=resolved_kind,
             )
@@ -2024,14 +2263,14 @@ async def _run_live(
                 await page.wait_for_timeout(1_500)
                 project_filter_scroll = await _filter_and_scroll_to_tile(
                     page,
-                    media_id=media_id,
+                    tile_id=tile_id,
                     asb_token=asb_token,
                     media_kind=resolved_kind,
                 )
 
             observed_in_initial_grid = bool(project_filter_scroll.get("tile_found"))
             if observed_in_initial_grid:
-                asb_token = await _extract_tile_asb_token(page, media_id)
+                asb_token = await _extract_tile_asb_token(page, tile_id)
             timings_ms["project_open"] = round((time.monotonic() - t0) * 1000, 1)
 
             if dry_run:
@@ -2039,12 +2278,12 @@ async def _run_live(
                 recorder.set_step("dry_run_menu")
                 step(
                     "2",
-                    f"Dry-run: opening overflow/context menu for {media_id[:8]}… (no Trash click)",
+                    f"Dry-run: opening menu for tile {tile_id[:8]}… (no Trash click)",
                     prefix="1363",
                 )
                 dry_run_menu_info = await _probe_tile_menu_dry_run(
                     page,
-                    media_id=media_id,
+                    tile_id=tile_id,
                     asb_token=asb_token,
                 )
                 timings_ms["dry_run_menu"] = round((time.monotonic() - t0) * 1000, 1)
@@ -2058,18 +2297,22 @@ async def _run_live(
                 # 3. Step (a) & (b): Open menu/toolbar on the item in grid, click Trash, confirm
                 t0 = time.monotonic()
                 recorder.set_step("trash")
-                step("2", f"Moving media {media_id[:8]}… to Trash", prefix="1363")
-                if not await _is_media_attached_and_visible(page, media_id, asb_token):
+                step(
+                    "2",
+                    f"Moving media {resolved_media_id[:8]}… (tile {tile_id[:8]}…) to Trash",
+                    prefix="1363",
+                )
+                if not await _is_media_attached_and_visible(page, tile_id, asb_token):
                     project_filter_scroll = await _filter_and_scroll_to_tile(
                         page,
-                        media_id=media_id,
+                        tile_id=tile_id,
                         asb_token=asb_token,
                         media_kind=resolved_kind,
                     )
                 item_may_be_trashed = True
                 trash_action_info = await _trigger_tile_action(
                     page,
-                    media_id=media_id,
+                    tile_id=tile_id,
                     asb_token=asb_token,
                     menuitem_selectors=TRASH_MENUITEM_SELECTORS,
                     direct_button_selectors=TRASH_BUTTON_SELECTORS,
@@ -2091,7 +2334,7 @@ async def _run_live(
                     await page.wait_for_timeout(2_500)
 
                 observed_gone_from_grid = not await _is_media_visible_in_dom(
-                    page, media_id, asb_token
+                    page, tile_id, asb_token
                 )
                 if trash_action_info.get("anchors_matched", {}).get("action") is None:
                     # No trash action was clicked at all, so the item was not moved.
@@ -2106,7 +2349,7 @@ async def _run_live(
                 )
                 trash_filter_scroll = await _filter_and_scroll_to_tile(
                     page,
-                    media_id=media_id,
+                    tile_id=tile_id,
                     asb_token=asb_token,
                     media_kind=resolved_kind,
                 )
@@ -2124,17 +2367,21 @@ async def _run_live(
                 # 6. Step (d): Restore the item from the Trash view
                 t0 = time.monotonic()
                 recorder.set_step("restore")
-                step("4", f"Restoring media {media_id[:8]}… from Trash", prefix="1363")
-                if not await _is_media_attached_and_visible(page, media_id, asb_token):
+                step(
+                    "4",
+                    f"Restoring media {resolved_media_id[:8]}… (tile {tile_id[:8]}…) from Trash",
+                    prefix="1363",
+                )
+                if not await _is_media_attached_and_visible(page, tile_id, asb_token):
                     trash_filter_scroll = await _filter_and_scroll_to_tile(
                         page,
-                        media_id=media_id,
+                        tile_id=tile_id,
                         asb_token=asb_token,
                         media_kind=resolved_kind,
                     )
                 restore_action_info = await _trigger_tile_action(
                     page,
-                    media_id=media_id,
+                    tile_id=tile_id,
                     asb_token=asb_token,
                     menuitem_selectors=RESTORE_MENUITEM_SELECTORS,
                     direct_button_selectors=RESTORE_BUTTON_SELECTORS,
@@ -2142,7 +2389,7 @@ async def _run_live(
                 restore_action_info["filter_scroll"] = trash_filter_scroll
                 restore_action_info["scroll_steps"] = trash_filter_scroll.get("scroll_steps", 0)
                 observed_gone_from_trash = not await _is_media_visible_in_dom(
-                    page, media_id, asb_token
+                    page, tile_id, asb_token
                 )
                 timings_ms["restore"] = round((time.monotonic() - t0) * 1000, 1)
 
@@ -2155,7 +2402,7 @@ async def _run_live(
                 )
                 verify_filter_scroll = await _filter_and_scroll_to_tile(
                     page,
-                    media_id=media_id,
+                    tile_id=tile_id,
                     asb_token=asb_token,
                     media_kind=resolved_kind,
                 )
@@ -2164,7 +2411,7 @@ async def _run_live(
                     await page.wait_for_timeout(1_500)
                     verify_filter_scroll = await _filter_and_scroll_to_tile(
                         page,
-                        media_id=media_id,
+                        tile_id=tile_id,
                         asb_token=asb_token,
                         media_kind=resolved_kind,
                     )
@@ -2190,13 +2437,13 @@ async def _run_live(
                         await page.wait_for_timeout(2_500)
                     await _filter_and_scroll_to_tile(
                         page,
-                        media_id=media_id,
+                        tile_id=tile_id,
                         asb_token=asb_token,
                         media_kind=resolved_kind,
                     )
                     await _trigger_tile_action(
                         page,
-                        media_id=media_id,
+                        tile_id=tile_id,
                         asb_token=asb_token,
                         menuitem_selectors=RESTORE_MENUITEM_SELECTORS,
                         direct_button_selectors=RESTORE_BUTTON_SELECTORS,
@@ -2208,7 +2455,7 @@ async def _run_live(
                     )
                     em_verify = await _filter_and_scroll_to_tile(
                         page,
-                        media_id=media_id,
+                        tile_id=tile_id,
                         asb_token=asb_token,
                         media_kind=resolved_kind,
                     )
@@ -2229,7 +2476,8 @@ async def _run_live(
             idle_trash = recorder.idle_rpc_ids("idle_before_trash")
             idle_restore = recorder.idle_rpc_ids("idle_before_restore") | idle_trash
             initial_listing_matches = any(
-                bool(find_id_positions(listing, {"media_id": media_id}).get("media_id"))
+                bool(find_id_positions(listing, {"media_id": resolved_media_id}).get("media_id"))
+                or bool(find_id_positions(listing, {"workflow_id": tile_id}).get("workflow_id"))
                 for listing in recorder.listings[:1]
             )
             summary_doc: dict[str, Any] = {
@@ -2238,6 +2486,9 @@ async def _run_live(
                 "host_served": host_served,
                 "dry_run": dry_run,
                 "media_kind": resolved_kind,
+                "media_id": resolved_media_id,
+                "tile_id": tile_id,
+                "tile_id_source": tile_id_source,
                 "positive_control": {
                     "zzl0ze_seen": bool(recorder.listings),
                     "media_in_initial_listing": initial_listing_matches,
@@ -2290,8 +2541,8 @@ async def _run_live(
             step("out", f"summary -> {summary_path}", prefix="1363")
             if item_may_be_trashed:
                 print(
-                    f"\n[spike-1363] MANUAL RESTORE REQUIRED: media_id={media_id} "
-                    f"may still be in Trash.\n"
+                    f"\n[spike-1363] MANUAL RESTORE REQUIRED: media_id={resolved_media_id} "
+                    f"(tile_id={tile_id}) may still be in Trash.\n"
                     f"[spike-1363] Open Trash view and restore by hand: {trash_url}",
                     file=sys.stderr,
                     flush=True,
@@ -2638,7 +2889,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         asset = resolve_asset(args.media_id, profile=profile, route="spike.1363")
     except DataStoreError as exc:
-        if not (profile and project_id):
+        asset = None
+        if profile is not None:
+            with contextlib.suppress(Exception):
+                with DataStore.open(get_settings().resolved_db_path()) as store:
+                    asset = DataRepository(store).get_asset_by_any_id(profile, args.media_id)
+        if asset is None and profile is None:
+            with contextlib.suppress(Exception):
+                with DataStore.open(get_settings().resolved_db_path()) as store:
+                    rows = store.conn.execute(
+                        "SELECT id, profile_name FROM assets WHERE flow_workflow_id = ? LIMIT 2",
+                        (args.media_id,),
+                    ).fetchall()
+                    if len(rows) == 1:
+                        asset = DataRepository(store).get_asset_by_any_id(
+                            str(rows[0]["profile_name"]), args.media_id
+                        )
+        if asset is None and not (profile and project_id):
             print(
                 f"[spike-1363] Catalog lookup failed ({exc.detail}); pass both --profile and "
                 "--project if the item is not in the local catalog.",
@@ -2646,7 +2913,6 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
             return 2
-        asset = None
 
     if asset is not None:
         if asset.kind is not AssetKind.IMAGE and not args.allow_non_image:
