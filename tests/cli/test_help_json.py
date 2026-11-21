@@ -108,6 +108,8 @@ EXPECTED_TREE: dict[str, bool] = {
     "serve": False,
     "video transcribe": False,
     "video captions": False,
+    "media trash": False,
+    "media restore": False,
 }
 
 

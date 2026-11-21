@@ -289,7 +289,8 @@ class FlowApiError(GFlowError):
         "Check request parameters and network connection, then retry the API call."
     )
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, code: int | None = None, **kwargs: Any) -> None:
+        self.code = code
         # `bool` is a subclass of `int`, so `isinstance(True, int)` is True.
         # Exclude bools explicitly so an accidental FlowApiError(True, ...) takes
         # the new-style path (and surfaces as a TypeError downstream) instead of
@@ -431,6 +432,7 @@ class RateLimitError(FlowApiError):
         route: str = "",
         remediation_hint: str | None = None,
         retry_after: float | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -438,6 +440,7 @@ class RateLimitError(FlowApiError):
             instance=instance,
             route=route,
             remediation_hint=remediation_hint,
+            charged=charged,
         )
         self.retry_after = retry_after
 
@@ -542,6 +545,7 @@ class WireFormatError(FlowApiError):
         route: str = "",
         remediation_hint: str | None = None,
         discovery: dict[str, Any] | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -549,6 +553,7 @@ class WireFormatError(FlowApiError):
             instance=instance,
             route=route,
             remediation_hint=remediation_hint,
+            charged=charged,
         )
         self.discovery = discovery or {}
 

@@ -312,15 +312,22 @@ class AssetsRepo(RepositoryBase):
         profile_name: str,
         ref_id: str,
     ) -> AssetLookup | None:
+        if not ref_id or not ref_id.strip():
+            return None
+        clean_id = ref_id.strip()
         row = self._store.conn.execute(
             f"""
             SELECT {_ASSET_LOOKUP_COLUMNS}
             FROM assets
-            WHERE profile_name = ? AND (flow_media_id = ? OR flow_workflow_id = ? OR id = ?)
+            WHERE profile_name = ? AND (
+                (flow_media_id = ? AND flow_media_id != '') OR
+                (flow_workflow_id = ? AND flow_workflow_id != '') OR
+                (id = ? AND id != '')
+            )
             ORDER BY created_at DESC
             LIMIT 1
             """,  # noqa: S608 - constants and ? placeholders only, values stay bound
-            (profile_name, ref_id, ref_id, ref_id),
+            (profile_name, clean_id, clean_id, clean_id),
         ).fetchone()
         if row is None:
             return None
@@ -343,6 +350,33 @@ class AssetsRepo(RepositoryBase):
             """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             (flow_media_id,),
         ).fetchall()
+        return [self._hydrate_asset_lookup(row) for row in rows]
+
+    def find_assets_by_any_id(
+        self, ref_id: str, profile_name: str | None = None
+    ) -> list[AssetLookup]:
+        """Return every asset matching ``ref_id`` (flow_media_id, flow_workflow_id, or catalog ID).
+
+        Used when resolving media targets across all profiles (#1363).
+        """
+        if not ref_id or not ref_id.strip():
+            return []
+        clean_id = ref_id.strip()
+        query = f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
+            FROM assets
+            WHERE (
+                (flow_media_id = ? AND flow_media_id != '') OR
+                (flow_workflow_id = ? AND flow_workflow_id != '') OR
+                (id = ? AND id != '')
+            )
+        """  # noqa: S608
+        params: list[object] = [clean_id, clean_id, clean_id]
+        if profile_name is not None:
+            query += " AND profile_name = ?"
+            params.append(profile_name)
+        query += " ORDER BY profile_name ASC, id ASC"
+        rows = self._store.conn.execute(query, params).fetchall()  # noqa: S608
         return [self._hydrate_asset_lookup(row) for row in rows]
 
     def _hydrate_asset_lookup(self, row: sqlite3.Row) -> AssetLookup:
