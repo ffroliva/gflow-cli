@@ -371,6 +371,54 @@ def test_audio_decode_does_not_require_numpy(
     assert wav.startswith(b"RIFF")
 
 
+def test_audio_decode_is_lazy(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Frames are resampled as they are decoded, never collected first (long clips)."""
+    real_av = pytest.importorskip("av")
+    state = {"exhausted": False, "exhausted_at_first_resample": None}
+
+    class _Container:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+            self.streams = inner.streams
+            self.duration = inner.duration
+
+        def __enter__(self) -> "_Container":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self._inner.close()
+
+        def decode(self, *args: Any) -> Any:
+            yield from self._inner.decode(*args)
+            state["exhausted"] = True
+
+    class _Resampler:
+        def __init__(self, **kwargs: Any) -> None:
+            self._inner = real_av.AudioResampler(**kwargs)
+
+        def resample(self, frame: Any) -> Any:
+            if frame is not None and state["exhausted_at_first_resample"] is None:
+                state["exhausted_at_first_resample"] = state["exhausted"]
+            return self._inner.resample(frame)
+
+    fake_av = SimpleNamespace(
+        open=lambda path: _Container(real_av.open(path)),
+        AudioResampler=_Resampler,
+        time_base=real_av.time_base,
+    )
+    real_require = service._require_chain_extra
+    monkeypatch.setattr(
+        service, "_require_chain_extra", lambda: (fake_av, real_require()[1])
+    )
+
+    wav, _ = extract_wav_bytes(media_files[0])
+
+    assert wav.startswith(b"RIFF")
+    assert state["exhausted_at_first_resample"] is False
+
+
 def test_extract_wav_bytes_preserves_leading_audio_offset_and_gaps(
     media_files: tuple[Path, Path], tmp_path: Path
 ) -> None:

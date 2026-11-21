@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import itertools
 import os
 import re
 import tempfile
@@ -327,7 +328,8 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
             samples: list[bytes] = []
             written_samples = 0
             duration = float(container.duration or 0) / av.time_base
-            for raw_frame in (*container.decode(stream), None):
+            # chain keeps decoding lazy; None drains the resampler at the end.
+            for raw_frame in itertools.chain(container.decode(stream), (None,)):
                 if raw_frame is not None and raw_frame.time_base is None:
                     raw_frame.time_base = stream.time_base
                 for frame in resampler.resample(raw_frame):
