@@ -28,3 +28,17 @@ Feature: Trashing and restoring an image on a live profile spends zero credits (
     Then the MCP response reports status "restored"
     And Flow's project listing reports the media active
     And zero credits were charged
+
+  Scenario: Trashing and restoring an image via CLI forcing browser fallback spends zero credits (#1363)
+    Given the e2e profile is signed in to Flow
+    And an existing generated image asset is cataloged for the project
+    When I run "gflow media trash <media_id> --yes --json" forcing browser fallback
+    Then the command exits with code 0
+    And the JSON output reports status "trashed"
+    And Flow's project listing reports the media archived
+    And zero credits were charged
+    When I run "gflow media restore <media_id> --json" forcing browser fallback
+    Then the command exits with code 0
+    And the JSON output reports status "restored"
+    And Flow's project listing reports the media active
+    And zero credits were charged

@@ -19,17 +19,25 @@ import pytest
 from click.testing import CliRunner
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from gflow_cli.api import flow_wire
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports._mc_submit_observe import read_project_listing
-from gflow_cli.api.transports.batchexecute import find_record
 from gflow_cli.cli import main
 from gflow_cli.config import get_settings
-from gflow_cli.data.store import DataStore
 from gflow_cli.mcp import media_trash_tools
 from gflow_cli.services import credits
+from gflow_cli.services.media_trash import restore_media_service
 
 scenarios("../features/media_trash_live.feature")
+
+
+def _walk_lists(node: object) -> list[list[Any]]:
+    """Walk nested lists depth-first."""
+    if not isinstance(node, list):
+        return []
+    result: list[list[Any]] = [node]
+    for item in node:
+        result.extend(_walk_lists(item))
+    return result
 
 
 @pytest.fixture
@@ -41,22 +49,28 @@ def world(e2e_profile_dir: Path) -> Iterator[dict[str, Any]]:
         "needs_restore": False,
         "media_id": None,
         "project_id": None,
+        "credits_initial": None,
     }
     try:
         yield state
     finally:
-        # Restore in a finally block to ensure the live Flow project is not left trashed
+        # Restore in a finally block through restore_media_service (direct, then browser)
         if state.get("needs_restore") and state.get("media_id") and state.get("project_id"):
             try:
                 asyncio.run(
-                    flow_wire.direct_restore_media(
-                        e2e_profile_dir,
-                        state["media_id"],
-                        state["project_id"],
+                    restore_media_service(
+                        target=state["media_id"],
+                        project=state["project_id"],
+                        profile=state["profile"],
                     )
                 )
-            except Exception:  # noqa: BLE001 - backstop cleanup
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"\n[E2E CLEANUP FAILURE] Failed to restore media {state['media_id']}: {exc}\n"
+                    f"Please restore manually: gflow media restore {state['media_id']} "
+                    f"--project {state['project_id']} --profile {state['profile']}\n"
+                )
+                raise
 
 
 async def _assert_media_listing_state(
@@ -68,20 +82,37 @@ async def _assert_media_listing_state(
         assert page is not None
         listing = await read_project_listing(page, project_id, budget_s=30.0)
         assert listing is not None, "Failed to read Zzl0ze project listing from Flow"
-        rec = find_record(listing, (2, media_id))
+
+        found_entry: list[Any] | None = None
+        if isinstance(listing, list) and len(listing) > 1 and isinstance(listing[1], list):
+            for entry in listing[1]:
+                if isinstance(entry, list) and len(entry) > 0 and entry[0] == media_id:
+                    found_entry = entry
+                    break
+        if found_entry is None and isinstance(listing, list):
+            for item in _walk_lists(listing):
+                if len(item) > 3 and item[0] == media_id and isinstance(item[3], list):
+                    found_entry = item
+                    break
+
         if archived:
-            is_archived = rec is None or (
-                len(rec) > 3 and isinstance(rec[3], list) and len(rec[3]) > 2 and rec[3][2] == 1
+            is_archived = found_entry is None or (
+                len(found_entry) > 3
+                and isinstance(found_entry[3], list)
+                and len(found_entry[3]) > 2
+                and found_entry[3][2] in (True, 1)
             )
             assert is_archived, (
-                f"Media {media_id} was expected to be archived in Zzl0ze, but was active: {rec}"
+                f"Media {media_id} was expected to be archived in Zzl0ze, but was active: {found_entry}"
             )
         else:
-            assert rec is not None, (
+            assert found_entry is not None, (
                 f"Media {media_id} was expected in Zzl0ze listing after restore, but was not found"
             )
-            if len(rec) > 3 and isinstance(rec[3], list) and len(rec[3]) > 2:
-                assert rec[3][2] != 1, f"Media {media_id} still has archived flag in Zzl0ze: {rec}"
+            if len(found_entry) > 3 and isinstance(found_entry[3], list) and len(found_entry[3]) > 2:
+                assert found_entry[3][2] not in (True, 1), (
+                    f"Media {media_id} still has archived flag in Zzl0ze: {found_entry}"
+                )
 
 
 @given("the e2e profile is signed in to Flow")
@@ -98,34 +129,16 @@ def _profile(world: dict[str, Any], e2e_profile_dir: Path) -> None:
 
 @given("an existing generated image asset is cataloged for the project")
 def _cataloged_image(world: dict[str, Any]) -> None:
-    settings = get_settings()
-    db_path = settings.db_path or (settings.home / "gflow.db")
-    store = DataStore.open(db_path)
-    profile = world["profile"]
-
     env_media = os.environ.get("GFLOW_CLI_E2E_MEDIA_ID", "").strip()
     env_project = os.environ.get("GFLOW_CLI_E2E_PROJECT", "").strip()
-    if env_media and env_project:
-        world["media_id"] = env_media
-        world["project_id"] = env_project
-        return
-
-    with store.transaction():
-        row = store.conn.execute(
-            "SELECT flow_media_id, flow_project_id FROM assets "
-            "WHERE profile_name = ? AND flow_media_id IS NOT NULL "
-            "AND flow_project_id IS NOT NULL LIMIT 1",
-            (profile,),
-        ).fetchone()
-
-    if row is None:
+    if not env_media or not env_project:
         pytest.skip(
-            f"No cataloged image asset with flow_media_id found for profile '{profile}'. "
-            "Set GFLOW_CLI_E2E_MEDIA_ID and GFLOW_CLI_E2E_PROJECT to target an item."
+            "GFLOW_CLI_E2E_MEDIA_ID and GFLOW_CLI_E2E_PROJECT must be set to run media trash e2e "
+            "(prevents touching arbitrary real items in live account)"
         )
 
-    world["media_id"] = str(row[0])
-    world["project_id"] = str(row[1])
+    world["media_id"] = env_media
+    world["project_id"] = env_project
 
 
 @when('I run "gflow media trash <media_id> --yes --json"')
@@ -133,10 +146,21 @@ def _run_trash_cli(world: dict[str, Any]) -> None:
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["media", "trash", world["media_id"], "--yes", "--json", "--profile", world["profile"]],
+        [
+            "media",
+            "trash",
+            world["media_id"],
+            "--project",
+            world["project_id"],
+            "--yes",
+            "--json",
+            "--profile",
+            world["profile"],
+        ],
     )
     world["cli_result"] = result
-    world["needs_restore"] = True
+    if result.exit_code == 0:
+        world["needs_restore"] = True
 
 
 @when('I run "gflow media restore <media_id> --json"')
@@ -144,9 +168,65 @@ def _run_restore_cli(world: dict[str, Any]) -> None:
     runner = CliRunner()
     result = runner.invoke(
         main,
-        ["media", "restore", world["media_id"], "--json", "--profile", world["profile"]],
+        [
+            "media",
+            "restore",
+            world["media_id"],
+            "--project",
+            world["project_id"],
+            "--json",
+            "--profile",
+            world["profile"],
+        ],
     )
     world["cli_result"] = result
+    if result.exit_code == 0:
+        world["needs_restore"] = False
+
+
+@when('I run "gflow media trash <media_id> --yes --json" forcing browser fallback')
+def _run_trash_cli_browser(world: dict[str, Any]) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "media",
+            "trash",
+            world["media_id"],
+            "--project",
+            world["project_id"],
+            "--yes",
+            "--json",
+            "--profile",
+            world["profile"],
+        ],
+        env={"GFLOW_CLI_WIRE_READS": "0"},
+    )
+    world["cli_result"] = result
+    if result.exit_code == 0:
+        world["needs_restore"] = True
+
+
+@when('I run "gflow media restore <media_id> --json" forcing browser fallback')
+def _run_restore_cli_browser(world: dict[str, Any]) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        main,
+        [
+            "media",
+            "restore",
+            world["media_id"],
+            "--project",
+            world["project_id"],
+            "--json",
+            "--profile",
+            world["profile"],
+        ],
+        env={"GFLOW_CLI_WIRE_READS": "0"},
+    )
+    world["cli_result"] = result
+    if result.exit_code == 0:
+        world["needs_restore"] = False
 
 
 @then("the command exits with code 0")
@@ -163,8 +243,10 @@ def _json_status(world: dict[str, Any], expected_status: str) -> None:
     data = json.loads(result.output)
     assert data["status"] == expected_status
     assert data["media_id"] == world["media_id"]
-    if expected_status == "restored":
-        world["needs_restore"] = False
+    if expected_status == "trashed":
+        assert data.get("archived") is True
+    elif expected_status == "restored":
+        assert data.get("archived") is False
 
 
 @when('I invoke MCP tool "gflow_media_trash" with confirm true')
@@ -172,13 +254,15 @@ def _invoke_mcp_trash(world: dict[str, Any]) -> None:
     async def _call() -> dict[str, Any]:
         return await media_trash_tools.gflow_media_trash(
             media_id=world["media_id"],
+            project_id=world["project_id"],
             profile=world["profile"],
             confirm=True,
         )
 
     res = asyncio.run(_call())
     world["mcp_result"] = res
-    world["needs_restore"] = True
+    if res.get("status") == "trashed":
+        world["needs_restore"] = True
 
 
 @when('I invoke MCP tool "gflow_media_restore"')
@@ -186,11 +270,14 @@ def _invoke_mcp_restore(world: dict[str, Any]) -> None:
     async def _call() -> dict[str, Any]:
         return await media_trash_tools.gflow_media_restore(
             media_id=world["media_id"],
+            project_id=world["project_id"],
             profile=world["profile"],
         )
 
     res = asyncio.run(_call())
     world["mcp_result"] = res
+    if res.get("status") == "restored":
+        world["needs_restore"] = False
 
 
 @then(parsers.parse('the MCP response reports status "{expected_status}"'))
@@ -199,8 +286,10 @@ def _mcp_status(world: dict[str, Any], expected_status: str) -> None:
     assert res is not None
     assert res.get("status") == expected_status, res
     assert res.get("media_id") == world["media_id"]
-    if expected_status == "restored":
-        world["needs_restore"] = False
+    if expected_status == "trashed":
+        assert res.get("archived") is True
+    elif expected_status == "restored":
+        assert res.get("archived") is False
 
 
 @then("Flow's project listing reports the media archived")
@@ -230,10 +319,14 @@ def _listing_active(world: dict[str, Any]) -> None:
 @then("zero credits were charged")
 def _zero_credits(world: dict[str, Any]) -> None:
     if "cli_result" in world and world["cli_result"] is not None:
-        try:
-            data = json.loads(world["cli_result"].output)
-            assert data.get("charged") == "no"
-        except Exception:  # noqa: BLE001
-            pass
+        data = json.loads(world["cli_result"].output)
+        assert data.get("charged") == "no"
     if "mcp_result" in world and world["mcp_result"] is not None:
         assert world["mcp_result"].get("charged") == "no"
+
+    profile = world.get("profile")
+    if profile and world.get("credits_initial") is not None:
+        balance_after = asyncio.run(credits.inspect_profile(profile)).get("balance")
+        assert balance_after == world["credits_initial"], (
+            f"Credits balance changed: initial={world['credits_initial']}, after={balance_after}"
+        )
