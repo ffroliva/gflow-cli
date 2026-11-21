@@ -357,22 +357,25 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
     return info
 
 
-async def direct_trash_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
-    """Trash a media item over the wire without a browser."""
+async def direct_set_archived_media(
+    profile_dir: Path, media_id: str, project_id: str, *, archived: bool
+) -> dict[str, Any]:
+    """Trash or restore a media item over the wire without a browser."""
     from gflow_cli.api.transports._media_trash_wire import (
-        build_trash_payload,
-        parse_trash_response,
+        build_mutation_payload,
+        parse_mutation_response,
     )
 
-    payload = build_trash_payload(media_id, project_id)
+    payload = build_mutation_payload(media_id, project_id, archived=archived)
     response, elapsed = await _execute_direct_rpc(profile_dir, "pGCYOe", payload=payload)
     frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
+    action = "trash" if archived else "restore"
     if not frames:
         _tokens.pop(profile_dir, None)
         errors = rpc_errors(response.text)
         if errors and any(e.code is not None for e in errors):
             code = next(e.code for e in errors if e.code is not None)
-            log.info("media.trash_wire_rpc_error", codes=[e.code for e in errors])
+            log.info(f"media.{action}_wire_rpc_error", codes=[e.code for e in errors])
             raise FlowApiError(
                 f"pGCYOe mutation rejected by Flow (code={code})",
                 status=response.status_code,
@@ -381,38 +384,19 @@ async def direct_trash_media(profile_dir: Path, media_id: str, project_id: str) 
                 charged="no",
             )
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
-    result = parse_trash_response(frames[0], expected_media_id=media_id)
-    log.info("media.trash_wire", ms=round(elapsed * 1000), media_id=media_id)
+    result = parse_mutation_response(frames[0], expected_media_id=media_id, archived=archived)
+    log.info(f"media.{action}_wire", ms=round(elapsed * 1000), media_id=media_id)
     return result
+
+
+async def direct_trash_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
+    """Trash a media item over the wire without a browser."""
+    return await direct_set_archived_media(profile_dir, media_id, project_id, archived=True)
 
 
 async def direct_restore_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
     """Restore a media item over the wire without a browser."""
-    from gflow_cli.api.transports._media_trash_wire import (
-        build_restore_payload,
-        parse_restore_response,
-    )
-
-    payload = build_restore_payload(media_id, project_id)
-    response, elapsed = await _execute_direct_rpc(profile_dir, "pGCYOe", payload=payload)
-    frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
-    if not frames:
-        _tokens.pop(profile_dir, None)
-        errors = rpc_errors(response.text)
-        if errors and any(e.code is not None for e in errors):
-            code = next(e.code for e in errors if e.code is not None)
-            log.info("media.restore_wire_rpc_error", codes=[e.code for e in errors])
-            raise FlowApiError(
-                f"pGCYOe mutation rejected by Flow (code={code})",
-                status=response.status_code,
-                code=code,
-                route="pGCYOe",
-                charged="no",
-            )
-        raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
-    result = parse_restore_response(frames[0], expected_media_id=media_id)
-    log.info("media.restore_wire", ms=round(elapsed * 1000), media_id=media_id)
-    return result
+    return await direct_set_archived_media(profile_dir, media_id, project_id, archived=False)
 
 
 def session_recovered(profile_dir: Path) -> None:
