@@ -3800,6 +3800,59 @@ class TestVideoUiModePolicy:
         return transport
 
     @pytest.mark.asyncio
+    async def test_labs_credit_refusal_waits_for_the_post_hop_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.api.transports import _mc_common, migrated_composer
+        from gflow_cli.api.video import VideoResult
+
+        transport = self._transport(monkeypatch)
+        transport._page.url = "https://labs.google/fx/tools/flow/project/p"
+        monkeypatch.setattr(transport, "_enter_editor", AsyncMock())
+        monkeypatch.setattr(VideoGenerationMixin, "_wait_video_editor_ready", AsyncMock())
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        monkeypatch.setattr(transport, "_park_composer_page", AsyncMock())
+        monkeypatch.setattr(_mc_common, "migrated_can_serve", lambda *_: False)
+        route = MagicMock(side_effect=["labs", "migrated"])
+        monkeypatch.setattr("gflow_cli.api.transports.ui_automation_video.migrated_route", route)
+        run = AsyncMock(
+            return_value=VideoResult(
+                status=VideoStatus(media_id="m", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+                local_path=None,
+                project_id="p",
+            )
+        )
+        monkeypatch.setattr(migrated_composer, "run_video", run)
+
+        result = await transport.generate_video(
+            request=GenerateVideoRequest(prompt="x", max_credits=2),
+            project_id="p",
+            download=False,
+        )
+        assert result.status.media_id == "m"
+        run.assert_awaited_once()
+        assert route.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_labs_route_still_refuses_a_cap_without_a_quote(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli.errors import CreditCapExceededError
+
+        transport = self._transport(monkeypatch)
+        monkeypatch.setattr(transport, "_dismiss_blocking_overlays", AsyncMock())
+        route = MagicMock(side_effect=["labs", "labs"])
+        monkeypatch.setattr("gflow_cli.api.transports.ui_automation_video.migrated_route", route)
+        with pytest.raises(CreditCapExceededError) as caught:
+            await transport.generate_video(
+                request=GenerateVideoRequest(prompt="x", max_credits=2),
+                project_id="p",
+                download=False,
+            )
+        assert caught.value.quoted is None
+        cast(AsyncMock, transport._send_prompt).assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_binds_classic_via_policy_after_editor_mount(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

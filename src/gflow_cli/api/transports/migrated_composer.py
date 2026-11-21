@@ -314,10 +314,12 @@ from gflow_cli.api.transports._mc_common import (
     url_rpcid as url_rpcid,
 )
 from gflow_cli.api.transports._mc_submit_observe import SubmitObserveMixin
+from gflow_cli.api.transports.batchexecute import GenerationRecord
 from gflow_cli.api.video import (
     GenerateVideoRequest,
     Mode,
     VideoResult,
+    VideoStarted,
     VideoStartedCallback,
     VideoStatus,
 )
@@ -325,6 +327,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     FlowAppError,
     FlowHostMigratedError,
+    GFlowError,
     ReferenceNotFoundError,
     RpcResponseUnavailableError,
     TransportTimeoutError,
@@ -358,6 +361,124 @@ class MigratedComposer(SubmitObserveMixin):
 _mc_media.MigratedComposer = MigratedComposer
 
 
+def _refuse_unported_video(unported: str) -> FlowHostMigratedError:
+    return FlowHostMigratedError(
+        detail=(
+            "Flow served flow.google.com, where gflow drives text-to-video, "
+            "image-to-video from local start (and end) frames, and reference-to-video "
+            f"from local files; {unported} is not ported yet (#639) — pass "
+            "--initial-frame / --ref as local files"
+        ),
+    )
+
+
+async def _prepare_video_composer(
+    page: Page,
+    request: GenerateVideoRequest,
+    project_id: str | None,
+    unported: str | None,
+    composer: MigratedComposer | None = None,
+) -> tuple[str, MigratedComposer, str]:
+    from gflow_cli.api.transports import agent_only_composer as agent
+
+    needs_classic = agent.unported_video(request) is not None
+    if unported is not None and needs_classic:
+        raise _refuse_unported_video(unported)
+    pid = project_id or extract_project_id(page.url)
+    if not pid:
+        raise ConfigurationError(
+            detail=(
+                "generating on the migrated flow.google.com host needs a project: pass "
+                "--project <id> (see `gflow project list` / `gflow project create`)"
+            ),
+        )
+    composer = composer or MigratedComposer()
+    with nothing_submitted():
+        surface = await composer.ensure_editor_for(page, pid, needs_classic=needs_classic)
+    if surface != "agent_only" and unported is not None:
+        raise _refuse_unported_video(unported)
+    return pid, composer, surface
+
+
+async def _refresh_credit_quote(page: Page, cap: int | None, initial: int | None) -> int | None:
+    if cap is None:
+        return initial
+    import inspect
+
+    from gflow_cli.api.transports._mc_settings_pane import _read_credit_quote
+
+    composer = MigratedComposer()
+    opened = False
+    locator = getattr(page, "locator", None)
+    if callable(locator):
+        pane = locator(".cdk-overlay-pane flow-prompt-box-settings")
+        count = getattr(pane, "count", None)
+        if inspect.iscoroutinefunction(count) and await count() == 0:
+            await composer._open_pane(page)
+            opened = True
+    try:
+        fresh = await _read_credit_quote(page, cap)
+        if fresh != initial:
+            from gflow_cli.errors import CreditCapExceededError
+
+            raise CreditCapExceededError(
+                quoted=None,
+                max_credits=cap,
+                route="flow.google.com settings quote changed before submit",
+            )
+    except BaseException:
+        if opened:
+            await composer._close_pane(page, strict=False)
+        raise
+    if opened:
+        await composer._close_pane(page, strict=True)
+    return fresh
+
+
+async def _submit_video_with_evidence(
+    composer: MigratedComposer,
+    page: Page,
+    request: GenerateVideoRequest,
+    *,
+    poll_timeout_s: float,
+    project_id: str,
+    on_started: VideoStartedCallback | None,
+    quoted_credits: int | None,
+    expect_media_id: str | None,
+    expect_end_media_id: str | None,
+    reference_ids: tuple[str, ...],
+    entity_ids: tuple[str, ...],
+) -> GenerationRecord:
+    started_ids: list[str] = []
+
+    def note_started(started: VideoStarted) -> Awaitable[None] | None:
+        started_ids.append(started.media_id)
+        return on_started(started) if on_started is not None else None
+
+    try:
+        return await composer.submit_and_observe(
+            page,
+            poll_timeout_s=poll_timeout_s,
+            on_started=note_started,
+            project_id=project_id,
+            expect_media_id=expect_media_id,
+            expect_end_media_id=expect_end_media_id,
+            expect_reference_ids=reference_ids + entity_ids,
+            adopt_ids=tuple(i for i in (expect_media_id, expect_end_media_id) if i) + reference_ids,
+            adopt_prompt=(
+                request.prompt if request.mode is Mode.T2V and request.count == 1 else None
+            ),
+        )
+    except Exception as exc:
+        if quoted_credits is not None:
+            setattr(exc, "quoted_credits", quoted_credits)  # noqa: B010
+        if started_ids:
+            setattr(exc, "completed_media_ids", started_ids)  # noqa: B010
+            if isinstance(exc, GFlowError):
+                exc.charged, exc.next_action = "maybe", "reconcile"
+        raise
+
+
 async def run_video(
     page: Page,
     request: GenerateVideoRequest,
@@ -377,37 +498,14 @@ async def run_video(
     project is created by ``FlowApiClient`` before this runs (#864), so reaching
     here without one means a caller bypassed the client.
     """
-    from gflow_cli.api.transports import agent_only_composer as agent  # noqa: PLC0415 - cycle
-
     unported = _unported_form(request)
-
-    def refuse() -> FlowHostMigratedError:
-        return FlowHostMigratedError(
-            detail=(
-                f"Flow served flow.google.com, where gflow drives "
-                f"text-to-video, image-to-video from local start (and end) frames, and "
-                f"reference-to-video from local files; {unported} is not ported yet "
-                f"(#639) — pass --initial-frame / --ref as local files"
-            ),
-        )
-
-    # $0 and before the page only when neither composer takes it (see run_images).
-    needs_classic = agent.unported_video(request) is not None
-    if unported is not None and needs_classic:
-        raise refuse()
-    pid = project_id or extract_project_id(page.url)
-    if not pid:
-        raise ConfigurationError(
-            detail=(
-                "generating on the migrated flow.google.com host needs a project: pass "
-                "--project <id> (see `gflow project list` / `gflow project create`)"
-            ),
-        )
+    pid, composer, surface = await _prepare_video_composer(
+        page, request, project_id, unported, MigratedComposer()
+    )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
-    composer = MigratedComposer()
-    with nothing_submitted():
-        surface = await composer.ensure_editor_for(page, pid, needs_classic=needs_classic)
     if surface == "agent_only":
+        from gflow_cli.api.transports import agent_only_composer as agent
+
         return await agent.run_agent_video(
             page,
             request,
@@ -417,12 +515,10 @@ async def run_video(
             download=download,
             on_started=on_started,
         )
-    if unported is not None:
-        raise refuse()
     # Everything up to the submit click spends nothing (#1320); a stray Enter while a
     # mention picker closes could submit, so the watch withholds the claim if one left.
     with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
-        await composer.apply_video_settings(page, request)
+        quoted_credits = await composer.apply_video_settings(page, request)
         media_id: str | None = None
         end_media_id: str | None = None
         reference_ids: tuple[str, ...] = ()
@@ -460,21 +556,19 @@ async def run_video(
                         f"ignore them"
                     ),
                 )
-    record = await composer.submit_and_observe(
+        quoted_credits = await _refresh_credit_quote(page, request.max_credits, quoted_credits)
+    record = await _submit_video_with_evidence(
+        composer,
         page,
+        request,
         poll_timeout_s=poll_timeout_s,
-        on_started=on_started,
         project_id=pid,
+        on_started=on_started,
+        quoted_credits=quoted_credits,
         expect_media_id=media_id,
         expect_end_media_id=end_media_id,
-        # The committed entity ids ride the MZZa6b body beside the media ids (route-abort
-        # capture, 2026-10-27), so a character-only run is guarded too.
-        expect_reference_ids=reference_ids + entity_ids,
-        # Only ids uploaded by THIS run identify its clip after a lost reply (#1112);
-        # a character's entity id repeats in every clip that cast it.
-        adopt_ids=tuple(i for i in (media_id, end_media_id) if i) + reference_ids,
-        # Nothing uploaded, so nothing run-unique: found by prompt and model instead (#1141).
-        adopt_prompt=(request.prompt if request.mode is Mode.T2V and request.count == 1 else None),
+        reference_ids=reference_ids,
+        entity_ids=entity_ids,
     )
     status = VideoStatus(
         media_id=record.media_id,
@@ -487,7 +581,13 @@ async def run_video(
     )
     local_path: Path | None = None
     if download and record.is_done:
-        local_path = await composer.download(page, record, save)
+        try:
+            local_path = await composer.download(page, record, save)
+        except Exception as exc:
+            if quoted_credits is not None:
+                setattr(exc, "quoted_credits", quoted_credits)  # noqa: B010
+            setattr(exc, "completed_media_ids", [record.media_id])  # noqa: B010
+            raise
     return VideoResult(
         status=status,
         # Not re-wrapped in Path(): a cloud UPath must reach the caller intact (#1003).
@@ -495,6 +595,7 @@ async def run_video(
         project_id=pid,
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,
+        quoted_credits=quoted_credits,
     )
 
 

@@ -168,7 +168,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | **Yes** | — | — |
 | Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
 | `charged` field on every error | **Yes** | — | — | — | — | — |
-| Per-call credit cap | Planned ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)) | Yes (`max_credits`) | — | — | — | — |
+| Per-call credit cap | Yes (`--max-credits`, read from Flow's own quote) | Yes (`max_credits`) | — | — | — | — |
 | Video-to-video edit | Planned ([#1356](https://github.com/ffroliva/gflow-cli/issues/1356)) | Yes | Yes | — | — | — |
 | Narration audio | Yes (audio narrate: edge-tts or Gemini voices) | Yes | — | — | — | Yes |
 | Captions | Yes (`video captions`, `.srt` export) | Yes | — | — | — | — |

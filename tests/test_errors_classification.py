@@ -6,9 +6,11 @@ from gflow_cli.api.client import _raise_for_non_retryable
 from gflow_cli.errors import (
     AuthExpiredError,
     ContentPolicyError,
+    CreditCapExceededError,
     WafRejectionError,
     WireFormatError,
     classify_content_safety,
+    exit_code_for,
 )
 
 
@@ -25,6 +27,17 @@ def test_403_maps_to_waf_rejection() -> None:
 def test_401_still_maps_to_auth_expired() -> None:
     with pytest.raises(AuthExpiredError):
         _raise_for_non_retryable(_Resp(401), "{}", route="createEntity")
+
+
+@pytest.mark.parametrize("mode", [None, "1", "2"])
+def test_credit_cap_exit_code_is_45_in_all_modes(
+    monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    if mode is None:
+        monkeypatch.delenv("GFLOW_CLI_EXIT_CODES", raising=False)
+    else:
+        monkeypatch.setenv("GFLOW_CLI_EXIT_CODES", mode)
+    assert exit_code_for(CreditCapExceededError(quoted=8, max_credits=4)) == 45
 
 
 # ---------- 400 content-safety classification (issue #342) ----------
