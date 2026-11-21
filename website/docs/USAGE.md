@@ -459,8 +459,8 @@ prompts through one Flow session/project.
 > Imagen 4, Agent instructions and `image batch` remain unavailable on that host and
 > fail before submit. On Flow's agent-only composer (#799), t2i runs through the agent
 > driver; see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's
-> 2026-11-20 build that driver stops before submit with exit 23, because its settings button
-> is not rendered there; porting it is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387).
+> 2026-11-20 build that driver opens Agent settings through the `settings_2` gear that build
+> renders instead ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)).
 
 ```text
 gflow image t2i PROMPT [PROMPT ...] [OPTIONS]
@@ -890,7 +890,7 @@ closed with exit 45. Image commands do not accept this option.
 ## `gflow video t2v`
 
 Generate a video from a text prompt only. On Flow's agent-only composer (#799), t2v runs
-through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's 2026-11-20 build the agent-only driver stops before submit with exit 23, because its settings button is not rendered there; porting it is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387).
+through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's 2026-11-20 build the driver opens Agent settings through the `settings_2` gear that build renders instead ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)).
 
 ```text
 gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]

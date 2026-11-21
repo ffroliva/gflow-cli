@@ -10,7 +10,11 @@ Shape of a run:
    request, saved, and restored afterwards (measured: Save persists across a reload, and a
    set -> Save -> restore -> Save round trip returns the account to its originals). The
    "Confirm before generating" radio follows ``GFLOW_CLI_AGENT_CONFIRM`` (or ``always``
-   under ``--max-credits``) and is restored afterwards too.
+   under ``--max-credits``) and is restored afterwards too. Flow's 2026-11-20 build (#1387)
+   moved them behind a ``settings_2`` gear into a two-level pane that saves on every click
+   and has no Save: there a failed apply is rolled back by writing the snapshot again, and
+   the section's summary row is read back before anything is submitted
+   (``docs/superpowers/spikes/2026-11-21-agent-settings-on-the-new-build.md``).
 2. A natural-language **directive** goes into the ProseMirror editor and is submitted.
 3. At most **one credit gate** that appeared after our own submit is approved, and only
    after its title has been read: a gate quoting more clips than requested is rejected
@@ -49,6 +53,10 @@ from gflow_cli.api.credit_cap import parse_credit_quote
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.transports._mc_common import (
+    AGENT_PANEL,
+    AGENT_PANEL_OPEN,
+    AGENT_SETTINGS_GEAR,
+    AGENT_SETTINGS_TUNE,
     LISTING_READ_BUDGET_S,
     LISTING_RPC,
     PROMPT_MATCH_MARGIN_S,
@@ -56,7 +64,6 @@ from gflow_cli.api.transports._mc_common import (
 from gflow_cli.api.transports._mc_submit_observe import read_project_listing
 from gflow_cli.api.transports.batchexecute import asb_token, generation_record_by_poster
 from gflow_cli.api.transports.migrated_composer import (
-    AGENT_ONLY_ANCHOR,
     ASPECT_LIGATURE,
     IMAGE_ASPECT_LIGATURE,
     IMAGE_MODEL_MENU_MATCHERS,
@@ -95,7 +102,8 @@ Section = Literal["image", "video"]
 Confirm = Literal["account", "always", "never"]
 
 PANE = "flow-settings-view"
-SETTINGS_BUTTON = AGENT_ONLY_ANCHOR
+#: The 2026-09-15 build's opener. The 2026-11-20 build's is `AGENT_SETTINGS_GEAR` (#1387).
+SETTINGS_BUTTON = AGENT_SETTINGS_TUNE
 TOGGLE_GROUP = f"{PANE} mat-button-toggle-group"
 TOGGLE_RADIO = "button[role='radio']"
 CONFIRM_INPUT = f"{PANE} mat-radio-button input[type='radio']"
@@ -107,6 +115,35 @@ MODEL_PICKER = {
     "video": f"{PANE} button.video-model-picker-button",
 }
 MENU_ITEM = "[role='menuitem']"
+#: Flow's 2026-11-20 build (#1387, measured 2026-11-21 on zh-CN and en accounts in agent mode).
+#: The gear opens the first level: the "Confirm before generating" toggle group (Always,
+#: then Never) and one summary row per section. A row opens the section's second level:
+#: a model radio list, then toggle groups for aspect (`crop_*` ligatures) and count
+#: (x1-x4); the image page adds a thinking-level group that is never touched. Every click
+#: saves, per project, through a queue (`AGENT_SETTINGS_SAVE_RPC`); there is no Save button,
+#: and the panel header's `arrow_back` steps back one level.
+UNIFIED_PANE = "flow-unified-settings-view"
+DEFAULTS_PANE = "flow-generation-defaults-view"
+UNIFIED_TOGGLE_GROUP = f"{UNIFIED_PANE} mat-button-toggle-group"
+DEFAULTS_TOGGLE_GROUP = f"{DEFAULTS_PANE} mat-button-toggle-group"
+DEFAULTS_ROW: dict[Section, str] = {
+    "image": f"{UNIFIED_PANE} button.image-defaults-row",
+    "video": f"{UNIFIED_PANE} button.video-defaults-row",
+}
+#: The row's summary, e.g. "Omni 1.2 Flash, 16:9, 1 output" (the image row starts with a 🍌).
+DEFAULTS_ROW_CAPTION = ".defaults-row-caption"
+MODEL_OPTION = f"{DEFAULTS_PANE} flow-radio-group.model-radio-group label.radio-option"
+MODEL_OPTION_SELECTED = f"{MODEL_OPTION}.radio-option-selected"
+#: The model's name; a retirement note sits beside it in `.radio-option-caption`.
+MODEL_OPTION_LABEL = ".radio-option-label"
+#: The pane's save: one batchexecute `Kcr7Ub` per click, carrying the whole section (model,
+#: aspect, count) under a field mask. Flow sends them one at a time, about 0.5 s apiece
+#: (measured 2026-11-21), so the pane shows the new values a second or more before the last
+#: save lands, and a page closed or navigated in between drops the rest unsent.
+AGENT_SETTINGS_SAVE_RPC = "Kcr7Ub"
+#: Quiet time after the last save before the queue counts as drained, and the budget for it.
+SAVE_QUIET_S = 1.0
+SAVE_BUDGET_S = 20.0
 EDITOR = "div.ProseMirror"
 SUBMIT = "flow-generate-icon-button button"
 IN_FLIGHT = "flow-stop-icon-button"
@@ -130,6 +167,9 @@ _GROUP_BASE: dict[Section, int] = {"image": 0, "video": 2}
 #: Measured 2026-09-16 (``scripts/dev/spike_agent_confirm_radios.py``): Always is
 #: ``value="1"``, Never is ``value="2"``, read against their English labels.
 _CONFIRM_VALUE = {"always": "1", "never": "2"}
+#: The same two choices on the 2026-11-20 build, by position in the first level's toggle
+#: group: Always first, Never second (the same order on zh-CN and en; labels never read).
+_UNIFIED_CONFIRM_INDEX = {"1": 0, "2": 1}
 #: The ``route`` every clip-download failure carries.
 _VIDEO_ROUTE = "agent-only:video"
 
@@ -370,8 +410,83 @@ async def _click(target: Locator, what: str, timeout_ms: int = 4000) -> None:
         raise UiSelectorDriftError(detail=f"agent-only composer: could not click {what}") from exc
 
 
-class AgentOnlyComposer:
-    """Agent settings in and out, directive in, finished tiles out."""
+class _SaveWatch:
+    """Counts the 2026-11-20 pane's saves (`AGENT_SETTINGS_SAVE_RPC`) while it is driven.
+
+    The pane shows a click's value at once and queues the save behind the previous one, so
+    reading the pane back proves nothing about the account. `settled` waits until every save
+    sent has been answered and the queue has been quiet for `SAVE_QUIET_S`: a run that leaves
+    earlier, or a browser closed after it, loses the unsent ones (measured 2026-11-21: a
+    restore read back correctly on the page, and the next session found the run's values).
+    """
+
+    def __init__(self, page: Page) -> None:
+        self._page = page
+        self.sent = self.answered = 0
+        self.failed: list[str] = []
+        self._last = time.monotonic()
+
+    def __enter__(self) -> _SaveWatch:
+        self._page.on("request", self._on_request)
+        self._page.on("response", self._on_response)
+        self._page.on("requestfailed", self._on_failed)
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._page.remove_listener("request", self._on_request)
+        self._page.remove_listener("response", self._on_response)
+        self._page.remove_listener("requestfailed", self._on_failed)
+
+    @staticmethod
+    def _is_save(url: str) -> bool:
+        return f"rpcids={AGENT_SETTINGS_SAVE_RPC}" in url
+
+    def _on_request(self, request: Any) -> None:
+        if self._is_save(request.url):
+            self.sent += 1
+            self._last = time.monotonic()
+
+    def _on_response(self, response: Any) -> None:
+        if self._is_save(response.url):
+            self.answered += 1
+            self._last = time.monotonic()
+            if response.status >= 400:
+                self.failed.append(f"HTTP {response.status}")
+
+    def _on_failed(self, request: Any) -> None:
+        if self._is_save(request.url):
+            self.answered += 1
+            self._last = time.monotonic()
+            self.failed.append(str(request.failure or "failed"))
+
+    async def settled(self, what: str) -> None:
+        deadline = time.monotonic() + SAVE_BUDGET_S
+        while True:
+            if self.failed:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"agent-only composer: {len(self.failed)} of {self.sent} Agent-settings "
+                        f"saves ({AGENT_SETTINGS_SAVE_RPC}) failed while {what}: {self.failed[0]}"
+                    )
+                )
+            quiet = time.monotonic() - self._last >= SAVE_QUIET_S
+            if self.answered >= self.sent and quiet:
+                return
+            if time.monotonic() >= deadline:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"agent-only composer: {self.sent - self.answered} Agent-settings saves "
+                        f"({AGENT_SETTINGS_SAVE_RPC}) unanswered {SAVE_BUDGET_S:.0f}s after {what}"
+                    )
+                )
+            await asyncio.sleep(0.1)
+
+
+class _AgentSettingsMixin:
+    """Agent settings in and out, on the 2026-09-15 pane and on the 2026-11-20 build's (#1387).
+
+    Split out of `AgentOnlyComposer` (one responsibility per class, #1249); moved unchanged.
+    """
 
     # --- Agent settings ------------------------------------------------------------------
 
@@ -392,9 +507,9 @@ class AgentOnlyComposer:
                 detail=f"agent-only composer: Agent settings ({PANE}) did not open"
             ) from exc
 
-    async def _checked_index(self, page: Page, group: int) -> int:
+    async def _checked_index(self, page: Page, group: int, *, groups: str = TOGGLE_GROUP) -> int:
         index = (
-            await page.locator(TOGGLE_GROUP)
+            await page.locator(groups)
             .nth(group)
             .evaluate(
                 "g => [...g.querySelectorAll(\"button[role='radio']\")]"
@@ -403,9 +518,11 @@ class AgentOnlyComposer:
         )
         return int(index)
 
-    async def _check_radio(self, page: Page, group: int, radio: str | int, named: str) -> None:
-        """Check one radio, by ligature (aspect) or by position (count, restore)."""
-        radios = page.locator(TOGGLE_GROUP).nth(group).locator(TOGGLE_RADIO)
+    async def _check_radio(
+        self, page: Page, group: int, radio: str | int, named: str, *, groups: str = TOGGLE_GROUP
+    ) -> None:
+        """Check one radio, by ligature (aspect) or by position (count, confirm, restore)."""
+        radios = page.locator(groups).nth(group).locator(TOGGLE_RADIO)
         if isinstance(radio, str):
             target = radios.filter(has=page.locator(f"mat-icon:text-is('{radio}')"))
         else:
@@ -528,6 +645,15 @@ class AgentOnlyComposer:
     ) -> DefaultsSnapshot:
         """Set this run's defaults, Save, and return what to restore."""
         with nothing_submitted():  # #1320: settings are bound before any submit
+            if await self._is_unified(page):
+                return await self._apply_unified(
+                    page,
+                    section=section,
+                    aspect_ligature=aspect_ligature,
+                    count=count,
+                    model=model,
+                    confirm=confirm,
+                )
             await self._open_pane(page)
             base = _GROUP_BASE[section]
             try:
@@ -569,6 +695,9 @@ class AgentOnlyComposer:
 
     async def restore_defaults(self, page: Page, snapshot: DefaultsSnapshot) -> None:
         """Restore the account's original settings after a run."""
+        if await self._is_unified(page):
+            await self._restore_unified(page, snapshot)
+            return
         await self._open_pane(page)
         base = _GROUP_BASE[snapshot.section]
         try:
@@ -587,6 +716,292 @@ class AgentOnlyComposer:
             await self._discard_pane(page)
             raise
         log.info("migrated.agent_only.defaults_restored", section=snapshot.section)
+
+    # --- Agent settings on Flow's 2026-11-20 build (#1387) -----------------------------------
+
+    async def _is_unified(self, page: Page) -> bool:
+        """Is this page's Agent settings the 2026-11-20 build's? The 2026-09-15 pane or its
+        `tune` opener wins when present, so a page on the older build keeps its own path."""
+        if await page.locator(f"{PANE}, {SETTINGS_BUTTON}").count():
+            return False
+        return bool(
+            await page.locator(f"{UNIFIED_PANE}, {DEFAULTS_PANE}, {AGENT_SETTINGS_GEAR}").count()
+        )
+
+    async def _back_from(self, page: Page, pane: str) -> None:
+        """One level back through the panel header's `arrow_back`; every click already saved."""
+        await _click(page.locator(PANE_BACK).last, "the Agent settings back arrow")
+        try:
+            await page.locator(pane).first.wait_for(state="hidden", timeout=int(PANE_S * 1000))
+        except PlaywrightError as exc:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: {pane} did not close on its back arrow"
+            ) from exc
+
+    async def _open_unified(self, page: Page) -> None:
+        """Open Agent settings at its first level, from whichever gear is showing.
+
+        The panel header's gear while the agent panel is open, the compact prompt box's
+        while it is closed (Flow remembers which, and a closed panel is not in the DOM).
+        Exactly one must be visible: #1273's rule, several matches is a miss, never a guess.
+        """
+        if await page.locator(DEFAULTS_PANE).first.is_visible():
+            await self._back_from(page, DEFAULTS_PANE)
+        if await page.locator(UNIFIED_PANE).first.is_visible():
+            return
+        gears = page.locator(AGENT_SETTINGS_GEAR)
+        visible = [i for i in range(await gears.count()) if await gears.nth(i).is_visible()]
+        if len(visible) != 1:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"agent-only composer: {len(visible)} visible Agent settings gears "
+                    f"({AGENT_SETTINGS_GEAR}), so none was clicked"
+                )
+            )
+        await _click(gears.nth(visible[0]), "the Agent settings gear", timeout_ms=5000)
+        try:
+            await page.locator(UNIFIED_PANE).first.wait_for(
+                state="visible", timeout=int(PANE_S * 1000)
+            )
+        except PlaywrightError as exc:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: Agent settings ({UNIFIED_PANE}) did not open"
+            ) from exc
+
+    async def _open_defaults(self, page: Page, section: Section) -> None:
+        await self._open_unified(page)
+        await _click(page.locator(DEFAULTS_ROW[section]).first, f"the {section} defaults row")
+        try:
+            await page.locator(DEFAULTS_PANE).first.wait_for(
+                state="visible", timeout=int(PANE_S * 1000)
+            )
+        except PlaywrightError as exc:
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: the {section} defaults ({DEFAULTS_PANE}) did not open"
+            ) from exc
+
+    async def _leave_unified(self, page: Page) -> None:
+        """Back out to the chat, where the run types its directive."""
+        if await page.locator(DEFAULTS_PANE).first.is_visible():
+            await self._back_from(page, DEFAULTS_PANE)
+        if await page.locator(UNIFIED_PANE).first.is_visible():
+            await self._back_from(page, UNIFIED_PANE)
+        try:
+            await page.locator(EDITOR).last.wait_for(state="visible", timeout=int(PANE_S * 1000))
+        except PlaywrightError as exc:
+            raise UiSelectorDriftError(
+                detail="agent-only composer: the prompt box did not come back after Agent settings"
+            ) from exc
+
+    async def _unified_confirm_value(self, page: Page) -> str:
+        index = await self._checked_index(page, 0, groups=UNIFIED_TOGGLE_GROUP)
+        for value, position in _UNIFIED_CONFIRM_INDEX.items():
+            if index == position:
+                return value
+        raise UiSelectorDriftError(detail="agent-only composer: confirm choice is unreadable")
+
+    async def _set_unified_confirm(self, page: Page, value: str) -> None:
+        await self._check_radio(
+            page, 0, _UNIFIED_CONFIRM_INDEX[value], "confirm", groups=UNIFIED_TOGGLE_GROUP
+        )
+
+    async def _unified_model(self, page: Page) -> str:
+        selected = page.locator(MODEL_OPTION_SELECTED)
+        if await selected.count() != 1:
+            return ""
+        # Counted first: `inner_text` on a missing label would wait out Playwright's 30 s.
+        label = selected.locator(MODEL_OPTION_LABEL)
+        if await label.count() != 1:
+            return ""
+        return (await label.inner_text()).strip()
+
+    async def _choose_unified_model(
+        self, page: Page, section: Section, wants: ModelMenuMatcher | str
+    ) -> None:
+        def hit(text: str) -> bool:
+            if isinstance(wants, str):
+                return text == wants
+            return bool(text) and wants.matches(text)
+
+        if hit(await self._unified_model(page)):
+            return
+        options = page.locator(MODEL_OPTION)
+        offered = [t.strip() for t in await options.locator(MODEL_OPTION_LABEL).all_inner_texts()]
+        if len(offered) != await options.count():
+            raise UiSelectorDriftError(
+                detail=(
+                    f"agent-only composer: a {section} model option has no label "
+                    f"({MODEL_OPTION_LABEL})"
+                )
+            )
+        hits = [i for i, text in enumerate(offered) if hit(text)]
+        if len(hits) != 1:
+            raise ConfigurationError(
+                detail=(
+                    f"{section} model matched {len(hits)} Agent-settings entries; "
+                    f"offered: {', '.join(offered)}"
+                ),
+                remediation_hint="Pass a --model that names one offered entry, or omit it.",
+            )
+        await _click(options.nth(hits[0]), f"the {section} model {offered[hits[0]]!r}")
+        # The same no-op click hazard as the older pane's menu: read the selection back.
+        deadline = time.monotonic() + RADIO_SETTLE_S
+        while not hit(await self._unified_model(page)):
+            if time.monotonic() >= deadline:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"agent-only composer: chose {offered[hits[0]]!r} but the {section} "
+                        "model did not change"
+                    )
+                )
+            await asyncio.sleep(0.1)
+        log.info("migrated.agent_only.model_selected", section=section, model=offered[hits[0]])
+
+    async def _checked_aspect_label(self, page: Page) -> str:
+        """The checked aspect radio's own text ("16:9"), without its `crop_*` ligature."""
+        checked = (
+            page.locator(DEFAULTS_TOGGLE_GROUP)
+            .nth(0)
+            .locator(f"{TOGGLE_RADIO}[aria-checked='true']")
+        )
+        if not await checked.count():
+            return ""
+        text = await checked.first.inner_text()
+        return " ".join(re.sub(r"crop_[a-z0-9_]+", " ", text).split())
+
+    async def _verify_row(
+        self, page: Page, section: Section, *, model: str, aspect: str, count: int
+    ) -> str:
+        """Read the section's summary row back before anything is submitted.
+
+        Each click saved on its own, so this is the one place where the three values are
+        seen together, as Flow will use them. Model and aspect are Flow's own strings; the
+        count is the first number after the aspect (number tokens are not translated)."""
+        caption = page.locator(DEFAULTS_ROW[section]).first.locator(DEFAULTS_ROW_CAPTION)
+        if not await caption.count():
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: the {section} defaults row has no summary"
+            )
+        text = " ".join((await caption.first.inner_text()).split())
+        wrong: list[str] = []
+        if not model or model not in text:
+            wrong.append(f"model {model!r}")
+        if not aspect or aspect not in text:
+            wrong.append(f"aspect {aspect!r}")
+        numbers = _NUMBER_RE.findall(text.split(aspect, 1)[1]) if aspect and aspect in text else []
+        if not numbers or int(numbers[0]) != count:
+            wrong.append(f"count {count}")
+        if wrong:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"agent-only composer: the {section} defaults row reads {text!r}, "
+                    f"which does not show {', '.join(wrong)}"
+                )
+            )
+        return text
+
+    async def _apply_unified(
+        self,
+        page: Page,
+        *,
+        section: Section,
+        aspect_ligature: str,
+        count: int,
+        model: ModelMenuMatcher | None,
+        confirm: Confirm,
+    ) -> DefaultsSnapshot:
+        await self._open_unified(page)
+        confirm_value = await self._unified_confirm_value(page)
+        await self._open_defaults(page, section)
+        snapshot = DefaultsSnapshot(
+            section=section,
+            aspect_index=await self._checked_index(page, 0, groups=DEFAULTS_TOGGLE_GROUP),
+            count_index=await self._checked_index(page, 1, groups=DEFAULTS_TOGGLE_GROUP),
+            model_text=await self._unified_model(page),
+            confirm_value=confirm_value,
+        )
+        if not snapshot.model_text:
+            # Nothing changed yet; with no original to restore, nothing may be changed.
+            await self._leave_unified(page)
+            raise UiSelectorDriftError(
+                detail=f"agent-only composer: the {section} model choice is unreadable"
+            )
+        try:
+            with _SaveWatch(page) as saves:
+                await self._check_radio(
+                    page, 0, aspect_ligature, "aspect", groups=DEFAULTS_TOGGLE_GROUP
+                )
+                await self._check_radio(page, 1, count - 1, "count", groups=DEFAULTS_TOGGLE_GROUP)
+                if model is not None:
+                    await self._choose_unified_model(page, section, model)
+                aspect = await self._checked_aspect_label(page)
+                chosen = await self._unified_model(page)
+                await self._open_unified(page)
+                if confirm != "account":
+                    await self._set_unified_confirm(page, _CONFIRM_VALUE[confirm])
+                row = await self._verify_row(
+                    page, section, model=chosen, aspect=aspect, count=count
+                )
+                await self._leave_unified(page)
+                # The row is the pane's own state; the run's defaults are the account's only
+                # once every queued save has been answered.
+                await saves.settled(f"applying the {section} defaults")
+        except Exception:
+            # No Save and no discard on this build: whatever was clicked is already the
+            # account's. Write the originals back before failing, so the next run does not
+            # snapshot this run's values as them.
+            await self._rollback_unified(page, snapshot)
+            raise
+        log.info(
+            "migrated.agent_only.defaults_applied",
+            section=section,
+            aspect=aspect_ligature,
+            count=count,
+            confirm=confirm,
+            row=row,
+        )
+        return snapshot
+
+    async def _rollback_unified(self, page: Page, snapshot: DefaultsSnapshot) -> None:
+        try:
+            await self._restore_unified(page, snapshot)
+        except Exception as exc:  # noqa: BLE001 - the apply's own failure is the one raised
+            log.warning(
+                "migrated.agent_only.defaults_rollback_failed",
+                section=snapshot.section,
+                aspect_index=snapshot.aspect_index,
+                count_index=snapshot.count_index,
+                model=snapshot.model_text,
+                confirm=snapshot.confirm_value,
+                error=str(exc)[:200],
+            )
+            try:
+                await self._leave_unified(page)
+            except Exception:  # noqa: BLE001, S110 - best effort back to the chat
+                pass
+
+    async def _restore_unified(self, page: Page, snapshot: DefaultsSnapshot) -> None:
+        with _SaveWatch(page) as saves:
+            await self._open_unified(page)
+            if snapshot.confirm_value in _UNIFIED_CONFIRM_INDEX:
+                await self._set_unified_confirm(page, snapshot.confirm_value)
+            await self._open_defaults(page, snapshot.section)
+            if snapshot.aspect_index >= 0:
+                await self._check_radio(
+                    page, 0, snapshot.aspect_index, "aspect", groups=DEFAULTS_TOGGLE_GROUP
+                )
+            if snapshot.count_index >= 0:
+                await self._check_radio(
+                    page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
+                )
+            await self._choose_unified_model(page, snapshot.section, snapshot.model_text)
+            await self._leave_unified(page)
+            await saves.settled(f"restoring the {snapshot.section} defaults")
+        log.info("migrated.agent_only.defaults_restored", section=snapshot.section)
+
+
+class AgentOnlyComposer(_AgentSettingsMixin):
+    """Agent settings in and out, directive in, finished tiles out."""
 
     # --- generation ----------------------------------------------------------------------
 
@@ -817,6 +1232,29 @@ class AgentOnlyComposer:
         head = _tile_key(state0["finished"][0]) if state0["finished"] else None
         return set(_video_uuids(state0)) | _asb_tokens(state0), head
 
+    async def _open_chat(self, page: Page) -> None:
+        """Open a closed agent panel before the submit: its chat holds the gate and the reply.
+
+        On the 2026-11-20 build a closed panel is not in the DOM. Two runs submitted from the
+        compact box alone saw no gate and no clip within their budget (measured 2026-11-21).
+        #1388 closes the panel before the agent-only verdict, so a genuinely agent-only page
+        reaches the driver closed. A page without the control is left as it is."""
+        panel = page.locator(AGENT_PANEL).first
+        if await panel.is_visible():
+            return
+        opener = page.locator(AGENT_PANEL_OPEN)
+        if not await opener.count():
+            return
+        with nothing_submitted():  # #1320: before the submit
+            await _click(opener.first, "the agent panel's open control", timeout_ms=5000)
+            try:
+                await panel.wait_for(state="visible", timeout=PANE_S * 1000)
+            except PlaywrightError as exc:
+                raise UiSelectorDriftError(
+                    detail="agent-only composer: the agent panel did not open"
+                ) from exc
+        log.info("migrated.agent_only.panel_opened")
+
     async def _submit(self, page: Page, directive: str) -> None:
         with nothing_submitted():  # #1320: the click below is the first send
             editor = page.locator(EDITOR).last
@@ -849,6 +1287,7 @@ class AgentOnlyComposer:
         ``read_listing`` returns the project's ``Zzl0ze`` payload (or ``None``); a video
         whose page names no uuid is looked up there (#1354)."""
         self.quoted_credits: int | None = None
+        await self._open_chat(page)  # the gates below are counted in the open panel
         baseline_gates = await page.locator(LIVE_GATE).count()
         if kind == "video":
             baseline, baseline_head = await self._video_baseline(page)
