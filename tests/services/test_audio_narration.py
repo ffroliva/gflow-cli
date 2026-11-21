@@ -98,3 +98,22 @@ def test_missing_output_parent_is_rejected_before_provider_call(tmp_path: Path) 
             synthesizer=synthesizer,
         )
     assert synthesizer.requests == []
+
+
+def test_invalid_provider_options_are_rejected_before_provider_call(tmp_path: Path) -> None:
+    synthesizer = FakeSynthesizer()
+    with pytest.raises(ConfigurationError, match="Provider must be"):
+        narrate(
+            text="hello",
+            out_file=tmp_path / "voice.mp3",
+            provider="unknown",  # type: ignore[arg-type]
+            synthesizer=synthesizer,
+        )
+    with pytest.raises(ConfigurationError, match="invalid format"):
+        narrate(
+            text="hello",
+            out_file=tmp_path / "voice.mp3",
+            rate="fast",
+            synthesizer=synthesizer,
+        )
+    assert synthesizer.requests == []

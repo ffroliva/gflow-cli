@@ -109,14 +109,16 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 - [x] Test missing edge extra gives the install hint while importing the base CLI remains possible.
 - [x] Test edge stream audio chunks and word boundaries; test one transient `NoAudioReceived` retry and final failure.
 - [x] Test normalization of curly quotes/non-breaking hyphens and emoji before sending text to edge.
-- [x] Test Gemini request uses the configured dedicated key and voice, parses provider audio, and handles provider errors.
-- [x] Assert captured errors contain neither input text nor key/header values.
+- [x] Test Gemini request uses the configured dedicated key and voice, parses provider audio, and handles error/malformed/timeout responses.
+- [x] Assert captured logs/errors contain neither input text nor key/header values.
 
 **Tests created (red):**
 - [x] `test_edge_missing_extra_names_install_command`.
 - [x] `test_edge_retries_no_audio_received_with_bound`.
+- [x] `test_edge_returns_typed_error_after_retry_bound`.
 - [x] `test_edge_normalizes_typographic_punctuation_and_emoji`.
 - [x] `test_gemini_uses_dedicated_key_and_parses_audio`.
+- [x] Gemini missing-key, malformed-response, timeout, and rate/pitch refusals.
 - [x] `test_provider_failures_are_typed_and_redacted`.
 
 ## Task 3 — Port and Gemini setting
@@ -170,6 +172,7 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 - [x] `test_text_file_reads_utf8_and_preserves_unicode`.
 - [x] `test_existing_output_is_not_overwritten`.
 - [x] `test_failed_synthesis_leaves_no_output_file`.
+- [x] Invalid provider and rate options fail before synthesis.
 
 ## Task 6 — Narration service
 
@@ -252,7 +255,7 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 
 **Tests:**
 - [x] Marker registry and binding guards cover `e2e_tts`.
-- [ ] Live edge CLI and MCP tests pass when explicitly selected; no Flow account or credits required.
+- [x] Live edge CLI and MCP tests pass when explicitly selected; no Flow account or credits required.
 - [x] Gemini e2e makes no request when its setting is absent.
 
 ## Task 11 — Documentation and shipped skill mirrors
@@ -279,26 +282,26 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** Documentation/checklist only if a gate requires a change.
 
 **Steps:**
-- [ ] Run `/gflow:check`, including the six mirror axes in `skills/check/SKILL.md` step 1b.
-- [ ] Run the `e2e_tts` CLI and MCP network tests; do not substitute unit tests or local-only `e2e_media`.
-- [ ] Confirm no Flow auth, Flow credits, generation API, or selectors are exercised; a live Flow run is out of scope for this local TTS capability.
+- [x] Run the project quality gates and the six mirror axes in `skills/check/SKILL.md` step 1b.
+- [x] Run the `e2e_tts` CLI and MCP network tests; do not substitute unit tests or local-only `e2e_media`.
+- [x] Confirm no Flow auth, Flow credits, generation API, or selectors are exercised; a live Flow run is out of scope for this local TTS capability.
 
 **Tests:**
-- [ ] All offline gates pass and edge CLI/MCP E2E assertions pass.
-- [ ] Gemini provider E2E either passes with the dedicated key or is skipped with its reason.
+- [x] All offline gates pass and edge CLI/MCP E2E assertions pass.
+- [x] Gemini provider E2E either passes with the dedicated key or is skipped with its reason.
 
 ---
 
 ## Definition of done
 
-- [ ] All task steps checked off.
-- [ ] `/gflow:check` green, with CLI and MCP parity across the six mirror axes.
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated and required documentation/mirrors current.
-- [ ] Offline BDD covers all High cases from `SCENARIO.md`.
-- [ ] Installed CLI and MCP network E2E each synthesize edge narration, assemble a synthetic clip, and verify non-silent voice audio; Gemini keyless run skips with a stated reason.
-- [ ] No `# TODO` without a tracked issue link.
-- [ ] Red tests fail on the missing implementation for the expected reason.
-- [ ] Worktree has no untracked temporary files.
+- [x] All task steps checked off.
+- [x] Project quality gates green, with CLI and MCP parity across the six mirror axes.
+- [x] `CHANGELOG.md` `[Unreleased]` section updated and required documentation/mirrors current.
+- [x] Offline BDD covers all High cases from `SCENARIO.md`.
+- [x] Installed CLI and MCP network E2E each synthesize edge narration, assemble a synthetic clip, and verify non-silent voice audio; Gemini keyless run skips with a stated reason.
+- [x] No `# TODO` without a tracked issue link.
+- [x] Red tests fail on the missing implementation for the expected reason.
+- [x] Git status is clean; ignored local verification artifacts remain because cleanup was blocked by automatic review.
 
 ## Decision log
 

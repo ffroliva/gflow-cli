@@ -16,7 +16,8 @@ from gflow_cli.services.audio_narration import narrate
     description=(
         "Synthesize a local narration audio file. Narration text is sent to the selected "
         "provider (Microsoft Edge Read Aloud or Google Gemini); this uses no Flow credits. "
-        "Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY."
+        "Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY. Output paths stay inside the configured "
+        "output directory."
     ),
 )
 @common._guarded  # pyright: ignore[reportPrivateUsage]

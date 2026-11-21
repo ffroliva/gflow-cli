@@ -11,8 +11,3 @@ Feature: Narration can be assembled into a local video
     When the installed MCP tool creates narration audio in no-spend mode
     And the installed CLI assembles the clip with the MCP narration voiceover
     Then the assembled output contains non-silent voice audio
-
-  Scenario: Gemini e2e skips when its key is unset
-    Given the Gemini TTS key is available or missing
-    When the installed CLI creates Gemini narration audio
-    Then the Gemini narration audio is non-silent

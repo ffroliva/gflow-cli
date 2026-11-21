@@ -17,6 +17,8 @@ from mcp.client.stdio import stdio_client
 from pytest_bdd import given, scenarios, then, when
 
 from tests.e2e.test_telemetry_local_e2e import InstalledGFlow
+from tests.e2e.test_telemetry_local_e2e import clean_home as _clean_home_fixture  # noqa: F401
+from tests.e2e.test_telemetry_local_e2e import installed_gflow as _installed_gflow_fixture  # noqa: F401
 
 scenarios("../features/audio_narrate_e2e.feature")
 
@@ -146,6 +148,7 @@ def mcp_narration(narration_case: dict[str, Any]) -> None:
 
 
 @when("the installed CLI assembles the clip with the narration voiceover")
+@when("the installed CLI assembles the clip with the MCP narration voiceover")
 def assemble(narration_case: dict[str, Any]) -> None:
     installed: InstalledGFlow = narration_case["installed"]
     root: Path = narration_case["root"]
@@ -177,18 +180,21 @@ def audible_assembly(narration_case: dict[str, Any]) -> None:
     _assert_voice_audio(narration_case["assembled"])
 
 
-@given("the Gemini TTS key is available or missing")
-def gemini_key_presence(monkeypatch: pytest.MonkeyPatch, narration_case: dict[str, Any]) -> None:
+@pytest.mark.e2e
+@pytest.mark.e2e_tts
+def test_gemini_narration_e2e_skips_without_dedicated_key(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
     key = os.environ.get("GFLOW_CLI_GEMINI_TTS_API_KEY", "").strip()
     if not key:
         pytest.skip("GFLOW_CLI_GEMINI_TTS_API_KEY is unset; Gemini TTS e2e was not requested")
-    narration_case["env"]["GFLOW_CLI_GEMINI_TTS_API_KEY"] = key
-
-
-@when("the installed CLI creates Gemini narration audio")
-def gemini_narration(narration_case: dict[str, Any]) -> None:
-    installed: InstalledGFlow = narration_case["installed"]
-    voice = narration_case["root"] / "gemini-voice.wav"
+    installed = request.getfixturevalue("_installed_gflow_fixture")
+    clean = request.getfixturevalue("_clean_home_fixture")
+    assert isinstance(installed, InstalledGFlow)
+    assert isinstance(clean, tuple)
+    _, env = clean
+    env["GFLOW_CLI_GEMINI_TTS_API_KEY"] = key
+    voice = tmp_path / "gemini-voice.wav"
     result = subprocess.run(
         [
             str(installed.gflow),
@@ -201,16 +207,11 @@ def gemini_narration(narration_case: dict[str, Any]) -> None:
             "gemini",
             "--json",
         ],
-        cwd=narration_case["root"],
-        env=narration_case["env"],
+        cwd=tmp_path,
+        env=env,
         capture_output=True,
         text=True,
         timeout=180,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    narration_case["gemini_voice"] = voice
-
-
-@then("the Gemini narration audio is non-silent")
-def audible_gemini(narration_case: dict[str, Any]) -> None:
-    _assert_voice_audio(narration_case["gemini_voice"])
+    _assert_voice_audio(voice)

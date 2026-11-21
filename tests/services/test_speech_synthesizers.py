@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 import pytest
+import structlog
 
 from gflow_cli.errors import ConfigurationError, NetworkError
 from gflow_cli.services.speech_ports import SynthesisRequest
@@ -126,9 +127,17 @@ def test_gemini_uses_dedicated_key_and_parses_audio(monkeypatch: pytest.MonkeyPa
     assert result.audio_bytes == b"wav"
     assert captured["headers"]["x-goog-api-key"] == "private-key"
     assert "private text" not in json.dumps(captured["headers"])
+    assert (
+        captured["json"]["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"][
+            "voiceName"
+        ]
+        == "Algieba"
+    )
 
 
-def test_provider_failures_are_typed_and_redacted(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_provider_failures_are_typed_and_redacted(
+    monkeypatch: pytest.MonkeyPatch, install_log_capture: structlog.testing.LogCapture
+) -> None:
     class Client:
         def __init__(self, **_: Any) -> None:
             pass
@@ -149,10 +158,13 @@ def test_provider_failures_are_typed_and_redacted(monkeypatch: pytest.MonkeyPatc
         )
     assert "private text" not in str(raised.value)
     assert "private-key" not in str(raised.value)
+    assert "private text" not in str(install_log_capture.entries)
+    assert "private-key" not in str(install_log_capture.entries)
 
 
+@pytest.mark.parametrize("controls", [{"rate": "+10%"}, {"pitch": "+1Hz"}])
 def test_gemini_rejects_non_default_rate_or_pitch_without_request(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, controls: dict[str, str]
 ) -> None:
     def unexpected_request(*_: Any, **__: Any) -> None:
         pytest.fail("Gemini request should not be made")
@@ -162,5 +174,43 @@ def test_gemini_rejects_non_default_rate_or_pitch_without_request(
     )
     with pytest.raises(ConfigurationError, match="custom rate or pitch"):
         GeminiTtsSynthesizer(api_key="secret").synthesize(
-            SynthesisRequest("hello", "Algieba", rate="+10%")
+            SynthesisRequest("hello", "Algieba", **controls)
         )
+
+
+def test_gemini_missing_key_names_dedicated_setting() -> None:
+    with pytest.raises(ConfigurationError, match="GFLOW_CLI_GEMINI_TTS_API_KEY"):
+        GeminiTtsSynthesizer(api_key=None).synthesize(SynthesisRequest("hello", None))
+
+
+@pytest.mark.parametrize(
+    "post",
+    [
+        lambda *_args, **_kwargs: httpx.Response(200, json={"candidates": []}),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(httpx.ReadTimeout("secret text key")),
+    ],
+    ids=["malformed-audio", "timeout"],
+)
+def test_gemini_malformed_and_timeout_responses_are_typed_and_redacted(
+    monkeypatch: pytest.MonkeyPatch, post: Any
+) -> None:
+    class Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def post(self, *args: Any, **kwargs: Any) -> Any:
+            return post(*args, **kwargs)
+
+    monkeypatch.setattr("gflow_cli.services.speech_synthesizers.gemini.httpx.Client", Client)
+    with pytest.raises((ConfigurationError, NetworkError)) as raised:
+        GeminiTtsSynthesizer(api_key="secret-key").synthesize(
+            SynthesisRequest("private text", "Algieba")
+        )
+    assert "private text" not in str(raised.value)
+    assert "secret-key" not in str(raised.value)
