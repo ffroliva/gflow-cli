@@ -460,6 +460,10 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_LLM_MODEL."
         ),
     )
+    transcribe_model: str = Field(
+        default="whisper-1",
+        description="Audio transcription model. Override via GFLOW_CLI_TRANSCRIBE_MODEL.",
+    )
 
     @field_validator("llm_base_url", mode="before")
     @classmethod

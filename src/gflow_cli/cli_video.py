@@ -49,6 +49,7 @@ from gflow_cli.api.video import (
     reference_cap_for,
     validate_duration_for_model,
 )
+from gflow_cli.cli_video_captions import captions, transcribe
 from gflow_cli.cli_video_reporting import (
     _chain_json,
     _emit_chain_result,
@@ -2606,3 +2607,7 @@ async def _run_video_upscale(
             out_path=out_path,
         )
         console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
+
+
+video.add_command(transcribe)
+video.add_command(captions)
