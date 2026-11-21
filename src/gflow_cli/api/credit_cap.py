@@ -50,6 +50,19 @@ def preserve_credit_cap_partials(
     return current
 
 
+def account_failed_spend(
+    budget: CreditBudget,
+    exc: BaseException,
+    completed_media_ids: Sequence[str] = (),
+) -> list[str]:
+    """Account for possible or confirmed spend from a failed generation step."""
+    current_ids = preserve_credit_cap_partials(exc, completed_media_ids)
+    quote = getattr(exc, "quoted_credits", None)
+    if budget.remaining is not None and (quote is not None or current_ids):
+        budget.remaining = max(0, budget.remaining - quote) if quote is not None else 0
+    return current_ids
+
+
 class CreditBudget:
     """Mutable remaining credits for a multi-submit command."""
 

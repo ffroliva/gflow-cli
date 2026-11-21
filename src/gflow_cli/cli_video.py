@@ -1933,8 +1933,64 @@ _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
 
 
-async def _refuse_unpriced_extend(max_credits: int) -> None:
-    enforce_credit_cap(quoted=None, max_credits=max_credits, route="flow.google.com video extend")
+def _refuse_unported_extend(refusal: Exception, is_json: bool, output_format: str) -> None:
+    async def _refuse() -> None:
+        raise refusal
+
+    run_with_handlers(
+        _refuse,
+        cli_command=_EXTEND_COMMAND,
+        as_json=is_json,
+        output_format=output_format,
+    )
+
+
+def _validate_extend_target(media_id: str, scene_id: str | None) -> None:
+    if scene_id is not None and not is_media_uuid(scene_id):
+        msg = f"scene id must be a UUID, got {scene_id!r}"
+        raise click.BadParameter(msg)
+    if not is_media_uuid(media_id):
+        msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
+        raise click.BadParameter(msg)
+
+
+def _maybe_print_extend_plan(
+    *,
+    is_json: bool,
+    output_format: str,
+    media_id: str,
+    prompt: str,
+    aspect: str | None,
+    segments: int,
+    migrated: bool,
+    max_credits: int | None,
+) -> None:
+    if is_json or output_format == OutputFormat.ID.value:
+        return
+    _print_extend_plan(
+        media_id=media_id,
+        prompt=prompt,
+        aspect=aspect or ("the source clip's" if migrated else _LABS_EXTEND_DEFAULT_ASPECT),
+        segments=segments,
+        migrated=migrated,
+        max_credits=max_credits,
+    )
+
+
+def _refuse_migrated_extend_cap(
+    effective_max_credits: int, is_json: bool, output_format: str
+) -> None:
+    async def _refuse() -> None:
+        enforce_credit_cap(
+            quoted=None, max_credits=effective_max_credits, route="flow.google.com video extend"
+        )
+
+    run_with_handlers(
+        _refuse,
+        cli_command=_EXTEND_COMMAND,
+        as_json=is_json,
+        output_format=output_format,
+    )
 
 
 async def _run_extend(  # noqa: PLR0913
@@ -2424,12 +2480,7 @@ def extend(  # noqa: PLR0913
     # --resume-from and --scene are the same knob wearing two names; resume is
     # the one the interrupt banner advertises, so it wins.
     scene_id = resume_from or scene_id
-    if scene_id is not None and not is_media_uuid(scene_id):
-        msg = f"scene id must be a UUID, got {scene_id!r}"
-        raise click.BadParameter(msg)
-    if not is_media_uuid(media_id):
-        msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
-        raise click.BadParameter(msg)
+    _validate_extend_target(media_id, scene_id)
     count = segments if segments is not None else len(prompts)
     # Which host drives this run is decided here, from settings and the request alone,
     # so an unported form is refused before the plan, the prompt or any browser.
@@ -2441,37 +2492,26 @@ def extend(  # noqa: PLR0913
     is_json = as_json or output_format == OutputFormat.JSON.value
     effective_max_credits = resolve_max_credits(max_credits, get_settings().max_credits)
     if migrated and refusal is not None:
-
-        async def _refuse() -> None:
-            raise refusal
-
-        run_with_handlers(
-            _refuse,
-            cli_command=_EXTEND_COMMAND,
-            as_json=is_json,
-            output_format=output_format,
-        )
+        _refuse_unported_extend(refusal, is_json=is_json, output_format=output_format)
         return
     # The cost gate runs before a client exists, so --dry-run cannot spend and
     # cannot even open a browser. Machine-readable output must not carry the
     # human plan preamble — it would corrupt the JSON document on stdout.
-    if not is_json and output_format != OutputFormat.ID.value:
-        _print_extend_plan(
-            media_id=media_id,
-            prompt=prompts[0],
-            aspect=aspect or ("the source clip's" if migrated else _LABS_EXTEND_DEFAULT_ASPECT),
-            segments=count,
-            migrated=migrated,
-            max_credits=effective_max_credits,
-        )
+    _maybe_print_extend_plan(
+        is_json=is_json,
+        output_format=output_format,
+        media_id=media_id,
+        prompt=prompts[0],
+        aspect=aspect,
+        segments=count,
+        migrated=migrated,
+        max_credits=effective_max_credits,
+    )
     if dry_run:
         return
     if migrated and effective_max_credits is not None:
-        run_with_handlers(
-            lambda: _refuse_unpriced_extend(effective_max_credits),
-            cli_command=_EXTEND_COMMAND,
-            as_json=is_json,
-            output_format=output_format,
+        _refuse_migrated_extend_cap(
+            effective_max_credits, is_json=is_json, output_format=output_format
         )
         return
     if not yes:

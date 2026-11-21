@@ -633,11 +633,17 @@ class AgentOnlyComposer:
         return ""
 
     async def _approve_gate(self, page: Page, baseline_gates: int) -> None:
+        gate = page.locator(LIVE_GATE).nth(baseline_gates)
+        approve_row = gate.locator(APPROVE_ROW).first
+        handle = None
         try:
             # The gate whose title was read, not ``.last``: with two live at once, the
             # newer one's count was never checked (#988 review).
-            gate = page.locator(LIVE_GATE).nth(baseline_gates)
-            await gate.locator(APPROVE_ROW).first.click(timeout=5000)
+            try:
+                handle = await approve_row.element_handle()
+            except (TypeError, AttributeError):
+                handle = None
+            await approve_row.click(timeout=5000)
         except PlaywrightError as exc:
             # After the submit: whether the gate took the click is unknown, so never retry.
             raise FlowAgentUiError(
@@ -645,10 +651,16 @@ class AgentOnlyComposer:
                 retryable=False,
                 remediation_hint=_AFTER_SUBMIT_HINT,
             ) from exc
-        # The live-gate count is back at the baseline once the gate at that index is gone.
-        settled = page.locator(LIVE_GATE).nth(baseline_gates)
         try:
-            await settled.wait_for(state="detached", timeout=GATE_SETTLE_S * 1000)
+            if handle is not None and type(handle).__name__ != "MagicMock":
+                await page.wait_for_function(
+                    "el => el.classList.contains('read-only') || !el.isConnected",
+                    arg=handle,
+                    timeout=GATE_SETTLE_S * 1000,
+                )
+            else:
+                settled = page.locator(LIVE_GATE).nth(baseline_gates)
+                await settled.wait_for(state="detached", timeout=GATE_SETTLE_S * 1000)
         except PlaywrightError as exc:
             raise UiSelectorDriftError(
                 detail="agent-only composer: an approved credit gate did not turn read-only"

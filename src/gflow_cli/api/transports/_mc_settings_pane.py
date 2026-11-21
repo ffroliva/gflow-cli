@@ -45,7 +45,7 @@ from gflow_cli.api.video import I2V_DEFAULT_MODEL, Mode, VideoModel
 from gflow_cli.errors import ConfigurationError, UiSelectorDriftError
 
 if TYPE_CHECKING:
-    from playwright.async_api import Page
+    from playwright.async_api import Locator, Page
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest
@@ -80,6 +80,44 @@ class SettingsPaneMixin(EditorGateMixin):
     """Settings pane interaction, models, aspects, and durations."""
 
     # --- settings ---------------------------------------------------------------
+
+    async def _apply_duration_setting(
+        self,
+        page: Page,
+        pane: Locator,
+        request: GenerateVideoRequest,
+        model: VideoModel | None,
+    ) -> None:
+        if request.duration is not None:
+            if (
+                request.mode is Mode.R2V
+                and model not in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH)
+                and request.duration != R2V_DURATION_S
+            ):
+                raise ConfigurationError(
+                    detail=(
+                        "the SDK restricts Veo/unspecified-model "
+                        "reference-to-video to "
+                        f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
+                        "silently drops the references and submits a text-to-video run "
+                        "with their file names typed into the prompt — a full-price clip "
+                        "with none of the images on it"
+                    ),
+                    remediation_hint=(
+                        f"Drop --duration (r2v pins {R2V_DURATION_S}s on its own), pass "
+                        f"--duration {R2V_DURATION_S}, or run this length on labs with "
+                        "GFLOW_CLI_FLOW_HOST=labs.google."
+                    ),
+                )
+            if model is VideoModel.OMNI_1_2_FLASH:
+                await self._select_omni12_duration(page, pane, request.duration)
+            else:
+                await self._select(page, pane, axis="duration", text=f"{request.duration}s")
+        elif request.mode is Mode.R2V:
+            if model is VideoModel.OMNI_1_2_FLASH:
+                await self._select_omni12_duration(page, pane, R2V_DURATION_S)
+            else:
+                await self._pin_r2v_duration(page, pane)
 
     async def apply_video_settings(self, page: Page, request: GenerateVideoRequest) -> int | None:
         """Mode, model, aspect, duration, count — through the radios, with read-back.
@@ -117,36 +155,7 @@ class SettingsPaneMixin(EditorGateMixin):
             if model is not None:
                 await self._select_model(page, pane, model)
             await self._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
-            if request.duration is not None:
-                if (
-                    request.mode is Mode.R2V
-                    and model not in (VideoModel.OMNI_FLASH, VideoModel.OMNI_1_2_FLASH)
-                    and request.duration != R2V_DURATION_S
-                ):
-                    raise ConfigurationError(
-                        detail=(
-                            "the SDK restricts Veo/unspecified-model "
-                            "reference-to-video to "
-                            f"{R2V_DURATION_S}s; at {request.duration}s it does not refuse but "
-                            "silently drops the references and submits a text-to-video run "
-                            "with their file names typed into the prompt — a full-price clip "
-                            "with none of the images on it"
-                        ),
-                        remediation_hint=(
-                            f"Drop --duration (r2v pins {R2V_DURATION_S}s on its own), pass "
-                            f"--duration {R2V_DURATION_S}, or run this length on labs with "
-                            "GFLOW_CLI_FLOW_HOST=labs.google."
-                        ),
-                    )
-                if model is VideoModel.OMNI_1_2_FLASH:
-                    await self._select_omni12_duration(page, pane, request.duration)
-                else:
-                    await self._select(page, pane, axis="duration", text=f"{request.duration}s")
-            elif request.mode is Mode.R2V:
-                if model is VideoModel.OMNI_1_2_FLASH:
-                    await self._select_omni12_duration(page, pane, R2V_DURATION_S)
-                else:
-                    await self._pin_r2v_duration(page, pane)
+            await self._apply_duration_setting(page, pane, request, model)
             if request.resolution is not None:
                 await _select_resolution(page, pane, request.resolution)
             await self._select(page, pane, axis="count", text=f"x{request.count}")

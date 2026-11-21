@@ -87,21 +87,24 @@ async def test_movie_cap_refusal_stops_even_with_continue_on_error(
     client.generate_video = AsyncMock(side_effect=CreditCapExceededError(quoted=4, max_credits=2))
     manifest = MovieManifest.from_toml_path(_manifest_file(tmp_path))
     state = MovieState(title="T", project="project")
+    context = cli_movie.MovieRunContext(
+        manifest=manifest,
+        state=state,
+        state_path=tmp_path / "movie-state.json",
+        profile_name="test",
+        profile_dir=tmp_path,
+        out_dir=tmp_path,
+        brief_cache=MagicMock(),
+        budget=CreditBudget(2),
+    )
     with pytest.raises(CreditCapExceededError):
         await cli_movie._run_one_scene(
             client=client,
             recorder=MagicMock(),
             scene=manifest.scenes[0],
-            manifest=manifest,
-            state=state,
-            state_path=tmp_path / "movie-state.json",
-            profile_name="test",
-            profile_dir=tmp_path,
-            out_dir=tmp_path,
+            context=context,
             generated_any=False,
             continue_on_error=True,
-            brief_cache=MagicMock(),
-            budget=CreditBudget(2),
         )
     assert state.scenes[manifest.scenes[0].id].status == "failed"
 
@@ -146,38 +149,34 @@ async def test_movie_deducts_quote_and_refuses_later_scene(
         )
 
     client.generate_video = AsyncMock(side_effect=generate)
-    await cli_movie._run_one_scene(
-        client=client,
-        recorder=MagicMock(),
-        scene=manifest.scenes[0],
+    context = cli_movie.MovieRunContext(
         manifest=manifest,
         state=state,
         state_path=tmp_path / "movie-state.json",
         profile_name="test",
         profile_dir=tmp_path,
         out_dir=tmp_path,
+        brief_cache=MagicMock(),
+        budget=budget,
+    )
+    await cli_movie._run_one_scene(
+        client=client,
+        recorder=MagicMock(),
+        scene=manifest.scenes[0],
+        context=context,
         generated_any=False,
         run_media_ids=run_media_ids,
         continue_on_error=True,
-        brief_cache=MagicMock(),
-        budget=budget,
     )
     with pytest.raises(CreditCapExceededError) as caught:
         await cli_movie._run_one_scene(
             client=client,
             recorder=MagicMock(),
             scene=manifest.scenes[1],
-            manifest=manifest,
-            state=state,
-            state_path=tmp_path / "movie-state.json",
-            profile_name="test",
-            profile_dir=tmp_path,
-            out_dir=tmp_path,
+            context=context,
             generated_any=True,
             run_media_ids=run_media_ids,
             continue_on_error=True,
-            brief_cache=MagicMock(),
-            budget=budget,
         )
     assert [request.max_credits for request in requests] == [6, 2]
     assert state.scenes["one"].status == "completed"
@@ -239,22 +238,25 @@ async def test_continue_on_error_deducts_quote_from_a_post_submit_failure(
         raise error
 
     client.generate_video = AsyncMock(side_effect=generate)
-    common = dict(
-        client=client,
-        recorder=MagicMock(),
+    context = cli_movie.MovieRunContext(
         manifest=manifest,
         state=state,
         state_path=tmp_path / "state.json",
         profile_name="test",
         profile_dir=tmp_path,
         out_dir=tmp_path,
-        continue_on_error=True,
         brief_cache=MagicMock(),
         budget=budget,
     )
     for index, scene in enumerate(manifest.scenes):
         call = cli_movie._run_one_scene(
-            **common, scene=scene, generated_any=bool(index), run_media_ids=[]
+            client=client,
+            recorder=MagicMock(),
+            context=context,
+            scene=scene,
+            generated_any=bool(index),
+            run_media_ids=[],
+            continue_on_error=True,
         )
         if index:
             with pytest.raises(CreditCapExceededError):
@@ -284,22 +286,25 @@ async def test_movie_persists_media_id_when_cap_gate_appears_after_submit(
     )
     error.charged, error.next_action = "maybe", "reconcile"
     client.generate_video = AsyncMock(side_effect=error)
+    context = cli_movie.MovieRunContext(
+        manifest=manifest,
+        state=state,
+        state_path=tmp_path / "state.json",
+        profile_name="test",
+        profile_dir=tmp_path,
+        out_dir=tmp_path,
+        brief_cache=MagicMock(),
+        budget=CreditBudget(10),
+    )
     with pytest.raises(CreditCapExceededError) as caught:
         await cli_movie._run_one_scene(
             client=client,
             recorder=MagicMock(),
             scene=manifest.scenes[0],
-            manifest=manifest,
-            state=state,
-            state_path=tmp_path / "state.json",
-            profile_name="test",
-            profile_dir=tmp_path,
-            out_dir=tmp_path,
+            context=context,
             generated_any=False,
             run_media_ids=[],
             continue_on_error=True,
-            brief_cache=MagicMock(),
-            budget=CreditBudget(10),
         )
     assert state.scenes[manifest.scenes[0].id].media_id == "media-billed"
     assert state.scenes[manifest.scenes[0].id].status == "completed"
@@ -332,22 +337,25 @@ async def test_movie_records_completed_scene_when_billed_submit_returns_no_quote
             quoted_credits=None,
         )
     )
+    context2 = cli_movie.MovieRunContext(
+        manifest=manifest,
+        state=state,
+        state_path=tmp_path / "state.json",
+        profile_name="test",
+        profile_dir=tmp_path,
+        out_dir=tmp_path,
+        brief_cache=MagicMock(),
+        budget=CreditBudget(10),
+    )
     with pytest.raises(CreditCapExceededError) as caught:
         await cli_movie._run_one_scene(
             client=client,
             recorder=MagicMock(),
             scene=manifest.scenes[0],
-            manifest=manifest,
-            state=state,
-            state_path=tmp_path / "state.json",
-            profile_name="test",
-            profile_dir=tmp_path,
-            out_dir=tmp_path,
+            context=context2,
             generated_any=False,
             run_media_ids=[],
             continue_on_error=True,
-            brief_cache=MagicMock(),
-            budget=CreditBudget(10),
         )
     assert state.scenes[manifest.scenes[0].id].media_id == "media-unquoted"
     assert state.scenes[manifest.scenes[0].id].status == "completed"

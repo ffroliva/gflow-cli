@@ -132,7 +132,7 @@ function gate(quoted) {
     window.log.approvedTitles.push(title.textContent);
     answer();
     window.log.approvals++;
-    if (window.log.approvals < S.gates) setTimeout(gate, S.delay); else produce();
+    if (window.log.approvals < S.gates) setTimeout(gate, 0); else produce();
   };
   rows[2].onclick = () => { answer(); window.log.rejections++; };
   document.getElementById('chat').appendChild(m);

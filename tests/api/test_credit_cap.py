@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from gflow_cli.api.credit_cap import CreditBudget, enforce_credit_cap, parse_credit_quote
+from gflow_cli.api.credit_cap import (
+    CreditBudget,
+    account_failed_spend,
+    enforce_credit_cap,
+    parse_credit_quote,
+)
 from gflow_cli.api.video import GenerateVideoRequest
 from gflow_cli.config import Settings
 from gflow_cli.errors import CreditCapExceededError
@@ -105,3 +110,37 @@ def test_max_credits_setting_and_environment(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "-1")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_account_failed_spend() -> None:
+    # 1. Budget with quote on exception -> deducted from budget
+    budget = CreditBudget(10)
+    err = CreditCapExceededError(quoted=4, max_credits=10)
+    err.quoted_credits = 4
+    res = account_failed_spend(budget, err, ["m0"])
+    assert res == []
+    assert budget.remaining == 6
+    assert err.completed_media_ids == ["m0"]
+
+    # 2. Budget with media id but no quote -> budget exhausted (remaining = 0)
+    budget = CreditBudget(10)
+    err2 = CreditCapExceededError(quoted=None, max_credits=10, completed_media_ids=["m1"])
+    res2 = account_failed_spend(budget, err2, ["m0"])
+    assert res2 == ["m1"]
+    assert budget.remaining == 0
+    assert err2.completed_media_ids == ["m0", "m1"]
+
+    # 3. Unlimited budget (None) stays None
+    unlimited = CreditBudget(None)
+    account_failed_spend(unlimited, err, ["m0"])
+    assert unlimited.remaining is None
+    unlimited.record_spend(10)
+    assert unlimited.remaining is None
+    assert unlimited.max_credits is None
+
+    # 4. Error with no quote and no current ids -> remaining unchanged
+    budget_clean = CreditBudget(10)
+    err_clean = ValueError("early validation error")
+    res_clean = account_failed_spend(budget_clean, err_clean, ())
+    assert res_clean == []
+    assert budget_clean.remaining == 10
