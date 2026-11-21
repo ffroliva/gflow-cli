@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 
 from gflow_cli.config import Settings, get_settings
-from gflow_cli.errors import ConfigurationError, VideoAssemblyError
+from gflow_cli.errors import Charged, ConfigurationError, VideoAssemblyError
 from gflow_cli.services.speech_ports import SpeechSynthesizer, SynthesisRequest
 from gflow_cli.services.speech_synthesizers import EdgeTtsSynthesizer, GeminiTtsSynthesizer
 from gflow_cli.services.video_assembly import publish_output
@@ -68,10 +68,12 @@ def narrate(
                     charged="no",
                     remediation_hint="Check that the input text contains speakable words.",
                 )
-            with _output_errors(out_file):
+            # Gemini bills a completed synthesis even when the local write then fails.
+            charged: Charged = "maybe" if provider == "gemini" else "no"
+            with _output_errors(out_file, charged):
                 staging.write(result.audio_bytes)
                 staging.flush()
-        with _output_errors(out_file):
+        with _output_errors(out_file, charged):
             publish_output(temporary, out_file)
         return NarrationResult(out_file, provider, result.media_type)
     finally:
@@ -103,20 +105,20 @@ def validate_narration(text: str, provider: str, rate: str, pitch: str) -> None:
 
 
 @contextmanager
-def _output_errors(out_file: Path) -> Generator[None, None, None]:
+def _output_errors(out_file: Path, charged: Charged) -> Generator[None, None, None]:
     """Map a failed write or publication of the output file to an actionable error."""
     try:
         yield
     except VideoAssemblyError as exc:  # publish_output raises it only for an existing output
         raise ConfigurationError(
             f"Narration output already exists: {out_file}",
-            charged="no",
+            charged=charged,
             remediation_hint=_EXISTING_OUT_FILE_HINT,
         ) from exc
     except OSError as exc:
         raise ConfigurationError(
             f"Could not write narration output: {out_file}",
-            charged="no",
+            charged=charged,
             remediation_hint=_WRITABLE_OUT_FILE_HINT,
         ) from exc
 

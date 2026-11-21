@@ -184,7 +184,7 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 - [x] Select edge by default and Gemini only when requested.
 - [x] Validate text/provider/rate/pitch and output destination before network calls.
 - [x] Write audio atomically without replacing an existing file; retain provider-native output unless conversion is required for WAV compatibility with the assembler.
-- [x] Return path/provider and typed outcome; report `charged: no` for every error.
+- [x] Return path/provider and typed outcome; report `charged: no` when nothing reached a provider or the provider is Edge, and `charged: maybe` when a Gemini request may have been billed (read timeout, HTTP 5xx, malformed reply, or a local write failure after synthesis).
 
 **Tests:**
 - [x] Task 5 service tests pass with fake adapters and temporary files.

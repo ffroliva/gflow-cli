@@ -240,3 +240,24 @@ def test_result_payload_reports_status_ok(tmp_path: Path) -> None:
         "provider": "edge",
         "media_type": "audio/mpeg",
     }
+
+
+@pytest.mark.parametrize(("provider", "charged"), [("edge", "no"), ("gemini", "maybe")])
+def test_output_failure_after_synthesis_reports_the_provider_charge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, charged: str
+) -> None:
+    from gflow_cli.services import audio_narration
+
+    def denied(*_: object) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(audio_narration, "publish_output", denied)
+    with pytest.raises(ConfigurationError) as raised:
+        narrate(
+            text="hello",
+            out_file=tmp_path / "v.wav",
+            provider=provider,  # pyright: ignore[reportArgumentType]
+            synthesizer=FakeSynthesizer(),
+        )
+
+    assert raised.value.charged == charged

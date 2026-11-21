@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import structlog
 
-from gflow_cli.errors import ConfigurationError, NetworkError, TransportTimeoutError
+from gflow_cli.errors import ConfigurationError, GFlowError, NetworkError, TransportTimeoutError
 from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult
 
 log = structlog.get_logger(__name__)
@@ -83,7 +83,7 @@ def _retryable_errors(edge_tts: Any) -> tuple[type[BaseException], ...]:
 
 def _final_error(
     failure: BaseException | None, edge_tts: Any, voice: str, attempts: int
-) -> Exception:
+) -> GFlowError:
     if isinstance(failure, TimeoutError):
         return TransportTimeoutError(
             "Edge TTS stream timed out while waiting for audio data.",
