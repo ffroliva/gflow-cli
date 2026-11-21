@@ -88,7 +88,7 @@ into a local clip or transcribes first when `srt` is omitted. Both tools are dir
 credit-free calls; output files stay inside `GFLOW_CLI_OUTPUT_DIR`. The Google Gemini default
 is refused before audio is sent. Configure an OpenAI, Groq, or local Whisper-compatible URL.
 
-`gflow_narrate(text, text_file, out_file, provider, voice, rate, pitch)` is the direct,
+`gflow_narrate(text, out_file, provider, voice, rate, pitch)` is the direct,
 credit-free twin of `gflow audio narrate`. It stays registered under `--no-spend`. Narration text
 is sent to the selected provider, Edge Read Aloud or Gemini; Gemini uses the separate
 `GFLOW_CLI_GEMINI_TTS_API_KEY`. Output paths are confined to `GFLOW_CLI_OUTPUT_DIR`.

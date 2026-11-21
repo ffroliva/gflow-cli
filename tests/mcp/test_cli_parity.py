@@ -46,7 +46,6 @@ import click
 from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
 from gflow_cli.mcp import server as mcp_server
-from gflow_cli.mcp import tools as mcp_tools
 from tests.mcp._cli_tree import cli_leaves
 
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
@@ -316,24 +315,25 @@ def _leaf_params(path: str) -> set[str]:
     return {p.name for p in cmd.params if p.name}
 
 
-def _tool_params(tool_name: str) -> set[str]:
+def _tool_params(fn: Any) -> set[str]:
     """Declared parameter names of a registered MCP tool, unwrapping decorators."""
-    fn: Any = getattr(mcp_tools, tool_name)
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return set(inspect.signature(fn).parameters) - {"self"}
 
 
-def test_every_cli_option_reaches_its_mcp_tool() -> None:
+def test_every_cli_option_reaches_its_mcp_tool(mcp_server: Any) -> None:
     """A mapped leaf's options must exist on the tool, be CLI-only, or be recorded.
 
     This is the check command-level parity cannot make. Its first run found #689.
     """
     unmirrored: list[str] = []
     for leaf, tool in sorted(CLI_TO_MCP.items()):
-        if not hasattr(mcp_tools, tool):
+        # Read the registry, not `tools`: tools in their own modules were silently skipped.
+        registered = mcp_server._tool_manager._tools.get(tool)
+        if registered is None:
             continue  # test_mapped_tools_are_registered owns that failure
-        tool_params = _tool_params(tool)
+        tool_params = _tool_params(registered.fn)
         for raw in sorted(_leaf_params(leaf) - _CLI_ONLY_PARAMS):
             candidates = {raw, _PARAM_ALIASES.get(raw, raw)}
             if candidates & tool_params or f"{leaf}:{raw}" in _OPTION_EXEMPT:
