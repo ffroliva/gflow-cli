@@ -384,7 +384,7 @@ def test_audio_decode_is_lazy(
             self.streams = inner.streams
             self.duration = inner.duration
 
-        def __enter__(self) -> "_Container":
+        def __enter__(self) -> _Container:
             return self
 
         def __exit__(self, *exc: object) -> None:
@@ -409,9 +409,7 @@ def test_audio_decode_is_lazy(
         time_base=real_av.time_base,
     )
     real_require = service._require_chain_extra
-    monkeypatch.setattr(
-        service, "_require_chain_extra", lambda: (fake_av, real_require()[1])
-    )
+    monkeypatch.setattr(service, "_require_chain_extra", lambda: (fake_av, real_require()[1]))
 
     wav, _ = extract_wav_bytes(media_files[0])
 
