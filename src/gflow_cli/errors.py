@@ -429,6 +429,7 @@ class RateLimitError(FlowApiError):
         route: str = "",
         remediation_hint: str | None = None,
         retry_after: float | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -436,6 +437,7 @@ class RateLimitError(FlowApiError):
             instance=instance,
             route=route,
             remediation_hint=remediation_hint,
+            charged=charged,
         )
         self.retry_after = retry_after
 

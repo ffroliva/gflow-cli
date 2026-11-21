@@ -154,7 +154,7 @@ def _gate(profile_dir: Path) -> None:
         del _throttled[profile_dir]
 
 
-def _check(response: httpx.Response, profile_dir: Path) -> None:
+def _check(response: httpx.Response, profile_dir: Path, *, rpcid: str = "nzlxg") -> None:
     if names := sorted(
         {h.split("=", 1)[0].strip() for h in response.headers.get_list("set-cookie")}
     ):
@@ -170,6 +170,18 @@ def _check(response: httpx.Response, profile_dir: Path) -> None:
         raise WireReadUnavailable(WireFallbackReason.HTTP_401)
     if status in (429, 503):
         window = parse_retry_after(response) or _THROTTLE_DEFAULT_S
+        if rpcid == "pGCYOe":
+            raise RateLimitError(
+                f"HTTP {status}",
+                status=status,
+                route="media_trash_wire",
+                retry_after=window,
+                remediation_hint=(
+                    "Flow rate-limited media trash/restore operations. "
+                    "Wait before retrying."
+                ),
+                charged="no",
+            )
         _throttled[profile_dir] = (_clock() + window, status)
         raise _throttled_error(status, window)
     if status == 400:
@@ -315,7 +327,7 @@ async def _execute_direct_rpc(
             tokens = await _shell_tokens(client, profile_dir, headers)
             _gate(profile_dir)  # another read's POST may have been throttled meanwhile
             response = await _send(client, _rpc_request(rpcid, tokens, headers, payload=payload))
-            _check(response, profile_dir)
+            _check(response, profile_dir, rpcid=rpcid)
     except (TimeoutError, httpx.TransportError):
         raise WireReadUnavailable(WireFallbackReason.NETWORK) from None
     return response, time.perf_counter() - started

@@ -590,5 +590,35 @@ async def test_direct_trash_flow_refusal_raises_flow_api_error_without_fallback(
     client_mock.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_direct_trash_429_has_own_route_and_does_not_throttle_credits(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=_SHELL)
+        return httpx.Response(429, headers={"Retry-After": "30"})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        lambda **kw: real_client(**{**kw, "transport": httpx.MockTransport(handler)}),
+    )
+
+    from gflow_cli.errors import RateLimitError
+
+    with pytest.raises(RateLimitError) as exc_info:
+        await flow_wire.direct_trash_media(profile_dir, "m-1", "proj-1")
+
+    err = exc_info.value
+    assert err.route != "credits_wire"
+    assert "credits" not in (err.remediation_hint or "").lower()
+    assert err.charged == "no"
+    # Crucial: _throttled window must NOT be set on credits throttle
+    assert profile_dir not in flow_wire._throttled
+
+
+
 
 
