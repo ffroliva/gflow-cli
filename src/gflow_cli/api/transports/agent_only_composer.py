@@ -9,8 +9,8 @@ Shape of a run:
 1. **Agent settings** carry aspect / count / model as account defaults. They are set to the
    request, saved, and restored afterwards (measured: Save persists across a reload, and a
    set -> Save -> restore -> Save round trip returns the account to its originals). The
-   "Confirm before generating" radio follows ``GFLOW_CLI_AGENT_CONFIRM`` and is NOT
-   restored — it is the user's standing choice.
+   "Confirm before generating" radio follows ``GFLOW_CLI_AGENT_CONFIRM`` (or ``always``
+   under ``--max-credits``) and is restored afterwards too.
 2. A natural-language **directive** goes into the ProseMirror editor and is submitted.
 3. At most **one credit gate** that appeared after our own submit is approved, and only
    after its title has been read: a gate quoting more clips than requested is rejected

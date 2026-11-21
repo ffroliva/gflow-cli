@@ -274,6 +274,43 @@ async def test_agent_video_cap_forces_confirm_always(
     )
     assert apply.await_args.kwargs["confirm"] == "always"
     restore.assert_awaited_once()
+    assert "is NOT" not in (agent.__doc__ or "")
+
+
+@pytest.mark.asyncio
+async def test_agent_video_cap_restores_confirm_setting_on_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.api.transports import agent_only_composer as agent
+    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.errors import CreditCapExceededError
+
+    monkeypatch.setattr(agent, "_confirm_setting", lambda: "account")
+    snapshot = agent.DefaultsSnapshot("video", 0, 0, "model", confirm_value="2")
+    monkeypatch.setattr(
+        agent.AgentOnlyComposer, "apply_defaults", AsyncMock(return_value=snapshot)
+    )
+    monkeypatch.setattr(
+        agent.AgentOnlyComposer,
+        "generate",
+        AsyncMock(side_effect=CreditCapExceededError(quoted=10, max_credits=4)),
+    )
+    restore = AsyncMock()
+    monkeypatch.setattr(agent.AgentOnlyComposer, "restore_defaults", restore)
+    page = object()
+    with pytest.raises(CreditCapExceededError):
+        await agent.run_agent_video(
+            page,
+            GenerateVideoRequest(prompt="cat", max_credits=4),
+            project_id="p",
+            save=AsyncMock(),
+            poll_timeout_s=1,
+            download=False,
+            on_started=None,
+        )
+    restore.assert_awaited_once_with(page, snapshot)
 
 
 @pytest.mark.asyncio
