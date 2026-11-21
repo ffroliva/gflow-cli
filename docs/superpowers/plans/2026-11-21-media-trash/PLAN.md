@@ -178,16 +178,16 @@ local catalog state.
 - `tests/services/test_media_trash.py`
 
 **Steps:**
-- [ ] Create `src/gflow_cli/services/media_trash.py` defining `trash_media_service(...)` and `restore_media_service(...)`.
-- [ ] Use `DataRepository.get_asset_by_any_id` / `resolve_asset` to accept `flow_media_id`, local asset ID, or `flow_workflow_id`.
-- [ ] Raise `DataStoreError` (exit 16) when the identifier matches assets across multiple profiles and `--profile` is unset.
-- [ ] Dispatch wire mutation via `FlowApiClient`.
-- [ ] On success, update asset metadata in `DataStore` (if asset is cataloged locally) and return structured result dataclass.
+- [x] Create `src/gflow_cli/services/media_trash.py` defining `trash_media_service(...)` and `restore_media_service(...)`.
+- [x] Use `DataRepository.get_asset_by_any_id` / `resolve_asset` to accept `flow_media_id`, local asset ID, or `flow_workflow_id`.
+- [x] Raise `DataStoreError` (exit 16) when the identifier matches assets across multiple profiles and `--profile` is unset.
+- [x] Dispatch wire mutation via `FlowApiClient`.
+- [x] On success, update asset metadata in `DataStore` (if asset is cataloged locally) and return structured result dataclass.
 
 **Tests created (green):**
-- [ ] `test_media_trash_service_resolves_local_id` — resolves asset ID to flow_media_id.
-- [ ] `test_media_trash_service_refuses_cross_profile_ambiguity` — raises exit 16 when ambiguous.
-- [ ] `test_media_trash_service_updates_local_catalog_status` — marks catalog record trashed.
+- [x] `test_media_trash_service_resolves_local_id` — resolves asset ID to flow_media_id.
+- [x] `test_media_trash_service_refuses_cross_profile_ambiguity` — raises exit 16 when ambiguous.
+- [x] `test_media_trash_service_updates_local_catalog_status` — marks catalog record trashed.
 
 ---
 

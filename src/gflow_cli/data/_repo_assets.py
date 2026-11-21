@@ -345,6 +345,22 @@ class AssetsRepo(RepositoryBase):
         ).fetchall()
         return [self._hydrate_asset_lookup(row) for row in rows]
 
+    def find_assets_by_any_id(self, ref_id: str) -> list[AssetLookup]:
+        """Return every asset matching ``ref_id`` (flow_media_id, flow_workflow_id, or catalog ID).
+
+        Used when resolving media targets across all profiles (#1363).
+        """
+        rows = self._store.conn.execute(
+            f"""
+            SELECT {_ASSET_LOOKUP_COLUMNS}
+            FROM assets
+            WHERE flow_media_id = ? OR flow_workflow_id = ? OR id = ?
+            ORDER BY profile_name ASC, id ASC
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
+            (ref_id, ref_id, ref_id),
+        ).fetchall()
+        return [self._hydrate_asset_lookup(row) for row in rows]
+
     def _hydrate_asset_lookup(self, row: sqlite3.Row) -> AssetLookup:
         file_rows = self._store.conn.execute(
             """

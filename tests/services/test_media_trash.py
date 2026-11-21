@@ -6,6 +6,8 @@ and FlowApiClient fallback execution.
 
 from __future__ import annotations
 
+import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,7 +27,15 @@ from gflow_cli.api.transports._media_trash_wire import (
     parse_trash_response,
 )
 from gflow_cli.config import reset_settings
-from gflow_cli.errors import WireFormatError
+from gflow_cli.data.models import AssetKind, AssetRecord, ProjectRecord
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
+from gflow_cli.errors import DataStoreError, WireFormatError
+from gflow_cli.services.media_trash import (
+    MediaTrashResult,
+    restore_media_service,
+    trash_media_service,
+)
 
 _FAKE_COOKIES = [("SID", "fake-sid"), ("OSID", "fake-osid")]
 _FAKE_AT = "AFAKEATTOKEN:1700000000000"
@@ -252,3 +262,178 @@ async def test_client_restore_media_page_evaluation(
     assert res["status"] == "restored"
     assert res["media_id"] == "m-1"
     fake_page.evaluate.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Service layer and catalog identifier resolution
+# ---------------------------------------------------------------------------
+
+
+def _seed_test_asset(
+    db_path: Path,
+    *,
+    asset_id: str,
+    flow_media_id: str,
+    flow_project_id: str,
+    profile_name: str = "default",
+    flow_workflow_id: str = "wf-1",
+    status: str = "ready",
+) -> None:
+    now_str = datetime.now(UTC).isoformat()
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile(
+            name=profile_name,
+            profile_dir=Path(f"/home/{profile_name}/.config/gflow"),
+        )
+        repo.upsert_project(
+            ProjectRecord(
+                id=str(uuid.uuid4()),
+                profile_name=profile_name,
+                flow_project_id=flow_project_id,
+                title="Test Project",
+                source="cli",
+                created_at=now_str,
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id=asset_id,
+                profile_name=profile_name,
+                flow_project_id=flow_project_id,
+                flow_media_id=flow_media_id,
+                flow_workflow_id=flow_workflow_id,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status=status,
+                model="imagen-3.0-fast-generate-001",
+                aspect_ratio="16:9",
+                width=1280,
+                height=720,
+                duration_seconds=None,
+                seed=1,
+                metadata_json={},
+                created_at=now_str,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_resolves_local_id(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="local-uuid-1",
+        flow_media_id="m-flow-1",
+        flow_project_id="p-flow-1",
+        profile_name="test_prof",
+    )
+
+    mock_trash = AsyncMock(
+        return_value={"media_id": "m-flow-1", "project_id": "p-flow-1", "status": "trashed"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    result = await trash_media_service("local-uuid-1")
+    assert isinstance(result, MediaTrashResult)
+    assert result.media_id == "m-flow-1"
+    assert result.project_id == "p-flow-1"
+    assert result.status == "trashed"
+    assert result.charged == "no"
+    assert "gflow media restore m-flow-1" in (result.restore_hint or "")
+    mock_trash.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_refuses_cross_profile_ambiguity(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="local-a",
+        flow_media_id="m-shared",
+        flow_project_id="p-a",
+        profile_name="prof-a",
+    )
+    _seed_test_asset(
+        db_path,
+        asset_id="local-b",
+        flow_media_id="m-shared",
+        flow_project_id="p-b",
+        profile_name="prof-b",
+    )
+
+    with pytest.raises(DataStoreError) as exc_info:
+        await trash_media_service("m-shared", profile=None)
+
+    assert "multiple profiles" in exc_info.value.detail
+    assert "--profile" in exc_info.value.detail
+
+    mock_trash = AsyncMock(
+        return_value={"media_id": "m-shared", "project_id": "p-a", "status": "trashed"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    res = await trash_media_service("m-shared", profile="prof-a")
+    assert res.profile_name == "prof-a"
+    assert res.media_id == "m-shared"
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_updates_local_catalog_status(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="local-asset",
+        flow_media_id="m-100",
+        flow_project_id="p-100",
+        profile_name="test_prof",
+        status="ready",
+    )
+
+    mock_trash = AsyncMock(
+        return_value={"media_id": "m-100", "project_id": "p-100", "status": "trashed"}
+    )
+    mock_restore = AsyncMock(
+        return_value={"media_id": "m-100", "project_id": "p-100", "status": "restored"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+    monkeypatch.setattr(flow_wire, "direct_restore_media", mock_restore)
+
+    res_trash = await trash_media_service("m-100")
+    assert res_trash.status == "trashed"
+
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        row_trashed = repo.find_assets_by_any_id("m-100")[0]
+        assert row_trashed.flow_media_id == "m-100"
+        # Check status in database directly
+        db_status = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id = ?", ("m-100",)
+        ).fetchone()
+        assert db_status is not None
+        assert db_status[0] == "trashed"
+
+    res_restore = await restore_media_service("m-100")
+    assert res_restore.status == "restored"
+
+    with DataStore.open(db_path) as store:
+        db_status = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id = ?", ("m-100",)
+        ).fetchone()
+        assert db_status is not None
+        assert db_status[0] == "ready"
