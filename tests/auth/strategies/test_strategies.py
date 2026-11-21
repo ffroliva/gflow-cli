@@ -15,6 +15,7 @@ from gflow_cli.errors import (
     AuthBrowserRejectedError,
     AuthLoginTimeoutError,
     AuthMissingError,
+    ProfileLockedError,
     SecurityError,
 )
 from tests.fixtures.settings_mock import NO_PROXY
@@ -227,6 +228,49 @@ class TestRealChromeStrategy:
         assert exc_info.value.detail == UNVERIFIED_MESSAGE[outcome]
         assert exc_info.value.remediation_hint == UNVERIFIED_HINT[outcome]
         assert not (profile_dir / ".gflow_browser_strategy").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "probe",
+        [
+            AsyncMock(return_value=_status(FlowSessionOutcome.PROFILE_UNAVAILABLE)),
+            AsyncMock(side_effect=ProfileLockedError("profile is locked (held)")),
+        ],
+        ids=["cookie-read-could-not-run", "profile-held"],
+    )
+    async def test_real_chrome_keeps_the_marker_when_the_check_could_not_run(
+        self, tmp_path: Path, probe: AsyncMock
+    ) -> None:
+        """#1400 item 2: a check that could not run is no evidence of a missing session.
+        Rolling the marker back made later commands open the Chrome-written profile with
+        the bundled Chromium (ProfileEngineDowngradeError), so the marker stays and the
+        login still fails with the local cause."""
+        strategy = RealChromeStrategy()
+        gflow_home = tmp_path / "gflow_home"
+        profile_dir = gflow_home / "profile_default"
+        gflow_home.mkdir()
+
+        with (
+            patch("gflow_cli.auth.real_chrome.get_settings", **NO_PROXY) as mock_settings,
+            _force_subprocess_path(),
+            patch(
+                "gflow_cli.auth.real_chrome.find_chrome_executable",
+                return_value=r"C:\fake\chrome.exe",
+            ),
+            patch(
+                "gflow_cli.auth.real_chrome.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=_build_mock_proc()),
+            ),
+            patch("gflow_cli.auth.real_chrome.verify_flow_profile", probe),
+        ):
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises((AuthMissingError, ProfileLockedError)) as exc_info:
+                await strategy.login(profile_dir, headless=False)
+
+        if isinstance(exc_info.value, AuthMissingError):
+            outcome = FlowSessionOutcome.PROFILE_UNAVAILABLE
+            assert exc_info.value.remediation_hint == UNVERIFIED_HINT[outcome]
+        assert (profile_dir / ".gflow_browser_strategy").read_text(encoding="utf-8") == "chrome"
 
     @pytest.mark.asyncio
     async def test_real_chrome_preserves_preexisting_marker_on_transient_failure(
