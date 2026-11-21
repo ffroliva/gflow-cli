@@ -483,7 +483,7 @@ def _write_output(
         )
 
 
-def _publish_output(temp_output: Path, output: Path) -> None:
+def publish_output(temp_output: Path, output: Path) -> None:
     """Atomically publish the completed file without replacing another writer's output."""
     try:
         os.link(temp_output, output)
@@ -507,6 +507,9 @@ def _publish_output(temp_output: Path, output: Path) -> None:
             raise
     else:
         temp_output.unlink()
+
+
+_publish_output = publish_output
 
 
 def assemble_videos(

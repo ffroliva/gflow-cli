@@ -117,3 +117,18 @@ def test_invalid_provider_options_are_rejected_before_provider_call(tmp_path: Pa
             synthesizer=synthesizer,
         )
     assert synthesizer.requests == []
+
+
+def test_narration_succeeds_when_os_link_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing_link(src: Path | str, dst: Path | str) -> None:
+        raise OSError("Operation not supported (cross-device or FAT)")
+
+    monkeypatch.setattr("gflow_cli.services.video_assembly.os.link", failing_link)
+    target = tmp_path / "voice.mp3"
+    synthesizer = FakeSynthesizer()
+    result = narrate(text="hello", out_file=target, synthesizer=synthesizer)
+    assert target.exists()
+    assert target.read_bytes() == b"audio"
+    assert result.out_file == target

@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import Literal
 
 from gflow_cli.config import Settings, get_settings
-from gflow_cli.errors import ConfigurationError
+from gflow_cli.errors import ConfigurationError, VideoAssemblyError
 from gflow_cli.services.speech_ports import SpeechSynthesizer, SynthesisRequest, SynthesisResult
 from gflow_cli.services.speech_synthesizers import EdgeTtsSynthesizer, GeminiTtsSynthesizer
+from gflow_cli.services.video_assembly import publish_output
 
 Provider = Literal["edge", "gemini"]
 
@@ -50,19 +51,44 @@ def narrate(
     try:
         result = adapter.synthesize(SynthesisRequest(script, voice, rate, pitch))
         if not result.audio_bytes:
-            raise ConfigurationError("Speech provider returned empty audio.", charged="no")
+            raise ConfigurationError(
+                "Speech provider returned empty audio.",
+                charged="no",
+                remediation_hint="Check that the input text contains speakable words.",
+            )
         audio_bytes, media_type = _container_audio(result)
         temporary.write_bytes(audio_bytes)
         try:
-            os.link(temporary, out_file)
-        except FileExistsError as exc:
+            mask = os.umask(0)
+            os.umask(mask)
+            os.chmod(temporary, 0o666 & ~mask)
+        except (OSError, AttributeError):
+            pass
+        try:
+            publish_output(temporary, out_file)
+        except VideoAssemblyError as exc:
+            if "already exists" in str(exc):
+                raise ConfigurationError(
+                    f"Narration output already exists: {out_file}",
+                    charged="no",
+                    remediation_hint=(
+                        "Choose an --out-file path that does not already exist, "
+                        "or remove the existing file."
+                    ),
+                ) from exc
             raise ConfigurationError(
-                f"Narration output already exists: {out_file}", charged="no"
+                f"Could not write narration output: {out_file}",
+                charged="no",
+                remediation_hint="Choose an --out-file path inside a writable directory.",
             ) from exc
         return NarrationResult(out_file, provider, media_type)
+    except ConfigurationError:
+        raise
     except OSError as exc:
         raise ConfigurationError(
-            f"Could not write narration output: {out_file}", charged="no"
+            f"Could not write narration output: {out_file}",
+            charged="no",
+            remediation_hint="Choose an --out-file path inside a writable directory.",
         ) from exc
     finally:
         temporary.unlink(missing_ok=True)
