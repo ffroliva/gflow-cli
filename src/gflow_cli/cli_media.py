@@ -53,7 +53,7 @@ def _emit_result(result: MediaTrashResult, output_format: str, is_json: bool) ->
 
 @spends_credits(False)
 @media.command("trash")
-@click.argument("id", metavar="ID")
+@click.argument("media_id", metavar="ID")
 @click.option(
     "--profile",
     default=None,
@@ -68,7 +68,7 @@ def _emit_result(result: MediaTrashResult, output_format: str, is_json: bool) ->
 )
 @output_format_option(default="table", help="Output format (json|table|id).")
 def trash_subcommand(
-    id: str,
+    media_id: str,
     profile: str | None,
     yes: bool,
     output_format: str = "table",
@@ -82,7 +82,7 @@ def trash_subcommand(
 
     if not yes:
         if _is_interactive():
-            if not click.confirm(f"Move media {id} to Flow's Trash?", default=False):
+            if not click.confirm(f"Move media {media_id} to Flow's Trash?", default=False):
                 click.echo("Aborted.")
                 sys.exit(0)
         else:
@@ -92,7 +92,7 @@ def trash_subcommand(
             )
 
     async def _run() -> None:
-        result = await trash_media_service(id, profile=profile, route="media.trash")
+        result = await trash_media_service(media_id, profile=profile, route="media.trash")
         _emit_result(result, output_format, is_json)
 
     run_with_handlers(
@@ -105,7 +105,7 @@ def trash_subcommand(
 
 @spends_credits(False)
 @media.command("restore")
-@click.argument("id", metavar="ID")
+@click.argument("media_id", metavar="ID")
 @click.option(
     "--profile",
     default=None,
@@ -113,7 +113,7 @@ def trash_subcommand(
 )
 @output_format_option(default="table", help="Output format (json|table|id).")
 def restore_subcommand(
-    id: str,
+    media_id: str,
     profile: str | None,
     output_format: str = "table",
     as_json: bool = False,
@@ -122,7 +122,7 @@ def restore_subcommand(
     is_json = as_json or output_format == OutputFormat.JSON.value
 
     async def _run() -> None:
-        result = await restore_media_service(id, profile=profile, route="media.restore")
+        result = await restore_media_service(media_id, profile=profile, route="media.restore")
         _emit_result(result, output_format, is_json)
 
     run_with_handlers(

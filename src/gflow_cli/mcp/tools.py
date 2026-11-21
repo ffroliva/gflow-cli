@@ -2682,10 +2682,16 @@ __all__ = [
     "gflow_instructions_rm",
     "gflow_instructions_toggle_mode",
     "gflow_instructions_apply",
+    "gflow_media_trash",
+    "gflow_media_restore",
     "_TokenBucket",
     "_adapt_tools",
     "_format_mcp_error",
     "_gflow_error_dict",
     "_run_generation_task",
 ]
+from gflow_cli.mcp.media_trash_tools import (  # noqa: E402, F401  # pyright: ignore[reportUnusedImport]
+    gflow_media_restore,
+    gflow_media_trash,
+)
 from gflow_cli.mcp.video_assembly import gflow_video_assemble  # noqa: E402, F401  # pyright: ignore[reportUnusedImport]

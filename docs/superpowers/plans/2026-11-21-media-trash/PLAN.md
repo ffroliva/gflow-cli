@@ -228,17 +228,17 @@ require `confirm: bool = False`, and update parity test suites.
 - `tests/mcp/test_cli_parity.py`
 
 **Steps:**
-- [ ] Create `src/gflow_cli/mcp/media_trash_tools.py` declaring `media_trash(media_id: str, profile: str | None = None, confirm: bool = False)` and `media_restore(media_id: str, profile: str | None = None)`.
-- [ ] Enforce `confirm=True` on `media_trash`: return Problem Details error if `False`.
-- [ ] In `src/gflow_cli/mcp/tools.py`, import and register both tools under `@server.tool` and `@_guarded`.
-- [ ] Add tool definitions to `tests/mcp/test_cli_parity.py` to maintain 100% leaf parity.
-- [ ] Write unit tests in `tests/mcp/test_media_trash_tools.py` verifying tool invocation and confirmation refusal.
+- [x] Create `src/gflow_cli/mcp/media_trash_tools.py` declaring `media_trash(media_id: str, profile: str | None = None, confirm: bool = False)` and `media_restore(media_id: str, profile: str | None = None)`.
+- [x] Enforce `confirm=True` on `media_trash`: return Problem Details error if `False`.
+- [x] In `src/gflow_cli/mcp/tools.py`, import and register both tools under `@server.tool` and `@_guarded`.
+- [x] Add tool definitions to `tests/mcp/test_cli_parity.py` to maintain 100% leaf parity.
+- [x] Write unit tests in `tests/mcp/test_media_trash_tools.py` verifying tool invocation and confirmation refusal.
 
 **Tests created (green):**
-- [ ] `test_mcp_media_trash_refuses_unconfirmed` — returns Problem Details error when `confirm=False`.
-- [ ] `test_mcp_media_trash_confirmed_succeeds` — succeeds when `confirm=True`.
-- [ ] `test_mcp_media_restore_succeeds` — restores media via MCP.
-- [ ] `test_cli_mcp_parity_includes_media_trash_and_restore` — passes `test_cli_parity.py`.
+- [x] `test_mcp_media_trash_refuses_unconfirmed` — returns Problem Details error when `confirm=False`.
+- [x] `test_mcp_media_trash_confirmed_succeeds` — succeeds when `confirm=True`.
+- [x] `test_mcp_media_restore_succeeds` — restores media via MCP.
+- [x] `test_cli_mcp_parity_includes_media_trash_and_restore` — passes `test_cli_parity.py`.
 
 ---
 
