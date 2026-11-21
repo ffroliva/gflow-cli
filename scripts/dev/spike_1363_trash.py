@@ -71,7 +71,7 @@ Usage
     python scripts/dev/spike_1363_trash.py --profile <profile> --project <project-uuid> \\
         --media-id <media-uuid> --yes-trash-this --dry-run
     python scripts/dev/spike_1363_trash.py --profile <profile> --project <project-uuid> \\
-        --media-id <media-uuid> --yes-trash-this
+        --media-id <media-uuid> --yes-trash-this [--show-mask]
 """
 
 from __future__ import annotations
@@ -404,6 +404,25 @@ def has_token_slot(shaped_node: Any) -> bool:
     if isinstance(shaped_node, dict):
         return any(has_token_slot(val) for val in shaped_node.values())
     return False
+
+
+def extract_pgcyoe_masks(inner: Any) -> list[str]:
+    """Extract literal field mask string(s) from a pGCYOe inner payload.
+
+    A pGCYOe payload typically has the shape ``[[[media_id, ...]], [[mask_1, mask_2, ...]]]``,
+    where the second element contains a list of field mask names.
+    """
+    masks: list[str] = []
+    if isinstance(inner, str) and inner.startswith(("[", "{")):
+        with contextlib.suppress(ValueError):
+            inner = json.loads(inner)
+    if isinstance(inner, list) and len(inner) > 1 and isinstance(inner[1], list):
+        for sub in inner[1]:
+            if isinstance(sub, list):
+                for val in sub:
+                    if isinstance(val, str) and val:
+                        masks.append(val)
+    return masks
 
 
 def should_abort_batchexecute(ids: list[str], *, strict: bool = False) -> bool:
@@ -944,7 +963,24 @@ def run_self_test() -> int:
     assert res_direct.tile_id == workflow_id
     assert res_direct.tile_id_source == "direct"
 
-    print("self-test: ok (9 helper suites passed)", flush=True)
+    # 10. pGCYOe field mask extraction for --show-mask
+    sample_trash_inner = [
+        [[media_id, None, None, [None, None, 1], project_id]],
+        [["mask_field_name_17"]],
+    ]
+    sample_restore_inner = [
+        [[media_id, "", None, [], project_id]],
+        [["mask_field_name_17", "collection_id"]],
+    ]
+    assert extract_pgcyoe_masks(sample_trash_inner) == ["mask_field_name_17"]
+    assert extract_pgcyoe_masks(sample_restore_inner) == [
+        "mask_field_name_17",
+        "collection_id",
+    ]
+    parsed_mask = build_parser().parse_args(["--show-mask"])
+    assert parsed_mask.show_mask is True
+
+    print("self-test: ok (10 helper suites passed)", flush=True)
     return 0
 
 
@@ -1335,6 +1371,7 @@ class WireRecorder:
     step_name: str = "boot"
     events: list[dict[str, Any]] = field(default_factory=list)
     listings: list[Any] = field(default_factory=list)
+    show_mask: bool = False
 
     def set_step(self, name: str) -> None:
         self.step_name = name
@@ -1355,6 +1392,9 @@ class WireRecorder:
         for raw_frame in mx._frames(body):  # noqa: SLF001
             rpcid = str(mx._at(raw_frame, 0))  # noqa: SLF001
             inner = mx._at(raw_frame, 1)  # noqa: SLF001
+            if self.show_mask and rpcid == "pGCYOe":
+                for mask_str in extract_pgcyoe_masks(inner):
+                    print(mask_str, flush=True)
             shaped = shape(inner, self.targets)
             frames_summary.append(
                 {
@@ -2119,6 +2159,7 @@ async def _run_live(
     media_kind: str,
     out_dir: Path,
     dry_run: bool = False,
+    show_mask: bool = False,
 ) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     profile_dir = resolve_profile_dir(profile)
@@ -2127,7 +2168,7 @@ async def _run_live(
         "project_id": project_id,
         "workflow_id": workflow_id,
     }
-    recorder = WireRecorder(out_dir=out_dir, targets=targets)
+    recorder = WireRecorder(out_dir=out_dir, targets=targets, show_mask=show_mask)
     timings_ms: dict[str, float] = {}
     t_run_start = time.monotonic()
 
@@ -2799,6 +2840,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow running on a non-image catalog asset (default refuses non-image rows).",
     )
     parser.add_argument(
+        "--show-mask",
+        dest="show_mask",
+        action="store_true",
+        help="Print only the literal unredacted pGCYOe field mask string to stdout when captured.",
+    )
+    parser.add_argument(
         "--inventory",
         dest="inventory",
         action="store_true",
@@ -2948,6 +2995,7 @@ def main(argv: list[str] | None = None) -> int:
             media_kind=media_kind,
             out_dir=out_dir,
             dry_run=bool(args.dry_run),
+            show_mask=bool(args.show_mask),
         )
     )
 
