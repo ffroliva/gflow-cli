@@ -548,7 +548,8 @@ class _SaveWatch:
 class _AgentSettingsMixin:
     """Agent settings in and out, on the 2026-09-15 pane and on the 2026-11-20 build's (#1387).
 
-    Split out of `AgentOnlyComposer` (one responsibility per class, #1249); moved unchanged.
+    Split out of `AgentOnlyComposer` (one responsibility per class, #1249); the 2026-11-20
+    pane's methods (`_is_unified` onwards) were added here since.
     """
 
     # --- Agent settings ------------------------------------------------------------------
