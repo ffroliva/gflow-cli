@@ -29,7 +29,12 @@ def video_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
         (tmp_path / stale).unlink(missing_ok=True)
     (tmp_path / "out" / "speech.srt").unlink(missing_ok=True)
     config.reset_settings()
-    case: dict[str, Any] = {"root": tmp_path, "requests": 0}
+    case: dict[str, Any] = {
+        "root": tmp_path,
+        "requests": 0,
+        "allow_transcription": False,
+    }
+    _install_transcription_spy(case)
     yield case
     if "client_patch" in case:
         case["client_patch"].stop()
@@ -56,7 +61,7 @@ def _make_clip(path: Path) -> None:
             output.mux(packet)
 
 
-def _fake_transcription(case: dict[str, Any]) -> None:
+def _install_transcription_spy(case: dict[str, Any]) -> None:
     class Response:
         status_code = 200
         text = ""
@@ -81,12 +86,20 @@ def _fake_transcription(case: dict[str, Any]) -> None:
 
         def post(self, *_: Any, **__: Any) -> Response:
             case["requests"] += 1
+            if not case.get("allow_transcription", False):
+                pytest.fail("prohibited transcription HTTP request sent")
             return Response()
 
     case["client_patch"] = patch(
         "gflow_cli.services.transcribers.openai_compatible.httpx.Client", Client
     )
     case["client_patch"].start()
+
+
+def _fake_transcription(case: dict[str, Any]) -> None:
+    case["allow_transcription"] = True
+    if "client_patch" not in case:
+        _install_transcription_spy(case)
 
 
 @given(parsers.parse('a local video clip "{name}" with an audio stream'))
@@ -218,6 +231,7 @@ def output_has_audio(video_case: dict[str, Any], name: str) -> None:
 
 @then(parsers.parse("no transcription HTTP request is sent"))
 def no_transcription_request(video_case: dict[str, Any]) -> None:
+    assert "client_patch" in video_case
     assert video_case["requests"] == 0
 
 
