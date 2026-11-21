@@ -231,6 +231,7 @@ if (S.prePending) {
 @pytest.fixture(autouse=True)
 def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(aoc, "POLL_S", 0.05)
+    monkeypatch.setattr(aoc, "CHAT_POLL_S", 0.05)
     monkeypatch.setattr(aoc, "IDLE_S", 0.8)
     monkeypatch.setattr(aoc, "GATE_SETTLE_S", 2.0)
     monkeypatch.setattr(aoc, "LISTING_RETRY_S", 1.2)

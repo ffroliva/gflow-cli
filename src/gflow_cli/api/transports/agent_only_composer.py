@@ -178,6 +178,11 @@ _UNIFIED_CONFIRM_INDEX = {"1": 0, "2": 1}
 _VIDEO_ROUTE = "agent-only:video"
 
 POLL_S = 1.0
+#: The chat's gates and replies must read the same this many polls in a row before the
+#: pre-submit gate count is taken, within `CHAT_SETTLE_S` (headroom, not measured).
+CHAT_POLL_S = 0.5
+CHAT_STABLE_POLLS = 3
+CHAT_SETTLE_S = 10.0
 #: Least seconds between two project-listing reads for one clip (#1354): each opens a tab.
 LISTING_RETRY_S = 10.0
 #: An image turn that ends with no gate and no tile for this long made nothing.
@@ -1353,14 +1358,23 @@ class AgentOnlyComposer(_AgentSettingsMixin):
         On the 2026-11-20 build a closed panel is not in the DOM. Two runs submitted from the
         compact box alone saw no gate and no clip within their budget (measured 2026-11-21).
         #1388 closes the panel before the agent-only verdict, so a genuinely agent-only page
-        reaches the driver closed. A page without the control is left as it is."""
+        reaches the driver closed. On that build a closed panel with no open control is drift;
+        an older build's page without the control is left as it is."""
         panel = page.locator(AGENT_PANEL).first
         if await panel.is_visible():
             return
         opener = page.locator(AGENT_PANEL_OPEN)
-        if not await opener.count():
-            return
         with nothing_submitted():  # #1320: before the submit
+            if not await opener.count():
+                if await self._is_unified(page):
+                    raise UiSelectorDriftError(
+                        detail=(
+                            "agent-only composer: the agent panel is closed and its open "
+                            f"control ({AGENT_PANEL_OPEN}) is missing; the panel's chat holds "
+                            "the credit gate, so nothing was submitted"
+                        )
+                    )
+                return
             await _click(opener.first, "the agent panel's open control", timeout_ms=5000)
             try:
                 await panel.wait_for(state="visible", timeout=PANE_S * 1000)
@@ -1369,6 +1383,36 @@ class AgentOnlyComposer(_AgentSettingsMixin):
                     detail="agent-only composer: the agent panel did not open"
                 ) from exc
         log.info("migrated.agent_only.panel_opened")
+
+    async def _gate_baseline(self, page: Page) -> int:
+        """Live gates before the submit, once the chat's gates and bubbles stop changing.
+
+        Earlier sessions' unanswered gates survive reloads, and a chat history that is still
+        rendering would mount one after the count: it would then be approved as this run's
+        own, billing an earlier request. Stable counts over `CHAT_STABLE_POLLS` polls are the
+        best available sign that the history is in; a chat that never settles is drift."""
+        deadline = time.monotonic() + CHAT_SETTLE_S
+        seen: list[tuple[int, int]] = []
+        with nothing_submitted():  # #1320: before the submit
+            while True:
+                seen.append(
+                    (
+                        await page.locator(LIVE_GATE).count(),
+                        await page.locator(LAST_REPLY).count(),
+                    )
+                )
+                recent = seen[-CHAT_STABLE_POLLS:]
+                if len(recent) == CHAT_STABLE_POLLS and len(set(recent)) == 1:
+                    return recent[0][0]
+                if time.monotonic() >= deadline:
+                    raise UiSelectorDriftError(
+                        detail=(
+                            f"agent-only composer: the agent chat did not settle within "
+                            f"{CHAT_SETTLE_S:.0f}s (gates, replies: {seen[-1]}), so its credit "
+                            "gates could not be counted"
+                        )
+                    )
+                await asyncio.sleep(CHAT_POLL_S)
 
     async def _submit(self, page: Page, directive: str) -> None:
         with nothing_submitted():  # #1320: the click below is the first send
@@ -1403,7 +1447,7 @@ class AgentOnlyComposer(_AgentSettingsMixin):
         whose page names no uuid is looked up there (#1354)."""
         self.quoted_credits: int | None = None
         await self._open_chat(page)  # the gates below are counted in the open panel
-        baseline_gates = await page.locator(LIVE_GATE).count()
+        baseline_gates = await self._gate_baseline(page)
         if kind == "video":
             baseline, baseline_head = await self._video_baseline(page)
         else:

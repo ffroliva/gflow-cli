@@ -610,10 +610,58 @@ async def test_an_open_panel_is_left_as_it_is(page: Page) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_page_without_the_open_control_is_left_as_it_is(page: Page) -> None:
+async def test_a_closed_panel_with_no_open_control_is_drift_before_the_submit(page: Page) -> None:
+    """Submitted from the compact box alone, a run saw no gate and timed out at 600 s with
+    charged=maybe (measured 2026-11-21); without the control the panel cannot be opened."""
     await _load(page, panelOpen=False, openControl=False)
+    with pytest.raises(UiSelectorDriftError, match="open control") as raised:
+        await aoc.AgentOnlyComposer()._open_chat(page)  # noqa: SLF001
+    assert raised.value.charged == "no"
+
+
+@pytest.mark.asyncio
+async def test_an_older_build_page_without_the_open_control_is_left_as_it_is(page: Page) -> None:
+    await page.set_content(
+        "<flow-creative-agent-prompt-box><div class='ProseMirror'></div><button>"
+        "<mat-icon>tune</mat-icon></button></flow-creative-agent-prompt-box>"
+    )
     await aoc.AgentOnlyComposer()._open_chat(page)  # noqa: SLF001
-    assert not await page.locator(aoc.AGENT_PANEL).count()
+
+
+#: A chat whose history is still rendering: an earlier run's unanswered gate mounts late.
+LATE_HISTORY = """
+<flow-agent-panel><flow-chat-bubble>earlier</flow-chat-bubble></flow-agent-panel>
+<script>
+setTimeout(() => document.querySelector('flow-agent-panel').insertAdjacentHTML('beforeend',
+  '<flow-permission-message><div role="radio" class="option-row"><mat-icon>check</mat-icon></div></flow-permission-message>'), 400);
+</script>
+"""
+
+
+@pytest.mark.asyncio
+async def test_the_gate_baseline_waits_for_the_chat_history(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale gate counted after the baseline would be approved as this run's own and bill
+    an earlier request."""
+    monkeypatch.setattr(aoc, "CHAT_POLL_S", 0.2)
+    await page.set_content(LATE_HISTORY)
+    assert await aoc.AgentOnlyComposer()._gate_baseline(page) == 1  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_a_chat_that_never_settles_is_drift_before_the_submit(
+    page: Page, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(aoc, "CHAT_POLL_S", 0.1)
+    monkeypatch.setattr(aoc, "CHAT_SETTLE_S", 1.0)
+    await page.set_content(
+        "<flow-agent-panel></flow-agent-panel><script>setInterval(() => document.querySelector("
+        "'flow-agent-panel').insertAdjacentHTML('beforeend', '<flow-chat-bubble>x</flow-chat-bubble>'), 50);</script>"
+    )
+    with pytest.raises(UiSelectorDriftError, match="did not settle") as raised:
+        await aoc.AgentOnlyComposer()._gate_baseline(page)  # noqa: SLF001
+    assert raised.value.charged == "no"
 
 
 @pytest.mark.asyncio
