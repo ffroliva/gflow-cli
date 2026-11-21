@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **macOS: gflow no longer asks for the Keychain password on every command.** Checking the session and launching the browser read the profile's cookies with browser_cookie3 first. On macOS that fetches "Chrome Safe Storage" from the Keychain, which raised a password prompt on each read (about five per command), and the read still failed to decrypt the jar, so gflow fell back to the headless Chrome read every time. On macOS gflow now goes straight to that read. A cookie store that is not an SQLite file is still reported as corrupt (#796) and never opened by Chrome. Windows and Linux are unchanged.
 - **The landing page meets WCAG AA contrast in both themes.**
   - The light theme's amber, grey and red text measured 2.4:1 to 4.0:1, and the primary button's hover state 3.7:1. Every text colour now measures at least 4.5:1 on the backgrounds it is used on.
   - The light theme's background is a neutral light grey instead of cream, and on the darker amber the primary button's text is white.
