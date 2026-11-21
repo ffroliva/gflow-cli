@@ -124,6 +124,8 @@ gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
 gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
                        [--body-prompt "<prompt>"] [--voice <id>] [--personality "<text>"] \
                        [--model {nano2|nanopro}]
+gflow character create --project <id> --name "<name>" --image <face.png>                        [--body-image <body.png>] [--voice <id>] [--personality "<text>"]
+                       # from your own images, flow.google.com; generates nothing (FREE)
 gflow character list --project <id>
 gflow character show <character-id> --project <id>
 gflow character rm --project <id> (--id <character-id> | --name "<name>") [--yes]   # delete (FREE)
