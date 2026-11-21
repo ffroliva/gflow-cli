@@ -147,3 +147,15 @@ def test_narration_errors_carry_actionable_remediation_hints(tmp_path: Path) -> 
         narrate(text="hello", out_file=target, synthesizer=synthesizer)
     assert exc_info.value.remediation_hint is not None
     assert "make_transport" not in exc_info.value.remediation_hint
+
+
+def test_rate_with_thousands_of_digits_does_not_crash(tmp_path: Path) -> None:
+    synthesizer = FakeSynthesizer()
+    oversized_rate = "+" + "1" * 5000 + "%"
+    with pytest.raises(ConfigurationError, match="invalid format"):
+        narrate(
+            text="hello",
+            out_file=tmp_path / "voice.mp3",
+            rate=oversized_rate,
+            synthesizer=synthesizer,
+        )

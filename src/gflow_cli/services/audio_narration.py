@@ -181,5 +181,5 @@ def _valid_pitch(pitch: str) -> bool:
 
 
 def _valid_adjustment(value: str, unit: str) -> bool:
-    match = re.fullmatch(rf"([+-])(\d+){re.escape(unit)}", value)
+    match = re.fullmatch(rf"([+-])(\d{{1,3}}){re.escape(unit)}", value)
     return match is not None and int(match[2]) <= 100
