@@ -45,6 +45,7 @@ import click
 
 from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
+from gflow_cli.mcp import character_tools, media_trash_tools, video_captions_tools
 from gflow_cli.mcp import server as mcp_server
 from gflow_cli.mcp import tools as mcp_tools
 from tests.mcp._cli_tree import cli_leaves
@@ -55,6 +56,7 @@ CLI_TO_MCP: dict[str, str] = {
     "character list": "gflow_character_list",
     "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
+    "character create": "gflow_character_create",  # the file-built (--image) path
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
@@ -144,13 +146,6 @@ _MCP_EXEMPT: dict[str, str] = {
         "would be harmless and is the upgrade path if agents ever need it"
     ),
     "run": "image-batch config runner (rows, batch:N and local-file refs) — not yet ported",
-    "character create": (
-        "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
-        "gflow_generate_image spends the same per-model image quota over MCP. "
-        "The port is an adapter over services/character_create.py; what needs "
-        "deciding is worker-enqueue vs inline (#481) and whether it should honour "
-        "GFLOW_MCP_NO_SPEND"
-    ),
     "character rm": (
         "irreversible deletion of a user-owned Flow entity — deliberately CLI-only, "
         "same rule as `data prune`/`data errors prune`. The CLI gates it behind a "
@@ -209,12 +204,23 @@ def _command(path: str) -> click.Command:
     return cmd
 
 
+#: Leaves whose MCP twin carries only the leaf's credit-free path, so the leaf spends
+#: and the tool does not. The --no-spend gate must keep the tool.
+_FREE_TWIN_OF_A_SPENDING_LEAF: dict[str, str] = {
+    "character create": (
+        "the tool mirrors only --image, which generates nothing; --face-prompt generation "
+        "stays CLI-only (GAP #691)"
+    ),
+}
+
+
 def test_paid_commands_agree_between_cli_and_mcp() -> None:
     # A CLI command marked as spending must map to a tool the MCP --no-spend gate removes.
     disagree = {
         leaf: (spends_credits_decision(_command(leaf)), tool)
         for leaf, tool in CLI_TO_MCP.items()
-        if spends_credits_decision(_command(leaf)) != (tool in mcp_server._SPEND_TOOLS)
+        if leaf not in _FREE_TWIN_OF_A_SPENDING_LEAF
+        and spends_credits_decision(_command(leaf)) != (tool in mcp_server._SPEND_TOOLS)
     }
     assert not disagree, f"spends_credits disagrees with mcp.server._SPEND_TOOLS: {disagree}"
 
@@ -227,6 +233,12 @@ def test_every_cli_leaf_has_an_mcp_decision() -> None:
         "Add each to CLI_TO_MCP (and register the tool) or to _MCP_EXEMPT "
         "with a reason — see AGENTS.md 'MCP & CLI Schema Symmetry'."
     )
+
+
+def test_a_free_twin_of_a_spending_leaf_is_a_spending_leaf_and_a_free_tool() -> None:
+    for leaf in _FREE_TWIN_OF_A_SPENDING_LEAF:
+        assert spends_credits_decision(_command(leaf)) is True, leaf
+        assert CLI_TO_MCP[leaf] not in mcp_server._SPEND_TOOLS, leaf
 
 
 def test_no_leaf_is_both_mapped_and_exempt() -> None:
@@ -303,6 +315,11 @@ _OPTION_EXEMPT: dict[str, str] = {
     "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "character create:face_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:body_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:model": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:format_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:locale": "GAP #691 — prompt-generated create not ported over MCP",
 }
 
 
@@ -314,9 +331,17 @@ def _leaf_params(path: str) -> set[str]:
     return {p.name for p in cmd.params if p.name}
 
 
+#: Modules that define MCP tools; a tool split out of ``mcp.tools`` is checked too.
+_TOOL_MODULES = (mcp_tools, character_tools, media_trash_tools, video_captions_tools)
+
+
+def _tool_fn(tool_name: str) -> Any:
+    return next((getattr(m, tool_name) for m in _TOOL_MODULES if hasattr(m, tool_name)), None)
+
+
 def _tool_params(tool_name: str) -> set[str]:
     """Declared parameter names of a registered MCP tool, unwrapping decorators."""
-    fn: Any = getattr(mcp_tools, tool_name)
+    fn: Any = _tool_fn(tool_name)
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return set(inspect.signature(fn).parameters) - {"self"}
@@ -329,7 +354,7 @@ def test_every_cli_option_reaches_its_mcp_tool() -> None:
     """
     unmirrored: list[str] = []
     for leaf, tool in sorted(CLI_TO_MCP.items()):
-        if not hasattr(mcp_tools, tool):
+        if _tool_fn(tool) is None:
             continue  # test_mapped_tools_are_registered owns that failure
         tool_params = _tool_params(tool)
         for raw in sorted(_leaf_params(leaf) - _CLI_ONLY_PARAMS):

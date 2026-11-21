@@ -193,6 +193,7 @@ def _register_surfaces() -> None:
     Registration is an import side effect, so these imports are deliberate and
     must not be pruned as "unused".
     """
+    from gflow_cli.mcp import character_tools as _character_tools
     from gflow_cli.mcp import media_trash_tools as _media_trash_tools
     from gflow_cli.mcp import prompts as _prompts
     from gflow_cli.mcp import resources as _resources
@@ -200,7 +201,14 @@ def _register_surfaces() -> None:
     from gflow_cli.mcp import video_captions_tools as _video_captions_tools
 
     # Access them to satisfy pyright unused import check
-    _ = (_media_trash_tools, _prompts, _resources, _tools, _video_captions_tools)
+    _ = (
+        _character_tools,
+        _media_trash_tools,
+        _prompts,
+        _resources,
+        _tools,
+        _video_captions_tools,
+    )
     _apply_no_spend_policy()
 
 

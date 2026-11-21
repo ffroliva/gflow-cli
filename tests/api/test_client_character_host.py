@@ -339,3 +339,66 @@ async def test_read_project_retries_with_goto_target_and_45s_timeout_not_reload(
 async def test_read_project_without_a_reply_times_out_rather_than_reading_empty() -> None:
     with pytest.raises(TransportTimeoutError):
         await read_project(_Page(None), PID, timeout_s=0.1)  # type: ignore[arg-type]
+
+
+# --- create_character_from_files: files are checked before any page is touched ------
+
+
+async def test_a_non_image_is_refused_before_any_page_is_used(tmp_path: Path) -> None:
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings())
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+    secret = tmp_path / "id_rsa"
+    secret.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError) as exc:
+        await c.create_character_from_files(PID, name="Nora", portrait=secret)
+    assert "id_rsa" in str(exc.value)
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+async def test_a_missing_body_image_is_refused_before_any_page_is_used(tmp_path: Path) -> None:
+    from PIL import Image
+
+    face = tmp_path / "face.jpg"
+    Image.new("RGB", (8, 8)).save(face)
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings())
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ConfigurationError):
+        await c.create_character_from_files(
+            PID, name="Nora", portrait=face, body=tmp_path / "missing.jpg"
+        )
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+async def test_valid_images_are_handed_to_the_editor_and_the_page_returned(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    from gflow_cli.api.transports.migrated_character import CreatedCharacter
+
+    face, body = tmp_path / "face.png", tmp_path / "body.png"
+    Image.new("RGB", (8, 8)).save(face)
+    Image.new("RGB", (8, 8)).save(body)
+    created = CreatedCharacter("e-1", ("wf-0", "wf-1"), ("m-0",))
+    page = MagicMock()
+    c = FlowApiClient(profile_dir=tmp_path / "prof", settings=Settings())
+    c._checkout_page = AsyncMock(return_value=page)  # type: ignore[method-assign]
+    c._checkin_page = MagicMock()  # type: ignore[method-assign]
+    driver = AsyncMock(return_value=created)
+
+    with patch("gflow_cli.api.transports.migrated_character.create_from_files", new=driver):
+        got = await c.create_character_from_files(
+            PID, name="Nora", portrait=face, body=body, voice="Aoede", personality="calm"
+        )
+
+    assert got == created
+    assert driver.await_args.kwargs == {
+        "name": "Nora",
+        "portrait": face,
+        "body": body,
+        "personality": "calm",
+        "voice": "Aoede",
+    }
+    c._checkin_page.assert_called_once_with(page)  # type: ignore[attr-defined]

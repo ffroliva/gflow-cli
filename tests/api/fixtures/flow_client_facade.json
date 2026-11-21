@@ -1003,6 +1003,7 @@
   "capability_listing": "async (self, project_id: 'str') -> 'JsonObject'",
   "commit_workflow": "async (self, workflow_id: 'str', *, project_id: 'str', primary_media_id: 'str') -> 'None'",
   "concatenate_scene": "async (self, inputs: 'list[ConcatInput]', *, out_path: 'Path', poll_interval: 'float' = 3.0, timeout_s: 'float' = 180.0) -> 'AnyPath'",
+  "create_character_from_files": "async (self, project_id: 'str', *, name: 'str', portrait: 'Path', body: 'Path | None' = None, voice: 'str | None' = None, personality: 'str | None' = None) -> 'CreatedCharacter'",
   "create_entity": "async (self, project_id: 'str') -> 'str'",
   "create_project": "async (self, title: 'str | None' = None) -> 'ProjectInfo'",
   "create_scene": "async (self, *, project_id: 'str', workflow_ids: 'list[str]') -> 'Scene'",
