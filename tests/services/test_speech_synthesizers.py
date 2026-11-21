@@ -11,7 +11,7 @@ import httpx
 import pytest
 import structlog
 
-from gflow_cli.errors import ConfigurationError, NetworkError
+from gflow_cli.errors import ConfigurationError, NetworkError, TransportTimeoutError
 from gflow_cli.services.speech_ports import SynthesisRequest
 from gflow_cli.services.speech_synthesizers import (
     EdgeTtsSynthesizer,
@@ -27,10 +27,9 @@ def test_edge_missing_extra_names_install_command(monkeypatch: pytest.MonkeyPatc
         EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", None))
 
 
-def test_edge_retries_no_audio_received_with_bound(monkeypatch: pytest.MonkeyPatch) -> None:
-    class NoAudioReceivedError(Exception):
-        pass
-
+def test_edge_retries_transient_network_error_with_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = 0
 
     class Communicate:
@@ -41,7 +40,7 @@ def test_edge_retries_no_audio_received_with_bound(monkeypatch: pytest.MonkeyPat
             nonlocal calls
             calls += 1
             if calls == 1:
-                raise NoAudioReceivedError
+                raise ConnectionError("connection dropped")
             yield {"type": "audio", "data": b"audio"}
             yield {"type": "WordBoundary", "text": "hello", "offset": 0, "duration": 4_000_000}
 
@@ -50,7 +49,9 @@ def test_edge_retries_no_audio_received_with_bound(monkeypatch: pytest.MonkeyPat
         "edge_tts",
         types.SimpleNamespace(
             Communicate=Communicate,
-            exceptions=types.SimpleNamespace(NoAudioReceived=NoAudioReceivedError),
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
         ),
     )
     result = EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", "en-US-AndrewNeural"))
@@ -60,15 +61,12 @@ def test_edge_retries_no_audio_received_with_bound(monkeypatch: pytest.MonkeyPat
 
 
 def test_edge_returns_typed_error_after_retry_bound(monkeypatch: pytest.MonkeyPatch) -> None:
-    class NoAudioReceivedError(Exception):
-        pass
-
     class Communicate:
         def __init__(self, *_: Any, **__: Any) -> None:
             pass
 
         async def stream(self) -> AsyncIterator[dict[str, Any]]:
-            raise NoAudioReceivedError
+            raise ConnectionError("connection dropped")
             yield {}
 
     monkeypatch.setitem(
@@ -76,7 +74,9 @@ def test_edge_returns_typed_error_after_retry_bound(monkeypatch: pytest.MonkeyPa
         "edge_tts",
         types.SimpleNamespace(
             Communicate=Communicate,
-            exceptions=types.SimpleNamespace(NoAudioReceived=NoAudioReceivedError),
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
         ),
     )
     with pytest.raises(NetworkError, match="after retries"):
@@ -208,9 +208,104 @@ def test_gemini_malformed_and_timeout_responses_are_typed_and_redacted(
             return post(*args, **kwargs)
 
     monkeypatch.setattr("gflow_cli.services.speech_synthesizers.gemini.httpx.Client", Client)
-    with pytest.raises((ConfigurationError, NetworkError)) as raised:
+    with pytest.raises((ConfigurationError, NetworkError, TransportTimeoutError)) as raised:
         GeminiTtsSynthesizer(api_key="secret-key").synthesize(
             SynthesisRequest("private text", "Algieba")
         )
     assert "private text" not in str(raised.value)
     assert "secret-key" not in str(raised.value)
+
+
+def test_edge_timeout_raises_transport_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class TimeoutCommunicate:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def stream(self) -> AsyncIterator[dict[str, Any]]:
+            raise TimeoutError("stream read timed out")
+            yield {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=TimeoutCommunicate,
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
+        ),
+    )
+    with pytest.raises(TransportTimeoutError, match="timed out"):
+        EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", "en-US-AndrewNeural"))
+
+
+def test_gemini_timeout_raises_transport_timeout_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        def __enter__(self) -> Client:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            pass
+
+        def post(self, *_: Any, **__: Any) -> Any:
+            raise httpx.ReadTimeout("Gemini read timed out")
+
+    monkeypatch.setattr("gflow_cli.services.speech_synthesizers.gemini.httpx.Client", Client)
+    with pytest.raises(TransportTimeoutError, match="timed out"):
+        GeminiTtsSynthesizer(api_key="secret-key").synthesize(SynthesisRequest("hello", "Algieba"))
+
+
+def test_edge_value_error_raises_configuration_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FailingCommunicate:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            raise ValueError("Invalid voice format")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=FailingCommunicate,
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
+        ),
+    )
+    with pytest.raises(ConfigurationError, match="Invalid voice"):
+        EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", "bad-shape"))
+
+
+def test_edge_unknown_voice_refuses_once_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class NoAudioReceivedError(Exception):
+        pass
+
+    calls = 0
+
+    class Communicate:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def stream(self) -> AsyncIterator[dict[str, Any]]:
+            nonlocal calls
+            calls += 1
+            raise NoAudioReceivedError("No audio was received.")
+            yield {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=Communicate,
+            exceptions=types.SimpleNamespace(NoAudioReceived=NoAudioReceivedError),
+        ),
+    )
+    with pytest.raises(ConfigurationError) as exc_info:
+        EdgeTtsSynthesizer(attempts=3).synthesize(SynthesisRequest("hello", "xx-XX-NobodyNeural"))
+
+    assert calls == 1
+    assert "--voice" in exc_info.value.remediation_hint
+    assert "edge-tts --list-voices" in exc_info.value.remediation_hint
