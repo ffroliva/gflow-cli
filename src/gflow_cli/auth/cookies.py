@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import sys
 from collections.abc import Iterable, Mapping
@@ -243,9 +244,12 @@ def _macos_store_is_missing(profile_dir: Path) -> bool:
     try:
         conn = sqlite3.connect(uri, uri=True, timeout=2)
         try:
-            conn.execute("SELECT count(*) FROM cookies").fetchone()
+            # quick_check decodes every record; count(*) passes a store with corrupt rows.
+            verdict = conn.execute("PRAGMA quick_check").fetchone()
         finally:
             conn.close()
+        if not verdict or verdict[0] != "ok":
+            raise sqlite3.DatabaseError("cookie store failed its integrity check")
     except sqlite3.OperationalError:
         # Locked or busy (a running Chrome), not corrupt: let the lease say so.
         logger.info("cookie_store_busy_falling_back", profile=str(profile_dir))
@@ -265,7 +269,8 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     ``wire_reads`` is off by default on macOS.
     """
     if _SKIP_DIRECT_READ:
-        if _macos_store_is_missing(profile_dir):
+        # Off the event loop: a store Chrome holds locked waits out the busy timeout.
+        if await asyncio.to_thread(_macos_store_is_missing, profile_dir):
             return ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:

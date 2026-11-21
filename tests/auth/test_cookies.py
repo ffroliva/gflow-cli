@@ -278,6 +278,40 @@ async def test_snapshot_on_macos_keeps_a_jar_with_a_corrupt_body_away_from_chrom
 
 
 @pytest.mark.asyncio
+async def test_snapshot_on_macos_keeps_a_jar_with_corrupt_records_away_from_chrome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Corrupt row bodies under intact page headers still count fine (count(*) does not
+    decode records), but browser_cookie3 read the rows and raised; so must the gate."""
+    import sqlite3
+
+    profile = _make_profile_with_cookies(tmp_path)
+    jar = profile / "Default" / "Network" / "Cookies"
+    conn = sqlite3.connect(jar)
+    conn.execute("CREATE TABLE cookies (host_key TEXT, name TEXT, value TEXT)")
+    for i in range(50):
+        conn.execute("INSERT INTO cookies VALUES (?, ?, ?)", ("labs.google", f"n{i}", "v" * 200))
+    conn.commit()
+    conn.close()
+    data = bytearray(jar.read_bytes())
+    page = 4096
+    start = (len(data) // page - 1) * page + page - 600  # record bodies of the last page
+    for k in range(start, start + 300):
+        data[k] ^= 0xA5
+    jar.write_bytes(bytes(data))
+    check = sqlite3.connect(jar)
+    assert check.execute("SELECT count(*) FROM cookies").fetchone() == (50,)  # still counts
+    check.close()
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    browser = AsyncMock()
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        await cookies_mod.get_chrome_cookie_snapshot(profile)
+    browser.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_snapshot_on_macos_reads_a_valid_jar_through_chrome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
