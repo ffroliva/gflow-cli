@@ -286,27 +286,27 @@ against a live Flow account at zero credit cost.
 - (all touched files)
 
 **Steps:**
-- [ ] Run `uv run ruff check src tests`
-- [ ] Run `uv run ruff format --check src tests`
-- [ ] Run `uv run pyright src`
-- [ ] Run `uv run python -m pytest -q --cov=gflow_cli tests/services/test_media_trash.py tests/cli/test_cli_media.py tests/mcp/test_media_trash_tools.py tests/features/test_media_trash_steps.py`
-- [ ] Run `uv run python scripts/ci/check_repo_hygiene.py`
-- [ ] Run `uv run python scripts/ci/check_size.py`
-- [ ] Run `uv run python scripts/ci/check_doc_links.py`
+- [x] Run `uv run ruff check src tests`
+- [x] Run `uv run ruff format --check src tests`
+- [x] Run `uv run pyright src`
+- [x] Run `uv run python -m pytest -q --cov=gflow_cli tests/services/test_media_trash.py tests/cli/test_cli_media.py tests/mcp/test_media_trash_tools.py tests/features/test_media_trash_steps.py`
+- [x] Run `uv run python scripts/ci/check_repo_hygiene.py`
+- [x] Run `uv run python scripts/ci/check_size.py`
+- [x] Run `uv run python scripts/ci/check_doc_links.py`
 
 ---
 
 ## Definition of done
 
-- [ ] All 9 tasks checked off in sequence.
-- [ ] Field mask literal captured and verified.
-- [ ] `gflow media trash` and `gflow media restore` functional on CLI and MCP.
-- [ ] Interactive confirmation prompt and `--yes` flag enforced.
-- [ ] Cross-profile ambiguity rejected with exit 16.
-- [ ] Unit, BDD, and E2E tests green.
-- [ ] Parity verified via `tests/mcp/test_cli_parity.py`.
-- [ ] `check_doc_links.py`, `check_size.py`, and `check_repo_hygiene.py` clean.
-- [ ] Documentation and CHANGELOG.md updated.
+- [x] All 9 tasks checked off in sequence.
+- [x] Field mask literal captured and verified.
+- [x] `gflow media trash` and `gflow media restore` functional on CLI and MCP.
+- [x] Interactive confirmation prompt and `--yes` flag enforced.
+- [x] Cross-profile ambiguity rejected with exit 16.
+- [x] Unit, BDD, and E2E tests green.
+- [x] Parity verified via `tests/mcp/test_cli_parity.py`.
+- [x] `check_doc_links.py`, `check_size.py`, and `check_repo_hygiene.py` clean.
+- [x] Documentation and CHANGELOG.md updated.
 
 ---
 

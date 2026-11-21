@@ -89,6 +89,8 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "instructions toggle-mode": None,
     "mcp run": None,
     "mcp setup": None,
+    "media restore": None,
+    "media trash": None,
     "models": None,
     "models list": None,
     "models show": None,
