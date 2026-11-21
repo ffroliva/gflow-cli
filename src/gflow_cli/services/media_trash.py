@@ -137,48 +137,81 @@ async def trash_media_service(
     target_id: str,
     *,
     profile: str | None = None,
+    project_id: str | None = None,
     route: str = "media.trash",
 ) -> MediaTrashResult:
     """Move media item to Flow's Trash over the wire."""
-    asset = resolve_media_trash_target(target_id, profile=profile, route=route)
-    profile_name = asset.profile_name
-    settings = get_settings()
-    profile_dir = settings.profile_subdir(profile_name)
-
-    media_id = asset.flow_media_id
-    project_id = asset.flow_project_id
-    if not project_id:
+    if not target_id or not target_id.strip():
         raise DataStoreError(
-            detail=f"Asset {media_id!r} has no associated flow_project_id in the catalog.",
+            detail="Media identifier must not be empty or blank.",
             route=route,
+            charged="no",
+            remediation_hint=(
+                "Provide a valid Flow media ID, local catalog ID, or workflow UUID, "
+                "or pass --project PROJECT_ID."
+            ),
         )
+    clean_id = target_id.strip()
+    settings = get_settings()
+
+    asset: AssetLookup | None = None
+    if project_id:
+        from gflow_cli import profile_store
+
+        media_id = clean_id
+        resolved_project_id = project_id.strip()
+        profile_name = profile if profile else profile_store.resolve_profile(None)
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            asset = repo.get_asset_by_any_id(profile_name, media_id)
+        workflow_id = asset.flow_workflow_id if asset and asset.flow_workflow_id else ""
+    else:
+        asset = resolve_media_trash_target(clean_id, profile=profile, route=route)
+        profile_name = asset.profile_name
+        media_id = asset.flow_media_id
+        resolved_project_id = asset.flow_project_id
+        if not resolved_project_id:
+            raise DataStoreError(
+                detail=f"Asset {media_id!r} has no associated flow_project_id in the catalog.",
+                route=route,
+                charged="no",
+                remediation_hint="Pass --project PROJECT_ID to specify Flow project ID.",
+            )
+        workflow_id = asset.flow_workflow_id or ""
+
+    profile_dir = settings.profile_subdir(profile_name)
 
     wire_success = False
     wire_res: dict[str, Any] | None = None
     if settings.wire_reads:
         try:
-            wire_res = await flow_wire.direct_trash_media(profile_dir, media_id, project_id)
+            wire_res = await flow_wire.direct_trash_media(
+                profile_dir, media_id, resolved_project_id
+            )
             wire_success = True
         except WireReadUnavailable as exc:
             log.info("media.trash_wire_fallback", reason=exc.reason.value, media_id=media_id)
 
     if not wire_success or wire_res is None:
         async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-            wire_res = await client.trash_media(media_id, project_id)
+            wire_res = await client.trash_media(media_id, resolved_project_id)
 
-    with DataStore.open(settings.resolved_db_path()) as store:
-        repo = DataRepository(store)
-        repo.update_asset_status(asset.profile_name, media_id, "trashed")
+    if asset is not None:
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            repo.update_asset_status(asset.profile_name, media_id, "trashed")
 
     restore_cmd = f"gflow media restore {media_id}"
+    if project_id:
+        restore_cmd += f" --project {resolved_project_id}"
     if profile:
         restore_cmd += f" --profile {profile}"
 
     return MediaTrashResult(
         media_id=media_id,
-        project_id=project_id,
-        workflow_id=wire_res.get("workflow_id") or asset.flow_workflow_id or "",
-        profile_name=asset.profile_name,
+        project_id=resolved_project_id,
+        workflow_id=wire_res.get("workflow_id") or workflow_id,
+        profile_name=profile_name,
         status="trashed",
         restore_hint=f"To restore this item, run: {restore_cmd}",
     )
@@ -188,43 +221,74 @@ async def restore_media_service(
     target_id: str,
     *,
     profile: str | None = None,
+    project_id: str | None = None,
     route: str = "media.restore",
 ) -> MediaTrashResult:
     """Restore media item from Flow's Trash over the wire."""
-    asset = resolve_media_trash_target(target_id, profile=profile, route=route)
-    profile_name = asset.profile_name
-    settings = get_settings()
-    profile_dir = settings.profile_subdir(profile_name)
-
-    media_id = asset.flow_media_id
-    project_id = asset.flow_project_id
-    if not project_id:
+    if not target_id or not target_id.strip():
         raise DataStoreError(
-            detail=f"Asset {media_id!r} has no associated flow_project_id in the catalog.",
+            detail="Media identifier must not be empty or blank.",
             route=route,
+            charged="no",
+            remediation_hint=(
+                "Provide a valid Flow media ID, local catalog ID, or workflow UUID, "
+                "or pass --project PROJECT_ID."
+            ),
         )
+    clean_id = target_id.strip()
+    settings = get_settings()
+
+    asset: AssetLookup | None = None
+    if project_id:
+        from gflow_cli import profile_store
+
+        media_id = clean_id
+        resolved_project_id = project_id.strip()
+        profile_name = profile if profile else profile_store.resolve_profile(None)
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            asset = repo.get_asset_by_any_id(profile_name, media_id)
+        workflow_id = asset.flow_workflow_id if asset and asset.flow_workflow_id else ""
+    else:
+        asset = resolve_media_trash_target(clean_id, profile=profile, route=route)
+        profile_name = asset.profile_name
+        media_id = asset.flow_media_id
+        resolved_project_id = asset.flow_project_id
+        if not resolved_project_id:
+            raise DataStoreError(
+                detail=f"Asset {media_id!r} has no associated flow_project_id in the catalog.",
+                route=route,
+                charged="no",
+                remediation_hint="Pass --project PROJECT_ID to specify Flow project ID.",
+            )
+        workflow_id = asset.flow_workflow_id or ""
+
+    profile_dir = settings.profile_subdir(profile_name)
 
     wire_success = False
     wire_res: dict[str, Any] | None = None
     if settings.wire_reads:
         try:
-            wire_res = await flow_wire.direct_restore_media(profile_dir, media_id, project_id)
+            wire_res = await flow_wire.direct_restore_media(
+                profile_dir, media_id, resolved_project_id
+            )
             wire_success = True
         except WireReadUnavailable as exc:
             log.info("media.restore_wire_fallback", reason=exc.reason.value, media_id=media_id)
 
     if not wire_success or wire_res is None:
         async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-            wire_res = await client.restore_media(media_id, project_id)
+            wire_res = await client.restore_media(media_id, resolved_project_id)
 
-    with DataStore.open(settings.resolved_db_path()) as store:
-        repo = DataRepository(store)
-        repo.update_asset_status(asset.profile_name, media_id, "ready")
+    if asset is not None:
+        with DataStore.open(settings.resolved_db_path()) as store:
+            repo = DataRepository(store)
+            repo.update_asset_status(asset.profile_name, media_id, "ready")
 
     return MediaTrashResult(
         media_id=media_id,
-        project_id=project_id,
-        workflow_id=wire_res.get("workflow_id") or asset.flow_workflow_id or "",
-        profile_name=asset.profile_name,
+        project_id=resolved_project_id,
+        workflow_id=wire_res.get("workflow_id") or workflow_id,
+        profile_name=profile_name,
         status="restored",
     )

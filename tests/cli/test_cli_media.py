@@ -34,6 +34,7 @@ def seeded_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     profile_dir = tmp_path / "profiles" / "default"
     profile_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "profile_default").mkdir(parents=True, exist_ok=True)
 
     now_str = datetime.now(UTC).isoformat()
     with DataStore.open(db_path) as store:
@@ -174,4 +175,25 @@ def test_cli_media_restore_refuses_empty_id(runner: CliRunner, seeded_db: Path) 
     res = runner.invoke(main, ["media", "restore", "   "])
     assert res.exit_code == 2
     assert "must not be empty or blank" in res.output
+
+
+def test_cli_media_trash_with_project_flag_succeeds_without_catalog(
+    runner: CliRunner, seeded_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_trash = AsyncMock(
+        return_value={"media_id": "uncataloged-m", "project_id": "p-ext", "status": "trashed"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    res = runner.invoke(
+        main,
+        ["media", "trash", "uncataloged-m", "--project", "p-ext", "--yes", "--json"],
+    )
+    assert res.exit_code == 0
+    data = json.loads(res.output)
+    assert data["status"] == "trashed"
+    assert data["media_id"] == "uncataloged-m"
+    assert data["project_id"] == "p-ext"
+    mock_trash.assert_awaited_once()
+
 

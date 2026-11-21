@@ -26,6 +26,7 @@ def mcp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
     profile_dir = tmp_path / "profiles" / "default"
     profile_dir.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "profile_default").mkdir(parents=True, exist_ok=True)
 
     with DataStore.open(db_path) as store:
         repo = DataRepository(store)
@@ -129,4 +130,23 @@ async def test_mcp_media_restore_refuses_empty_id(mcp_env: Path) -> None:
     assert res.get("status") == "error"
     err = res.get("error", {})
     assert "empty or blank" in err.get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_mcp_media_trash_with_project_id_succeeds_without_catalog(
+    mcp_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mock_trash = AsyncMock(
+        return_value={"media_id": "uncataloged-m", "project_id": "proj-ext", "status": "trashed"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    res = await gflow_media_trash(
+        media_id="uncataloged-m", project_id="proj-ext", confirm=True
+    )
+    assert res.get("status") == "trashed"
+    assert res.get("media_id") == "uncataloged-m"
+    assert res.get("project_id") == "proj-ext"
+    mock_trash.assert_awaited_once()
+
 

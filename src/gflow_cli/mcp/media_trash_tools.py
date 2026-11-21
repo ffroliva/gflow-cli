@@ -34,6 +34,7 @@ def _guarded(fn: Any) -> Any:
 @_guarded
 async def gflow_media_trash(
     media_id: str,
+    project_id: str | None = None,
     profile: str | None = None,
     confirm: bool = False,
 ) -> dict[str, Any]:
@@ -57,7 +58,9 @@ async def gflow_media_trash(
             },
         }
 
-    res = await trash_media_service(media_id, profile=profile, route="mcp.media_trash")
+    res = await trash_media_service(
+        media_id, profile=profile, project_id=project_id, route="mcp.media_trash"
+    )
     return res.as_json()
 
 
@@ -71,12 +74,15 @@ async def gflow_media_trash(
 @_guarded
 async def gflow_media_restore(
     media_id: str,
+    project_id: str | None = None,
     profile: str | None = None,
 ) -> dict[str, Any]:
     """Restore media from Flow's Trash."""
     if not media_id or not media_id.strip():
         return common._bad_param("Invalid Media ID", "media_id must not be empty or blank.")
-    res = await restore_media_service(media_id, profile=profile, route="mcp.media_restore")
+    res = await restore_media_service(
+        media_id, profile=profile, project_id=project_id, route="mcp.media_restore"
+    )
     return res.as_json()
 
 

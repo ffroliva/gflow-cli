@@ -26,7 +26,7 @@ from gflow_cli.api.transports._media_trash_wire import (
     parse_restore_response,
     parse_trash_response,
 )
-from gflow_cli.config import reset_settings
+from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.data.models import AssetKind, AssetRecord, ProjectRecord
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
@@ -506,4 +506,29 @@ async def test_media_trash_service_refuses_same_profile_ambiguity(
     assert "multiple" in exc_info.value.detail.lower()
     assert "m-1" in exc_info.value.detail
     assert "m-2" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_with_explicit_project_bypasses_catalog(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    mock_trash = AsyncMock(
+        return_value={"media_id": "uncataloged-id", "project_id": "proj-999", "status": "trashed"}
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    # Calling with project_id should not query catalog and succeed
+    result = await trash_media_service(
+        "uncataloged-id", project_id="proj-999", profile="test_prof"
+    )
+    assert result.media_id == "uncataloged-id"
+    assert result.project_id == "proj-999"
+    assert result.profile_name == "test_prof"
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_trash.assert_awaited_once_with(expected_pdir, "uncataloged-id", "proj-999")
+
 
