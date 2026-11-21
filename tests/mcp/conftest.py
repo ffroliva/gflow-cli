@@ -12,6 +12,7 @@ import gflow_cli.mcp.audio_tools  # noqa: F401
 # first is cached, so if it happens under that patch, `@server.prompt()` returns a mock
 # and TestMcpPrompts fails for the rest of the process. Single-process runs happened to
 # import them earlier; pytest-xdist's scheduling did not (5 failures, measured).
+import gflow_cli.mcp.media_trash_tools  # noqa: F401
 import gflow_cli.mcp.prompts
 import gflow_cli.mcp.resources
 import gflow_cli.mcp.tools  # noqa: F401

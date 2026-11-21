@@ -90,6 +90,8 @@ CLI_TO_MCP: dict[str, str] = {
     "instructions rm": "gflow_instructions_rm",
     "instructions apply": "gflow_instructions_apply",
     "instructions toggle-mode": "gflow_instructions_toggle_mode",
+    "media trash": "gflow_media_trash",
+    "media restore": "gflow_media_restore",
 }
 
 # CLI leaf → reason it deliberately has NO MCP surface. "not yet ported"
@@ -282,6 +284,7 @@ _PARAM_ALIASES: dict[str, str] = {
     "disabled": "enabled",
     "output_file": "out_file",  # --out-file PATH (#1158)
     "out_dir_deprecated": "out_dir",  # video upscale: deprecated -o DIR for --out DIR
+    "yes": "confirm",  # CLI --yes confirmation flag -> MCP confirm boolean (#1363)
 }
 
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked

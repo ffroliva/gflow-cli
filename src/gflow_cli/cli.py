@@ -39,6 +39,7 @@ from gflow_cli.cli_gen import image_gen as _image_gen_command
 from gflow_cli.cli_gen import video_gen as _video_gen_command
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
+from gflow_cli.cli_media import media as _media_group
 from gflow_cli.cli_models import models as _models_command
 from gflow_cli.cli_movie import movie as _movie_group
 from gflow_cli.cli_project import project as _project_group
@@ -706,6 +707,7 @@ main.add_command(_movie_group)
 main.add_command(_project_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
+main.add_command(_media_group)
 for _name in ("generate", "gen"):  # bridge verbs (#1193), kept in cli_gen; `gen` is an alias
     _video_group.add_command(_video_gen_command, name=_name)
     _image_group.add_command(_image_gen_command, name=_name)

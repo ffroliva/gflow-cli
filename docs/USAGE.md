@@ -1884,6 +1884,50 @@ same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
 
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
 
+## `gflow media trash` and `gflow media restore`
+
+Move generated media items (images, videos) to Flow's Trash or restore them back to the project ([#1363](https://github.com/ffroliva/gflow-cli/issues/1363)).
+
+Flow provides a restorable Trash: moving an item to Trash removes it from Flow project views and collections without permanently destroying it. Trashing and restoring are **credit-free** (0 credits) and execute directly over the wire using batchexecute RPC `pGCYOe`.
+
+### `gflow media trash`
+
+```text
+gflow media trash ID [OPTIONS]
+
+Options:
+  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --profile TEXT                 Profile name to disambiguate or scope the lookup.
+  -y, --yes                      Confirm trashing media without an interactive prompt.
+  -o, --output [json|table|id]   Output format (json|table|id). [default: table]
+  --json                         Alias for -o json.
+```
+
+- Accepts a Flow media UUID (`flow_media_id`), local catalog asset ID, or workflow UUID.
+- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- Resolves the Flow project ID from the local catalog when `--project` is omitted.
+- If the identifier matches assets across multiple profiles and `--profile` is unset, raises exit 16 (`DataStoreError`) requesting `--profile`.
+- In interactive environments, prompts `Move <kind> <id> in project <project_id> (profile: <profile>) to Flow's Trash? [y/N]: ` unless `--yes` (`-y`) is supplied.
+- In non-interactive environments (scripts, CI), `--yes` is required (exits 2 if omitted; emits JSON problem document when `--json` is set).
+
+### `gflow media restore`
+
+```text
+gflow media restore ID [OPTIONS]
+
+Options:
+  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --profile TEXT                 Profile name to disambiguate or scope the lookup.
+  -o, --output [json|table|id]   Output format (json|table|id). [default: table]
+  --json                         Alias for -o json.
+```
+
+- Restores a trashed media item back to its Flow project over the wire.
+- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- Clears the `metadata.archived` flag and resets `collection_id` via `pGCYOe`.
+
+Exit codes: `0` success, `2` confirmation missing in non-interactive shell or usage error, `16` ambiguous asset across profiles or catalog record missing.
+
 ## `gflow data sync`
 
 Reconcile the local catalog's display names against Flow's own project-listing
