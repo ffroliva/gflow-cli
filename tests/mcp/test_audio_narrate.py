@@ -116,3 +116,21 @@ def test_gflow_narrate_is_registered_with_provider_disclosure(mcp_server) -> Non
     assert {"out_file"} <= set(tool.parameters["required"])
     assert "text is sent to the selected provider" in tool.description.lower()
     assert "flow credits" in tool.description.lower()
+
+
+@pytest.mark.asyncio
+async def test_gflow_narrate_parent_that_is_a_file_is_a_bad_parameter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from gflow_cli import config
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    config.reset_settings()
+    (tmp_path / "blocked").write_text("not a directory")
+
+    response = await gflow_narrate(text="hello", out_file="blocked/voice.mp3")
+
+    assert response["status"] == "error"
+    assert response["error"]["type"] == "https://gflow-cli.dev/errors/bad-parameter"
+    assert "blocked" in response["error"]["detail"]
+    config.reset_settings()

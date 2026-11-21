@@ -37,7 +37,14 @@ async def gflow_narrate(
     if output is None:
         return common._bad_param("Invalid Output", "out_file is required.")  # pyright: ignore[reportPrivateUsage]
     out_path = Path(output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return common._bad_param(  # pyright: ignore[reportPrivateUsage]
+            "Invalid Output",
+            f"Cannot create the output directory {out_path.parent}; "
+            "choose an out_file whose parent is a writable directory.",
+        )
     result = await asyncio.to_thread(
         narrate,
         text=text,

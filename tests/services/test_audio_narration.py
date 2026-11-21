@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -159,3 +161,42 @@ def test_rate_with_thousands_of_digits_does_not_crash(tmp_path: Path) -> None:
             rate=oversized_rate,
             synthesizer=synthesizer,
         )
+
+
+def test_narration_never_changes_the_process_umask(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def forbidden(_mask: int) -> int:
+        raise AssertionError("os.umask is process-wide state; narration must not set it")
+
+    monkeypatch.setattr(os, "umask", forbidden)
+    target = tmp_path / "voice.mp3"
+
+    narrate(text="hello", out_file=target, synthesizer=FakeSynthesizer())
+
+    assert target.read_bytes() == b"audio"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_published_narration_gets_the_default_file_mode(tmp_path: Path) -> None:
+    mask = os.umask(0o022)
+    try:
+        target = tmp_path / "voice.mp3"
+        narrate(text="hello", out_file=target, synthesizer=FakeSynthesizer())
+    finally:
+        os.umask(mask)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+def test_narration_leaves_no_staging_file_behind(tmp_path: Path) -> None:
+    ok = tmp_path / "ok.mp3"
+    narrate(text="hello", out_file=ok, synthesizer=FakeSynthesizer())
+    with pytest.raises(RuntimeError):
+        narrate(
+            text="hello",
+            out_file=tmp_path / "failed.mp3",
+            synthesizer=FakeSynthesizer(RuntimeError("provider failure")),
+        )
+
+    assert [p.name for p in tmp_path.iterdir()] == ["ok.mp3"]

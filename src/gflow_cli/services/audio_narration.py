@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
+import secrets
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import ConfigurationError, VideoAssemblyError
@@ -55,22 +55,17 @@ def narrate(
         )
 
     adapter = synthesizer or _make_synthesizer(provider, settings or get_settings())
-    temporary = _temporary_path(out_file)
+    temporary, staging = _open_staging(out_file)
     try:
-        result = adapter.synthesize(SynthesisRequest(script, voice, rate, pitch))
-        if not result.audio_bytes:
-            raise ConfigurationError(
-                "Speech provider returned empty audio.",
-                charged="no",
-                remediation_hint="Check that the input text contains speakable words.",
-            )
-        temporary.write_bytes(result.audio_bytes)
-        try:
-            mask = os.umask(0)
-            os.umask(mask)
-            os.chmod(temporary, 0o666 & ~mask)
-        except (OSError, AttributeError):
-            pass
+        with staging:
+            result = adapter.synthesize(SynthesisRequest(script, voice, rate, pitch))
+            if not result.audio_bytes:
+                raise ConfigurationError(
+                    "Speech provider returned empty audio.",
+                    charged="no",
+                    remediation_hint="Check that the input text contains speakable words.",
+                )
+            staging.write(result.audio_bytes)
         try:
             publish_output(temporary, out_file)
         except VideoAssemblyError as exc:
@@ -151,12 +146,14 @@ def _validate_output(path: Path) -> None:
         )
 
 
-def _temporary_path(path: Path) -> Path:
+def _open_staging(path: Path) -> tuple[Path, BinaryIO]:
+    """Create the staging file exclusively and keep its descriptor for the write."""
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    # O_EXCL refuses an existing name or symlink; mode 0o666 lets the OS apply the
+    # umask, so the published file gets the default mode without touching the umask.
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
     try:
-        with tempfile.NamedTemporaryFile(
-            prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False
-        ) as temporary:
-            return Path(temporary.name)
+        return temporary, os.fdopen(os.open(temporary, flags, 0o666), "wb")
     except OSError as exc:
         raise ConfigurationError(
             f"Narration output parent is not writable: {path.parent}",
