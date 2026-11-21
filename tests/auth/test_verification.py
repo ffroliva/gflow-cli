@@ -144,6 +144,12 @@ def _build_verify_mock(
 
 
 class TestVerifyFlowSession:
+    @pytest.fixture(autouse=True)
+    def _browser_cookie3_route(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """These tests drive the browser_cookie3 read, which macOS skips (see
+        tests/auth/test_cookies.py); run them on the non-macOS route there too."""
+        monkeypatch.setattr("gflow_cli.auth.cookies._SKIP_DIRECT_READ", False)
+
     @pytest.fixture
     def gflow_home(self, tmp_path: Path) -> Path:
         home = tmp_path / "gflow_home"

@@ -1735,7 +1735,9 @@ use `--browser chrome` there.
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
 (a no-browser fast path) and only falls back to launching Playwright when that
-decryption fails. This adds two more local surfaces to check when verification
+decryption fails. On macOS the direct read is skipped and the Playwright read runs
+straight away: browser_cookie3 raises a Keychain prompt there and still cannot decrypt the
+profile's jar. This adds two more local surfaces to check when verification
 fails unexpectedly: a Windows **DPAPI decrypt failure** (cross-user / cross-machine
 key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 `PermissionError` to trigger the Playwright fallback) and a **locked cookie DB**
