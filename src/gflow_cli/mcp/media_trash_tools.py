@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+from functools import wraps
 from typing import Any
 
-from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.server import server
 from gflow_cli.services.media_trash import restore_media_service, trash_media_service
+
+
+def _guarded(fn: Any) -> Any:
+    """Import the shared error funnel only after MCP tool registration completes."""
+
+    @wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        from gflow_cli.mcp.tools import _guarded as guarded  # pyright: ignore[reportPrivateUsage]
+
+        return await guarded(fn)(*args, **kwargs)
+
+    wrapper.__gflow_guarded__ = True  # type: ignore[attr-defined]
+    return wrapper
 
 
 @server.tool(
@@ -17,7 +30,7 @@ from gflow_cli.services.media_trash import restore_media_service, trash_media_se
         "using gflow_media_restore. Requires explicit confirm=True to prevent accidental deletion."
     ),
 )
-@common._guarded  # pyright: ignore[reportPrivateUsage]
+@_guarded
 async def gflow_media_trash(
     media_id: str,
     profile: str | None = None,
@@ -52,7 +65,7 @@ async def gflow_media_trash(
         "Credit-free (0 credits). Returns the restored item status and ID."
     ),
 )
-@common._guarded  # pyright: ignore[reportPrivateUsage]
+@_guarded
 async def gflow_media_restore(
     media_id: str,
     profile: str | None = None,

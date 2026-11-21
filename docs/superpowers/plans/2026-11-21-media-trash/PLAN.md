@@ -270,11 +270,11 @@ against a live Flow account at zero credit cost.
 - `tests/e2e/test_media_trash_e2e.py`
 
 **Steps:**
-- [ ] Create `tests/e2e/test_media_trash_e2e.py` marked `@pytest.mark.e2e @pytest.mark.e2e_image`.
-- [ ] Pick an existing generated image from the e2e profile's project.
-- [ ] Run `gflow media trash <id> --yes --json`, verify exit 0 and status "trashed".
-- [ ] Run `gflow media restore <id> --json`, verify exit 0 and status "restored".
-- [ ] Verify balance before and after run confirms zero credits were charged.
+- [x] Create `tests/e2e/test_media_trash_e2e.py` marked `@pytest.mark.e2e @pytest.mark.e2e_image`.
+- [x] Pick an existing generated image from the e2e profile's project.
+- [x] Run `gflow media trash <id> --yes --json`, verify exit 0 and status "trashed".
+- [x] Run `gflow media restore <id> --json`, verify exit 0 and status "restored".
+- [x] Verify balance before and after run confirms zero credits were charged.
 
 ---
 
