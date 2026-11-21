@@ -253,11 +253,11 @@ require `confirm: bool = False`, and update parity test suites.
 - `CHANGELOG.md`
 
 **Steps:**
-- [ ] In `docs/USAGE.md`, add a section for `gflow media trash` and `gflow media restore` with examples and confirmation options.
-- [ ] In `docs/MCP.md`, document `media_trash` and `media_restore` tools, parameters, and confirmation contract.
-- [ ] In `docs/FLOW_WIRE_RPCS.md`, record the verified literal field mask for `pGCYOe`.
-- [ ] In `CHANGELOG.md`, add entry under `[Unreleased]` for media trash and restore commands.
-- [ ] Run `python scripts/ci/check_doc_links.py` to ensure all cross-references resolve.
+- [x] In `docs/USAGE.md`, add a section for `gflow media trash` and `gflow media restore` with examples and confirmation options.
+- [x] In `docs/MCP.md`, document `media_trash` and `media_restore` tools, parameters, and confirmation contract.
+- [x] In `docs/FLOW_WIRE_RPCS.md`, record the verified literal field mask for `pGCYOe`.
+- [x] In `CHANGELOG.md`, add entry under `[Unreleased]` for media trash and restore commands.
+- [x] Run `python scripts/ci/check_doc_links.py` to ensure all cross-references resolve.
 
 ---
 
