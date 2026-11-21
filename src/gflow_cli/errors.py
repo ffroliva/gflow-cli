@@ -1611,6 +1611,16 @@ class VideoAssemblyError(GFlowError):
     )
 
 
+class VideoProcessingError(FrameExtractionError):
+    """Raised when local video decoding or caption rendering fails."""
+
+    problem_type = "https://gflow-cli.dev/errors/video-processing"
+    title = "Video processing failed"
+    charged = "no"
+    next_action = "fix_input"
+    _default_remediation = "Check that the local video is readable and its codecs are supported."
+
+
 class ChainPartialError(GFlowError):
     """Raised when a sequential video chain fails mid-way after earlier links
     already produced ready-on-disk clips.
