@@ -78,6 +78,8 @@ def trash_subcommand(
 
     Requires confirmation (--yes in scripts/CI, or interactive [y/N] prompt).
     """
+    if not media_id or not media_id.strip():
+        raise click.BadParameter("ID must not be empty or blank.", param_hint="ID")
     is_json = as_json or output_format == OutputFormat.JSON.value
 
     if not yes:
@@ -119,6 +121,8 @@ def restore_subcommand(
     as_json: bool = False,
 ) -> None:
     """Restore a trashed media item from Flow's Trash over the wire."""
+    if not media_id or not media_id.strip():
+        raise click.BadParameter("ID must not be empty or blank.", param_hint="ID")
     is_json = as_json or output_format == OutputFormat.JSON.value
 
     async def _run() -> None:

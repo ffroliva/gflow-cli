@@ -162,3 +162,16 @@ def test_cli_media_trash_output_format_id(
     res = runner.invoke(main, ["media", "trash", "media-123", "--yes", "-o", "id"])
     assert res.exit_code == 0
     assert res.output.strip() == "media-123"
+
+
+def test_cli_media_trash_refuses_empty_id(runner: CliRunner, seeded_db: Path) -> None:
+    res = runner.invoke(main, ["media", "trash", "   ", "--yes"])
+    assert res.exit_code == 2
+    assert "must not be empty or blank" in res.output
+
+
+def test_cli_media_restore_refuses_empty_id(runner: CliRunner, seeded_db: Path) -> None:
+    res = runner.invoke(main, ["media", "restore", "   "])
+    assert res.exit_code == 2
+    assert "must not be empty or blank" in res.output
+

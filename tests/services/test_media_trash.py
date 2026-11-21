@@ -437,3 +437,73 @@ async def test_media_trash_service_updates_local_catalog_status(
         ).fetchone()
         assert db_status is not None
         assert db_status[0] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_refuses_empty_or_blank_id(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    for blank in ("", "   ", "\t\n"):
+        with pytest.raises(DataStoreError) as exc_info:
+            await trash_media_service(blank)
+        assert "empty or blank" in exc_info.value.detail.lower()
+        assert exc_info.value.charged == "no"
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_empty_id_does_not_match_blank_workflow_id(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="asset-with-empty-wf",
+        flow_media_id="real-image-id",
+        flow_project_id="p-100",
+        flow_workflow_id="",
+        profile_name="test_prof",
+    )
+
+    with pytest.raises(DataStoreError) as exc_info:
+        await trash_media_service("")
+    assert "empty or blank" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_media_trash_service_refuses_same_profile_ambiguity(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    _seed_test_asset(
+        db_path,
+        asset_id="local-1",
+        flow_media_id="m-1",
+        flow_project_id="p-1",
+        flow_workflow_id="wf-shared",
+        profile_name="test_prof",
+    )
+    _seed_test_asset(
+        db_path,
+        asset_id="local-2",
+        flow_media_id="m-2",
+        flow_project_id="p-1",
+        flow_workflow_id="wf-shared",
+        profile_name="test_prof",
+    )
+
+    with pytest.raises(DataStoreError) as exc_info:
+        await trash_media_service("wf-shared", profile="test_prof")
+    assert "multiple" in exc_info.value.detail.lower()
+    assert "m-1" in exc_info.value.detail
+    assert "m-2" in exc_info.value.detail
+

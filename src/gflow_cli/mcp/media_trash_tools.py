@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any
 
+from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.server import server
 from gflow_cli.services.media_trash import restore_media_service, trash_media_service
 
@@ -37,6 +38,8 @@ async def gflow_media_trash(
     confirm: bool = False,
 ) -> dict[str, Any]:
     """Move media to Flow's Trash. Requires confirm=True."""
+    if not media_id or not media_id.strip():
+        return common._bad_param("Invalid Media ID", "media_id must not be empty or blank.")
     if not confirm:
         return {
             "status": "error",
@@ -71,6 +74,8 @@ async def gflow_media_restore(
     profile: str | None = None,
 ) -> dict[str, Any]:
     """Restore media from Flow's Trash."""
+    if not media_id or not media_id.strip():
+        return common._bad_param("Invalid Media ID", "media_id must not be empty or blank.")
     res = await restore_media_service(media_id, profile=profile, route="mcp.media_restore")
     return res.as_json()
 

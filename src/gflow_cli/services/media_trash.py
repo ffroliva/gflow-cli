@@ -57,33 +57,78 @@ def resolve_media_trash_target(target_id: str, *, profile: str | None, route: st
 
     Accepts flow_media_id, local catalog ID, or flow_workflow_id.
     """
+    if not target_id or not target_id.strip():
+        raise DataStoreError(
+            detail="Media identifier must not be empty or blank.",
+            route=route,
+            charged="no",
+            remediation_hint=(
+                "Provide a valid Flow media ID, local catalog ID, or workflow UUID, "
+                "or pass --project PROJECT_ID."
+            ),
+        )
+    clean_id = target_id.strip()
     settings = get_settings()
     with DataStore.open(settings.resolved_db_path()) as store:
         repo = DataRepository(store)
         if profile is not None:
-            scoped = repo.get_asset_by_any_id(profile, target_id)
-            if scoped is None:
+            matches = repo.find_assets_by_any_id(clean_id, profile_name=profile)
+            if not matches:
                 raise DataStoreError(
-                    detail=f"No local media record found: {target_id} (profile={profile!r})",
+                    detail=f"No local media record found: {clean_id} (profile={profile!r})",
                     route=route,
+                    charged="no",
+                    remediation_hint=(
+                        "Check the identifier or profile name, or pass --project PROJECT_ID "
+                        "if the item is not cataloged locally."
+                    ),
                 )
-            return scoped
+            if len(matches) > 1:
+                candidates = sorted({f"{m.flow_media_id} ({m.kind.value})" for m in matches})
+                raise DataStoreError(
+                    detail=(
+                        f"Multiple media records match {clean_id!r} under profile {profile!r}: "
+                        f"{candidates}. Pass a specific media id to disambiguate."
+                    ),
+                    route=route,
+                    charged="no",
+                )
+            return matches[0]
 
-        matches = repo.find_assets_by_any_id(target_id)
+        matches = repo.find_assets_by_any_id(clean_id)
         if not matches:
             raise DataStoreError(
-                detail=f"No local media record found for identifier: {target_id!r}",
+                detail=f"No local media record found for identifier: {clean_id!r}",
                 route=route,
+                charged="no",
+                remediation_hint=(
+                    "Provide a valid Flow media ID, local catalog ID, or workflow UUID, "
+                    "or pass --project PROJECT_ID."
+                ),
             )
 
-        profiles = sorted({m.profile_name for m in matches})
-        if len(profiles) > 1:
+        if len(matches) > 1:
+            profiles = sorted({m.profile_name for m in matches})
+            if len(profiles) > 1:
+                candidates = sorted(
+                    {f"{m.profile_name} ({m.kind.value}: {m.flow_media_id})" for m in matches}
+                )
+                raise DataStoreError(
+                    detail=(
+                        f"Media {clean_id!r} exists under multiple profiles: "
+                        f"{candidates}. Pass --profile NAME to disambiguate."
+                    ),
+                    route=route,
+                    charged="no",
+                )
+            candidates = sorted({f"{m.flow_media_id} ({m.kind.value})" for m in matches})
             raise DataStoreError(
                 detail=(
-                    f"Media {target_id!r} exists under multiple profiles: "
-                    f"{profiles}. Pass --profile NAME to disambiguate."
+                    f"Multiple media records match {clean_id!r}: "
+                    f"{candidates}. Pass a specific media id to disambiguate."
                 ),
                 route=route,
+                charged="no",
             )
         return matches[0]
 

@@ -113,3 +113,20 @@ async def test_mcp_media_restore_succeeds(mcp_env: Path, monkeypatch: pytest.Mon
     assert res.get("project_id") == "proj-uuid-1"
     assert res.get("charged") == "no"
     mock_restore.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mcp_media_trash_refuses_empty_id(mcp_env: Path) -> None:
+    res = await gflow_media_trash(media_id="   ", confirm=True)
+    assert res.get("status") == "error"
+    err = res.get("error", {})
+    assert "empty or blank" in err.get("detail", "")
+
+
+@pytest.mark.asyncio
+async def test_mcp_media_restore_refuses_empty_id(mcp_env: Path) -> None:
+    res = await gflow_media_restore(media_id="   ")
+    assert res.get("status") == "error"
+    err = res.get("error", {})
+    assert "empty or blank" in err.get("detail", "")
+
