@@ -41,6 +41,11 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.credit_cap import (
+    CreditBudget,
+    preserve_credit_cap_partials,
+    resolve_max_credits,
+)
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
 from gflow_cli.composition import (
@@ -56,7 +61,12 @@ from gflow_cli.composition import (
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
-from gflow_cli.errors import ConfigurationError, DataStoreError, WireFormatError
+from gflow_cli.errors import (
+    ConfigurationError,
+    CreditCapExceededError,
+    DataStoreError,
+    WireFormatError,
+)
 from gflow_cli.movie_manifest import (
     CharacterState,
     MovieManifest,
@@ -168,12 +178,30 @@ def template(output: Path, force: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if value:
+        ctx.meta["no_max_credits"] = True
+
+
 @spends_credits(True)
 @movie.command("run")
 @click.argument(
     "manifest_path", metavar="MANIFEST", type=click.Path(dir_okay=False, path_type=Path)
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
+@click.option(
+    "--no-max-credits",
+    is_flag=True,
+    expose_value=False,
+    callback=_set_no_max_credits,
+    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
+)
+@click.option(
+    "--max-credits",
+    type=click.IntRange(min=0),
+    default=None,
+    help="Refuse before submit if Flow's quote exceeds this per-command cap.",
+)
 @click.option(
     "--out-dir",
     "out_dir_override",
@@ -213,6 +241,7 @@ def run(
     dry_run: bool,
     continue_on_error: bool,
     stitch: bool,
+    max_credits: int | None,
 ) -> None:
     """Execute a movie.toml — compose prompts and generate every scene.
 
@@ -237,6 +266,10 @@ def run(
         sys.exit(11)
 
     settings = get_settings()
+    effective_max_credits = resolve_max_credits(
+        max_credits,
+        None if click.get_current_context().meta.get("no_max_credits") else settings.max_credits,
+    )
     out_dir = resolve_batch_output_dir(
         cli_override=out_dir_override,
         config_value=manifest.output_dir,
@@ -249,7 +282,7 @@ def run(
     _print_header(manifest, out_dir=out_dir, dry_run=dry_run)
 
     if dry_run:
-        _print_plan(manifest, state)
+        _print_plan(manifest, state, max_credits=effective_max_credits)
         return
 
     profile_name = _resolve_profile(profile)
@@ -264,6 +297,7 @@ def run(
             out_dir=out_dir,
             continue_on_error=continue_on_error,
             stitch=stitch,
+            max_credits=effective_max_credits,
         ),
         cli_command="movie run",
     )
@@ -311,7 +345,9 @@ def _format_scene_line(s: Scene, style: StyleSpec, *, done: bool, stale: bool) -
     return f"    \\[{mode}] {s.id!r}{framing_tag}{model_tag}{dur_tag}{refs}{style_tag}  {status}"
 
 
-def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
+def _print_plan(
+    manifest: MovieManifest, state: MovieState, *, max_credits: int | None = None
+) -> None:
     console.print("\n[bold]Plan:[/bold]")
 
     # Characters (text identity only in P1)
@@ -338,6 +374,8 @@ def _print_plan(manifest: MovieManifest, state: MovieState) -> None:
 
     operation_noun = "operation" if pending_operations == 1 else "operations"
     console.print(f"\n  {pending_operations} pending video {operation_noun}")
+    if max_credits is not None:
+        console.print(f"  max credits: {max_credits}")
     console.print(
         "  Video operations may consume credits. Current cost varies by model, duration, "
         "account tier, and Flow policy; check Google Flow before submitting."
@@ -444,59 +482,132 @@ async def _sync_scene_instructions(
     cache.signature = desired_sig
 
 
+def _preserve_movie_cap_partials(
+    exc: Exception,
+    manifest: MovieManifest,
+    state: MovieState,
+    run_media_ids: list[str],
+) -> None:
+    if isinstance(exc, CreditCapExceededError):
+        completed = [
+            state.scenes[scene.id].media_id
+            for scene in manifest.scenes
+            if scene.id in state.scenes
+            and state.scenes[scene.id].status == "completed"
+            and state.scenes[scene.id].media_id
+            and state.scenes[scene.id].media_id in run_media_ids
+        ]
+        preserve_credit_cap_partials(exc, completed)
+
+
+@dataclass(frozen=True)
+class MovieRunContext:
+    manifest: MovieManifest
+    state: MovieState
+    state_path: Path
+    profile_name: str
+    profile_dir: Path
+    out_dir: Path
+    brief_cache: _BriefSyncCache
+    budget: CreditBudget
+
+
+def _record_scene_success(
+    video_result: Any,
+    scene: Scene,
+    prompt: str,
+    reference_entities: tuple[str, ...],
+    context: MovieRunContext,
+    run_media_ids: list[str] | None,
+) -> None:
+    if run_media_ids is not None:
+        run_media_ids.append(video_result.status.media_id)
+    local_path_str = str(video_result.local_path) if video_result.local_path is not None else None
+    context.state.scenes[scene.id] = SceneState(
+        media_id=video_result.status.media_id,
+        flow_operation_id=video_result.flow_operation_id,
+        local_path=local_path_str,
+        status="completed",
+        prompt=prompt,
+        consistency_method="entity" if reference_entities else "text",
+        style_hash=resume_hash(prompt),
+    )
+    context.state.save(context.state_path)
+    try:
+        context.budget.record_spend(video_result.quoted_credits)
+    except CreditCapExceededError as exc:
+        exc.completed_media_ids = [video_result.status.media_id]
+        raise
+
+
+def _handle_scene_failure(
+    exc: Exception,
+    scene: Scene,
+    prompt: str,
+    reference_entities: tuple[str, ...],
+    context: MovieRunContext,
+    run_media_ids: list[str] | None,
+) -> None:
+    scene_media_ids = getattr(exc, "completed_media_ids", [])
+    billed_quote = getattr(exc, "quoted_credits", None)
+    if context.budget.remaining is not None and (billed_quote is not None or scene_media_ids):
+        if billed_quote is None:
+            context.budget.remaining = 0
+        else:
+            context.budget.record_spend(billed_quote)
+    _preserve_movie_cap_partials(exc, context.manifest, context.state, run_media_ids or [])
+    log.error(
+        "movie.scene_failed",
+        scene_id=scene.id,
+        error=str(exc),
+        exc_info=True,
+    )
+    if reference_entities and isinstance(exc, WireFormatError):
+        failed_method = "degraded"
+    else:
+        failed_method = "text"
+    context.state.scenes[scene.id] = SceneState(
+        media_id=scene_media_ids[0] if scene_media_ids else "",
+        flow_operation_id=None,
+        local_path=None,
+        status="completed" if scene_media_ids else "failed",
+        prompt=prompt,
+        consistency_method=failed_method,
+        style_hash=resume_hash(prompt),
+    )
+    context.state.save(context.state_path)
+
+
 async def _run_one_scene(
     *,
     client: FlowApiClient,
     recorder: OperationRecorder,
     scene: Scene,
-    manifest: MovieManifest,
-    state: MovieState,
-    state_path: Path,
-    profile_name: str,
-    profile_dir: Path,
-    out_dir: Path,
+    context: MovieRunContext,
     generated_any: bool,
+    run_media_ids: list[str] | None = None,
     continue_on_error: bool,
-    brief_cache: _BriefSyncCache,
 ) -> Path | None:
     """Generate one scene clip and persist its state.
 
     Returns the local video path on success, ``None`` on a handled failure
     (continue_on_error).  Re-raises on an unhandled failure (fail-fast).
     """
-    prompt = compose_prompt(manifest.style, scene, manifest.characters)
-
-    # reference_entities / reference_entity_names are resolved inside
-    # the try so a pre-flight ConfigurationError (missing entity_id)
-    # is handled per-scene by the continue-on-error / fail-fast
-    # policy like any other failure.
+    prompt = compose_prompt(context.manifest.style, scene, context.manifest.characters)
     reference_entities: tuple[str, ...] = ()
 
     try:
-        # Resolve native (entity-identity) characters to their created
-        # entity ids. FAIL LOUD when an entity character has no
-        # entity_id in state — never silently drop the reference
-        # (council C4). reference_audio stays None: embedded-voice-on-
-        # entity is the preferred path (the entity carries the voice).
-        reference_entities = _resolve_entities(scene, manifest, state)
-
-        # Build the parallel display-name list so the UI picker can
-        # select tiles by name instead of UUID (live e2e fix).
-        reference_entity_names = _resolve_entity_names(scene, manifest)
-
-        # reCAPTCHA cooldown between scenes — inside the try so any
-        # failure here is handled per-scene and never aborts the run.
+        reference_entities = _resolve_entities(scene, context.manifest, context.state)
+        reference_entity_names = _resolve_entity_names(scene, context.manifest)
         if generated_any:
             await asyncio.sleep(5)
 
-        # Sync instructions for this scene to the project brief (skips the
-        # network work when this scene's set matches the last synced one).
         await _sync_scene_instructions(
             client=client,
-            project_id=manifest.project,
-            global_cards=manifest.instructions,
+            project_id=context.manifest.project,
+            global_cards=context.manifest.instructions,
             scene_inst=scene.instructions,
-            cache=brief_cache,
+            cache=context.brief_cache,
         )
 
         video_result = await _generate_scene(
@@ -507,52 +618,21 @@ async def _run_one_scene(
             reference_entities=reference_entities,
             reference_entity_names=reference_entity_names,
             reference_audio=None,
-            profile_name=profile_name,
-            profile_dir=profile_dir,
-            out_dir=out_dir,
-            project_id=manifest.project,
+            profile_name=context.profile_name,
+            profile_dir=context.profile_dir,
+            out_dir=context.out_dir,
+            project_id=context.manifest.project,
+            max_credits=context.budget.max_credits,
         )
-        local_path_str = (
-            str(video_result.local_path) if video_result.local_path is not None else None
+        _record_scene_success(
+            video_result, scene, prompt, reference_entities, context, run_media_ids
         )
-        state.scenes[scene.id] = SceneState(
-            media_id=video_result.status.media_id,
-            flow_operation_id=video_result.flow_operation_id,
-            local_path=local_path_str,
-            status="completed",
-            prompt=prompt,
-            consistency_method="entity" if reference_entities else "text",
-            style_hash=resume_hash(prompt),
-        )
-        state.save(state_path)
         console.print(f"    saved: {video_result.local_path}")
         return video_result.local_path
 
     except Exception as exc:
-        log.error(
-            "movie.scene_failed",
-            scene_id=scene.id,
-            error=str(exc),
-            exc_info=True,
-        )
-        # An entity scene whose wire backstop (WireFormatError) tripped
-        # but the run continued is recorded as "degraded" (entity path
-        # attempted, identity not honored); everything else is "text".
-        if reference_entities and isinstance(exc, WireFormatError):
-            failed_method = "degraded"
-        else:
-            failed_method = "text"
-        state.scenes[scene.id] = SceneState(
-            media_id="",
-            flow_operation_id=None,
-            local_path=None,
-            status="failed",
-            prompt=prompt,
-            consistency_method=failed_method,
-            style_hash=resume_hash(prompt),
-        )
-        state.save(state_path)
-        if continue_on_error:
+        _handle_scene_failure(exc, scene, prompt, reference_entities, context, run_media_ids)
+        if continue_on_error and not isinstance(exc, CreditCapExceededError):
             console.print(f"    [red]Scene failed:[/red] {escape(str(exc))}")
             return None
         raise
@@ -583,6 +663,7 @@ async def _run_movie(
     out_dir: Path,
     continue_on_error: bool,
     stitch: bool = False,
+    max_credits: int | None = None,
 ) -> None:
     settings = get_settings()
     if stitch:
@@ -590,6 +671,7 @@ async def _run_movie(
         refuse_cloud_storage_for_local_file(settings.storage_uri, "movie run --stitch")
     recorder = OperationRecorder.open(settings)
     include_prompts = getattr(settings, "history_prompts", "store") == "store"
+    budget = CreditBudget(max_credits)
 
     completed_local_paths: list[Path] = []
 
@@ -627,8 +709,19 @@ async def _run_movie(
             # ------------------------------------------------------------------
             console.print("\n[bold]Scenes[/bold]")
             generated_any = False
+            run_media_ids: list[str] = []
             # One memo for the whole run so scenes sharing a brief sync it once.
             brief_cache = _BriefSyncCache()
+            context = MovieRunContext(
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                out_dir=out_dir,
+                brief_cache=brief_cache,
+                budget=budget,
+            )
 
             for scene in manifest.scenes:
                 scene_state = state.scenes.get(scene.id)
@@ -653,15 +746,10 @@ async def _run_movie(
                     client=client,
                     recorder=recorder,
                     scene=scene,
-                    manifest=manifest,
-                    state=state,
-                    state_path=state_path,
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    out_dir=out_dir,
+                    context=context,
                     generated_any=generated_any,
+                    run_media_ids=run_media_ids,
                     continue_on_error=continue_on_error,
-                    brief_cache=brief_cache,
                 )
                 if local_path is not None:
                     completed_local_paths.append(local_path)
@@ -835,6 +923,7 @@ async def _generate_scene(
     profile_dir: Path,
     out_dir: Path,
     project_id: str | None = None,
+    max_credits: int | None = None,
 ) -> Any:
     """Generate one clip for *scene* using the pre-composed *prompt*.
 
@@ -862,6 +951,7 @@ async def _generate_scene(
         count=scene.count,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
+        max_credits=max_credits,
     )
 
     started_media_ids: list[str] = []
@@ -887,6 +977,8 @@ async def _generate_scene(
             on_started=on_started,
         )
     except Exception as exc:
+        if started_media_ids:
+            setattr(exc, "completed_media_ids", list(started_media_ids))  # noqa: B010
         # #341: persist the scene failure before the per-scene handler in
         # `_run_one_scene` decides continue-vs-abort.
         record_failed_operation_safe(

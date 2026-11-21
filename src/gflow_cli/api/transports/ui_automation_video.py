@@ -759,6 +759,10 @@ class VideoGenerationMixin(FrameAttachMixin):
             # of the editor before we click into mode-switch / settings / submit (#26).
             await self._dismiss_blocking_overlays(page, out_dir)
             route = migrated_route(page.url, flow_host, prefer_migrated=prefer)
+        if route == "labs" and request.max_credits is not None:
+            from gflow_cli.api.credit_cap import enforce_credit_cap  # noqa: PLC0415
+
+            enforce_credit_cap(quoted=None, max_credits=request.max_credits, route="labs video UI")
         if route == "blocked":
             raise_if_migrated(page, at="flow_host_kill_switch")
         if route == "migrated":

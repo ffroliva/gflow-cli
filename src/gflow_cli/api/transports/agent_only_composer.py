@@ -9,8 +9,8 @@ Shape of a run:
 1. **Agent settings** carry aspect / count / model as account defaults. They are set to the
    request, saved, and restored afterwards (measured: Save persists across a reload, and a
    set -> Save -> restore -> Save round trip returns the account to its originals). The
-   "Confirm before generating" radio follows ``GFLOW_CLI_AGENT_CONFIRM`` and is NOT
-   restored — it is the user's standing choice.
+   "Confirm before generating" radio follows ``GFLOW_CLI_AGENT_CONFIRM`` (or ``always``
+   under ``--max-credits``) and is restored afterwards too.
 2. A natural-language **directive** goes into the ProseMirror editor and is submitted.
 3. At most **one credit gate** that appeared after our own submit is approved, and only
    after its title has been read: a gate quoting more clips than requested is rejected
@@ -45,6 +45,7 @@ from urllib.parse import urlsplit
 import structlog
 from playwright.async_api import Error as PlaywrightError
 
+from gflow_cli.api.credit_cap import parse_credit_quote
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.transports._mc_common import (
@@ -66,6 +67,7 @@ from gflow_cli.api.transports.migrated_composer import (
 from gflow_cli.api.video import Aspect, Mode, VideoModel, VideoResult, VideoStarted, VideoStatus
 from gflow_cli.errors import (
     ConfigurationError,
+    CreditCapExceededError,
     FlowAgentUiError,
     FlowHostMigratedError,
     TransportTimeoutError,
@@ -224,6 +226,7 @@ class DefaultsSnapshot:
     aspect_index: int
     count_index: int
     model_text: str
+    confirm_value: str = "1"
 
 
 def compose_image_directive(prompt: str, count: int, aspect_label: str) -> str:
@@ -315,6 +318,44 @@ def gate_quotes_more(title: str, count: int) -> bool | None:
     if len(numbers) < 2:
         return None
     return any(n > count for n in numbers[:-1])
+
+
+def gate_quoted_credits(title: str) -> int | None:
+    """Return a strict, unambiguous quote, excluding the generation count."""
+    count = _NUMBER_RE.search(title)
+    return parse_credit_quote(title[: count.start()] + title[count.end() :]) if count else None
+
+
+def _unapproved_media_cap_error(
+    max_credits: int, media_id: str | None = None
+) -> CreditCapExceededError:
+    error = CreditCapExceededError(
+        quoted=None,
+        max_credits=max_credits,
+        route="agent-only composer without an approved quote",
+        completed_media_ids=[media_id] if media_id else None,
+    )
+    error.charged, error.next_action = "maybe", "reconcile"
+    error.remediation_hint = (
+        "A clip appeared without an approved quote; reconcile the Flow project before retrying."
+    )
+    return error
+
+
+async def _report_video_started(
+    run: _Run,
+    started: bool,
+    media_id: str | None,
+    pending: int,
+    on_first_media: Callable[[str], object] | None,
+) -> bool:
+    if media_id and not started:
+        started = True
+        if on_first_media is not None:
+            await _maybe_await(on_first_media(media_id))
+    if (media_id or pending) and run.max_credits is not None and not run.approvals:
+        raise _unapproved_media_cap_error(run.max_credits, media_id)
+    return started
 
 
 def _tile_key(tile: dict[str, str]) -> str:
@@ -497,6 +538,7 @@ class AgentOnlyComposer:
                     model_text=_picker_label(
                         await page.locator(MODEL_PICKER[section]).first.inner_text()
                     ),
+                    confirm_value=await self._confirm_value(page),
                 )
                 await self._check_radio(page, base, aspect_ligature, "aspect")
                 await self._check_radio(page, base + 1, count - 1, "count")
@@ -518,8 +560,15 @@ class AgentOnlyComposer:
         )
         return snapshot
 
+    async def _confirm_value(self, page: Page) -> str:
+        for value in _CONFIRM_VALUE.values():
+            radio = page.locator(f"{CONFIRM_INPUT}[value='{value}']")
+            if await radio.count() == 1 and await radio.is_checked():
+                return value
+        raise UiSelectorDriftError(detail="agent-only composer: confirm choice is unreadable")
+
     async def restore_defaults(self, page: Page, snapshot: DefaultsSnapshot) -> None:
-        """Put back aspect / count / model. Confirm is deliberately left as applied."""
+        """Restore the account's original settings after a run."""
         await self._open_pane(page)
         base = _GROUP_BASE[snapshot.section]
         try:
@@ -528,6 +577,9 @@ class AgentOnlyComposer:
             if snapshot.count_index >= 0:
                 await self._check_radio(page, base + 1, snapshot.count_index, "count")
             await self._choose_model(page, snapshot.section, snapshot.model_text)
+            radio = page.locator(f"{CONFIRM_INPUT}[value='{snapshot.confirm_value}']")
+            if await radio.count() == 1 and not await radio.is_checked():
+                await radio.check(timeout=4000)
             await self._save(page)
         except Exception:
             # The failed-apply hazard from the other end: left open, the next run would
@@ -581,11 +633,14 @@ class AgentOnlyComposer:
         return ""
 
     async def _approve_gate(self, page: Page, baseline_gates: int) -> None:
+        gate = page.locator(LIVE_GATE).nth(baseline_gates)
+        approve_row = gate.locator(APPROVE_ROW).first
+        handle = None
         try:
             # The gate whose title was read, not ``.last``: with two live at once, the
             # newer one's count was never checked (#988 review).
-            gate = page.locator(LIVE_GATE).nth(baseline_gates)
-            await gate.locator(APPROVE_ROW).first.click(timeout=5000)
+            handle = await approve_row.element_handle(timeout=5000)
+            await approve_row.click(timeout=5000)
         except PlaywrightError as exc:
             # After the submit: whether the gate took the click is unknown, so never retry.
             raise FlowAgentUiError(
@@ -593,10 +648,14 @@ class AgentOnlyComposer:
                 retryable=False,
                 remediation_hint=_AFTER_SUBMIT_HINT,
             ) from exc
-        # The live-gate count is back at the baseline once the gate at that index is gone.
-        settled = page.locator(LIVE_GATE).nth(baseline_gates)
         try:
-            await settled.wait_for(state="detached", timeout=GATE_SETTLE_S * 1000)
+            # Wait on the approved gate's own element: an index locator re-resolves to the
+            # NEXT gate when Flow opens one quickly, and then times out (CI, #1355).
+            await page.wait_for_function(
+                "el => el.classList.contains('read-only') || !el.isConnected",
+                arg=handle,
+                timeout=GATE_SETTLE_S * 1000,
+            )
         except PlaywrightError as exc:
             raise UiSelectorDriftError(
                 detail="agent-only composer: an approved credit gate did not turn read-only"
@@ -653,7 +712,18 @@ class AgentOnlyComposer:
             title = await gate.locator(GATE_TITLE).first.inner_text(timeout=2000)
         except PlaywrightError:
             title = ""
+        if title != run.last_gate_title:
+            run.last_gate_title = title
+            run.stable_gate_polls = 1
+            return False
+        run.stable_gate_polls += 1
+        if run.stable_gate_polls < 2:
+            return False
         quotes_more = gate_quotes_more(title, run.count)
+        if run.gate_seen_at is None:
+            run.gate_seen_at = time.monotonic()
+        if not await self._gate_cap_ready(page, run, title):
+            return False
         shown = redact_sensitive_text(title[:200]) or "(no title)"
         if quotes_more:
             rejected = await self._reject_gate(page, run.baseline_gates)
@@ -668,13 +738,9 @@ class AgentOnlyComposer:
             )
         if quotes_more is False:
             return True
-        if run.gate_seen_at is None:
-            run.gate_seen_at = time.monotonic()
         if time.monotonic() - run.gate_seen_at < GATE_SETTLE_S:
             return False
         if run.kind == "image":
-            # Unmeasured title shape. Images cost no credits, and _await_images still
-            # refuses a run that made more than requested.
             log.warning("migrated.agent_only.gate_count_unread", kind=run.kind)
             return True
         raise FlowAgentUiError(
@@ -689,6 +755,36 @@ class AgentOnlyComposer:
                 "can read it."
             ),
         )
+
+    async def _gate_cap_ready(self, page: Page, run: _Run, title: str) -> bool:
+        if run.max_credits is None:
+            return True
+        max_credits = run.max_credits
+        quoted = gate_quoted_credits(title)
+        if quoted is None:
+            if run.gate_seen_at is None:
+                run.gate_seen_at = time.monotonic()
+            if time.monotonic() - run.gate_seen_at < GATE_SETTLE_S:
+                return False
+            await self._reject_cap_gate(page, run, quoted, max_credits)
+        elif quoted > max_credits:
+            await self._reject_cap_gate(page, run, quoted, max_credits)
+        run.quoted_credits = quoted
+        return True
+
+    async def _reject_cap_gate(
+        self, page: Page, run: _Run, quoted: int | None, max_credits: int
+    ) -> None:
+        rejected = await self._reject_gate(page, run.baseline_gates)
+        error = CreditCapExceededError(
+            quoted=quoted,
+            max_credits=max_credits,
+            route="agent-only confirmation gate",
+        )
+        if not rejected:
+            error.charged, error.next_action = "maybe", "reconcile"
+            error.remediation_hint = "The gate is still open in Flow; reconcile before retrying."
+        raise error
 
     async def _reject_gate(self, page: Page, baseline_gates: int) -> bool:
         """Click Reject; True once the gate is seen to turn read-only."""
@@ -744,6 +840,7 @@ class AgentOnlyComposer:
         kind: Section,
         count: int,
         budget_s: float,
+        max_credits: int | None = None,
         on_first_media: Callable[[str], object] | None = None,
         read_listing: ListingReader | None = None,
     ) -> list[TileMedia]:
@@ -751,6 +848,7 @@ class AgentOnlyComposer:
 
         ``read_listing`` returns the project's ``Zzl0ze`` payload (or ``None``); a video
         whose page names no uuid is looked up there (#1354)."""
+        self.quoted_credits: int | None = None
         baseline_gates = await page.locator(LIVE_GATE).count()
         if kind == "video":
             baseline, baseline_head = await self._video_baseline(page)
@@ -759,12 +857,22 @@ class AgentOnlyComposer:
         submitted_at = time.time()
         await self._submit(page, directive)
         log.info("migrated.agent_only.submitted", kind=kind, count=count)
-        run = _Run(kind, budget_s, time.monotonic() + budget_s, baseline_gates, count, submitted_at)
+        run = _Run(
+            kind,
+            budget_s,
+            time.monotonic() + budget_s,
+            baseline_gates,
+            count,
+            submitted_at,
+            max_credits,
+        )
         run.seen_before = frozenset(baseline)
         if kind == "video":
-            return await self._await_video(
+            media = await self._await_video(
                 page, run, count, baseline, baseline_head, on_first_media, read_listing
             )
+            self.quoted_credits = run.quoted_credits
+            return media
         return await self._await_images(page, run, count, baseline)
 
     async def _await_video(
@@ -797,16 +905,14 @@ class AgentOnlyComposer:
                     retryable=False,
                     remediation_hint=_AFTER_SUBMIT_HINT,
                 )
-            if named and not started and on_first_media is not None:
-                started = True
-                await _maybe_await(on_first_media(named[0]))
+            started = await _report_video_started(
+                run, started, named[0] if named else None, state["pending"], on_first_media
+            )
             ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
             # #1354: the listing may name the clip before its player mounts, or the run may
             # time out waiting for it; the early report must not wait for the download.
             listed = ready.uuid if ready is not None else (run.listed and run.listed[1])
-            if listed and not started and on_first_media is not None:
-                started = True
-                await _maybe_await(on_first_media(listed))
+            started = await _report_video_started(run, started, listed, 0, on_first_media)
             if ready is not None:
                 return [ready]
             await asyncio.sleep(POLL_S)
@@ -964,9 +1070,13 @@ class _Run:
     count: int
     #: Wall-clock time just before the submit click: a listed clip created earlier is not ours.
     submitted_at: float
+    max_credits: int | None = None
+    quoted_credits: int | None = None
     approvals: int = 0
     #: When this run's gate was first seen with a title that could not be read yet.
     gate_seen_at: float | None = None
+    last_gate_title: str = ""
+    stable_gate_polls: int = 0
     #: Clip uuids and `/asb/` tokens on the page before the submit: never this run's clip.
     seen_before: frozenset[str] = frozenset()
     #: Whether this run's clip has shown as pending; the listing is not read before that.
@@ -1207,6 +1317,13 @@ async def run_agent_video(
     unported = unported_video(request)
     if unported is not None:
         raise refuse_unported(unported)
+    confirm = _confirm_setting()
+    if request.max_credits is not None and confirm == "never":
+        raise CreditCapExceededError(
+            quoted=None,
+            max_credits=request.max_credits,
+            route="agent-only confirmation is disabled",
+        )
     composer = AgentOnlyComposer()
     snapshot = await composer.apply_defaults(
         page,
@@ -1214,7 +1331,7 @@ async def run_agent_video(
         aspect_ligature=ASPECT_LIGATURE[request.aspect],
         count=1,
         model=VIDEO_MODEL_MENU_MATCHERS[request.model] if request.model else None,
-        confirm=_confirm_setting(),
+        confirm="always" if request.max_credits is not None else confirm,
     )
 
     def started(media_id: str) -> object:
@@ -1231,6 +1348,7 @@ async def run_agent_video(
             kind="video",
             count=1,
             budget_s=poll_timeout_s,
+            max_credits=request.max_credits,
             on_first_media=started,
             read_listing=lambda budget_s: read_project_listing(page, project_id, budget_s=budget_s),
         )
@@ -1241,4 +1359,5 @@ async def run_agent_video(
         status=VideoStatus(media_id=media.uuid, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=local_path,
         project_id=project_id,
+        quoted_credits=getattr(composer, "quoted_credits", None),
     )

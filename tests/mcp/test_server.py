@@ -450,6 +450,48 @@ class TestCliMcpParameterSymmetry:
             f"MCP tool missing CLI params: {required_in_both - schema_props}"
         )
 
+    def test_video_tool_schema_exposes_nullable_integer_max_credits(self, mcp_server: Any) -> None:
+        tool = mcp_server._tool_manager._tools["gflow_generate_video"]
+        properties = tool.parameters["properties"]
+        assert "max_credits" in properties
+        assert "integer" in str(properties["max_credits"])
+        assert any(item.get("minimum") == 0 for item in properties["max_credits"].get("anyOf", []))
+
+
+@pytest.mark.asyncio
+async def test_negative_video_cap_is_rejected_before_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from gflow_cli.mcp import tools as mcp_tools
+
+    acquire = AsyncMock(return_value=False)
+    monkeypatch.setattr(mcp_tools._rate_limiter, "acquire", acquire)
+    result = await mcp_tools.gflow_generate_video(prompt="cat", max_credits=-1)
+    assert result["error"]["title"] == "Invalid max_credits"
+    acquire.assert_not_awaited()
+
+
+def test_video_payload_round_trips_max_credits() -> None:
+    from gflow_cli.mcp.tools import _build_video_payload
+
+    common = dict(
+        prompt="cat",
+        mode="t2v",
+        aspect="9:16",
+        count=1,
+        model=None,
+        duration=None,
+        resolution=None,
+        tool_specs=(),
+        project=None,
+        project_name=None,
+    )
+    assert _build_video_payload(**common, max_credits=12)["max_credits"] == 12
+    assert "max_credits" not in _build_video_payload(**common, max_credits=None)
+    assert _build_video_payload(**common, max_credits=-1)["max_credits"] == -1
+
 
 # ---------------------------------------------------------------------------
 # MCP prompts
