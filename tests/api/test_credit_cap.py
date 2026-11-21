@@ -60,6 +60,20 @@ def test_missing_quote_remediation_says_to_run_without_a_cap() -> None:
     assert "run without a credit cap" in error.remediation_hint
 
 
+def test_agents_doc_and_e2e_refusal_pin_credit_cap_exit_and_omni_1_2() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    agents_md = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert "3–45 by default" in agents_md
+    assert "45 `CreditCapExceededError`" in agents_md
+    e2e_src = (root / "tests" / "e2e" / "test_credit_cap_refusal_bdd.py").read_text(
+        encoding="utf-8"
+    )
+    assert "omni_flash" not in e2e_src
+    assert 'model="omni-1.2"' in e2e_src
+
+
 def test_max_credits_setting_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings(max_credits=10).max_credits == 10
     monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "10")

@@ -136,7 +136,7 @@ def _mcp_video(monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], cap: int)
             prompt=_PROMPT,
             mode="t2v",
             aspect="9:16",
-            model="omni_flash",
+            model="omni-1.2",
             duration=4,
             count=1,
             max_credits=cap,
