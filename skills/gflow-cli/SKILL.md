@@ -48,7 +48,7 @@ Before any gflow-cli invocation, verify:
    - Quick: `uvx --from gflow-cli gflow --help` (no install)
    - Persistent: `uv tool install gflow-cli && gflow --help`
 4. **Playwright Chromium** has been downloaded once: `uvx --from gflow-cli playwright install chromium` (~150 MB), for Flow commands. `gflow audio narrate` does not need Chromium.
-5. **A signed-in profile** exists for Flow commands: `gflow auth status` should print `Flow session verified` and exit 0. `gflow audio narrate` does not need a Flow profile or account.
+5. **A signed-in profile** exists for Flow commands: `gflow auth status` should print `Flow session verified` and exit 0 (it probes the live session, with no credits, and may open a short-lived headless browser; exit 1 means dead or missing session). If not, run `gflow auth login` and walk the user through the one-time browser sign-in. `gflow audio narrate` does not need a Flow profile or account.
 6. **The user has Flow access** — any Google account with Flow rolled out works. If `gflow image upload` returns 403, missing Flow access is the cause.
 
 ## Core commands
@@ -107,10 +107,6 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # project. Set it once when looping, instead of leaving one project per call.
 
 # Video generation (Veo 3.1)
-# Audio narration (no Flow account/browser/credits; text is sent to the selected provider)
-gflow audio narrate "A clear voice speaks." --out-file voice.mp3 [--provider edge|gemini] [--voice ID]
-# Edge is keyless but requires `gflow-cli[tts]`; Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY.
-# Edge uses Microsoft's unofficial Read Aloud endpoint; Gemini rejects custom --rate/--pitch.
 gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--resolution 360p|720p] [--out-dir DIR] [--aspect ...]  # --resolution: Omni models only; without --project a project is created first, on either host (#864); durations: 4/6/8 Veo, 4/6/8/10 omni-flash, 3-15 omni-1.2-flash
 # Flow retires omni-flash, veo-fast and veo-quality on 2026-12-05 (`retires_on` in `gflow models --json`): use veo-lite or omni-1.2
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
@@ -124,6 +120,11 @@ gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [-
 gflow video chain <manifest.jsonl> [--out-dir DIR] [--dry-run] \
                   [--max-links N] [--resume-from N]   # last-frame I2V chaining; veo models only
                   # --out-file out/clip.mp4 writes link i to out/clip_<i>.mp4 (#1293)
+
+# Audio narration (no Flow account/browser/credits; text is sent to the selected provider)
+gflow audio narrate "A clear voice speaks." --out-file voice.mp3 [--provider edge|gemini] [--voice ID]
+# Edge is keyless but requires `gflow-cli[tts]`; Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY.
+# Edge uses Microsoft's unofficial Read Aloud endpoint; Gemini rejects custom --rate/--pitch.
 
 # Characters (reusable, project-scoped subjects)
 gflow character create --project <id> --name "<name>" --face-prompt "<prompt>" \
