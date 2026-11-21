@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,6 +12,7 @@ import structlog
 
 from gflow_cli import telemetry
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.video import GenerateVideoRequest, VideoStarted
@@ -46,6 +48,14 @@ from gflow_cli.worker.queue import (
 )
 
 logger = structlog.get_logger()
+
+
+def _apply_configured_video_cap(
+    request: GenerateVideoRequest, settings: Any
+) -> GenerateVideoRequest:
+    configured = getattr(settings, "max_credits", None)
+    effective = resolve_max_credits(request.max_credits, configured)
+    return replace(request, max_credits=effective) if effective != request.max_credits else request
 
 
 async def run_counted(job: Awaitable[None]) -> None:
@@ -395,13 +405,16 @@ class FlowWorker:
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 
-                        req = await resolve_and_apply(
-                            client,
-                            req,
-                            path="video",
-                            project_id=project_id,
-                            tool_specs=tuple(task.payload.get("tool_specs", ())),
-                            quiet=True,
+                        req = _apply_configured_video_cap(
+                            await resolve_and_apply(
+                                client,
+                                req,
+                                path="video",
+                                project_id=project_id,
+                                tool_specs=tuple(task.payload.get("tool_specs", ())),
+                                quiet=True,
+                            ),
+                            settings,
                         )
 
                         def on_started(started: VideoStarted) -> None:
@@ -435,8 +448,6 @@ class FlowWorker:
 
                                 # Not Path.replace: a rename across mounts raises EXDEV (#1114).
                                 shutil.move(result.local_path, output_file)
-                                from dataclasses import replace
-
                                 result = replace(result, local_path=output_file)
 
                     try:

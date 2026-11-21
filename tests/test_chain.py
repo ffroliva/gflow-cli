@@ -60,6 +60,7 @@ from gflow_cli.api.video import (
 from gflow_cli.chain import ChainLinkSpec, reject_unusable_links, run_chain
 from gflow_cli.errors import (
     ChainPartialError,
+    CreditCapExceededError,
     ModelModeIncompatibilityError,
     WireFormatError,
 )
@@ -68,13 +69,14 @@ from gflow_cli.errors import (
 # --------------------------------------------------------------------------- #
 # helpers / fixtures
 # --------------------------------------------------------------------------- #
-def _ok_result(media_id: str, local_path: Path) -> VideoResult:
+def _ok_result(media_id: str, local_path: Path, quoted_credits: int | None = None) -> VideoResult:
     """A successful, downloaded VideoResult for one link."""
     return VideoResult(
         status=VideoStatus(media_id=media_id, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
         local_path=local_path,
         project_id=f"proj-{media_id}",
         flow_operation_id=f"op-{media_id}",
+        quoted_credits=quoted_credits,
     )
 
 
@@ -122,6 +124,101 @@ def _two_link_specs() -> list[ChainLinkSpec]:
 # --------------------------------------------------------------------------- #
 # tests
 # --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_chain_deducts_credit_quote_and_marks_partial_refusal(tmp_path: Path) -> None:
+    accepted: list[GenerateVideoRequest] = []
+
+    async def generate(*, req: GenerateVideoRequest, **_: Any) -> VideoResult:
+        accepted.append(req)
+        if req.max_credits == 2:
+            raise CreditCapExceededError(quoted=4, max_credits=2)
+        return _ok_result("m0", tmp_path / "link0.mp4", quoted_credits=4)
+
+    client = MagicMock(name="FlowApiClient")
+    client.generate_video = AsyncMock(side_effect=generate)
+    with pytest.raises(CreditCapExceededError) as caught:
+        await run_chain(
+            client=client,
+            links=_two_link_specs(),
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            extractor=_fake_extractor([]),
+            max_credits=6,
+        )
+    assert [req.max_credits for req in accepted] == [6, 2]
+    assert caught.value.charged == "yes"
+    assert caught.value.next_action == "reconcile"
+    assert caught.value.completed_media_ids == ["m0"]
+    assert caught.value.to_problem_details()["completed_media_ids"] == ["m0"]
+
+
+@pytest.mark.asyncio
+async def test_chain_persists_a_started_but_unresolved_link_for_resume(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli.errors import CreditCapExceededError
+
+    client = MagicMock(name="FlowApiClient")
+    error = CreditCapExceededError(quoted=None, max_credits=4, completed_media_ids=["orphan"])
+    error.charged, error.next_action = "maybe", "reconcile"
+    client.generate_video = AsyncMock(side_effect=error)
+    recorder = MagicMock()
+
+    with pytest.raises(CreditCapExceededError):
+        await run_chain(
+            client=client,
+            links=_two_link_specs(),
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            recorder=recorder,
+            extractor=_fake_extractor([]),
+            max_credits=4,
+        )
+
+    (pending,) = recorder.record_chain_link.call_args.args
+    assert pending.media_id == "orphan"
+    assert pending.local_path.name == ".gflow-pending-orphan.mp4"
+    assert not pending.local_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_chain_records_completed_link_when_billed_submit_returns_no_quote(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli.errors import CreditCapExceededError
+
+    clip = tmp_path / "m0.mp4"
+    clip.write_bytes(b"mp4")
+    client = MagicMock(name="FlowApiClient")
+    client.generate_video = AsyncMock(
+        return_value=VideoResult(
+            status=VideoStatus(media_id="m0", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=clip,
+            quoted_credits=None,
+        )
+    )
+    recorder = MagicMock()
+
+    with pytest.raises(CreditCapExceededError) as caught:
+        await run_chain(
+            client=client,
+            links=_two_link_specs(),
+            out_dir=tmp_path,
+            model=VideoModel.VEO_3_1_LITE,
+            recorder=recorder,
+            extractor=_fake_extractor([tmp_path / "f0.jpg"]),
+            max_credits=4,
+        )
+
+    assert caught.value.charged == "maybe"
+    assert caught.value.next_action == "reconcile"
+    assert caught.value.completed_media_ids == ["m0"]
+    recorder.record_chain_link.assert_called_once()
+    assert recorder.record_chain_link.call_args.args[0].media_id == "m0"
+
+
 async def test_links_run_strictly_sequentially(tmp_path: Path) -> None:
     """generate_video is awaited exactly once per link, in link order."""
     results = [

@@ -1232,35 +1232,29 @@ def _build_video_payload(
     ui_mode: str | None = None,
     reference_entities: list[str] | None = None,
     reference_entity_names: list[str] | None = None,
+    max_credits: int | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "prompt": prompt,
-        "mode": mode,
-        "aspect": aspect,
-        "count": count,
-    }
-    if ui_mode is not None:
-        payload["ui_mode"] = ui_mode
-    if model is not None:
-        payload["model"] = model
-    if duration is not None:
-        payload["duration"] = duration
-    if resolution is not None:
-        payload["resolution"] = resolution
-    if tool_specs:
-        payload["tool_specs"] = list(tool_specs)
-    if project is not None:
-        payload["project_id"] = project
-    if project_name is not None:
-        payload["project_name"] = project_name
-    if output is not None:
-        payload["output_file"] = output
-    # Omitted rather than written empty when unused: `codec.build_video_request`
-    # already reads both keys, so an empty list is a real (and wrong) instruction.
-    if reference_entities:
-        payload["reference_entities"] = list(reference_entities)
-    if reference_entity_names:
-        payload["reference_entity_names"] = list(reference_entity_names)
+    payload: dict[str, Any] = {"prompt": prompt, "mode": mode, "aspect": aspect, "count": count}
+    names = list(reference_entity_names) if reference_entity_names else None
+    payload.update(
+        {
+            key: value
+            for key, value in (
+                ("ui_mode", ui_mode),
+                ("model", model),
+                ("duration", duration),
+                ("resolution", resolution),
+                ("project_id", project),
+                ("project_name", project_name),
+                ("output_file", output),
+                ("max_credits", max_credits),
+                ("tool_specs", list(tool_specs) if tool_specs else None),
+                ("reference_entities", list(reference_entities) if reference_entities else None),
+                ("reference_entity_names", names),
+            )
+            if value is not None
+        }
+    )
     return payload
 
 
@@ -1279,6 +1273,7 @@ def _build_video_payload(
         "to r2v). "
         "Reference a SAVED character via @Name; pass one-off "
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
+        "max_credits uses Flow's quote as a hard cap and refuses missing or over-limit quotes. "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
         "out_file, if given, must resolve inside the configured output directory. "
@@ -1299,6 +1294,7 @@ async def gflow_generate_video(  # NOSONAR
     duration: int | None = None,
     resolution: str | None = None,
     count: int = 1,
+    max_credits: Annotated[int | None, Field(ge=0)] = None,
     tools: _ToolsParam = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
@@ -1358,6 +1354,7 @@ async def gflow_generate_video(  # NOSONAR
             other model, or on the labs editor, the job fails pre-submit with the
             exit-11-equivalent envelope and no credits spent.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
+        max_credits: Flow quote cap. Omission uses the environment default, which MCP cannot clear.
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -1409,6 +1406,8 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if max_credits is not None and max_credits < 0:
+        return _bad_param("Invalid max_credits", "max_credits must be >= 0.")
     # #1008: a video moved to a local file cannot live in a cloud bucket.
     if isinstance(resolved := _resolve_out_file(out_file, local_only=True), dict):
         return resolved
@@ -1522,15 +1521,13 @@ async def gflow_generate_video(  # NOSONAR
         ui_mode=ui_mode,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
+        max_credits=max_credits,
     )
     payload.update(media)
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(
-        profile=resolved_profile,
-        task_type=mode,
-        payload=payload,
-        wait=wait,
+        profile=resolved_profile, task_type=mode, payload=payload, wait=wait
     )
 
     # Annotate the result with the original request parameters for context.
@@ -1545,6 +1542,7 @@ async def gflow_generate_video(  # NOSONAR
         "duration": duration,
         "resolution": resolution,
         "count": count,
+        "max_credits": max_credits,
         "tools": tools or [],
         "tool_specs": list(tool_specs),
         "profile": resolved_profile,

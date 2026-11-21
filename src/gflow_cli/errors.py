@@ -31,6 +31,7 @@ __all__ = [
     "ChainPartialError",
     "ConfigurationError",
     "ContentPolicyError",
+    "CreditCapExceededError",
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
@@ -120,6 +121,8 @@ class ProblemDetails(TypedDict, total=False):
     operation_id: str  # gflow extension (#1201) — local job / media id, when one exists
     retry_after: float  # gflow extension (#1201) — seconds, with next_action retry_after
     completed_media_ids: list[str]  # gflow extension (#1201) — a partial chain's billed links
+    quoted: int | None  # gflow extension — Flow's pre-submit credit quote
+    max_credits: int  # gflow extension — caller's credit ceiling
 
 
 class GFlowError(Exception):
@@ -907,6 +910,56 @@ class UiSelectorDriftError(GFlowError):
         "(review artifacts before sharing — screenshots may show your account "
         "name/avatar; do NOT include tokens or signed URLs)."
     )
+
+
+class CreditCapExceededError(GFlowError):
+    """Flow's quoted generation cost is over the caller's per-command cap."""
+
+    problem_type = "https://gflow-cli.dev/errors/credit-cap-exceeded"
+    title = "Credit cap exceeded"
+    _default_remediation = "Raise --max-credits or choose a cheaper generation setting."
+    charged: Charged = "no"
+    next_action: NextAction = "fix_input"
+    quoted: int | None = None
+    max_credits: int = 0
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        quoted: int | None = None,
+        max_credits: int = 0,
+        route: str = "",
+        completed_media_ids: list[str] | None = None,
+    ) -> None:
+        detail = detail or (
+            f"Flow quoted {quoted} credits, exceeding the maximum of {max_credits}."
+            if quoted is not None
+            else f"Flow's credit quote was unavailable; the maximum is {max_credits}."
+        )
+        super().__init__(
+            detail,
+            status=422,
+            route=route,
+            remediation_hint=(
+                "This surface shows no price before submit; run without a credit cap."
+                if quoted is None
+                else None
+            ),
+            charged="no",
+            next_action="fix_input",
+        )
+        self.quoted = quoted
+        self.max_credits = max_credits
+        self.completed_media_ids = completed_media_ids or []
+
+    def to_problem_details(self) -> ProblemDetails:
+        out = super().to_problem_details()
+        out["quoted"] = self.quoted
+        out["max_credits"] = self.max_credits
+        if getattr(self, "completed_media_ids", None):
+            out["completed_media_ids"] = self.completed_media_ids
+        return out
 
 
 class InsufficientCreditsError(GFlowError):
@@ -1777,6 +1830,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # from generic error (1) without parsing stderr.
     UiSelectorDriftError: 23,
     InsufficientCreditsError: 37,
+    CreditCapExceededError: 45,
     # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
     # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
     # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].

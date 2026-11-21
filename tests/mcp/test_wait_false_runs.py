@@ -67,6 +67,7 @@ def wired(db: DataStore, tmp_path: Path) -> Iterator[dict[str, Any]]:
                 headless=True,
                 transport=None,
                 output_dir=tmp_path / "out",
+                max_credits=None,
             ),
         ),
     ):
