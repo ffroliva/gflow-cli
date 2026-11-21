@@ -284,6 +284,32 @@ def _stream_start_seconds(stream: Any) -> float:
     return float(start_time * time_base)
 
 
+def _append_resampled_frame(
+    frame: Any,
+    stream: Any,
+    video_origin: float,
+    samples: list[bytes],
+    written_samples: int,
+) -> int:
+    tb = frame.time_base or stream.time_base
+    target_sample = (
+        round((float(frame.pts * tb) - video_origin) * 16000)
+        if frame.pts is not None and tb is not None
+        else written_samples
+    )
+    if target_sample > written_samples:
+        gap = target_sample - written_samples
+        samples.append(bytes(gap * 2))
+        written_samples += gap
+    chunk = bytes(frame.planes[0])[: frame.samples * 2]
+    if target_sample < written_samples:
+        chunk = chunk[(written_samples - target_sample) * 2 :]
+    if chunk:
+        samples.append(chunk)
+        written_samples += len(chunk) // 2
+    return written_samples
+
+
 def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
     av, _ = _require_chain_extra()
     try:
@@ -305,22 +331,9 @@ def extract_wav_bytes(video_path: Path) -> tuple[bytes, float]:
                 if raw_frame is not None and raw_frame.time_base is None:
                     raw_frame.time_base = stream.time_base
                 for frame in resampler.resample(raw_frame):
-                    tb = frame.time_base or stream.time_base
-                    target_sample = (
-                        round((float(frame.pts * tb) - video_origin) * 16000)
-                        if frame.pts is not None and tb is not None
-                        else written_samples
+                    written_samples = _append_resampled_frame(
+                        frame, stream, video_origin, samples, written_samples
                     )
-                    if target_sample > written_samples:
-                        gap = target_sample - written_samples
-                        samples.append(bytes(gap * 2))
-                        written_samples += gap
-                    chunk = bytes(frame.planes[0])[: frame.samples * 2]
-                    if target_sample < written_samples:
-                        chunk = chunk[(written_samples - target_sample) * 2 :]
-                    if chunk:
-                        samples.append(chunk)
-                        written_samples += len(chunk) // 2
             if not written_samples:
                 raise ConfigurationError(
                     detail="Video audio track contains no decodable audio.",
