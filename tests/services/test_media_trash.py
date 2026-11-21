@@ -439,6 +439,7 @@ async def test_page_trash_media_empty_at_token_raises_auth_error(
         return {"at": "", "fsid": "1", "bl": "boq"}
 
     fake_page.evaluate = AsyncMock(side_effect=mock_eval)
+    fake_page.content = AsyncMock(return_value="<html></html>")  # no SNlM0e either
 
     with pytest.raises(AuthExpiredError) as exc_info:
         await page_trash_media(fake_page, "m-1", "proj-1")

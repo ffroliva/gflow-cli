@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+import structlog
+from playwright.async_api import Error as PlaywrightError
+
 from gflow_cli.api.flow_wire import Tokens, build_rpc_request, extract_wiz_token
 from gflow_cli.api.transports._common import raise_if_known_landing
 from gflow_cli.api.transports.batchexecute import parse_frames, rpc_errors
@@ -18,6 +21,8 @@ from gflow_cli.errors import AuthExpiredError, FlowApiError, WireFormatError
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
+
+log = structlog.get_logger(__name__)
 
 TRASH_RPC = "pGCYOe"
 TRASH_FIELD_MASK = "metadata.archived"
@@ -161,7 +166,9 @@ async def page_set_archived(
     if not at:
         try:
             content = await page.content()
-        except Exception:  # noqa: BLE001
+        except PlaywrightError as exc:
+            # The page went away mid-read: no tokens, so the signed-out error below says so.
+            log.info("media_trash.page_content_unavailable", error=type(exc).__name__)
             content = ""
         at = extract_wiz_token(content, "SNlM0e") or ""
         if not fsid:
