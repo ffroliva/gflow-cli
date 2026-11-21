@@ -275,8 +275,12 @@ async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:
         return _get_chrome_cookies3(profile_dir=profile_dir)
-    except PermissionError:
-        logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
+    except PermissionError as exc:
+        logger.info(
+            "cookie_decryption_failed_falling_back_to_playwright",
+            profile=str(profile_dir),
+            error=type(exc.__cause__ or exc).__name__,  # the class only, never its text
+        )
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
 
 

@@ -83,6 +83,25 @@ def test_verification_error_points_at_network_not_login(monkeypatch: pytest.Monk
     assert "gflow auth login" not in result.output
 
 
+def test_unavailable_profile_fails_with_a_local_retry_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400: the cookie check could not run. That is local, not a dead session, so
+    the row says so and asks for a retry; it fails the run like a launch error."""
+    _make_profile("alice")
+    _mock_renew(monkeypatch, {"alice": FlowSessionOutcome.PROFILE_UNAVAILABLE})
+
+    result = CliRunner().invoke(main, ["auth", "renew", "--profile", "alice"])
+    as_json = CliRunner().invoke(main, ["auth", "renew", "--profile", "alice", "--json"])
+
+    assert result.exit_code == 1
+    assert "could not run" in result.output
+    assert "retry" in result.output
+    assert "gflow auth login" not in result.output
+    assert "connectivity" not in result.output
+    assert json.loads(as_json.output)[0]["result"] == "profile_unavailable"
+
+
 def test_all_visits_every_profile_with_cookies(monkeypatch: pytest.MonkeyPatch) -> None:
     _make_profile("alice")
     _make_profile("bob")

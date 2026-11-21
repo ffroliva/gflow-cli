@@ -130,3 +130,47 @@ async def test_an_unreadable_cookie_store_is_not_retryable_and_not_a_network_fau
     assert result["error"]["status"] == 409
     assert "connectivity" not in result["error"]["remediation_hint"]
     assert "gflow auth login" in result["error"]["remediation_hint"]
+
+
+async def test_an_unavailable_profile_is_local_and_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400 + MCP parity: the headless cookie read could not run. Local, so not the
+    503 network envelope; retryable, since a launch or read failure can be transient."""
+    from gflow_cli.mcp import tools
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(
+        tools.verification,
+        "verify_flow_profile",
+        _probe(FlowSessionOutcome.PROFILE_UNAVAILABLE),
+    )
+    result = await tools.gflow_auth_status()
+    assert result["status"] == "profile_unavailable"
+    assert result["error"]["type"] == "https://gflow-cli.dev/errors/profile-unavailable"
+    assert result["error"]["status"] == 409
+    assert (result["error"]["charged"], result["error"]["next_action"]) == ("no", "retry")
+    assert result["error"]["retryable"] is True
+    assert "connectivity" not in result["error"]["remediation_hint"]
+
+
+async def test_a_held_profile_is_the_profile_locked_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1400 + MCP parity: a lease another gflow process holds keeps its own type and
+    remediation (`profile-locked`, wait), instead of the 503 network envelope."""
+    from gflow_cli.errors import ProfileLockedError
+    from gflow_cli.mcp import tools
+
+    async def _held(*_a: Any, **_k: Any) -> Any:
+        raise ProfileLockedError(
+            detail="profile is locked (held)",
+            remediation_hint="Set GFLOW_CLI_LEASE_WAIT_SECONDS to wait for the holder.",
+        )
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(tools.verification, "verify_flow_profile", _held)
+    result = await tools.gflow_auth_status()
+    assert result["error"]["type"] == "https://gflow-cli.dev/errors/profile-locked"
+    assert result["error"]["next_action"] == "wait"
+    assert "GFLOW_CLI_LEASE_WAIT_SECONDS" in result["error"]["remediation_hint"]
