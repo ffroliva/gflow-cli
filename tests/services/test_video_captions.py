@@ -192,6 +192,74 @@ def test_transcribe_no_clobber_when_srt_created_during_transcription(
     assert [p for p in tmp_path.glob(".race.srt.*") if p != other_temp] == []
 
 
+def test_atomic_write_fallback_never_exposes_empty_final_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    destination = tmp_path / "published.srt"
+    observed_at_publish: list[tuple[bool, int | None]] = []
+    real_rename = os.rename
+    real_replace = os.replace
+
+    def no_hardlink(_src: object, _dst: object) -> None:
+        raise OSError("hard links unsupported")
+
+    def spy_publish(
+        fn: Any,
+    ) -> Any:
+        def wrapper(src: Path, dst: Path) -> None:
+            dst_path = Path(dst)
+            exists = dst_path.exists()
+            observed_at_publish.append((exists, dst_path.stat().st_size if exists else None))
+            fn(src, dst)
+
+        return wrapper
+
+    monkeypatch.setattr("gflow_cli.services.video_captions.os.link", no_hardlink)
+    monkeypatch.setattr("gflow_cli.services.video_captions.os.rename", spy_publish(real_rename))
+    monkeypatch.setattr("gflow_cli.services.video_captions.os.replace", spy_publish(real_replace))
+
+    service._atomic_write(destination, b"1\n00:00:00,000 --> 00:00:01,000\nhello\n")
+    assert observed_at_publish == [(False, None)]
+    assert destination.read_bytes().startswith(b"1\n")
+
+
+def test_atomic_write_cleans_own_temp_file_on_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tempfile
+
+    destination = tmp_path / "failed.srt"
+    sibling_temp = tmp_path / ".failed.srt.other"
+    sibling_temp.write_text("keep sibling", encoding="utf-8")
+    real_ntf = tempfile.NamedTemporaryFile
+
+    def failing_ntf(*args: Any, **kwargs: Any) -> Any:
+        handle = real_ntf(*args, **kwargs)
+
+        class BrokenHandle:
+            name = handle.name
+
+            def __enter__(self) -> BrokenHandle:
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                handle.close()
+
+            def write(self, _data: bytes) -> int:
+                raise OSError("disk full")
+
+        return BrokenHandle()
+
+    monkeypatch.setattr("gflow_cli.services.video_captions.tempfile.NamedTemporaryFile", failing_ntf)
+    with pytest.raises(ConfigurationError, match="Could not write SubRip file"):
+        service._atomic_write(destination, b"content")
+    assert not destination.exists()
+    assert sibling_temp.read_text(encoding="utf-8") == "keep sibling"
+    assert [p for p in tmp_path.glob(".failed.srt.*") if p != sibling_temp] == []
+
+
 def test_captions_without_srt_refuses_existing_default_srt_before_network(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

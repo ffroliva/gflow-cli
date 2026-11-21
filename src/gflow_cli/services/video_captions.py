@@ -223,36 +223,43 @@ def _srt_exists_error(destination: Path) -> ConfigurationError:
 
 def _atomic_write(path: Path, data: bytes) -> None:
     _prepare_output_parent(path)
+    temporary: Path | None = None
     try:
-        with tempfile.NamedTemporaryFile(
-            dir=path.parent, prefix=f".{path.name}.", delete=False
-        ) as f:
-            temporary = Path(f.name)
-            f.write(data)
-    except OSError as exc:
-        raise ConfigurationError(
-            detail=f"Could not write SubRip file {path.name!r}.",
-            charged="no",
-            remediation_hint="Choose an --out-file path inside a writable directory.",
-        ) from exc
-    try:
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=path.parent, prefix=f".{path.name}.", delete=False
+            ) as f:
+                temporary = Path(f.name)
+                f.write(data)
+        except OSError as exc:
+            raise ConfigurationError(
+                detail=f"Could not write SubRip file {path.name!r}.",
+                charged="no",
+                remediation_hint="Choose an --out-file path inside a writable directory.",
+            ) from exc
         try:
             os.link(temporary, path)
         except FileExistsError as exc:
             raise _srt_exists_error(path) from exc
         except OSError:
+            # shortcut: exists() + os.rename() leaves a tiny TOCTOU window on filesystems
+            # without hard links; upgrade to platform-specific atomic no-clobber rename
+            # (renameat2 RENAME_NOREPLACE / MoveFileExW) if cross-process races appear on FAT/exFAT.
+            if path.exists():
+                raise _srt_exists_error(path) from None
             try:
-                descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+                os.rename(temporary, path)
             except FileExistsError as exc:
                 raise _srt_exists_error(path) from exc
-            os.close(descriptor)
-            try:
-                os.replace(temporary, path)
-            except BaseException:
-                path.unlink(missing_ok=True)
-                raise
+            except OSError as exc:
+                raise ConfigurationError(
+                    detail=f"Could not write SubRip file {path.name!r}.",
+                    charged="no",
+                    remediation_hint="Choose an --out-file path inside a writable directory.",
+                ) from exc
     finally:
-        temporary.unlink(missing_ok=True)
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def _stream_start_seconds(stream: Any) -> float:
