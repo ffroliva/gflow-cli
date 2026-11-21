@@ -539,6 +539,7 @@ class WireFormatError(FlowApiError):
         route: str = "",
         remediation_hint: str | None = None,
         discovery: dict[str, Any] | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -546,6 +547,7 @@ class WireFormatError(FlowApiError):
             instance=instance,
             route=route,
             remediation_hint=remediation_hint,
+            charged=charged,
         )
         self.discovery = discovery or {}
 

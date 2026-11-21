@@ -55,6 +55,8 @@ async def gflow_media_trash(
                 "remediation_hint": (
                     "Call gflow_media_trash with confirm=True to confirm trashing this item."
                 ),
+                "charged": "no",
+                "next_action": "fix_input",
             },
         }
 

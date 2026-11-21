@@ -87,27 +87,30 @@ def parse_trash_response(frame: object, expected_media_id: str | None = None) ->
     """
     rows = _as_list(frame)
     if not rows or not rows[0]:
-        raise WireFormatError(f"Unexpected pGCYOe trash response frame: {frame!r}")
+        raise WireFormatError(f"Unexpected pGCYOe trash response frame: {frame!r}", charged="no")
     first_row = _as_list(rows[0])
     if not first_row or not first_row[0]:
-        raise WireFormatError(f"Unexpected pGCYOe trash response frame: {frame!r}")
+        raise WireFormatError(f"Unexpected pGCYOe trash response frame: {frame!r}", charged="no")
     item = _as_list(first_row[0])
     if not item or len(item) < 5:
-        raise WireFormatError(f"Unexpected pGCYOe item structure: {first_row[0]!r}")
+        raise WireFormatError(f"Unexpected pGCYOe item structure: {first_row[0]!r}", charged="no")
 
     media_id = str(item[0]) if item[0] is not None else ""
     if expected_media_id and media_id != expected_media_id:
         raise WireFormatError(
-            f"pGCYOe response media ID mismatch: expected {expected_media_id}, got {media_id}"
+            f"pGCYOe response media ID mismatch: expected {expected_media_id}, got {media_id}",
+            charged="no",
         )
 
     metadata = _as_list(item[3])
     if not metadata or len(metadata) < 3:
-        raise WireFormatError(f"pGCYOe response missing metadata array: {item!r}")
+        raise WireFormatError(f"pGCYOe response missing metadata array: {item!r}", charged="no")
 
     archived = metadata[2]
     if archived is not True:
-        raise WireFormatError(f"pGCYOe response did not set archived flag to True: {archived!r}")
+        raise WireFormatError(
+            f"pGCYOe response did not set archived flag to True: {archived!r}", charged="no"
+        )
 
     project_id = str(item[4]) if item[4] is not None else ""
     workflow_id = str(metadata[4]) if len(metadata) > 4 and metadata[4] is not None else ""
@@ -127,27 +130,30 @@ def parse_restore_response(frame: object, expected_media_id: str | None = None) 
     """
     rows = _as_list(frame)
     if not rows or not rows[0]:
-        raise WireFormatError(f"Unexpected pGCYOe restore response frame: {frame!r}")
+        raise WireFormatError(f"Unexpected pGCYOe restore response frame: {frame!r}", charged="no")
     first_row = _as_list(rows[0])
     if not first_row or not first_row[0]:
-        raise WireFormatError(f"Unexpected pGCYOe restore response frame: {frame!r}")
+        raise WireFormatError(f"Unexpected pGCYOe restore response frame: {frame!r}", charged="no")
     item = _as_list(first_row[0])
     if not item or len(item) < 5:
-        raise WireFormatError(f"Unexpected pGCYOe item structure: {first_row[0]!r}")
+        raise WireFormatError(f"Unexpected pGCYOe item structure: {first_row[0]!r}", charged="no")
 
     media_id = str(item[0]) if item[0] is not None else ""
     if expected_media_id and media_id != expected_media_id:
         raise WireFormatError(
-            f"pGCYOe response media ID mismatch: expected {expected_media_id}, got {media_id}"
+            f"pGCYOe response media ID mismatch: expected {expected_media_id}, got {media_id}",
+            charged="no",
         )
 
     metadata = _as_list(item[3])
     if not metadata or len(metadata) < 3:
-        raise WireFormatError(f"pGCYOe response missing metadata array: {item!r}")
+        raise WireFormatError(f"pGCYOe response missing metadata array: {item!r}", charged="no")
 
     archived = metadata[2]
     if archived is not None:
-        raise WireFormatError(f"pGCYOe response did not clear archived flag: {archived!r}")
+        raise WireFormatError(
+            f"pGCYOe response did not clear archived flag: {archived!r}", charged="no"
+        )
 
     project_id = str(item[4]) if item[4] is not None else ""
     workflow_id = str(metadata[4]) if len(metadata) > 4 and metadata[4] is not None else ""

@@ -81,6 +81,7 @@ async def test_mcp_media_trash_refuses_unconfirmed(mcp_env: Path) -> None:
     assert err.get("type") == "https://gflow-cli.dev/errors/confirmation-required"
     assert "confirm=True" in err.get("detail", "")
     assert err.get("status") == 400
+    assert err.get("charged") == "no"
 
 
 @pytest.mark.asyncio

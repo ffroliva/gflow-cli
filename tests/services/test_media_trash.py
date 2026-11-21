@@ -532,3 +532,28 @@ async def test_media_trash_service_with_explicit_project_bypasses_catalog(
     mock_trash.assert_awaited_once_with(expected_pdir, "uncataloged-id", "proj-999")
 
 
+@pytest.mark.asyncio
+async def test_all_media_trash_errors_charge_no_and_have_correct_remediation(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+
+    # 1. Uncataloged ID DataStoreError
+    with pytest.raises(DataStoreError) as exc_info:
+        await trash_media_service("nonexistent-id")
+    err = exc_info.value
+    assert err.charged == "no"
+    hint = err.remediation_hint or ""
+    assert "--project" in hint
+    assert "media ID" in hint or "workflow UUID" in hint or "catalog ID" in hint
+    assert "file permissions" not in hint.lower()
+
+    # 2. WireFormatError
+    with pytest.raises(WireFormatError) as exc_info2:
+        parse_trash_response([], expected_media_id="m-1")
+    assert exc_info2.value.charged == "no"
+
+
+
