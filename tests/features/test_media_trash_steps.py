@@ -66,11 +66,13 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
     monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path))
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
     reset_settings()
 
     # Intercept wire/client mutations to record calls in tests
     try:
         from gflow_cli.api import flow_wire
+        from gflow_cli.api.client import FlowApiClient
 
         async def fake_direct_trash(
             profile_dir: Path, media_id: str, project_id: str
@@ -99,8 +101,16 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             )
             return {"media_id": media_id, "project_id": project_id, "status": "restored"}
 
+        async def fake_client_trash(self: Any, media_id: str, project_id: str) -> dict[str, Any]:
+            return await fake_direct_trash(Path("/fake"), media_id, project_id)
+
+        async def fake_client_restore(self: Any, media_id: str, project_id: str) -> dict[str, Any]:
+            return await fake_direct_restore(Path("/fake"), media_id, project_id)
+
         monkeypatch.setattr(flow_wire, "direct_trash_media", fake_direct_trash, raising=False)
         monkeypatch.setattr(flow_wire, "direct_restore_media", fake_direct_restore, raising=False)
+        monkeypatch.setattr(FlowApiClient, "trash_media", fake_client_trash, raising=False)
+        monkeypatch.setattr(FlowApiClient, "restore_media", fake_client_restore, raising=False)
     except Exception:
         pass
 

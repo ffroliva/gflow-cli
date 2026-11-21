@@ -202,17 +202,17 @@ wire into `src/gflow_cli/cli.py`, and add confirmation guards.
 - `tests/cli/test_cli_media.py`
 
 **Steps:**
-- [ ] Create `src/gflow_cli/cli_media.py` with `@click.group("media")` and subcommands `trash` and `restore`.
-- [ ] Add options: `--profile`, `--yes` / `-y` (for trash), `--json`, `-o` (`json` / `id` / `plain`).
-- [ ] In `trash`, check `sys.stdin.isatty()`: prompt `Move media <id> to Flow's Trash? [y/N]: ` if interactive and `--yes` not passed; raise `click.BadParameter` (exit 2) if non-interactive without `--yes`.
-- [ ] Register `media` group in `src/gflow_cli/cli.py`.
-- [ ] Write integration tests in `tests/cli/test_cli_media.py` testing `--help`, `--yes`, interactive prompt abort, and JSON stdout formatting.
+- [x] Create `src/gflow_cli/cli_media.py` with `@click.group("media")` and subcommands `trash` and `restore`.
+- [x] Add options: `--profile`, `--yes` / `-y` (for trash), `--json`, `-o` (`json` / `id` / `plain`).
+- [x] In `trash`, check `sys.stdin.isatty()`: prompt `Move media <id> to Flow's Trash? [y/N]: ` if interactive and `--yes` not passed; raise `click.BadParameter` (exit 2) if non-interactive without `--yes`.
+- [x] Register `media` group in `src/gflow_cli/cli.py`.
+- [x] Write integration tests in `tests/cli/test_cli_media.py` testing `--help`, `--yes`, interactive prompt abort, and JSON stdout formatting.
 
 **Tests created (green):**
-- [ ] `test_cli_media_trash_requires_yes_in_non_interactive_shell` — asserts exit 2 without `--yes`.
-- [ ] `test_cli_media_trash_with_yes_succeeds` — asserts exit 0 and JSON output.
-- [ ] `test_cli_media_restore_succeeds` — asserts exit 0 and JSON output.
-- [ ] `test_cli_media_trash_interactive_abort` — asserts exit 0 and "Aborted." message on 'n'.
+- [x] `test_cli_media_trash_requires_yes_in_non_interactive_shell` — asserts exit 2 without `--yes`.
+- [x] `test_cli_media_trash_with_yes_succeeds` — asserts exit 0 and JSON output.
+- [x] `test_cli_media_restore_succeeds` — asserts exit 0 and JSON output.
+- [x] `test_cli_media_trash_interactive_abort` — asserts exit 0 and "Aborted." message on 'n'.
 
 ---
 
