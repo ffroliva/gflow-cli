@@ -13,6 +13,8 @@ surface, so this probe puts one there and drives the driver's own code on it:
    carry-over check: the second clip must come out in its own aspect, not the first's.
    `--generate-panel closed` starts them with the panel closed (risk 2: the reply and
    gate anchors on a page whose panel gflow just closed); the default starts them open;
+   `--generate-images` adds two `run_agent_images` turns from the same panel state
+   (16:9 x2 on Nano Banana 2.1, then 9:16 x1 on Nano Banana Pro);
 4. the classic composer is restored in `finally`, unless `--leave-agent-mode`, which leaves
    agent mode on with the panel open, for a CLI run through the editor gate.
 
@@ -42,6 +44,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.image import GenerateImageRequest
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.transports import agent_only_composer as aoc
 from gflow_cli.api.transports._mc_common import (
@@ -195,8 +199,39 @@ async def _generate(page: Any, project: str, out: Path, aspect: Aspect) -> dict[
     }
 
 
+async def _generate_images(
+    page: Any, project: str, aspect: ImageAspect, count: int, model: ImageModel
+) -> dict[str, Any]:
+    panel_before = await page.locator(AGENT_PANEL).first.is_visible()
+    request = GenerateImageRequest(
+        prompt="a paper boat on a calm pond at dusk, no text",
+        aspect=aspect,
+        model=model,
+        count=count,
+    )
+    started = time.monotonic()
+    try:
+        images = await aoc.run_agent_images(page, request, project_id=project)
+    except Exception as exc:  # noqa: BLE001 - the class and detail are the observation
+        return {
+            "aspect": aspect.value,
+            "panel_before": panel_before,
+            "raised": f"{type(exc).__name__}: {str(exc)[:300]}",
+        }
+    return {
+        "aspect": aspect.value,
+        "model": model.value,
+        "asked": count,
+        "got": len(images),
+        "seconds": round(time.monotonic() - started),
+        "panel_before": panel_before,
+        "dims": [f"{w}x{h}" for w, h in (i.dimensions for i in images)],
+        "unanswered_gates_after": await page.locator(aoc.LIVE_GATE).count(),
+    }
+
+
 async def main(
-    profile: str, project: str, generate: bool, generate_panel: str, leave: bool
+    profile: str, project: str, generate: bool, generate_panel: str, leave: bool, images: bool
 ) -> None:
     out = OUT_ROOT / f"agent_settings_{time.strftime('%Y%m%dT%H%M%S')}"
     out.mkdir(parents=True, exist_ok=True)
@@ -242,6 +277,15 @@ async def main(
             snaps["clip_16_9"] = await _generate(page, project, out, Aspect.LANDSCAPE)
             snaps["clip_9_16"] = await _generate(page, project, out, Aspect.PORTRAIT)
             snaps["rows_after_clips"] = await _rows(page)
+        if images:
+            await (_close_panel(page) if generate_panel == "closed" else _open_panel(page))
+            snaps["images_landscape_x2"] = await _generate_images(
+                page, project, ImageAspect.LANDSCAPE, 2, ImageModel.NARWHAL
+            )
+            snaps["images_portrait_x1"] = await _generate_images(
+                page, project, ImageAspect.PORTRAIT, 1, ImageModel.GEM_PIX_2
+            )
+            snaps["rows_after_images"] = await _rows(page)
     finally:
         try:
             if not leave:
@@ -270,8 +314,20 @@ if __name__ == "__main__":
         default="open",
         help="the agent panel's state before the first clip",
     )
+    parser.add_argument(
+        "--generate-images",
+        action="store_true",
+        help="also run two image turns: 16:9 x2, then 9:16 x1 on another model",
+    )
     parser.add_argument("--leave-agent-mode", action="store_true")
     args = parser.parse_args()
     asyncio.run(
-        main(args.profile, args.project, args.generate, args.generate_panel, args.leave_agent_mode)
+        main(
+            args.profile,
+            args.project,
+            args.generate,
+            args.generate_panel,
+            args.leave_agent_mode,
+            args.generate_images,
+        )
     )

@@ -1,8 +1,9 @@
 # Spike: the agent-only driver's settings, gate and reply on Flow's 2026-11-20 build
 
 **Date:** 2026-11-21 · **Host served:** flow.google.com · **Locale:** en-GB · **Cost:** four
-4-second clips and one 3-second 360p clip at Omni 1.2 Flash; the runs that timed out charged
-nothing; everything else was layout clicks and settings writes, all restored
+4-second clips and one 3-second 360p clip at Omni 1.2 Flash, and three images (no credits);
+the runs that timed out charged nothing; everything else was layout clicks and settings
+writes, all restored
 
 Probe: [`scripts/dev/spike_agent_settings_new_build.py`](../../../scripts/dev/spike_agent_settings_new_build.py).
 One profile, one project. Issues: #1369, #1387. Follows
@@ -94,8 +95,16 @@ Then two back-to-back clips, 16:9 then 9:16, 4 s each:
 | B, before the chat fix | closed | no gate approved and no clip queued within 600 s (`approvals=0`, `pending seen: False`) | the same |
 | C, with the chat fix | closed | `panel_opened`, then gate approved 12 s after the submit; downloaded in 64 s; 1280x720 | the same in 55 s; 720x1280 |
 
-In every run the rows after the clips were identical to the start, and the account went back
-to the classic composer at the end. After run C no unanswered gate was left in the chat, so
+Then, in a separate run with the chat fix, two image turns from a closed panel
+(`--generate-images --generate-panel closed`; images cost no credits):
+
+| Turn | Result |
+|---|---|
+| 16:9, x2, Nano Banana 2.1 | `panel_opened`, 2 images in 37 s, both 1376x768 |
+| 9:16, x1, Nano Banana Pro, right after | 1 image in 36 s, 768x1376 |
+
+In every run the rows after the clips (and after the images) were identical to the start, and
+the account went back to the classic composer at the end. After run C no unanswered gate was left in the chat, so
 whether the agent raised a gate during run B is not known; what is known is that the driver
 saw none and nothing was charged.
 
@@ -112,7 +121,7 @@ generating, and the driver waited out its 600 s poll budget. No clip was produce
 - The settings port works on the new build in both panel states, and the account's
   settings survive into a new session.
 - Gate, reply, naming and download work through the driver on this surface once the panel is
-  open. With the panel closed they do not (run B), so the driver now opens it before the
+  open, for video and for images. With the panel closed they do not (run B), so the driver now opens it before the
   submit (run C). Risk 2 on #1387 was real and is covered.
 - #1369's carry-over did not reproduce: in runs A and C each clip came out in its own aspect.
 - When the account's defaults cannot satisfy a request, the agent asks rather than
