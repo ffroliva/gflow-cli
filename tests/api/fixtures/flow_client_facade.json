@@ -1030,6 +1030,7 @@
   "rename_project": "async (self, project_id: 'str', new_title: 'str') -> 'JsonObject'",
   "restore_media": "async (self, media_id: 'str', project_id: 'str') -> 'dict[str, Any]'",
   "served_route": "sync (self, *, prefer_migrated: 'bool') -> 'str'",
+  "set_archived_media": "async (self, media_id: 'str', project_id: 'str', *, archived: 'bool') -> 'dict[str, Any]'",
   "trash_media": "async (self, media_id: 'str', project_id: 'str') -> 'dict[str, Any]'",
   "update_scene_workflows": "async (self, *, scene_id: 'str', project_id: 'str', workflows: 'list[SceneWorkflow]') -> 'None'",
   "upload_image": "async (self, project_id: 'str', image_path: 'Path') -> 'AssetInfo'",
