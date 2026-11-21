@@ -528,6 +528,20 @@ async def _first_then_grace(first: asyncio.Event, done: asyncio.Event, grace_s: 
         await asyncio.wait_for(done.wait(), timeout=grace_s)
 
 
+def _collect_frames(got: dict[str, Any], text: str, rpcids: tuple[str, ...]) -> bool:
+    """Record the first frame of each watched rpcid in ``got``, an error frame as its
+    :class:`RpcError`; return whether one of them was an error frame."""
+    refused = False
+    for err in rpc_errors(text):
+        if err.rpcid in rpcids and err.rpcid not in got:
+            got[err.rpcid] = err
+            refused = True
+    for rid, frame in parse_frames(text):
+        if rid in rpcids and rid not in got:
+            got[rid] = frame
+    return refused
+
+
 async def _rpc_replies(
     page: Page,
     rpcids: tuple[str, ...],
@@ -549,19 +563,10 @@ async def _rpc_replies(
 
     async def on_response(response: Any) -> None:
         text = await _batchexecute_text(response)
-        if not text:
-            return
-        for err in rpc_errors(text):
-            if err.rpcid in rpcids and err.rpcid not in got:
-                got[err.rpcid] = err
-                first.set()
-                done.set()
-        for rid, frame in parse_frames(text):
-            if rid in rpcids and rid not in got:
-                got[rid] = frame
-        if UPLOAD_RPC in got:
+        refused = _collect_frames(got, text, rpcids) if text else False
+        if refused or UPLOAD_RPC in got:
             first.set()
-        if all(r in got for r in rpcids):
+        if refused or all(r in got for r in rpcids):
             done.set()
 
     page.on("response", on_response)
