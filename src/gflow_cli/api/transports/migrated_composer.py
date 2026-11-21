@@ -373,7 +373,11 @@ def _refuse_unported_video(unported: str) -> FlowHostMigratedError:
 
 
 async def _prepare_video_composer(
-    page: Page, request: GenerateVideoRequest, project_id: str | None, unported: str | None
+    page: Page,
+    request: GenerateVideoRequest,
+    project_id: str | None,
+    unported: str | None,
+    composer: MigratedComposer | None = None,
 ) -> tuple[str, MigratedComposer, str]:
     from gflow_cli.api.transports import agent_only_composer as agent
 
@@ -388,7 +392,7 @@ async def _prepare_video_composer(
                 "--project <id> (see `gflow project list` / `gflow project create`)"
             ),
         )
-    composer = MigratedComposer()
+    composer = composer or MigratedComposer()
     with nothing_submitted():
         surface = await composer.ensure_editor_for(page, pid, needs_classic=needs_classic)
     if surface != "agent_only" and unported is not None:
@@ -399,17 +403,34 @@ async def _prepare_video_composer(
 async def _refresh_credit_quote(page: Page, cap: int | None, initial: int | None) -> int | None:
     if cap is None:
         return initial
+    import inspect
+
     from gflow_cli.api.transports._mc_settings_pane import _read_credit_quote
 
-    fresh = await _read_credit_quote(page, cap)
-    if fresh != initial:
-        from gflow_cli.errors import CreditCapExceededError
+    composer = MigratedComposer()
+    opened = False
+    locator = getattr(page, "locator", None)
+    if callable(locator):
+        pane = locator(".cdk-overlay-pane flow-prompt-box-settings")
+        if inspect.iscoroutinefunction(getattr(pane, "count", None)) and await pane.count() == 0:
+            await composer._open_pane(page)
+            opened = True
+    try:
+        fresh = await _read_credit_quote(page, cap)
+        if fresh != initial:
+            from gflow_cli.errors import CreditCapExceededError
 
-        raise CreditCapExceededError(
-            quoted=None,
-            max_credits=cap,
-            route="flow.google.com settings quote changed before submit",
-        )
+            raise CreditCapExceededError(
+                quoted=None,
+                max_credits=cap,
+                route="flow.google.com settings quote changed before submit",
+            )
+    except BaseException:
+        if opened:
+            await composer._close_pane(page, strict=False)
+        raise
+    if opened:
+        await composer._close_pane(page, strict=True)
     return fresh
 
 
@@ -477,7 +498,9 @@ async def run_video(
     here without one means a caller bypassed the client.
     """
     unported = _unported_form(request)
-    pid, composer, surface = await _prepare_video_composer(page, request, project_id, unported)
+    pid, composer, surface = await _prepare_video_composer(
+        page, request, project_id, unported, MigratedComposer()
+    )
     log.info("migrated.dispatch", project_id=pid, mode=request.mode.value)
     if surface == "agent_only":
         from gflow_cli.api.transports import agent_only_composer as agent

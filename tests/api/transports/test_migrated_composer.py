@@ -348,6 +348,8 @@ class FakeLocator:
 
     async def inner_text(self, **_: Any) -> str:
         if self.kind == "credit_cost":
+            if not self.items:
+                raise RealPlaywrightTimeoutError("waiting for credit_cost")
             return self.page.dom.credit_label
         return await self.text_content() or ""
 
@@ -952,6 +954,27 @@ async def test_apply_video_settings_fails_closed_when_quote_is_unreadable() -> N
     assert caught.value.quoted is None
     assert caught.value.max_credits == 10
     assert caught.value.charged == "no"
+
+
+async def test_refresh_credit_quote_reopens_settings_pane_and_checks_fresh_quote() -> None:
+    from gflow_cli.api.transports.migrated_composer import (
+        MigratedComposer,
+        _refresh_credit_quote,
+    )
+
+    page = FakePage()
+    composer = MigratedComposer()
+    quoted = await composer.apply_video_settings(page, _t2v(max_credits=10))
+    assert quoted == 4
+    assert not page.dom.pane_open
+    assert await _refresh_credit_quote(page, 10, quoted) == 4
+    assert not page.dom.pane_open
+
+    for bad_label in ("Generating will use 6 credits", ""):
+        page.dom.credit_label = bad_label
+        with pytest.raises(CreditCapExceededError):
+            await _refresh_credit_quote(page, 10, quoted)
+        assert not page.dom.pane_open
 
 
 @pytest.mark.parametrize("unit", ["s", " giây", " Sek."])
