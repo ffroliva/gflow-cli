@@ -289,9 +289,7 @@ async def test_agent_video_cap_restores_confirm_setting_on_error(
 
     monkeypatch.setattr(agent, "_confirm_setting", lambda: "account")
     snapshot = agent.DefaultsSnapshot("video", 0, 0, "model", confirm_value="2")
-    monkeypatch.setattr(
-        agent.AgentOnlyComposer, "apply_defaults", AsyncMock(return_value=snapshot)
-    )
+    monkeypatch.setattr(agent.AgentOnlyComposer, "apply_defaults", AsyncMock(return_value=snapshot))
     monkeypatch.setattr(
         agent.AgentOnlyComposer,
         "generate",

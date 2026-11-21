@@ -412,7 +412,8 @@ async def _refresh_credit_quote(page: Page, cap: int | None, initial: int | None
     locator = getattr(page, "locator", None)
     if callable(locator):
         pane = locator(".cdk-overlay-pane flow-prompt-box-settings")
-        if inspect.iscoroutinefunction(getattr(pane, "count", None)) and await pane.count() == 0:
+        count = getattr(pane, "count", None)
+        if inspect.iscoroutinefunction(count) and await count() == 0:
             await composer._open_pane(page)
             opened = True
     try:
