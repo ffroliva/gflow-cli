@@ -126,15 +126,15 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `src/gflow_cli/services/speech_ports.py`, `src/gflow_cli/config.py`, `tests/services/test_speech_ports.py`, `tests/test_config.py`.
 
 **Steps:**
-- [ ] Add `SynthesisRequest`, `WordTiming`, `SynthesisResult`, and `SpeechSynthesizer`.
-- [ ] Include rate and pitch in the request contract; use only fields needed for synthesis and optional provider timings.
-- [ ] Add `gemini_tts_api_key: SecretStr | None` mapped only to `GFLOW_CLI_GEMINI_TTS_API_KEY`.
-- [ ] Do not fall back to `GFLOW_CLI_LLM_API_KEY`.
+- [x] Add `SynthesisRequest`, `WordTiming`, `SynthesisResult`, and `SpeechSynthesizer`.
+- [x] Include rate and pitch in the request contract; use only fields needed for synthesis and optional provider timings.
+- [x] Add `gemini_tts_api_key: SecretStr | None` mapped only to `GFLOW_CLI_GEMINI_TTS_API_KEY`.
+- [x] Do not fall back to `GFLOW_CLI_LLM_API_KEY`.
 
 **Tests:**
-- [ ] Task 1 contract tests pass.
-- [ ] Setting parses from env, is absent by default, and does not expose its value in repr/serialization.
-- [ ] `test_llm_key_is_not_reused_for_gemini_tts` — dedicated setting remains required.
+- [x] Task 1 contract tests pass.
+- [x] Setting parses from env, is absent by default, and does not expose its value in repr/serialization.
+- [x] `test_llm_key_is_not_reused_for_gemini_tts` — dedicated setting remains required.
 
 ## Task 4 — Edge and Gemini adapters
 
