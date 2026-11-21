@@ -244,16 +244,16 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `pyproject.toml`, `tests/test_marker_registry.py`, `tests/features/test_e2e_binding_guard.py`, `tests/e2e/conftest.py`, `tests/features/audio_narrate_e2e.feature`, `tests/e2e/test_audio_narrate_bdd.py`, `docs/E2E_TESTING.md`.
 
 **Steps:**
-- [ ] Register `e2e_tts` as network-dependent, zero Flow credits, no browser/profile requirement; make selection explicit like other e2e markers.
-- [ ] Bind the feature once; use synthetic local clip and installed-wheel CLI invocation for edge synthesis then `video assemble --voiceover`.
-- [ ] Run MCP `gflow_narrate` under no-spend, then assemble returned audio with the synthetic clip.
-- [ ] Assert generated and assembled voice audio is non-silent, not merely that files exist.
-- [ ] Add Gemini marked case that skips with a reason naming `GFLOW_CLI_GEMINI_TTS_API_KEY` when unset.
+- [x] Register `e2e_tts` as network-dependent, zero Flow credits, no browser/profile requirement; make selection explicit like other e2e markers.
+- [x] Bind the feature once; use synthetic local clip and installed-wheel CLI invocation for edge synthesis then `video assemble --voiceover`.
+- [x] Run MCP `gflow_narrate` under no-spend, then assemble returned audio with the synthetic clip.
+- [x] Assert generated and assembled voice audio is non-silent, not merely that files exist.
+- [x] Add Gemini marked case that skips with a reason naming `GFLOW_CLI_GEMINI_TTS_API_KEY` when unset.
 
 **Tests:**
-- [ ] Marker registry and binding guards cover `e2e_tts`.
+- [x] Marker registry and binding guards cover `e2e_tts`.
 - [ ] Live edge CLI and MCP tests pass when explicitly selected; no Flow account or credits required.
-- [ ] Gemini e2e makes no request when its setting is absent.
+- [x] Gemini e2e makes no request when its setting is absent.
 
 ## Task 11 — Documentation and shipped skill mirrors
 
