@@ -65,6 +65,8 @@ Pre-registered Readings (committed before the first live run)
 Usage
 -----
     python scripts/dev/spike_1363_trash.py --self-test
+    python scripts/dev/spike_1363_trash.py --project <project-uuid> --inventory \\
+        [--profile <profile>]
     python scripts/dev/spike_1363_trash.py --profile <profile> [--project <project-uuid>]
     python scripts/dev/spike_1363_trash.py --profile <profile> --project <project-uuid> \\
         --media-id <media-uuid> --yes-trash-this --dry-run
@@ -482,6 +484,132 @@ def tile_scoped_selectors(media_id: str, inner_selectors: tuple[str, ...]) -> tu
     return tuple(scoped)
 
 
+def extract_listing_ids(listings: list[Any]) -> dict[str, set[str]]:
+    """Extract media_ids, workflow_ids, project_ids, and other UUIDs from Zzl0ze listings."""
+    media_ids: set[str] = set()
+    workflow_ids: set[str] = set()
+    project_ids: set[str] = set()
+    all_uuids: set[str] = set()
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, list):
+            if (
+                len(node) >= 6
+                and isinstance(node[5], list)
+                and all(
+                    isinstance(node[i], str) and bool(UUID_RE.fullmatch(node[i])) for i in (0, 1, 2)
+                )
+            ):
+                workflow_ids.add(str(node[0]))
+                project_ids.add(str(node[1]))
+                media_ids.add(str(node[2]))
+            for child in node:
+                _walk(child)
+        elif isinstance(node, dict):
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, str):
+            if node.startswith(("[", "{")):
+                with contextlib.suppress(Exception):
+                    _walk(json.loads(node))
+            for m in UUID_RE.finditer(node):
+                all_uuids.add(m.group(0))
+
+    for listing in listings:
+        _walk(listing)
+        if isinstance(listing, list) and len(listing) > 1 and isinstance(listing[1], list):
+            for entry in listing[1]:
+                if (
+                    isinstance(entry, list)
+                    and len(entry) > 0
+                    and isinstance(entry[0], str)
+                    and UUID_RE.fullmatch(entry[0])
+                ):
+                    media_ids.add(entry[0])
+                if (
+                    isinstance(entry, list)
+                    and len(entry) > 3
+                    and isinstance(entry[3], list)
+                    and len(entry[3]) > 4
+                    and isinstance(entry[3][4], str)
+                    and UUID_RE.fullmatch(entry[3][4])
+                ):
+                    workflow_ids.add(entry[3][4])
+
+    other_uuids = all_uuids - media_ids - workflow_ids - project_ids
+    return {
+        "media_ids": media_ids,
+        "workflow_ids": workflow_ids,
+        "project_ids": project_ids,
+        "other": other_uuids,
+    }
+
+
+def classify_uuid(u: str, id_maps: dict[str, set[str]]) -> str | None:
+    """Classify *u* as 'media id', 'workflow id', or 'other' based on *id_maps*."""
+    if u in id_maps.get("media_ids", set()):
+        return "media id"
+    if u in id_maps.get("workflow_ids", set()):
+        return "workflow id"
+    if u in id_maps.get("other", set()) or u in id_maps.get("project_ids", set()):
+        return "other"
+    return None
+
+
+def sanitize_url_path(raw_url: str | None) -> str | None:
+    """Return host + path with UUIDs replaced by <uuid> (query/fragment stripped)."""
+    if not raw_url:
+        return None
+    try:
+        parts = urlsplit(raw_url)
+        path = UUID_RE.sub("<uuid>", parts.path or "")
+        host = parts.netloc
+        if host:
+            return f"{host}{path}"
+        return path or None
+    except Exception:
+        return UUID_RE.sub("<uuid>", str(raw_url))
+
+
+def print_inventory_table(
+    *,
+    project_id: str,
+    selected_filter: str | None,
+    scroller_wheel_test: dict[str, Any],
+    tiles: list[dict[str, Any]],
+) -> None:
+    """Print a short formatted summary table of visible grid tiles and scroller test."""
+    print(f"\n=== Flow Project Grid Tile Inventory (project: {project_id[:8]}…) ===")
+    print(f"Selected filter: {selected_filter or 'none'}")
+    sw = scroller_wheel_test
+    print(
+        f"Wheel scroll: scrollTop {sw.get('before_scroll_top')} -> {sw.get('after_scroll_top')} "
+        f"(changed={sw.get('scroll_top_changed')}), "
+        f"new tiles attached={sw.get('new_tiles_attached')} (+{sw.get('new_tiles_count', 0)})\n"
+    )
+    header = (
+        f"{'#':<3} {'Tag':<7} {'Role':<10} {'data-* / attrs':<28} "
+        f"{'Matched Field':<15} {'Nearest Ancestor':<25}"
+    )
+    print(header)
+    print("-" * len(header))
+    for idx, t in enumerate(tiles[:40], 1):
+        tag = t.get("tag", "")
+        role = t.get("role") or "-"
+        data_keys = list(t.get("data_attributes", {}).keys())
+        if data_keys:
+            attrs_str = (",".join(data_keys))[:27]
+        else:
+            attrs_str = (",".join(t.get("attribute_names", [])[:3]))[:27]
+        matched = t.get("matched_listing_field") or "-"
+        ancestors = t.get("ancestors", [])
+        ancestor = (ancestors[0] if ancestors else "-")[:24]
+        print(f"{idx:<3} {tag:<7} {role:<10} {attrs_str:<28} {matched:<15} {ancestor:<25}")
+    if len(tiles) > 40:
+        print(f"... (+{len(tiles) - 40} more tiles recorded in summary.json)")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Offline self-test (--self-test)
 # ---------------------------------------------------------------------------
@@ -587,7 +715,70 @@ def run_self_test() -> int:
     assert parsed_dry.dry_run is True
     assert parsed_dry.yes_trash_this is True
 
-    print("self-test: ok (7 helper suites passed)", flush=True)
+    # 8. Listing ID extraction, UUID classification, URL sanitizing, and --inventory parser
+    mock_listing = [
+        [
+            workflow_id,
+            project_id,
+            media_id,
+            None,
+            None,
+            ["details"],
+        ],
+        [
+            [media_id, None, None, [None, None, None, None, workflow_id]],
+        ],
+        f"prefix-{other_uuid}-suffix",
+    ]
+    extracted = extract_listing_ids([mock_listing])
+    assert media_id in extracted["media_ids"], f"media_id not extracted: {extracted}"
+    assert workflow_id in extracted["workflow_ids"], f"workflow_id not extracted: {extracted}"
+    assert project_id in extracted["project_ids"], f"project_id not extracted: {extracted}"
+    assert other_uuid in extracted["other"], f"other_uuid not extracted: {extracted}"
+    assert classify_uuid(media_id, extracted) == "media id"
+    assert classify_uuid(workflow_id, extracted) == "workflow id"
+    assert classify_uuid(project_id, extracted) == "other"
+    assert classify_uuid(other_uuid, extracted) == "other"
+    assert classify_uuid("00000000-0000-0000-0000-000000000000", extracted) is None
+
+    assert (
+        sanitize_url_path(f"https://flow.google.com/project/{project_id}/view?query=1")
+        == "flow.google.com/project/<uuid>/view"
+    )
+    assert (
+        sanitize_url_path(f"https://lh3.googleusercontent.com/asb/{other_uuid}=w512")
+        == "lh3.googleusercontent.com/asb/<uuid>=w512"
+    )
+
+    parsed_inv = build_parser().parse_args(["--project", project_id, "--inventory"])
+    assert parsed_inv.inventory is True
+    assert parsed_inv.project == project_id
+    assert parsed_inv.media_id is None
+    assert parsed_inv.yes_trash_this is False
+
+    print_inventory_table(
+        project_id=project_id,
+        selected_filter="image",
+        scroller_wheel_test={
+            "before_scroll_top": 0,
+            "after_scroll_top": 600,
+            "scroll_top_changed": True,
+            "new_tiles_attached": True,
+            "new_tiles_count": 2,
+        },
+        tiles=[
+            {
+                "tag": "img",
+                "role": None,
+                "data_attributes": {"data-media-id": media_id},
+                "attribute_names": ["src", "data-media-id"],
+                "matched_listing_field": "media id",
+                "ancestors": ["flow-image-tile.mat-mdc-card"],
+            }
+        ],
+    )
+
+    print("self-test: ok (8 helper suites passed)", flush=True)
     return 0
 
 
@@ -782,6 +973,186 @@ _SCROLL_GRID_STEP_JS = r"""
     client_height: Math.round(ch),
     container_tag: tag,
   };
+}
+"""
+
+_COLLECT_TILE_INVENTORY_JS = r"""
+() => {
+  const uuidRegex = /[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/g;
+  const isUuid = (s) => /[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/.test(s);
+
+  const visible = (el) => {
+    if (!el) return false;
+    const cs = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return cs.display !== "none" && cs.visibility !== "hidden" && r.width > 0 && r.height > 0;
+  };
+
+  const sanitizeUrl = (raw) => {
+    if (!raw) return null;
+    try {
+      const u = new URL(raw, window.location.origin);
+      const path = u.pathname.replace(uuidRegex, "<uuid>");
+      return (u.host ? u.host : "") + path;
+    } catch (e) {
+      return String(raw).replace(uuidRegex, "<uuid>");
+    }
+  };
+
+  const inHeaderOrNav = (el) => {
+    return Boolean(
+      el.closest(
+        "flow-navigation-header, flow-tile-view-header, flow-project-nav-list, " +
+        "mat-sidenav, nav, aside, [role='navigation'], flow-header-user-icon"
+      )
+    );
+  };
+
+  const mainRoot =
+    document.querySelector("#main-content") ||
+    document.querySelector("cdk-virtual-scroll-viewport") ||
+    document.querySelector("mat-sidenav-content") ||
+    document.querySelector("flow-project-page") ||
+    document.querySelector("[role='main']") ||
+    document.querySelector("main") ||
+    document.body;
+
+  const elements = [...mainRoot.querySelectorAll("*")];
+  const matched = [];
+
+  for (const el of elements) {
+    if (!visible(el)) continue;
+    if (inHeaderOrNav(el)) continue;
+    const tag = el.tagName.toLowerCase();
+    const isMediaTag = tag === "img" || tag === "video" || tag === "canvas";
+    let hasUuidAttr = false;
+    for (let i = 0; i < el.attributes.length; i++) {
+      if (isUuid(el.attributes[i].value)) {
+        hasUuidAttr = true;
+        break;
+      }
+    }
+    if (!isMediaTag && !hasUuidAttr) continue;
+
+    const attrNames = [];
+    const dataAttrs = {};
+    const ariaAttrs = {};
+    const foundUuids = [];
+
+    for (let i = 0; i < el.attributes.length; i++) {
+      const a = el.attributes[i];
+      attrNames.push(a.name);
+      if (a.name.startsWith("data-")) {
+        dataAttrs[a.name] = a.value;
+      }
+      if (a.name.startsWith("aria-")) {
+        ariaAttrs[a.name] = a.value;
+      }
+      const matches = a.value.match(uuidRegex);
+      if (matches) {
+        for (const m of matches) foundUuids.push(m);
+      }
+    }
+
+    const srcVal = el.getAttribute("src");
+    const hrefVal = el.getAttribute("href");
+    if (srcVal) {
+      const matches = srcVal.match(uuidRegex);
+      if (matches) {
+        for (const m of matches) foundUuids.push(m);
+      }
+    }
+    if (hrefVal) {
+      const matches = hrefVal.match(uuidRegex);
+      if (matches) {
+        for (const m of matches) foundUuids.push(m);
+      }
+    }
+
+    const ancestors = [];
+    let cur = el.parentElement;
+    for (
+      let depth = 0;
+      cur && cur !== document.body && cur !== document.documentElement && depth < 4;
+      depth++, cur = cur.parentElement
+    ) {
+      const pTag = cur.tagName.toLowerCase();
+      const pCls =
+        cur.className && typeof cur.className === "string" ? cur.className.trim() : "";
+      ancestors.push(`${pTag}${pCls ? "." + pCls.split(/\s+/).filter(Boolean).join(".") : ""}`);
+    }
+
+    matched.push({
+      tag,
+      attribute_names: attrNames,
+      data_attributes: dataAttrs,
+      aria_attributes: ariaAttrs,
+      role: el.getAttribute("role"),
+      class: el.getAttribute("class") || "",
+      src: sanitizeUrl(srcVal),
+      href: sanitizeUrl(hrefVal),
+      ancestors,
+      found_uuids: [...new Set(foundUuids)],
+    });
+
+    if (matched.length >= 40) break;
+  }
+
+  return matched;
+}
+"""
+
+_COLLECT_LEFT_NAV_FILTERS_JS = r"""
+() => {
+  const container = document.querySelector(
+    "flow-project-nav-list, mat-nav-list, mat-sidenav, [role='navigation'], nav, aside"
+  );
+  if (!container) return { filters: [], selected: null };
+
+  const ligatureOf = (el) => {
+    const icons = [...el.querySelectorAll("mat-icon, i.google-symbols, i[class*='symbols']")];
+    return icons.map(i => (i.textContent || "").trim()).filter(Boolean).join(",");
+  };
+
+  const btnSel = "button, a[href], [role='tab'], [role='button'], .mat-mdc-list-item";
+  const buttons = [...container.querySelectorAll(btnSel)];
+  const filters = [];
+  let selected = null;
+
+  for (const b of buttons) {
+    const cs = getComputedStyle(b);
+    const r = b.getBoundingClientRect();
+    if (cs.display === "none" || cs.visibility === "hidden" || r.width === 0 || r.height === 0) {
+      continue;
+    }
+    const cls = b.getAttribute("class") || "";
+    const ariaSelected = b.getAttribute("aria-selected");
+    const ariaCurrent = b.getAttribute("aria-current");
+    const role = b.getAttribute("role");
+    const ligature = ligatureOf(b);
+    const isSelected =
+      ariaSelected === "true" ||
+      ariaCurrent === "page" ||
+      ariaCurrent === "true" ||
+      /(selected|active|activated|mat-mdc-list-item-activated)/.test(cls);
+
+    const info = {
+      tag: b.tagName.toLowerCase(),
+      role,
+      class: cls,
+      ligature: ligature || null,
+      aria_selected: ariaSelected,
+      aria_current: ariaCurrent,
+      is_selected: isSelected,
+      text: (b.textContent || "").trim().slice(0, 40),
+    };
+    filters.push(info);
+    if (isSelected && !selected) {
+      selected = ligature || info.text || info.tag;
+    }
+  }
+
+  return { filters, selected };
 }
 """
 
@@ -1931,6 +2302,198 @@ async def _run_live(
     return 0 if restored_cleanly else 1
 
 
+async def _run_inventory(
+    *,
+    profile: str,
+    project_id: str,
+    out_dir: Path,
+) -> int:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    profile_dir = resolve_profile_dir(profile)
+    targets = {
+        "media_id": "",
+        "project_id": project_id,
+        "workflow_id": "",
+    }
+    recorder = WireRecorder(out_dir=out_dir, targets=targets)
+    timings_ms: dict[str, float] = {}
+    t_run_start = time.monotonic()
+    host_served = "unknown"
+    run_error: str | None = None
+
+    async with build_client(profile_dir, headless=False) as client:
+        page = await client._checkout_page()  # noqa: SLF001
+        ctx = page.context
+        await ctx.route("**/batchexecute**", recorder.on_batchexecute_route)
+        await ctx.route("https://aisandbox-pa.googleapis.com/**", recorder.on_aisandbox_route)
+        ctx.on("response", recorder.on_response)
+
+        try:
+            t0 = time.monotonic()
+            recorder.set_step("project_open")
+            step("1", f"Opening project {project_id[:8]}… (inventory mode)", prefix="1363")
+            await page.goto(
+                mc.MIGRATED_PROJECT_URL.format(project_id=project_id),
+                wait_until="domcontentloaded",
+                timeout=60_000,
+            )
+            await raise_if_known_landing(page, requested=f"project {project_id}", at="spike_1363")
+            host_served = urlsplit(page.url).netloc or "unknown"
+            await wait_for_or_none(page, SHELL_READY_SELECTOR, 12_000)
+            await wait_for_or_none(
+                page,
+                (
+                    "cdk-virtual-scroll-viewport, flow-grid-tile-container, "
+                    "flow-image-tile, img, video, canvas"
+                ),
+                8_000,
+            )
+            await page.wait_for_timeout(1_500)
+            timings_ms["project_open"] = round((time.monotonic() - t0) * 1000, 1)
+
+            t0 = time.monotonic()
+            recorder.set_step("inventory_inspection")
+            step(
+                "2",
+                "Inspecting visible tiles, left-nav filters, and virtual scroller…",
+                prefix="1363",
+            )
+
+            nav_filters_data: dict[str, Any] = await page.evaluate(_COLLECT_LEFT_NAV_FILTERS_JS)
+            raw_initial_tiles: list[dict[str, Any]] = await page.evaluate(
+                _COLLECT_TILE_INVENTORY_JS
+            )
+
+            listing_id_maps = extract_listing_ids(recorder.listings)
+            initial_tiles: list[dict[str, Any]] = []
+            for tile in raw_initial_tiles:
+                found_uuids = tile.pop("found_uuids", [])
+                matches: list[dict[str, str]] = []
+                matched_field: str | None = None
+                for u in found_uuids:
+                    field_name = classify_uuid(u, listing_id_maps)
+                    if field_name:
+                        matches.append({"uuid": u, "field": field_name})
+                        if not matched_field or field_name == "media id":
+                            matched_field = field_name
+                tile["src"] = sanitize_url_path(tile.get("src"))
+                tile["href"] = sanitize_url_path(tile.get("href"))
+                tile["listing_matches"] = matches
+                tile["matched_listing_field"] = matched_field
+                initial_tiles.append(tile)
+
+            viewport_loc = page.locator("cdk-virtual-scroll-viewport").first
+            has_viewport = await viewport_loc.count() > 0 and await viewport_loc.is_visible()
+            scroller_loc = (
+                viewport_loc
+                if has_viewport
+                else page.locator("mat-sidenav-content, #main-content, main, [role='main']").first
+            )
+            box = await scroller_loc.bounding_box()
+            before_scroll_top = int(
+                await scroller_loc.evaluate("el => Math.round(el.scrollTop || 0)")
+            )
+            if box:
+                await page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+
+            wheel_steps = 3
+            delta_y = 500
+            for _ in range(wheel_steps):
+                await page.mouse.wheel(0, delta_y)
+                await page.wait_for_timeout(600)
+
+            after_scroll_top = int(
+                await scroller_loc.evaluate("el => Math.round(el.scrollTop || 0)")
+            )
+            scroll_top_changed = after_scroll_top != before_scroll_top
+            scroll_delta = after_scroll_top - before_scroll_top
+
+            raw_after_tiles: list[dict[str, Any]] = await page.evaluate(_COLLECT_TILE_INVENTORY_JS)
+
+            def _tile_fingerprint(t: dict[str, Any]) -> str:
+                tag = t.get("tag", "")
+                src = t.get("src") or ""
+                attrs = tuple(sorted(t.get("data_attributes", {}).items()))
+                return f"{tag}:{src}:{attrs}"
+
+            before_fps = {_tile_fingerprint(t) for t in raw_initial_tiles}
+            after_fps = {_tile_fingerprint(t) for t in raw_after_tiles}
+            new_fps = after_fps - before_fps
+            new_tiles_attached = len(new_fps) > 0
+
+            scroller_wheel_test = {
+                "viewport_found": bool(has_viewport),
+                "viewport_tag": (
+                    await scroller_loc.evaluate("el => el.tagName.toLowerCase()")
+                    if await scroller_loc.count() > 0
+                    else "unknown"
+                ),
+                "steps": wheel_steps,
+                "delta_y_per_step": delta_y,
+                "before_scroll_top": before_scroll_top,
+                "after_scroll_top": after_scroll_top,
+                "scroll_top_changed": scroll_top_changed,
+                "scroll_delta": scroll_delta,
+                "before_tiles_count": len(raw_initial_tiles),
+                "after_tiles_count": len(raw_after_tiles),
+                "new_tiles_attached": new_tiles_attached,
+                "new_tiles_count": len(new_fps),
+            }
+            timings_ms["inventory_inspection"] = round((time.monotonic() - t0) * 1000, 1)
+
+            timings_ms["total"] = round((time.monotonic() - t_run_start) * 1000, 1)
+            summary_doc: dict[str, Any] = {
+                "spike": "1363-media-trash-and-restore",
+                "mode": "inventory",
+                "captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "host_served": host_served,
+                "project_id": project_id,
+                "profile": profile,
+                "positive_control": {
+                    "zzl0ze_seen": bool(recorder.listings),
+                    "listings_count": len(recorder.listings),
+                    "total_listing_media_ids": len(listing_id_maps["media_ids"]),
+                    "total_listing_workflow_ids": len(listing_id_maps["workflow_ids"]),
+                },
+                "inventory": {
+                    "tiles": initial_tiles,
+                    "total_tiles_recorded": len(initial_tiles),
+                    "left_nav_filters": nav_filters_data.get("filters", []),
+                    "selected_filter": nav_filters_data.get("selected"),
+                    "scroller_wheel_test": scroller_wheel_test,
+                },
+                "timings_ms": timings_ms,
+                "error": None,
+            }
+            summary_path = out_dir / "summary.json"
+            summary_path.write_text(
+                json.dumps(summary_doc, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            step("out", f"summary -> {summary_path}", prefix="1363")
+
+            print_inventory_table(
+                project_id=project_id,
+                selected_filter=nav_filters_data.get("selected"),
+                scroller_wheel_test=scroller_wheel_test,
+                tiles=initial_tiles,
+            )
+
+        except BaseException as exc:
+            run_error = f"{type(exc).__name__}: {str(exc)[:300]}"
+            raise
+        finally:
+            with contextlib.suppress(BaseException):
+                await ctx.unroute("**/batchexecute**", recorder.on_batchexecute_route)
+                await ctx.unroute(
+                    "https://aisandbox-pa.googleapis.com/**", recorder.on_aisandbox_route
+                )
+                ctx.remove_listener("response", recorder.on_response)
+            client._checkin_page(page)  # noqa: SLF001
+
+    return 0 if run_error is None else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -1985,6 +2548,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Allow running on a non-image catalog asset (default refuses non-image rows).",
     )
     parser.add_argument(
+        "--inventory",
+        dest="inventory",
+        action="store_true",
+        help=(
+            "Open the project grid, record the first 40 visible tile elements and their "
+            "structural attributes, inspect left-nav filters, test virtual scroller wheel "
+            "movement (3 steps), write inventory to summary.json, and print a summary table "
+            "(changes nothing, needs --project, no --media-id)."
+        ),
+    )
+    parser.add_argument(
         "--out-dir",
         dest="out_dir",
         type=Path,
@@ -1998,6 +2572,50 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.self_test:
         return run_self_test()
+
+    if args.inventory:
+        if not args.project:
+            print(
+                "[spike-1363] REFUSED: --project <uuid> is required for --inventory mode.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+
+        profile = args.profile
+        if not profile:
+            with contextlib.suppress(Exception):
+                db_path = get_settings().resolved_db_path()
+                rows = [
+                    r
+                    for r in list_images(db_path=db_path, profile=None, limit=50, offset=0)
+                    if r.project_id == args.project
+                ]
+                if rows:
+                    profile = rows[0].profile
+        if not profile:
+            with contextlib.suppress(Exception):
+                from gflow_cli.profile_store import resolve_profile
+
+                profile = resolve_profile(None)
+        if not profile:
+            print(
+                "[spike-1363] REFUSED: could not resolve profile for project. "
+                "Pass --profile explicitly.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return 2
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out_dir = args.out_dir or (OUT_ROOT / f"spike_1363_{ts}")
+        return asyncio.run(
+            _run_inventory(
+                profile=profile,
+                project_id=args.project,
+                out_dir=out_dir,
+            )
+        )
 
     if not args.media_id:
         return _print_candidates_and_refuse(
