@@ -92,12 +92,12 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `tests/services/test_speech_ports.py` (new), `src/gflow_cli/services/speech_ports.py` (later task).
 
 **Steps:**
-- [ ] Add frozen request, result, and optional word timing expectations to tests.
-- [ ] Assert protocol accepts a minimal fake synthesizer.
+- [x] Add frozen request, result, and optional word timing expectations to tests.
+- [x] Assert protocol accepts a minimal fake synthesizer.
 
 **Tests created (red):**
-- [ ] `test_synthesis_values_are_frozen` — values cannot be mutated.
-- [ ] `test_synthesizer_returns_audio_and_optional_word_timings` — contract has no provider dependency.
+- [x] `test_synthesis_values_are_frozen` — values cannot be mutated.
+- [x] `test_synthesizer_returns_audio_and_optional_word_timings` — contract has no provider dependency.
 
 ## Task 2 — Adapter behavior tests (red)
 

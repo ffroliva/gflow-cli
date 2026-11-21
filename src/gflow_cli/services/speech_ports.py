@@ -25,3 +25,29 @@ class Transcript:
 
 class Transcriber(Protocol):
     def transcribe(self, request: TranscriptionRequest) -> Transcript: ...
+
+
+@dataclass(frozen=True)
+class SynthesisRequest:
+    text: str
+    voice: str | None
+    rate: str = "+0%"
+    pitch: str = "+0Hz"
+
+
+@dataclass(frozen=True)
+class WordTiming:
+    text: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
+class SynthesisResult:
+    audio_bytes: bytes
+    media_type: str
+    words: tuple[WordTiming, ...] = ()
+
+
+class SpeechSynthesizer(Protocol):
+    def synthesize(self, request: SynthesisRequest) -> SynthesisResult: ...
