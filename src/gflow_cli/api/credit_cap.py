@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from gflow_cli.errors import CreditCapExceededError
 
@@ -29,6 +30,24 @@ def enforce_credit_cap(
 def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | None:
     """Use an explicit CLI cap when supplied; otherwise use the environment setting."""
     return cli_value if cli_value is not None else configured
+
+
+def preserve_credit_cap_partials(
+    exc: BaseException, completed_media_ids: Sequence[str]
+) -> list[str]:
+    """Attach prior and current billed media ids to a credit-cap failure."""
+    prior = list(completed_media_ids)
+    current = [
+        media_id for media_id in getattr(exc, "completed_media_ids", []) if media_id not in prior
+    ]
+    all_ids = prior + current
+    if isinstance(exc, CreditCapExceededError) and all_ids:
+        if exc.charged != "maybe":
+            exc.charged = "maybe" if current else "yes"
+        exc.next_action = "reconcile"
+        exc.retryable = False
+        exc.completed_media_ids = all_ids
+    return current
 
 
 class CreditBudget:

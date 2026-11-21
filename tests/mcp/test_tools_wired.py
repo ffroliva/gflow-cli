@@ -127,6 +127,7 @@ class TestGenerateImageWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):
@@ -170,6 +171,7 @@ class TestGenerateImageWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):
@@ -211,6 +213,7 @@ class TestGenerateImageWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):
@@ -260,6 +263,7 @@ class TestGenerateImageWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                     history_prompts=False,
                 ),
             ),
@@ -329,6 +333,7 @@ class TestGenerateVideoWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):
@@ -390,6 +395,7 @@ class TestGenerateVideoWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                     history_prompts=False,
                 ),
             ),
@@ -511,6 +517,7 @@ class TestGenerateVideoWired:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):
@@ -683,6 +690,7 @@ class TestRunGenerationTask:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):
@@ -723,6 +731,7 @@ class TestRunGenerationTask:
                     headless=True,
                     transport=None,
                     output_dir=tmp_path / "out",
+                    max_credits=None,
                 ),
             ),
         ):

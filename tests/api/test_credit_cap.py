@@ -74,6 +74,30 @@ def test_agents_doc_and_e2e_refusal_pin_credit_cap_exit_and_omni_1_2() -> None:
     assert 'model="omni-1.2"' in e2e_src
 
 
+def test_preserve_credit_cap_partials_and_mcp_docstring_preserved() -> None:
+    from gflow_cli.api import credit_cap
+    from gflow_cli.mcp.tools import gflow_generate_video
+
+    preserve = getattr(credit_cap, "preserve_credit_cap_partials", None)
+    assert callable(preserve)
+    err = CreditCapExceededError(quoted=8, max_credits=4, completed_media_ids=["m2"])
+    err.charged = "maybe"
+    assert preserve(err, ["m1"]) == ["m2"]
+    assert err.completed_media_ids == ["m1", "m2"]
+    assert err.charged == "maybe"
+    assert err.next_action == "reconcile"
+
+    pre_submit = CreditCapExceededError(quoted=8, max_credits=4)
+    assert preserve(pre_submit, ["m1"]) == []
+    assert pre_submit.completed_media_ids == ["m1"]
+    assert pre_submit.charged == "yes"
+    assert pre_submit.next_action == "reconcile"
+
+    doc = gflow_generate_video.__doc__ or ""
+    assert "Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality'" in doc
+    assert "Optional clip length in seconds (mirrors the CLI ``--duration``):" in doc
+
+
 def test_max_credits_setting_and_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings(max_credits=10).max_credits == 10
     monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "10")

@@ -342,6 +342,22 @@ def _unapproved_media_cap_error(
     return error
 
 
+async def _report_video_started(
+    run: _Run,
+    started: bool,
+    media_id: str | None,
+    pending: int,
+    on_first_media: Callable[[str], object] | None,
+) -> bool:
+    if media_id and not started:
+        started = True
+        if on_first_media is not None:
+            await _maybe_await(on_first_media(media_id))
+    if (media_id or pending) and run.max_credits is not None and not run.approvals:
+        raise _unapproved_media_cap_error(run.max_credits, media_id)
+    return started
+
+
 def _tile_key(tile: dict[str, str]) -> str:
     return tile["video"] or tile["img"]
 
@@ -882,22 +898,14 @@ class AgentOnlyComposer:
                     retryable=False,
                     remediation_hint=_AFTER_SUBMIT_HINT,
                 )
-            if named and not started:
-                started = True
-                if on_first_media is not None:
-                    await _maybe_await(on_first_media(named[0]))
-            if (named or state["pending"]) and run.max_credits is not None and not run.approvals:
-                raise _unapproved_media_cap_error(run.max_credits, named[0] if named else None)
+            started = await _report_video_started(
+                run, started, named[0] if named else None, state["pending"], on_first_media
+            )
             ready = await self._ready_video(page, state, named, baseline_head, run, read_listing)
             # #1354: the listing may name the clip before its player mounts, or the run may
             # time out waiting for it; the early report must not wait for the download.
             listed = ready.uuid if ready is not None else (run.listed and run.listed[1])
-            if listed and not started:
-                started = True
-                if on_first_media is not None:
-                    await _maybe_await(on_first_media(listed))
-            if listed and run.max_credits is not None and not run.approvals:
-                raise _unapproved_media_cap_error(run.max_credits, listed)
+            started = await _report_video_started(run, started, listed, 0, on_first_media)
             if ready is not None:
                 return [ready]
             await asyncio.sleep(POLL_S)

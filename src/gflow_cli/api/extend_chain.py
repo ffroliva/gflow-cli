@@ -29,7 +29,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
-from gflow_cli.errors import RETRY_ACTIONS, CreditCapExceededError, GFlowError
+from gflow_cli.api.credit_cap import preserve_credit_cap_partials
+from gflow_cli.errors import RETRY_ACTIONS, GFlowError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
@@ -83,14 +84,6 @@ class ExtendChainResult:
     def aborted(self) -> bool:
         """A run ended early exactly when something refused it."""
         return self.error is not None
-
-
-def _preserve_cap_partials(exc: BaseException, completed: list[str]) -> None:
-    if isinstance(exc, CreditCapExceededError) and completed:
-        exc.charged = "yes"
-        exc.next_action = "reconcile"
-        exc.retryable = False
-        exc.completed_media_ids = list(completed)
 
 
 async def run_extend_chain(  # noqa: PLR0913
@@ -162,7 +155,7 @@ async def run_extend_chain(  # noqa: PLR0913
             # partial-preservation path entirely — the exact "paid for, invisible"
             # outcome this module's docstring says it prevents.
             # No retry, by design. Hand back everything already paid for.
-            _preserve_cap_partials(exc, completed)
+            preserve_credit_cap_partials(exc, completed)
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,

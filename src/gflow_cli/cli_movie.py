@@ -41,7 +41,11 @@ from gflow_cli._cli_helpers import (
 )
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.credit_cap import CreditBudget, resolve_max_credits
+from gflow_cli.api.credit_cap import (
+    CreditBudget,
+    preserve_credit_cap_partials,
+    resolve_max_credits,
+)
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
 from gflow_cli.composition import (
@@ -493,15 +497,7 @@ def _preserve_movie_cap_partials(
             and state.scenes[scene.id].media_id
             and state.scenes[scene.id].media_id in run_media_ids
         ]
-        completed.extend(
-            media_id for media_id in exc.completed_media_ids if media_id not in completed
-        )
-        if completed:
-            if exc.charged != "maybe":
-                exc.charged = "yes"
-            exc.next_action = "reconcile"
-            exc.retryable = False
-            exc.completed_media_ids = completed
+        preserve_credit_cap_partials(exc, completed)
 
 
 async def _run_one_scene(

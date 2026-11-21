@@ -1234,12 +1234,8 @@ def _build_video_payload(
     reference_entity_names: list[str] | None = None,
     max_credits: int | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "prompt": prompt,
-        "mode": mode,
-        "aspect": aspect,
-        "count": count,
-    }
+    payload: dict[str, Any] = {"prompt": prompt, "mode": mode, "aspect": aspect, "count": count}
+    names = list(reference_entity_names) if reference_entity_names else None
     payload.update(
         {
             key: value
@@ -1254,10 +1250,7 @@ def _build_video_payload(
                 ("max_credits", max_credits),
                 ("tool_specs", list(tool_specs) if tool_specs else None),
                 ("reference_entities", list(reference_entities) if reference_entities else None),
-                (
-                    "reference_entity_names",
-                    list(reference_entity_names) if reference_entity_names else None,
-                ),
+                ("reference_entity_names", names),
             )
             if value is not None
         }
@@ -1338,15 +1331,24 @@ async def gflow_generate_video(  # NOSONAR
         reference_entity_names: Display names paired positionally with
             ``reference_entities`` (mirrors ``--reference-entity-name``); required
             for each id on flow.google.com, where the picker attaches by name.
-        model: Optional Veo model (aliases mirror CLI ``--model``). When omitted, Flow's UI
-            default applies except frame-based i2v, which defaults to veo-lite. Every model
-            supports start/end-frame i2v; omni_flash end-frame was wire-verified 2026-09-02
+        model: Optional Veo model — 'veo_lite', 'veo_fast', 'veo_quality',
+            'omni_flash', 'omni_1_2_flash' (aliases accepted, mirrors the CLI ``--model``). When
+            omitted, Flow's UI default applies EXCEPT for i2v with frames,
+            where the transport defaults to veo-lite. Every model supports i2v
+            with a start frame and with an end frame; 'omni_flash' was the last
+            exception and its end-frame route was wire-verified 2026-09-02
             (refs #125, #626).
-        duration: Optional clip length (mirrors CLI ``--duration``): omni_1_2_flash accepts
-            3–15 seconds (11–15 needs a Google AI plan; end_frame caps it at 10), Veo accepts
-            4/6/8, and omni_flash accepts 4/6/8/10. Omitted duration uses the model default;
-            migrated r2v pins to 8 because shorter Veo durations dropped refs and billed t2v.
-            Migrated r2v supports 4/6/8/10 on omni_flash or 3–15 on omni_1_2_flash.
+        duration: Optional clip length in seconds (mirrors the CLI ``--duration``):
+            Every integer 3–15 on explicit ``omni_1_2_flash`` (11–15 needs a Google AI
+            plan; with an ``end_frame`` at most 10, #1178), 4/6/8 on Veo 3.1, 4/6/8/10
+            on ``omni_flash``; whether the account's cohort renders the control is
+            decided pre-submit at zero cost.
+            When omitted, Flow's per-model default applies. On the migrated
+            flow.google.com host an 'r2v' request with explicit omni_flash accepts
+            4/6/8/10, and explicit ``omni_1_2_flash`` every integer 3-15 through its
+            duration slider. Veo or an unspecified model accepts only 8: measured
+            shorter Veo requests dropped references and billed text-to-video instead.
+            Omitted r2v duration still pins 8 to avoid inherited editor settings.
         resolution: Optional video resolution — '360p' or '720p' (Omni models only,
             mirrors the CLI ``--resolution``). When omitted, Flow's default applies. On any
             other model, or on the labs editor, the job fails pre-submit with the
@@ -1525,10 +1527,7 @@ async def gflow_generate_video(  # NOSONAR
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(
-        profile=resolved_profile,
-        task_type=mode,
-        payload=payload,
-        wait=wait,
+        profile=resolved_profile, task_type=mode, payload=payload, wait=wait
     )
 
     # Annotate the result with the original request parameters for context.

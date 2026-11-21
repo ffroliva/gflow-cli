@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
-from gflow_cli.api.credit_cap import CreditBudget
+from gflow_cli.api.credit_cap import CreditBudget, preserve_credit_cap_partials
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
@@ -81,8 +81,7 @@ _log = structlog.get_logger(__name__)
 def _account_failed_link(
     budget: CreditBudget, exc: Exception, previous_ids: list[str]
 ) -> list[str]:
-    media_ids = list(getattr(exc, "completed_media_ids", []))
-    current_ids = [media_id for media_id in media_ids if media_id not in previous_ids]
+    current_ids = preserve_credit_cap_partials(exc, previous_ids)
     quote = getattr(exc, "quoted_credits", None)
     if budget.remaining is not None and (quote is not None or current_ids):
         budget.remaining = max(0, budget.remaining - quote) if quote is not None else 0
@@ -91,8 +90,6 @@ def _account_failed_link(
             exc.charged, exc.next_action = "maybe", "reconcile"
         elif previous_ids:
             exc.charged, exc.next_action = "yes", "reconcile"
-    if isinstance(exc, CreditCapExceededError):
-        exc.completed_media_ids = previous_ids + current_ids
     return current_ids
 
 
@@ -115,6 +112,16 @@ def _record_unresolved_link(
                 frame_path=None if is_last else out_dir / f"link{index}_lastframe.jpg",
             )
         )
+
+
+def _deduct_link_spend(
+    budget: CreditBudget, result: VideoResult, results: Sequence[ChainLinkResult]
+) -> None:
+    try:
+        budget.record_spend(result.quoted_credits)
+    except CreditCapExceededError as exc:
+        preserve_credit_cap_partials(exc, [r.media_id for r in results])
+        raise
 
 
 @dataclass(frozen=True)
@@ -309,13 +316,7 @@ async def _generate_link(
                 if not exc.operation_id:  # an in-flight link's own id is the better handle
                     exc.operation_id = completed_media_ids[-1]
                 if isinstance(exc, CreditCapExceededError):
-                    current_ids = [
-                        media_id
-                        for media_id in exc.completed_media_ids
-                        if media_id not in completed_media_ids
-                    ]
-                    exc.completed_media_ids = list(completed_media_ids) + current_ids
-                    exc.charged = "maybe" if current_ids else "yes"
+                    preserve_credit_cap_partials(exc, completed_media_ids)
                 else:
                     exc.charged = "yes"
             raise
@@ -571,11 +572,7 @@ async def run_chain(
 
         results.append(link_result)
         completed_paths.append(result.local_path)
-        try:
-            budget.record_spend(result.quoted_credits)
-        except CreditCapExceededError as exc:
-            exc.completed_media_ids = [r.media_id for r in results]
-            raise
+        _deduct_link_spend(budget, result, results)
 
         if link_result.frame_path is not None:
             prev_frame = await asyncio.to_thread(
