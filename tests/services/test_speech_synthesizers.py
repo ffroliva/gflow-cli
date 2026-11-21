@@ -9,14 +9,14 @@ from typing import Any
 
 import httpx
 import pytest
+
+from gflow_cli.errors import ConfigurationError, NetworkError
+from gflow_cli.services.speech_ports import SynthesisRequest
 from gflow_cli.services.speech_synthesizers import (
     EdgeTtsSynthesizer,
     GeminiTtsSynthesizer,
     sanitize_for_edge_tts,
 )
-
-from gflow_cli.errors import ConfigurationError, NetworkError
-from gflow_cli.services.speech_ports import SynthesisRequest
 
 
 def test_edge_missing_extra_names_install_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -42,6 +42,7 @@ def test_edge_retries_no_audio_received_with_bound(monkeypatch: pytest.MonkeyPat
             if calls == 1:
                 raise NoAudioReceivedError
             yield {"type": "audio", "data": b"audio"}
+            yield {"type": "WordBoundary", "text": "hello", "offset": 0, "duration": 4_000_000}
 
     monkeypatch.setitem(
         sys.modules,
@@ -53,7 +54,32 @@ def test_edge_retries_no_audio_received_with_bound(monkeypatch: pytest.MonkeyPat
     )
     result = EdgeTtsSynthesizer().synthesize(SynthesisRequest("hello", "en-US-AndrewNeural"))
     assert result.audio_bytes == b"audio"
+    assert result.words[0].text == "hello"
     assert calls == 2
+
+
+def test_edge_returns_typed_error_after_retry_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    class NoAudioReceivedError(Exception):
+        pass
+
+    class Communicate:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        async def stream(self) -> AsyncIterator[dict[str, Any]]:
+            raise NoAudioReceivedError
+            yield {}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=Communicate,
+            exceptions=types.SimpleNamespace(NoAudioReceived=NoAudioReceivedError),
+        ),
+    )
+    with pytest.raises(NetworkError, match="after retries"):
+        EdgeTtsSynthesizer(attempts=2).synthesize(SynthesisRequest("hello", None))
 
 
 def test_edge_normalizes_typographic_punctuation_and_emoji() -> None:
@@ -125,3 +151,16 @@ def test_provider_failures_are_typed_and_redacted(monkeypatch: pytest.MonkeyPatc
     assert "private-key" not in str(raised.value)
 
 
+def test_gemini_rejects_non_default_rate_or_pitch_without_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_request(*_: Any, **__: Any) -> None:
+        pytest.fail("Gemini request should not be made")
+
+    monkeypatch.setattr(
+        "gflow_cli.services.speech_synthesizers.gemini.httpx.Client", unexpected_request
+    )
+    with pytest.raises(ConfigurationError, match="custom rate or pitch"):
+        GeminiTtsSynthesizer(api_key="secret").synthesize(
+            SynthesisRequest("hello", "Algieba", rate="+10%")
+        )

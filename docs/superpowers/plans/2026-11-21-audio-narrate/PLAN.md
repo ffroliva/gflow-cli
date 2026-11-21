@@ -143,16 +143,16 @@ skills/gflow-cli/SKILL.md and its plugin byte copy
 **Files:** `src/gflow_cli/services/speech_synthesizers/{__init__,edge,gemini}.py`, `pyproject.toml`, `tests/services/test_speech_synthesizers.py`.
 
 **Steps:**
-- [ ] Add `tts = ["edge-tts>=7.3.1"]`; lazy import edge-tts and raise a typed configuration error with the install hint when absent.
-- [ ] Stream audio and optional edge word boundaries; retry only `NoAudioReceived` a small bounded number of times.
-- [ ] Apply the evaluation-backed edge normalization for curly quotes/non-breaking hyphens and emoji.
-- [ ] Call Gemini TTS with httpx, a bounded timeout, `gemini-3.8-flash-tts`, canonical voice IDs from `api.character.VOICES`, and the dedicated key.
-- [ ] Reject non-default rate/pitch for Gemini before sending the request; edge passes both natively.
-- [ ] Map provider failures to typed network errors without retaining raw text, key, headers, or response body in public details.
+- [x] Add `tts = ["edge-tts>=7.3.1"]`; lazy import edge-tts and raise a typed configuration error with the install hint when absent.
+- [x] Stream audio and optional edge word boundaries; retry only `NoAudioReceived` a small bounded number of times.
+- [x] Apply the evaluation-backed edge normalization for curly quotes/non-breaking hyphens and emoji.
+- [x] Call Gemini TTS with httpx, a bounded timeout, `gemini-3.8-flash-tts`, canonical voice IDs from `api.character.VOICES`, and the dedicated key.
+- [x] Reject non-default rate/pitch for Gemini before sending the request; edge passes both natively.
+- [x] Map provider failures to typed network errors without retaining raw text, key, headers, or response body in public details.
 
 **Tests:**
-- [ ] Task 2 adapter tests pass using mocks; no live provider call.
-- [ ] `test_gemini_rejects_non_default_rate_or_pitch_without_request`.
+- [x] Task 2 adapter tests pass using mocks; no live provider call.
+- [x] `test_gemini_rejects_non_default_rate_or_pitch_without_request`.
 
 ## Task 5 — Narration service tests (red)
 
