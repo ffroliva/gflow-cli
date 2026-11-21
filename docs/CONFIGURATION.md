@@ -203,15 +203,21 @@ stay with your gateway; gflow never sees them.
 
 #### `GFLOW_CLI_LLM_MODEL`
 
-**What:** Model to request. Because gateways route on the model string, this doubles as the
-provider selector (e.g. `openai/gpt-4o-mini`, `google/gemini-2.5-flash`).
+**What:** Model to request for prompt tools. Because gateways route on the model string, this
+doubles as the provider selector (e.g. `openai/gpt-4o-mini`, `google/gemini-2.5-flash`).
 **Default:** unset.
 **Precedence:** a tool's TOML `config.model` pin > `GFLOW_CLI_LLM_MODEL` > the default
 endpoint's own default > omitted, letting the gateway choose. The builtin tools pin
 nothing on purpose: a hardcoded vendor model name is rejected by any gateway that does not
 serve it. Note Google's compat endpoint has **no** server-side default and answers
 `400 "model is not specified"`, so the default endpoint ships a matching default model.
-For transcription, an unset value selects `whisper-1`.
+
+#### `GFLOW_CLI_TRANSCRIBE_MODEL`
+
+**What:** Audio transcription model requested by `gflow video transcribe` and
+`gflow video captions` (when `--srt` is omitted) on `{base_url}/audio/transcriptions`.
+**Default:** `whisper-1`.
+**Scope:** Used only by transcription; `GFLOW_CLI_LLM_MODEL` is never read for it.
 
 #### When is the tool active?
 

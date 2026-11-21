@@ -63,8 +63,8 @@ OpenAI-compatible `/audio/transcriptions` endpoint and burn bottom-centred capti
    (such as OpenAI `https://api.openai.com/v1`, Groq `https://api.groq.com/openai/v1`, or a
    local `whisper.cpp` / `faster-whisper-server` / `vLLM` / `LiteLLM` server at
    `http://127.0.0.1:8080/v1`), along with `GFLOW_CLI_LLM_API_KEY` (optional for keyless
-   loopback servers) and `GFLOW_CLI_LLM_MODEL` (defaulting to `"whisper-1"` when unset on a
-   configured endpoint).
+   loopback servers) and `GFLOW_CLI_TRANSCRIBE_MODEL` (defaulting to `"whisper-1"` when unset on a
+   configured endpoint; `GFLOW_CLI_LLM_MODEL` is never read for transcription).
 
 ---
 
@@ -120,7 +120,7 @@ Five adversarial personas evaluated the proposal before implementation. No perso
 - **Default endpoint UX:** Because Google's default `GFLOW_CLI_LLM_BASE_URL` returns HTTP 404
   on `/audio/transcriptions`, the pre-flight `ConfigurationError` (exit 11, `charged="no"`,
   `next_action="fix_input"`) must give an actionable remediation hint naming
-  `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_LLM_MODEL`, and the offline
+  `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_TRANSCRIBE_MODEL`, and the offline
   `--srt` alternative.
 - **Six mirror axes (`skills/check/SKILL.md` step 1b):** Map `"video transcribe"` ->
   `"gflow_video_transcribe"` and `"video captions"` -> `"gflow_video_captions"` in
@@ -171,7 +171,7 @@ Full 13-dimension coverage map: [`SCENARIO.md`](SCENARIO.md). Gherkin specificat
 
 | # | Dimension | Scenario | Severity | Expected behaviour | Test category |
 |---|---|---|---|---|---|
-| 1 | D9 / D7 | `video transcribe` (or `video captions` without `--srt`) when `GFLOW_CLI_LLM_BASE_URL` is at the Google default | **Critical** | Fails pre-flight before extracting/sending audio with `ConfigurationError` (exit 11, `charged: "no"`, `next_action: "fix_input"`); hint names `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_LLM_MODEL`, and `--srt` | Unit + BDD + E2E |
+| 1 | D9 / D7 | `video transcribe` (or `video captions` without `--srt`) when `GFLOW_CLI_LLM_BASE_URL` is at the Google default | **Critical** | Fails pre-flight before extracting/sending audio with `ConfigurationError` (exit 11, `charged: "no"`, `next_action: "fix_input"`); hint names `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_TRANSCRIBE_MODEL`, and `--srt` | Unit + BDD + E2E |
 | 2 | D9 / D7 | Configured transcription endpoint returns an HTTP 3xx redirect | **Critical** | `follow_redirects=False` refuses the redirect and raises `ConfigurationError` (exit 11, `charged: "no"`) | Unit |
 | 3 | D13 / D8 | MCP `out_file` escapes `GFLOW_CLI_OUTPUT_DIR`, or `out_file` is omitted when source `file` is outside `GFLOW_CLI_OUTPUT_DIR` | **Critical** | Escaping `out_file` returns 400 `Invalid Output`; omitted `out_file` writes `<output_dir>/<stem>.srt` and `<output_dir>/<stem>-captions.mp4` inside `GFLOW_CLI_OUTPUT_DIR` | Unit (MCP) + BDD |
 | 4 | D11 / D7 | Malformed `.srt` file or non-SRT file passed to `--srt` / MCP `srt` | **Critical** | Raises `ConfigurationError` (exit 11, `charged: "no"`) naming block/line index only, never raw file content | Unit + BDD |
@@ -302,8 +302,8 @@ from `tests/features/test_video_captions_steps.py`.
 - [x] Implement `extract_wav_bytes(video_path: Path) -> tuple[bytes, float]`: decode the video container's first audio stream with PyAV, resample to 16 kHz mono `s16` PCM into an in-memory `io.BytesIO` WAV container, and return `(wav_bytes, duration_seconds)`. Raise `ConfigurationError(..., charged="no")` if the container has no audio stream or decodes zero audio frames, and `FrameExtractionError(..., charged="no")` if the container is corrupt/undecodable.
 - [x] Implement `transcribe_video(...) -> TranscribeResult`:
   - Check `_require_chain_extra()` and `refuse_cloud_storage_for_local_file` when `out_file` is given.
-  - Enforce the privacy & default-endpoint gate: if `(settings.llm_base_url or DEFAULT_LLM_BASE_URL).rstrip("/") == DEFAULT_LLM_BASE_URL`, raise `ConfigurationError` (exit 11, `charged="no"`, `next_action="fix_input"`) explaining that Google's default endpoint does not offer `/audio/transcriptions` and gflow never sends audio to an unconfigured endpoint, with remediation naming `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_LLM_MODEL`, and `--srt`.
-  - Extract 16 kHz mono WAV bytes via `extract_wav_bytes` and POST multipart form data (`file=("audio.wav", wav_bytes, "audio/wav")`, `model=settings.llm_model or "whisper-1"`, `response_format="verbose_json"`, plus optional `language`) to `{base_url}/audio/transcriptions` using `httpx.Client(follow_redirects=False, timeout=120.0)`.
+  - Enforce the privacy & default-endpoint gate: if `(settings.llm_base_url or DEFAULT_LLM_BASE_URL).rstrip("/") == DEFAULT_LLM_BASE_URL`, raise `ConfigurationError` (exit 11, `charged="no"`, `next_action="fix_input"`) explaining that Google's default endpoint does not offer `/audio/transcriptions` and gflow never sends audio to an unconfigured endpoint, with remediation naming `GFLOW_CLI_LLM_BASE_URL`, `GFLOW_CLI_LLM_API_KEY`, `GFLOW_CLI_TRANSCRIBE_MODEL`, and `--srt`.
+  - Extract 16 kHz mono WAV bytes via `extract_wav_bytes` and POST multipart form data (`file=("audio.wav", wav_bytes, "audio/wav")`, `model=settings.transcribe_model`, `response_format="verbose_json"`, plus optional `language`) to `{base_url}/audio/transcriptions` using `httpx.Client(follow_redirects=False, timeout=120.0)`.
   - Map 3xx and HTTP 400/401/403/404/405/422 to `ConfigurationError(..., charged="no")`, HTTP 429 to `RateLimitError(..., charged="no")`, and HTTP 5xx / `httpx.HTTPError` to `NetworkError(..., charged="no")`, redacting response text with `redact_error_detail`.
   - Parse either raw SRT response text or JSON (`segments` list or `text` fallback), write the `.srt` file with `encoding="utf-8"`, log `video.transcribe.completed` (host only, never keys/URLs), and return `TranscribeResult`.
 - [x] Implement `caption_video(...) -> CaptionsResult`:
