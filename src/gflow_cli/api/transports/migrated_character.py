@@ -107,6 +107,7 @@ _REREAD_S = 8.0
 
 _CHARACTERS, _VOICES = 5, 3
 _CHARACTER_AT = "migrated.character"
+_CREATE_REPLY_LOST = "migrated.character_create_reply_lost"
 _CHARACTER_ROUTE = re.compile(
     r"/project/(?P<project>[0-9a-f-]{36})/character/(?P<entity>[0-9a-f-]{36})"
 )
@@ -395,11 +396,11 @@ def _recover_created(got: dict[str, Any], url: object, project_id: str) -> str |
     if UPLOAD_RPC in got:
         bound = _upload_fields(got[UPLOAD_RPC])[2]
         if bound is not None:
-            log.warning("migrated.character_create_reply_lost", source="upload_reply")
+            log.warning(_CREATE_REPLY_LOST, source="upload_reply")
             return bound
     match = _CHARACTER_ROUTE.search(str(url or ""))
     if match and match["project"] == project_id:
-        log.warning("migrated.character_create_reply_lost", source="page_url")
+        log.warning(_CREATE_REPLY_LOST, source="page_url")
         return match["entity"]
     return None
 
@@ -762,7 +763,7 @@ async def _created_since(page: Page, project_id: str, known: set[str]) -> str | 
                 CREATE_RPC,
             )
         if new:
-            log.warning("migrated.character_create_reply_lost", source="project_read")
+            log.warning(_CREATE_REPLY_LOST, source="project_read")
             return new[0]
         if asyncio.get_running_loop().time() >= deadline:
             return None
