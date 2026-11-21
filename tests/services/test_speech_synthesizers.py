@@ -16,7 +16,6 @@ from gflow_cli.services.speech_ports import SynthesisRequest
 from gflow_cli.services.speech_synthesizers import (
     EdgeTtsSynthesizer,
     GeminiTtsSynthesizer,
-    sanitize_for_edge_tts,
 )
 
 
@@ -83,8 +82,33 @@ def test_edge_returns_typed_error_after_retry_bound(monkeypatch: pytest.MonkeyPa
         EdgeTtsSynthesizer(attempts=2).synthesize(SynthesisRequest("hello", None))
 
 
-def test_edge_normalizes_typographic_punctuation_and_emoji() -> None:
-    assert sanitize_for_edge_tts("‘hello’ — don’t 😊") == "'hello' - don't "
+def test_edge_preserves_text_and_rejects_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent_text = ""
+
+    class CaptureCommunicate:
+        def __init__(self, text: str, *_: Any, **__: Any) -> None:
+            nonlocal sent_text
+            sent_text = text
+
+        async def stream(self) -> AsyncIterator[dict[str, Any]]:
+            yield {"type": "audio", "data": b"audio"}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "edge_tts",
+        types.SimpleNamespace(
+            Communicate=CaptureCommunicate,
+            exceptions=types.SimpleNamespace(
+                NoAudioReceived=type("NoAudioReceived", (Exception,), {})
+            ),
+        ),
+    )
+    raw_text = "‘hello’ — don’t 😊"
+    EdgeTtsSynthesizer().synthesize(SynthesisRequest(raw_text, "en-US-AndrewNeural"))
+    assert sent_text == raw_text
+
+    with pytest.raises(ConfigurationError, match="empty"):
+        EdgeTtsSynthesizer().synthesize(SynthesisRequest("   ", "en-US-AndrewNeural"))
 
 
 def test_gemini_uses_dedicated_key_and_parses_audio(monkeypatch: pytest.MonkeyPatch) -> None:

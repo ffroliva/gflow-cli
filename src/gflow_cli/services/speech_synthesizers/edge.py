@@ -4,19 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import re
 from dataclasses import dataclass
 from typing import Any, cast
 
 from gflow_cli.errors import ConfigurationError, NetworkError, TransportTimeoutError
 from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult, WordTiming
-
-_EMOJI = re.compile(r"[\U0001f300-\U0001faff\u2600-\u27bf\ufe0f\u200d]")
-_PUNCTUATION = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "‑": "-", "—": "-"})
-
-
-def sanitize_for_edge_tts(text: str) -> str:
-    return _EMOJI.sub("", text.translate(_PUNCTUATION))
 
 
 @dataclass(frozen=True)
@@ -26,6 +18,12 @@ class EdgeTtsSynthesizer:
     attempts: int = 3
 
     def synthesize(self, request: SynthesisRequest) -> SynthesisResult:
+        if not request.text or not request.text.strip():
+            raise ConfigurationError(
+                "Narration text cannot be empty.",
+                charged="no",
+                remediation_hint="Provide non-empty text to narrate.",
+            )
         try:
             edge_tts = importlib.import_module("edge_tts")
         except ImportError as exc:
@@ -91,7 +89,7 @@ class EdgeTtsSynthesizer:
         self, edge_tts: Any, request: SynthesisRequest, voice: str
     ) -> tuple[bytes, list[WordTiming]]:
         communicator = edge_tts.Communicate(
-            sanitize_for_edge_tts(request.text),
+            request.text,
             voice=voice,
             rate=request.rate,
             pitch=request.pitch,
