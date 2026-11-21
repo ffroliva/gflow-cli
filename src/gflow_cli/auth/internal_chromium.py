@@ -67,7 +67,8 @@ UNVERIFIED_MESSAGE: dict[FlowSessionOutcome, str] = {
         "This profile's cookie store is corrupt or unreadable."
     ),
     FlowSessionOutcome.PROFILE_UNAVAILABLE: (
-        "This profile's cookies could not be read: Chrome has it in use, or could not start."
+        "The headless Chrome read of this profile's cookies could not run, so the "
+        "session could not be checked. The cause is on this machine, not the network."
     ),
 }
 UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
@@ -88,8 +89,8 @@ UNVERIFIED_HINT: dict[FlowSessionOutcome, str] = {
         "the profile out) and log in again."
     ),
     FlowSessionOutcome.PROFILE_UNAVAILABLE: (
-        "Close any Chrome window using this profile and check that Google Chrome is "
-        "installed, then re-run `gflow auth login`."
+        "The warning above names the error class. Close any Chrome window using this "
+        "profile, then retry with `gflow auth status`; the sign-in itself was kept."
     ),
 }
 

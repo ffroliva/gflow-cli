@@ -452,7 +452,9 @@ class TestVerifyFlowSession:
         assert status.outcome is FlowSessionOutcome.VERIFICATION_ERROR
 
     @pytest.mark.asyncio
-    async def test_dpapi_runtime_error_triggers_playwright_fallback(self, gflow_home: Path) -> None:
+    async def test_dpapi_runtime_error_triggers_playwright_fallback(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Regression for fix #1: RuntimeError('Failed to decrypt the cipher text with DPAPI')
 
         browser-cookie3==0.20.1 raises RuntimeError (not BrowserCookieError) from
@@ -460,6 +462,9 @@ class TestVerifyFlowSession:
         This must be caught and re-raised as PermissionError so get_chrome_cookie_snapshot
         routes it to the Playwright fallback, not silently returns VERIFICATION_ERROR.
         """
+        monkeypatch.setattr(
+            "gflow_cli.browser_manager.is_playwright_chrome_channel_available", lambda: True
+        )
         profile = gflow_home / "profile_default"
         profile.mkdir()
         # Write chrome marker so the Playwright fallback is allowed.
@@ -512,18 +517,19 @@ class TestVerifyFlowSession:
         assert status.user_email == "test.user@example.com"
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("macos", [True, False])
-    async def test_v11_jar_verifies_through_the_browser_read(
-        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
+    async def test_macos_route_verifies_without_browser_cookie3(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A jar browser_cookie3 0.20.1 refuses with its v11 assertion still
-        verifies end to end. macOS never asks browser_cookie3 (#1397), so it runs
-        the store check on a real SQLite file and goes to the headless Chrome read;
-        elsewhere the assertion (which browser_cookie3 raises only off Linux, and
-        win32 returns before it) is a decryption failure that falls back."""
+        """#1400 on the #1397 route: current Chrome on macOS stores every cookie as v11,
+        which browser_cookie3 0.20.1 cannot read there. macOS never asks it: the real
+        SQLite store passes the header and quick_check, then the headless Chrome read
+        supplies the cookies and the session verifies end to end."""
         import sqlite3
 
-        monkeypatch.setattr("gflow_cli.auth.cookies._SKIP_DIRECT_READ", macos)
+        monkeypatch.setattr("gflow_cli.auth.cookies._SKIP_DIRECT_READ", True)
+        monkeypatch.setattr(
+            "gflow_cli.browser_manager.is_playwright_chrome_channel_available", lambda: True
+        )
         profile = gflow_home / "profile_default"
         jar = profile / "Default" / "Network" / "Cookies"
         jar.parent.mkdir(parents=True)
@@ -532,11 +538,7 @@ class TestVerifyFlowSession:
         conn.close()
         (profile / ".gflow_browser_strategy").write_text("chrome", encoding="utf-8")
 
-        class BrowserCookieError(Exception):
-            pass
-
         fake_bc3 = MagicMock()
-        fake_bc3.BrowserCookieError = BrowserCookieError
         fake_bc3.chrome.side_effect = AssertionError("v11 keys should only appear on Linux.")
 
         fake_resp = MagicMock(status_code=200, text=AUTHENTICATED_BODY)
@@ -568,27 +570,11 @@ class TestVerifyFlowSession:
 
         assert status.outcome is FlowSessionOutcome.AUTHENTICATED
         assert status.user_email == "test.user@example.com"
-        assert fake_bc3.chrome.called is not macos
+        fake_bc3.chrome.assert_not_called()
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "failure",
-        [
-            ProfileLockedError("Chrome reports the profile dir is already in use"),
-            PlaywrightError("Chromium distribution 'chrome' is not found"),
-        ],
-        ids=["profile-locked", "chrome-cannot-start"],
-    )
-    async def test_a_local_cookie_read_failure_names_the_profile_not_the_network(
-        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
-    ) -> None:
-        """#1400 item 1: when the headless Chrome cookie read cannot run (the profile
-        is still held by Chrome, or Chrome cannot start), the cause is on this
-        machine. It was reported as VERIFICATION_ERROR, "often a network problem"."""
+    def _fail_the_browser_read(self, monkeypatch: pytest.MonkeyPatch, failure: Exception) -> None:
         from gflow_cli.auth import cookies as cookies_mod
 
-        profile = gflow_home / "profile_default"
-        profile.mkdir()
         monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", False)
         monkeypatch.setattr(
             cookies_mod, "_get_chrome_cookies3", MagicMock(side_effect=PermissionError("x"))
@@ -597,13 +583,61 @@ class TestVerifyFlowSession:
             cookies_mod, "_get_chrome_cookies_playwright", AsyncMock(side_effect=failure)
         )
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            ProfileLockedError(
+                detail="profile is locked (held)",
+                remediation_hint="set GFLOW_CLI_LEASE_WAIT_SECONDS to wait for the holder",
+            ),
+            ProfileLockedError(
+                detail="Chrome reports the profile dir is already in use",
+                remediation_hint="Close the Chrome window that is using this profile",
+            ),
+        ],
+        ids=["gflow-lease", "chrome-holds-it"],
+    )
+    async def test_a_held_profile_raises_its_own_profile_locked_error(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch, failure: ProfileLockedError
+    ) -> None:
+        """#1400 item 1: a profile another gflow process leases, or a Chrome window
+        holds, is not a network fault. Each raise site's own remediation (the lease's
+        owner and GFLOW_CLI_LEASE_WAIT_SECONDS, or the Chrome window) must reach the
+        user, so the typed error propagates instead of becoming VERIFICATION_ERROR."""
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        self._fail_the_browser_read(monkeypatch, failure)
+
+        with patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings:
+            mock_settings.return_value.home = gflow_home
+            with pytest.raises(ProfileLockedError) as raised:
+                await verify_flow_profile(profile, source="status")
+
+        assert raised.value is failure
+
+    @pytest.mark.asyncio
+    async def test_a_browser_read_that_cannot_run_is_local_and_names_its_class(
+        self, gflow_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#1400 item 1: the headless cookie read failed (a launch error, a timeout, a
+        read-only profile, a cookies() failure). Local, not the network; the detail
+        names the error class and never its text."""
+        profile = gflow_home / "profile_default"
+        profile.mkdir()
+        self._fail_the_browser_read(
+            monkeypatch, PlaywrightError("secret-ish launch text /home/someone")
+        )
+
         with patch("gflow_cli.auth.verification.get_settings", **NO_PROXY) as mock_settings:
             mock_settings.return_value.home = gflow_home
             status = await verify_flow_profile(profile, source="status")
 
         assert status.outcome is FlowSessionOutcome.PROFILE_UNAVAILABLE
+        assert "could not run" in status.detail
+        assert "(Error)" in status.detail
         assert "network" not in status.detail.lower()
-        assert "in use" in status.detail
+        assert "launch text" not in status.detail
 
     @pytest.mark.asyncio
     async def test_httpx_retryable_status_retried_then_verification_error(

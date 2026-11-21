@@ -36,16 +36,16 @@ _ENVELOPES: dict[FlowSessionOutcome, tuple[str, str, int, NextAction, str]] = {
         "Close any Chrome window using this profile, then re-run "
         "`gflow auth login` for it.",
     ),
-    # #1400: the cookie read could not open the profile (Chrome holds it, or cannot
-    # start). Local, so not the 503 network envelope; retryable once Chrome lets go.
+    # #1400: the headless cookie read could not run (`detail` names the error class).
+    # Local, so not the 503 network envelope; a launch or read failure can be transient.
+    # A profile another process holds is the `profile-locked` error instead.
     FlowSessionOutcome.PROFILE_UNAVAILABLE: (
         "profile-unavailable",
         "Profile cookies could not be read",
         409,
         "retry",
-        "Chrome has this profile in use, or could not start. Close any Chrome "
-        "window using this profile and check that Google Chrome is installed, "
-        "then retry.",
+        "The headless Chrome read of this profile's cookies failed on this machine, "
+        "not the network. Close any Chrome window using this profile, then retry.",
     ),
     # A network/endpoint problem is not fixed by re-login, and the machine-readable
     # discriminators must say so too: labelling this 401/auth-expired sent

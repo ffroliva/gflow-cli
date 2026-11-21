@@ -426,13 +426,12 @@ def test_preread_flow_session_cookies_best_effort(
     assert client._preread_flow_cookies == {}  # noqa: SLF001
 
 
-@pytest.mark.parametrize("macos", [True, False])
-def test_preread_reads_a_v11_jar_through_the_browser(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, macos: bool
+def test_preread_on_macos_reads_through_the_browser_not_browser_cookie3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#1400: the pre-read gets a jar browser_cookie3 refuses from the headless
-    Chrome read: on macOS, which skips browser_cookie3 and checks the real SQLite
-    store first (#1397), and elsewhere, where the v11 assertion falls back."""
+    """#1400 on the #1397 route: on macOS the pre-read checks the real SQLite store
+    and gets the cookies from the headless Chrome read; browser_cookie3, which cannot
+    read the v11 cookies current Chrome writes there, is never imported or called."""
     import asyncio
     import sqlite3
 
@@ -443,14 +442,9 @@ def test_preread_reads_a_v11_jar_through_the_browser(
     conn = sqlite3.connect(network / "Cookies")
     conn.execute("create table cookies(x)")
     conn.close()
-    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", macos)
-    if not macos:
-
-        def _v11(**_: object) -> object:
-            raise AssertionError("v11 keys should only appear on Linux.")
-
-        # Through the loader, so shadowcopy (WMI) is never imported (#1229).
-        monkeypatch.setattr(cookies_mod._browser_cookie3(), "chrome", _v11)  # noqa: SLF001
+    monkeypatch.setattr(cookies_mod, "_SKIP_DIRECT_READ", True)
+    direct = MagicMock(side_effect=AssertionError("v11 keys should only appear on Linux."))
+    monkeypatch.setattr(cookies_mod, "_get_chrome_cookies3", direct)
     snap = cookies_mod.ChromeCookieSnapshot(
         httpx_cookies={"__Secure-next-auth.session-token": "tok"}, google_session=True
     )
@@ -461,6 +455,7 @@ def test_preread_reads_a_v11_jar_through_the_browser(
     asyncio.run(client._preread_flow_session_cookies())  # noqa: SLF001
     assert client._preread_flow_cookies == {"__Secure-next-auth.session-token": "tok"}  # noqa: SLF001
     browser.assert_awaited_once_with(profile_dir=tmp_path)
+    direct.assert_not_called()
 
 
 # --- issue #477: profile-engine (Chromium version) downgrade guard ---------------

@@ -151,14 +151,6 @@ def _get_chrome_cookies3(profile_dir: Path) -> ChromeCookieSnapshot:
         # session has settled, or in minimal desktop environments without a keyring.
         # Treat it as a decryption failure so the Playwright fallback runs.
         raise PermissionError(f"Failed to read Chrome keyring key: {exc}") from exc
-    except AssertionError as exc:
-        # Defensive (#1400): browser_cookie3 0.20.1 asserts "v11 keys should only
-        # appear on Linux." for a v11 cookie when it has no v11 key. Only its macOS
-        # branch leaves that key unset, and macOS skips this read; should it ever
-        # run there, it is a decryption failure. Any other assertion is not masked.
-        if "v11" not in str(exc):
-            raise
-        raise PermissionError(f"Failed to decrypt Chrome cookies: {exc}") from exc
 
     return ChromeCookieSnapshot(
         httpx_cookies=_name_value_cookies(cookies, flow_only=True),

@@ -22,6 +22,7 @@ from gflow_cli import __version__, json_output, profile_store, telemetry, teleme
 from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import (
     OutputFormat,
+    _handle_gflow_error,  # pyright: ignore[reportPrivateUsage]
     command_tree,
     help_json_path,
     output_format_option,
@@ -410,9 +411,15 @@ def auth_status(profile: str | None) -> None:
     from gflow_cli.auth import verification
 
     console.print("[dim]Probing Flow session (may take up to ~2 min on a slow network)...[/dim]")
-    status_result = asyncio.run(
-        verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
-    )
+    from gflow_cli.errors import ProfileLockedError
+
+    try:
+        status_result = asyncio.run(
+            verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
+        )
+    except ProfileLockedError as exc:
+        # #1400: held by another gflow process or a Chrome window; its own hint says which.
+        sys.exit(_handle_gflow_error(exc, cli_command="auth status"))
     if not status_result.authenticated:
         if status_result.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
             # #796: local profile state, not the network. Sending this user to
@@ -431,11 +438,11 @@ def auth_status(profile: str | None) -> None:
                 f"[bold]gflow auth login --profile {name}[/bold].",
             )
         elif status_result.outcome is verification.FlowSessionOutcome.PROFILE_UNAVAILABLE:
-            # #1400: the cookie read could not open the profile; local, not the network.
+            # #1400: the headless cookie read could not run; local, not the network.
             console.print(
                 f"[yellow]{escape(str(status_result.detail))}[/yellow] "
-                "Close any Chrome window using this profile and check that Google Chrome "
-                "is installed, then retry.",
+                "The cause is on this machine, not the network. Close any Chrome window "
+                "using this profile, then retry.",
             )
         elif status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
             # Re-login cannot fix an unreachable endpoint — don't send the
@@ -468,7 +475,9 @@ def _render_renew_row(
         who = f" as [bold]{escape(r['email'])}[/bold]" if r["email"] else ""
         console.print(f"[green]{name}: session renewed and verified{who}.[/green]")
     elif r["result"] == "in_use":
-        console.print(f"[dim]{name}: in use by another gflow process — skipped.[/dim]")
+        console.print(
+            f"[dim]{name}: in use by another gflow process or a Chrome window — skipped.[/dim]"
+        )
     elif r["result"] in ("engine_downgrade", "launch_error"):
         reason = (
             "profile was written by a newer browser"
@@ -494,6 +503,11 @@ def _render_renew_row(
         console.print(
             f"[yellow]{name}: not renewed — {reason}.[/yellow] Retry later; if it "
             f"persists, run [bold]gflow auth login --profile {name}[/bold].",
+        )
+    elif r["result"] == FlowSessionOutcome.PROFILE_UNAVAILABLE.value:
+        console.print(
+            f"[yellow]{name}: the session check could not run on this machine.[/yellow] "
+            "Close any Chrome window using this profile, then retry.",
         )
     elif r["result"] == FlowSessionOutcome.VERIFICATION_ERROR.value:
         console.print(

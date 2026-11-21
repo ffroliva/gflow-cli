@@ -53,27 +53,6 @@ def test_get_chrome_cookies3_maps_browsercookieerror_to_permissionerror(
         _get_chrome_cookies3(profile)
 
 
-@pytest.mark.parametrize(
-    ("message", "falls_back"),
-    [("v11 keys should only appear on Linux.", True), ("something else", False)],
-)
-def test_get_chrome_cookies3_maps_only_the_v11_assertion_to_permissionerror(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str, falls_back: bool
-) -> None:
-    """Defensive: browser_cookie3 0.20.1 asserts on a v11 cookie when it holds no
-    v11 key, which only its macOS branch leaves unset (and macOS skips this read).
-    That assertion is a decryption failure; any other assertion is not masked."""
-    profile = _make_profile_with_cookies(tmp_path)
-
-    def _raise(**_: object) -> object:
-        raise AssertionError(message)
-
-    monkeypatch.setattr(cookies_mod._browser_cookie3(), "chrome", _raise)  # noqa: SLF001
-
-    with pytest.raises(PermissionError if falls_back else AssertionError, match=message):
-        _get_chrome_cookies3(profile)
-
-
 # --- issue #222 / #230: /fx-scoped session token must survive the cookie read ---
 
 
