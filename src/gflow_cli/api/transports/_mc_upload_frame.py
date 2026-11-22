@@ -56,6 +56,17 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+#: What to do about Flow's one-time "rights to use this image" dialog (#719).
+UPLOAD_TERMS_REMEDIATION = (
+    "Open the project on flow.google.com, upload any image by hand, "
+    "and accept the one-time 'rights to use this image' dialog. gflow "
+    "does not accept it for you: it affirms that YOU hold the rights "
+    "to what you upload. It appears once per account — after that, "
+    "uploads work unattended. If you see a different dialog instead "
+    "(an error, a quota notice, a re-login), that is the one blocking "
+    "the upload. Nothing was spent; re-run when done."
+)
+
 
 class UploadFrameMixin(SettingsPaneMixin):
     """Frame upload and picker interactions for i2v/r2v."""
@@ -232,15 +243,7 @@ class UploadFrameMixin(SettingsPaneMixin):
                             f"upload-terms confirmation (host=migrated)"
                         ),
                         route=route,
-                        remediation_hint=(
-                            "Open the project on flow.google.com, upload any image by hand, "
-                            "and accept the one-time 'rights to use this image' dialog. gflow "
-                            "does not accept it for you: it affirms that YOU hold the rights "
-                            "to what you upload. It appears once per account — after that, "
-                            "uploads work unattended. If you see a different dialog instead "
-                            "(an error, a quota notice, a re-login), that is the one blocking "
-                            "the upload. Nothing was spent; re-run when done."
-                        ),
+                        remediation_hint=UPLOAD_TERMS_REMEDIATION,
                     ) from None
                 # Say which half of #719 this is. `sent` is observed, not inferred: the
                 # request listener above saw the upload leave the page, or it did not.

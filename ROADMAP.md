@@ -57,7 +57,7 @@ The CLI and the MCP server are two doors onto one product, and every CLI capabil
 MCP twin or a recorded reason it does not.
 
 - Server-directed tasks and bounded waits: [#1105](https://github.com/ffroliva/gflow-cli/issues/1105), [#481](https://github.com/ffroliva/gflow-cli/issues/481).
-- Missing twins: video extend ([#884](https://github.com/ffroliva/gflow-cli/issues/884)), character create ([#691](https://github.com/ffroliva/gflow-cli/issues/691)).
+- Missing twins: video extend ([#884](https://github.com/ffroliva/gflow-cli/issues/884)), character create from a prompt ([#691](https://github.com/ffroliva/gflow-cli/issues/691); the `--image` path has `gflow_character_create`).
 - Distribution: Docker MCP Catalog ([#822](https://github.com/ffroliva/gflow-cli/issues/822)).
 
 ## Onboarding and evidence
