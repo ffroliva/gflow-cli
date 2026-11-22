@@ -43,6 +43,8 @@ _ASSET_LOOKUP_COLUMNS = (
 
 def verified_local_path(local_file: LocalFileRecord) -> Path | None:
     """Return an on-disk catalog file only when its recorded integrity still matches."""
+    if getattr(local_file, "superseded_at", None) is not None:
+        return None
     path = local_file.path
     if local_file.storage_provider is not None or path is None:
         return None
@@ -73,10 +75,16 @@ def _decode_metadata_json(raw: object) -> dict[str, Any]:
     return cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
 
 
+def _optional_column(row: sqlite3.Row, name: str) -> object | None:
+    """The column's value, or None when the query did not select it."""
+    return dict(zip(row.keys(), tuple(row), strict=True)).get(name)
+
+
 def _row_to_local_file(row: sqlite3.Row) -> LocalFileRecord:
     provider: str | None = row["storage_provider"]
     # Cloud-only rows: path column holds the cloud URI, not a filesystem path.
     local_path = None if provider is not None else Path(str(row["path"]))
+    superseded_at = cast("str | None", _optional_column(row, "superseded_at"))
     return LocalFileRecord(
         id=str(row["id"]),
         profile_name=str(row["profile_name"]),
@@ -88,6 +96,7 @@ def _row_to_local_file(row: sqlite3.Row) -> LocalFileRecord:
         storage_provider=provider,
         cloud_uri=row["cloud_uri"],
         created_at=row["created_at"],
+        superseded_at=superseded_at,
     )
 
 

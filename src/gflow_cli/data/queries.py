@@ -151,9 +151,20 @@ _LIST_IMAGES_SQL = """
          GROUP BY oa2.asset_id
     ) op ON op.asset_id = a.id
     LEFT JOIN (
-        SELECT asset_id, COUNT(*) AS copy_count, MAX(path) AS latest_path
-          FROM local_files
-         GROUP BY asset_id
+        SELECT
+            asset_id,
+            COUNT(*) AS copy_count,
+            (
+                SELECT lf2.path
+                FROM local_files lf2
+                WHERE lf2.asset_id = lf.asset_id
+                  AND lf2.superseded_at IS NULL
+                ORDER BY lf2.created_at DESC, lf2.id DESC
+                LIMIT 1
+            ) AS latest_path
+        FROM local_files lf
+        WHERE lf.superseded_at IS NULL
+        GROUP BY lf.asset_id
     ) lfa ON lfa.asset_id = a.id
     WHERE a.kind = 'image'
       AND (:profile IS NULL OR a.profile_name = :profile)
@@ -181,7 +192,7 @@ _LIST_IMAGES_ALL_COPIES_SQL = """
          WHERE oa2.role = 'output'
          GROUP BY oa2.asset_id
     ) op ON op.asset_id = a.id
-    LEFT JOIN local_files lf ON lf.asset_id = a.id
+    LEFT JOIN local_files lf ON lf.asset_id = a.id AND lf.superseded_at IS NULL
     WHERE a.kind = 'image'
       AND (:profile IS NULL OR a.profile_name = :profile)
     ORDER BY a.created_at DESC
@@ -311,9 +322,20 @@ _LIST_VIDEOS_SQL = """
          GROUP BY oa2.asset_id
     ) op ON op.asset_id = a.id
     LEFT JOIN (
-        SELECT asset_id, COUNT(*) AS copy_count, MAX(path) AS latest_path
-          FROM local_files
-         GROUP BY asset_id
+        SELECT
+            asset_id,
+            COUNT(*) AS copy_count,
+            (
+                SELECT lf2.path
+                FROM local_files lf2
+                WHERE lf2.asset_id = lf.asset_id
+                  AND lf2.superseded_at IS NULL
+                ORDER BY lf2.created_at DESC, lf2.id DESC
+                LIMIT 1
+            ) AS latest_path
+        FROM local_files lf
+        WHERE lf.superseded_at IS NULL
+        GROUP BY lf.asset_id
     ) lfa ON lfa.asset_id = a.id
     WHERE a.kind = 'video'
       AND (:profile IS NULL OR a.profile_name = :profile)
@@ -343,7 +365,7 @@ _LIST_VIDEOS_ALL_COPIES_SQL = """
          WHERE oa2.role = 'output'
          GROUP BY oa2.asset_id
     ) op ON op.asset_id = a.id
-    LEFT JOIN local_files lf ON lf.asset_id = a.id
+    LEFT JOIN local_files lf ON lf.asset_id = a.id AND lf.superseded_at IS NULL
     WHERE a.kind = 'video'
       AND (:profile IS NULL OR a.profile_name = :profile)
     ORDER BY a.created_at DESC

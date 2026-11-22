@@ -37,6 +37,7 @@ def test_open_creates_schema_and_migration_row(tmp_path: Path) -> None:
             "0008",
             "0009",
             "0010",
+            "0011",
         ]
         assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000

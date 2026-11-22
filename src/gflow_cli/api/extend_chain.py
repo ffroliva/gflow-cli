@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from gflow_cli.api.credit_cap import mark_prior_work_billed, preserve_credit_cap_partials
-from gflow_cli.errors import RETRY_ACTIONS, GFlowError
+from gflow_cli.errors import ConfigurationError, GFlowError, WireFormatError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
@@ -84,6 +84,57 @@ class ExtendChainResult:
     def aborted(self) -> bool:
         """A run ended early exactly when something refused it."""
         return self.error is not None
+
+
+def _submit_failure(exc: GFlowError | ValueError, completed: list[str]) -> GFlowError:
+    if isinstance(exc, ValueError):
+        error = ConfigurationError(str(exc))
+        error.__cause__ = exc
+        return error
+    if isinstance(exc, WireFormatError):
+        error = exc
+        error.remediation_hint = (
+            "The extend response was malformed. Check the scene on Flow for any accepted "
+            "segment before continuing."
+            + (" Completed segments are already billed." if completed else "")
+        )
+        return error
+    return exc
+
+
+def _poll_failure(exc: GFlowError | ValueError, *, segment: int, media_id: str) -> GFlowError:
+    error: GFlowError
+    if isinstance(exc, ValueError):
+        error = WireFormatError(
+            str(exc),
+            remediation_hint=(
+                "The segment's completion is unknown. Check the scene on Flow before "
+                "running the chain again."
+            ),
+        )
+        error.__cause__ = exc
+    else:
+        error = exc
+    if not error.operation_id:
+        error.operation_id = media_id
+    action = error.resolved_next_action()
+    in_flight = (
+        f"Flow took segment {segment} ({media_id}), so it may have charged for it. "
+        "Check the scene on Flow before running it again."
+    )
+    if action in {"reauth", "fix_input"}:
+        # The advice stands (log in again / fix the input), but the accepted segment may be
+        # billed either way: never report it as uncharged, and say so before a re-run.
+        if error.charged != "yes":
+            error.charged = "maybe"
+        error.retryable = False
+        error.remediation_hint = f"{in_flight} {error.remediation_hint or ''}".strip()
+    elif action != "reconcile":
+        error.charged = "maybe"
+        error.next_action = "reconcile"
+        error.retryable = False
+        error.remediation_hint = in_flight
+    return error
 
 
 async def run_extend_chain(  # noqa: PLR0913
@@ -149,26 +200,22 @@ async def run_extend_chain(  # noqa: PLR0913
                 max_credits=(max_credits - spent if max_credits is not None else None),
             )
         except (GFlowError, ValueError) as exc:
-            # ValueError is in here on purpose: media_name_from_generate_response
-            # and parse_video_status raise it bare on a shape drift, and by then
-            # the segment is already billed. Letting it escape would skip the
-            # partial-preservation path entirely — the exact "paid for, invisible"
-            # outcome this module's docstring says it prevents.
             # No retry, by design. Hand back everything already paid for.
-            preserve_credit_cap_partials(exc, completed)
-            mark_prior_work_billed(exc, bool(completed))
+            error = _submit_failure(exc, completed)
+            preserve_credit_cap_partials(error, completed)
+            mark_prior_work_billed(error, bool(completed))
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,
                 of=total,
                 completed=len(completed),
-                error_class=type(exc).__name__,
+                error_class=type(error).__name__,
             )
             return ExtendChainResult(
                 scene_id=scene_id,
                 completed_media_ids=completed,
                 credits_spent=spent,
-                error=exc,
+                error=error,
             )
 
         # Billed now — record before the long wait, never after.
@@ -187,30 +234,19 @@ async def run_extend_chain(  # noqa: PLR0913
         try:
             await client.poll_video_status(started.media_id, project_id=project_id)
         except (GFlowError, ValueError) as exc:
-            if isinstance(exc, GFlowError) and not exc.operation_id:
-                exc.operation_id = started.media_id  # #1201: billed; the handle to settle it
-            if isinstance(exc, GFlowError) and exc.resolved_next_action() in RETRY_ACTIONS:
-                # #1201: a poll failure outlasting its retries must not advise re-running a
-                # segment Flow already took.
-                exc.charged = "maybe"
-                exc.next_action = "reconcile"
-                exc.retryable = False
-                exc.remediation_hint = (
-                    f"Flow took segment {index + 1} ({started.media_id}), so it may have "
-                    "charged for it. Check the scene on Flow before running it again."
-                )
+            error = _poll_failure(exc, segment=index + 1, media_id=started.media_id)
             # The in-flight segment's outcome is unknown (docs/ERRORS.md: maybe / reconcile);
             # only a segment that already finished proves billed work.
-            mark_prior_work_billed(exc, bool(completed))
+            mark_prior_work_billed(error, bool(completed))
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,
                 of=total,
                 completed=len(completed),
-                error_class=type(exc).__name__,
+                error_class=type(error).__name__,
             )
             return ExtendChainResult(
-                scene_id=scene_id, completed_media_ids=completed, credits_spent=spent, error=exc
+                scene_id=scene_id, completed_media_ids=completed, credits_spent=spent, error=error
             )
         completed.append(started.media_id)
         logger.info("extend_segment_completed", segment=index + 1, of=total)
