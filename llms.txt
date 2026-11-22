@@ -4,7 +4,7 @@
 
 ## Key facts
 
-- Two surfaces, one package: the `gflow` CLI (70+ commands, typed exit codes, `gflow --help --json` for the whole tree) and an MCP server with 26 tools (`gflow mcp run` over stdio, `gflow serve` for Streamable HTTP at `/mcp`); CLI-to-MCP parity is enforced in CI.
+- Two surfaces, one package: the `gflow` CLI (70+ commands, typed exit codes, `gflow --help --json` for the whole tree) and an MCP server with 27 tools (`gflow mcp run` over stdio, `gflow serve` for Streamable HTTP at `/mcp`); CLI-to-MCP parity is enforced in CI.
 - Listed in the official MCP Registry as `io.github.ffroliva/gflow-cli`; install from PyPI (`gflow-cli`); macOS, Windows and Linux; Python 3.11+.
 - Connect a client: Claude Code plugin (`/plugin marketplace add ffroliva/gflow-cli`, then `/plugin install gflow@gflow-cli`), `gflow mcp setup` (Claude Desktop), `gflow mcp setup --target cursor`, `gflow mcp setup --target vscode`, or any MCP client with command `uvx gflow-cli mcp run`.
 - Video models: Veo 3.1 Lite, Fast and Quality (8 s); Omni Flash (10 s) and Omni 1.2 Flash (15 s), up to 7 reference images. Flow retires Veo 3.1 Fast, Veo 3.1 Quality and Omni Flash on 2026-12-05 (`retires_on` in `gflow models --json`); use Veo 3.1 Lite or Omni 1.2 Flash. Image models: Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4. `gflow models list` prints the current table.
