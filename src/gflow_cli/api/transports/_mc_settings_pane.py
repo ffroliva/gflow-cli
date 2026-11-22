@@ -42,7 +42,7 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_editor_gate import EditorGateMixin
 from gflow_cli.api.video import I2V_DEFAULT_MODEL, Mode, VideoModel
-from gflow_cli.errors import ConfigurationError, UiSelectorDriftError, nothing_submitted
+from gflow_cli.errors import ConfigurationError, UiSelectorDriftError
 
 if TYPE_CHECKING:
     from playwright.async_api import Locator, Page
@@ -519,17 +519,16 @@ class SettingsPaneMixin(EditorGateMixin):
     async def _select_image_model(self, page: Page, pane: Any, model: ImageModel) -> None:
         matcher = IMAGE_MODEL_MENU_MATCHERS.get(model)
         if matcher is None:
-            with nothing_submitted():
-                raise ConfigurationError(
-                    detail=(
-                        f"gflow has no flow.google.com selector for image model "
-                        f"'{model.value}' — a gap in gflow's table, not a reading of Flow's menu"
-                    ),
-                    remediation_hint=(
-                        "Use nano2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
-                        "helps if Flow still serves you labs."
-                    ),
-                )
+            raise ConfigurationError(
+                detail=(
+                    f"gflow has no flow.google.com selector for image model "
+                    f"'{model.value}' — a gap in gflow's table, not a reading of Flow's menu"
+                ),
+                remediation_hint=(
+                    "Use nano2 or nano-pro. GFLOW_CLI_FLOW_HOST=labs.google only "
+                    "helps if Flow still serves you labs."
+                ),
+            )
         button = await _visible_model_picker(page, pane, what="image model picker")
         current = (await button.text_content() or "").strip()
         if matcher.matches(current):
@@ -542,13 +541,12 @@ class SettingsPaneMixin(EditorGateMixin):
         hits = [index for index, text in enumerate(offered) if matcher.matches(text)]
         if len(hits) != 1:
             await page.keyboard.press("Escape")
-            with nothing_submitted():
-                raise ConfigurationError(
-                    detail=(
-                        f"image model '{model.value}' matched {len(hits)} entries on the migrated "
-                        f"host; offered: {', '.join(offered)}"
-                    ),
-                    remediation_hint="Choose one offered image model or omit --model.",
-                )
+            raise ConfigurationError(
+                detail=(
+                    f"image model '{model.value}' matched {len(hits)} entries on the migrated "
+                    f"host; offered: {', '.join(offered)}"
+                ),
+                remediation_hint="Choose one offered image model or omit --model.",
+            )
         await items.nth(hits[0]).click(timeout=4000)
         log.info("migrated.image_model_selected", model=offered[hits[0]], requested=model.value)

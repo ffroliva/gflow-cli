@@ -121,8 +121,15 @@ def _emit_extend_json_payload(
     last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
     outcome: dict[str, str] = {}
     if result.aborted or result.error is not None:
-        billed = bool(result.completed_media_ids) or result.credits_spent > 0
-        outcome = {"charged": "yes" if billed else "maybe", "next_action": "reconcile"}
+        error = result.error
+        if isinstance(error, GFlowError):
+            outcome = {
+                "charged": error.charged,
+                "next_action": error.resolved_next_action(),
+            }
+        elif error is None:
+            billed = bool(result.completed_media_ids) or result.credits_spent > 0
+            outcome = {"charged": "yes" if billed else "maybe", "next_action": "reconcile"}
         operation_id = getattr(result.error, "operation_id", "")
         if operation_id:
             outcome["operation_id"] = operation_id

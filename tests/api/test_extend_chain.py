@@ -175,8 +175,8 @@ async def test_resume_continues_at_the_given_position() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_failed_poll_names_the_billed_segment() -> None:
-    """#1201: the segment is submitted and billed; its id must survive a poll failure."""
+async def test_a_failed_poll_names_the_in_flight_segment() -> None:
+    """#1201: the submitted segment remains uncertain, but its id survives a poll failure."""
     from gflow_cli.errors import FlowApiError
 
     class _PollFails(_FakeClient):
@@ -188,6 +188,9 @@ async def test_a_failed_poll_names_the_billed_segment() -> None:
     )
     assert result.credits_spent == 10
     assert getattr(result.error, "operation_id", "") == "media-1"
+    assert result.error is not None
+    assert result.error.resolved_next_action() == "reconcile"
+    assert "retry" not in (result.error.remediation_hint or "").lower()
 
 
 @pytest.mark.asyncio
@@ -292,18 +295,20 @@ async def test_poll_failure_after_a_finished_segment_is_charged() -> None:
     assert result.error is not None
     assert (result.error.charged, result.error.next_action, result.error.retryable) == (
         "yes",
-        "none",
-        None,
+        "reconcile",
+        False,
     )
 
 
 @pytest.mark.asyncio
 async def test_value_error_after_a_finished_segment_reports_prior_charge() -> None:
+    from gflow_cli.errors import WireFormatError
+
     class _SecondSubmitValueError(_FakeClient):
         async def extend_video(self, **kwargs: Any) -> ExtendStarted:
             if self._n == 0:
                 return await super().extend_video(**kwargs)
-            raise ValueError("unexpected response shape")
+            raise WireFormatError("unexpected response shape")
 
     result = await run_extend_chain(
         _SecondSubmitValueError(),
@@ -317,6 +322,7 @@ async def test_value_error_after_a_finished_segment_reports_prior_charge() -> No
     assert result.error is not None
     assert (result.error.charged, result.error.resolved_next_action()) == ("yes", "reconcile")
     assert "retry" not in (result.error.remediation_hint or "").lower()
+    assert "completed segments are already billed" in (result.error.remediation_hint or "").lower()
 
 
 @pytest.mark.asyncio
@@ -333,3 +339,39 @@ async def test_value_error_from_poll_keeps_in_flight_segment_uncertain() -> None
     assert (result.error.charged, result.error.resolved_next_action()) == ("maybe", "reconcile")
     assert result.error.operation_id == "media-1"
     assert "retry" not in (result.error.remediation_hint or "").lower()
+    assert isinstance(result.error.__cause__, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_first_submit_wire_error_does_not_claim_completed_segments() -> None:
+    from gflow_cli.errors import WireFormatError
+
+    class _MalformedSubmit(_FakeClient):
+        async def extend_video(self, **_kwargs: Any) -> ExtendStarted:
+            raise WireFormatError("missing generated media")
+
+    result = await run_extend_chain(
+        _MalformedSubmit(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
+    )
+
+    assert result.error is not None
+    assert (
+        "completed segments are already billed" not in (result.error.remediation_hint or "").lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_first_segment_prompt_is_pre_submit() -> None:
+    from gflow_cli.errors import ConfigurationError
+
+    class _ValidatingClient(_FakeClient):
+        async def extend_video(self, **kwargs: Any) -> ExtendStarted:
+            assert kwargs["prompt"].isspace()
+            raise ValueError("prompt must not be empty")
+
+    result = await run_extend_chain(
+        _ValidatingClient(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["   "]
+    )
+
+    assert isinstance(result.error, ConfigurationError)
+    assert (result.error.charged, result.error.resolved_next_action()) == ("no", "fix_input")

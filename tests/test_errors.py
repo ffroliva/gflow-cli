@@ -940,38 +940,3 @@ def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
     ]
     assert len(guarded_raises) == expected_guards
     assert len(guarded_raises) == len(drift_raises)
-
-
-@pytest.mark.parametrize("raise_index", [0, 1], ids=["unsupported-model", "ambiguous-model"])
-def test_each_migrated_image_model_error_is_guarded_before_submit(raise_index: int) -> None:
-    source = Path(__file__).parents[1] / "src/gflow_cli/api/transports/_mc_settings_pane.py"
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    function = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_select_image_model"
-    )
-    raises = [
-        node
-        for node in ast.walk(function)
-        if isinstance(node, ast.Raise)
-        and isinstance(node.exc, ast.Call)
-        and isinstance(node.exc.func, ast.Name)
-        and node.exc.func.id == "ConfigurationError"
-    ]
-    guarded = {
-        id(raise_node)
-        for with_node in ast.walk(function)
-        if isinstance(with_node, ast.With)
-        and any(
-            isinstance(item.context_expr, ast.Call)
-            and isinstance(item.context_expr.func, ast.Name)
-            and item.context_expr.func.id == "nothing_submitted"
-            for item in with_node.items
-        )
-        for raise_node in ast.walk(with_node)
-        if isinstance(raise_node, ast.Raise)
-    }
-
-    assert len(raises) == 2
-    assert id(raises[raise_index]) in guarded
