@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import asyncio
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
 
+from gflow_cli.api.credit_cap import CreditBudget, preserve_credit_cap_partials
 from gflow_cli.api.video import (
     Aspect,
     GenerateVideoRequest,
@@ -46,6 +47,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     ChainPartialError,
+    CreditCapExceededError,
     GFlowError,
     ModelModeIncompatibilityError,
     WafRejectionError,
@@ -74,6 +76,52 @@ __all__ = [
 ]
 
 _log = structlog.get_logger(__name__)
+
+
+def _account_failed_link(
+    budget: CreditBudget, exc: Exception, previous_ids: list[str]
+) -> list[str]:
+    current_ids = preserve_credit_cap_partials(exc, previous_ids)
+    quote = getattr(exc, "quoted_credits", None)
+    if budget.remaining is not None and (quote is not None or current_ids):
+        budget.remaining = max(0, budget.remaining - quote) if quote is not None else 0
+    if isinstance(exc, GFlowError):
+        if current_ids or quote is not None:
+            exc.charged, exc.next_action = "maybe", "reconcile"
+        elif previous_ids:
+            exc.charged, exc.next_action = "yes", "reconcile"
+    return current_ids
+
+
+def _record_unresolved_link(
+    recorder: ChainRecorder | None,
+    *,
+    index: int,
+    spec: ChainLinkSpec,
+    out_dir: Path,
+    media_id: str,
+    is_last: bool,
+) -> None:
+    if recorder is not None:
+        recorder.record_chain_link(
+            ChainLinkResult(
+                index=index,
+                prompt=spec.prompt,
+                local_path=out_dir / f".gflow-pending-{media_id}.mp4",
+                media_id=media_id,
+                frame_path=None if is_last else out_dir / f"link{index}_lastframe.jpg",
+            )
+        )
+
+
+def _deduct_link_spend(
+    budget: CreditBudget, result: VideoResult, results: Sequence[ChainLinkResult]
+) -> None:
+    try:
+        budget.record_spend(result.quoted_credits)
+    except CreditCapExceededError as exc:
+        preserve_credit_cap_partials(exc, [r.media_id for r in results])
+        raise
 
 
 @dataclass(frozen=True)
@@ -241,6 +289,27 @@ def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) 
                 raise ModelModeIncompatibilityError(msg) from exc
 
 
+def _annotate_chain_error(
+    exc: Exception, completed_paths: list[Path], completed_media_ids: list[str]
+) -> None:
+    if completed_paths and isinstance(exc, GFlowError):
+        # #1201: links 0..k are billed whatever this link's own class says.
+        exc.next_action = "reconcile"
+        exc.retryable = False
+        if not exc.operation_id:  # an in-flight link's own id is the better handle
+            exc.operation_id = completed_media_ids[-1]
+        if isinstance(exc, CreditCapExceededError):
+            preserve_credit_cap_partials(exc, completed_media_ids)
+        else:
+            exc.charged = "yes"
+
+
+def _should_wrap_chain_abort(exc: Exception, has_completed_paths: bool) -> bool:
+    return isinstance(exc, WireFormatError | WafRejectionError) or (
+        has_completed_paths and not isinstance(exc, GFlowError)
+    )
+
+
 async def _generate_link(
     *,
     client: FlowApiClient,
@@ -257,17 +326,8 @@ async def _generate_link(
         return await client.generate_video(req=req, on_started=link_on_started)
     except Exception as exc:
         _notify_link_failed(on_link_failed, req, exc)
-        wrap = isinstance(exc, WireFormatError | WafRejectionError) or (
-            completed_paths and not isinstance(exc, GFlowError)
-        )
-        if not wrap:
-            if completed_paths and isinstance(exc, GFlowError):
-                # #1201: links 0..k are billed whatever this link's own class says.
-                exc.charged = "yes"
-                exc.next_action = "reconcile"
-                exc.retryable = False
-                if not exc.operation_id:  # an in-flight link's own id is the better handle
-                    exc.operation_id = completed_media_ids[-1]
+        if not _should_wrap_chain_abort(exc, bool(completed_paths)):
+            _annotate_chain_error(exc, completed_paths, completed_media_ids)
             raise
         _log.warning(
             "chain_link_aborted",
@@ -365,6 +425,77 @@ async def _resume_seed(
     return await asyncio.to_thread(extractor, src=seed_clip, dst=dst, offset_ms=offset_ms)
 
 
+def _handle_failed_chain_link(
+    budget: CreditBudget,
+    exc: Exception,
+    results: list[ChainLinkResult],
+    recorder: ChainRecorder | None,
+    index: int,
+    spec: ChainLinkSpec,
+    out_dir: Path,
+    is_last: bool,
+) -> None:
+    previous_ids = [r.media_id for r in results]
+    media_ids = _account_failed_link(budget, exc, previous_ids)
+    current_ids = [media_id for media_id in media_ids if media_id not in previous_ids]
+    if current_ids:
+        _record_unresolved_link(
+            recorder,
+            index=index,
+            spec=spec,
+            out_dir=out_dir,
+            media_id=current_ids[0],
+            is_last=is_last,
+        )
+
+
+def _ensure_link_local_path(
+    result: VideoResult,
+    index: int,
+    completed_paths: list[Path],
+    completed_media_ids: list[str],
+    on_link_failed: LinkFailedHook | None,
+    req: GenerateVideoRequest,
+) -> None:
+    if result.local_path is None:
+        msg = f"link {index} returned no local_path (download failed)"
+        exc = ChainPartialError(
+            detail=msg,
+            partial_results=list(completed_paths),
+            completed_media_ids=list(completed_media_ids),
+        )
+        _notify_link_failed(on_link_failed, req, exc)
+        raise exc
+
+
+def _record_completed_link(
+    *,
+    index: int,
+    spec: ChainLinkSpec,
+    result: VideoResult,
+    is_last: bool,
+    out_dir: Path,
+    req: GenerateVideoRequest,
+    recorder: ChainRecorder | None,
+    on_link_completed: LinkCompletedHook | None,
+    budget: CreditBudget,
+    results: list[ChainLinkResult],
+    completed_paths: list[Path],
+) -> ChainLinkResult:
+    link_result = _build_link_result(
+        index=index, spec=spec, result=result, is_last=is_last, out_dir=out_dir
+    )
+    if recorder is not None:
+        recorder.record_chain_link(link_result)
+    if on_link_completed is not None:
+        on_link_completed(req, result)
+    results.append(link_result)
+    assert result.local_path is not None
+    completed_paths.append(result.local_path)
+    _deduct_link_spend(budget, result, results)
+    return link_result
+
+
 async def run_chain(
     *,
     client: FlowApiClient,
@@ -382,6 +513,7 @@ async def run_chain(
     relocate: Callable[[int, VideoResult], VideoResult] | None = None,
     start_index: int = 0,
     seed_clip: Path | None = None,
+    max_credits: int | None = None,
 ) -> list[ChainLinkResult]:
     """Render ``links`` as a sequential last-frame I2V chain.
 
@@ -438,6 +570,7 @@ async def run_chain(
     reject_unusable_links(model=model, links=links)
 
     results: list[ChainLinkResult] = []
+    budget = CreditBudget(max_credits)
     completed_paths: list[Path] = []
     prev_frame = await _resume_seed(
         extractor,
@@ -456,50 +589,44 @@ async def run_chain(
         req = _build_link_request(
             spec=spec, index=index, model=model, aspect=aspect, prev_frame=prev_frame
         )
+        req = replace(req, max_credits=budget.max_credits)
 
-        result = await _generate_link(
-            client=client,
-            req=req,
-            index=index,
-            completed_paths=completed_paths,
-            completed_media_ids=[r.media_id for r in results],
-            on_link_started=on_link_started,
-            on_link_failed=on_link_failed,
-        )
+        try:
+            result = await _generate_link(
+                client=client,
+                req=req,
+                index=index,
+                completed_paths=completed_paths,
+                completed_media_ids=[r.media_id for r in results],
+                on_link_started=on_link_started,
+                on_link_failed=on_link_failed,
+            )
+        except Exception as exc:
+            _handle_failed_chain_link(
+                budget, exc, results, recorder, index, spec, out_dir, index == last_index
+            )
+            raise
         if relocate is not None:  # a missing clip is left as is and refused just below
             result = await _relocate_guarded(relocate, index, result)
 
-        if result.local_path is None:
-            msg = f"link {index} returned no local_path (download failed)"
-            exc = ChainPartialError(
-                detail=msg,
-                partial_results=list(completed_paths),
-                completed_media_ids=[r.media_id for r in results],
-            )
-            # #341: this abort path must also reach the failure hook, else the
-            # link's STARTED catalog row is stranded and the abort is invisible
-            # to `gflow data list errors`.
-            _notify_link_failed(on_link_failed, req, exc)
-            raise exc
+        _ensure_link_local_path(
+            result, index, completed_paths, [r.media_id for r in results], on_link_failed, req
+        )
 
         is_last = index == last_index
-
-        # RECORD-BEFORE-EXTRACT: persist the downloaded clip before decoding it.
-        # The frame_path is the planned seed-frame destination; it is filled in
-        # below for non-final links, but the clip itself is recorded first so a
-        # crash in the download->extract gap resumes at extraction.
-        link_result = _build_link_result(
-            index=index, spec=spec, result=result, is_last=is_last, out_dir=out_dir
+        link_result = _record_completed_link(
+            index=index,
+            spec=spec,
+            result=result,
+            is_last=is_last,
+            out_dir=out_dir,
+            req=req,
+            recorder=recorder,
+            on_link_completed=on_link_completed,
+            budget=budget,
+            results=results,
+            completed_paths=completed_paths,
         )
-        if recorder is not None:
-            recorder.record_chain_link(link_result)
-
-        # Catalog the link in the `videos` table (parity with t2v/i2v). Uses the
-        # link's OWN request (link 0 T2V, links N I2V) + result so the row mode
-        # matches. The hook absorbs its own DataStoreError so a post-success
-        # persistence failure never aborts the already-paid chain.
-        if on_link_completed is not None:
-            on_link_completed(req, result)
 
         if link_result.frame_path is not None:
             prev_frame = await asyncio.to_thread(
@@ -508,9 +635,6 @@ async def run_chain(
                 dst=link_result.frame_path,
                 offset_ms=seed_offset_ms,
             )
-
-        results.append(link_result)
-        completed_paths.append(result.local_path)
         _log.info(
             "chain_link_completed",
             index=index,

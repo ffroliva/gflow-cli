@@ -34,6 +34,7 @@ _VIDEO = "generate.video"
 #: upscale). A new command fails test_every_cli_command_has_a_capability_entry until it
 #: is added here, which forces the question "does the capability document still hold?".
 COMMAND_CAPABILITY: dict[str, str | None] = {
+    "audio narrate": None,
     "image t2i": _IMAGE,
     "image i2i": _IMAGE,
     "image generate": _IMAGE,  # bridge to t2i/i2i (#1193)
@@ -46,6 +47,8 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "video generate": _VIDEO,  # bridge to t2v/i2v/r2v (#1193)
     "video chain": _VIDEO,
     "video extend": _VIDEO,
+    "video transcribe": None,
+    "video captions": None,
     "movie run": _VIDEO,
     "data download": "download",
     "image upload": "upload",
@@ -87,6 +90,8 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "instructions toggle-mode": None,
     "mcp run": None,
     "mcp setup": None,
+    "media restore": None,
+    "media trash": None,
     "models": None,
     "models list": None,
     "models show": None,
@@ -107,6 +112,7 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "tools show": None,
     "update": None,
     "video upscale": None,
+    "video assemble": None,
 }
 
 
@@ -122,6 +128,13 @@ def test_every_value_is_in_the_enum_and_every_partial_has_a_note(host: str, no_s
         if value == "partial":
             assert doc["notes"].get(key), f"{key} is partial but carries no note"
     assert set(doc["notes"]) <= set(doc["capabilities"]), "a note for an unknown key"
+
+
+@pytest.mark.parametrize("host", _HOSTS)
+def test_video_credit_cap_is_a_note_on_the_existing_capability(host: str) -> None:
+    doc = caps.build_capabilities(host)
+    assert _VIDEO in doc["capabilities"]
+    assert "--max-credits" in doc["notes"][_VIDEO]
 
 
 def test_issue_vocabulary_is_present_and_server_cancel_is_honest() -> None:

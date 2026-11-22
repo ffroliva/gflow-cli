@@ -1,17 +1,23 @@
-"""Read the Flow credit balance straight from flow.google.com, with no browser (#1229).
+"""Direct wire communication with flow.google.com without a browser (#1229, #1363).
 
 The profile's saved cookies (``auth/cookies.read_cookies_for``) go on one GET of the app
 shell, which carries the page's ``at`` token (``SNlM0e``), session id (``FdrFJe``) and
-build label (``cfb2h``); then one batchexecute POST of ``nzlxg`` returns the balance,
-decoded by ``CreditsInfo.from_nzlxg``. Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
+build label (``cfb2h``); batchexecute POSTs then execute RPC ``nzlxg`` (credit balance read,
+decoded by ``CreditsInfo.from_nzlxg``) or ``pGCYOe`` (media trash/restore mutations,
+#1363). Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
 
 A failure raises :class:`WireReadUnavailable` carrying only an enum reason, and the caller
-(``services/credits.py``) reads through the browser instead. Back-pressure is the exception:
-HTTP 429 and 503 raise the page path's own ``RateLimitError`` / ``NetworkError`` and open a
-per-profile window (Retry-After, else 60 s) in which every read of that profile re-raises
-with nothing sent, because a page load would send the same RPCs to a throttled account.
-Nothing here retries a 4xx, follows a redirect, keeps a cookie Flow sets, or names anything
-but ``nzlxg``. All state is per profile: one account's failure never affects another.
+(``services/credits.py`` or ``services/media_trash.py``) falls back to the browser instead.
+Back-pressure is the exception: HTTP 429 and 503 raise the page path's own ``RateLimitError``
+/ ``NetworkError`` and, for credits reads, open a per-profile window (Retry-After, else 60 s) in
+which every read of that profile re-raises with nothing sent, because a page load would send the
+same RPCs to a throttled account. Media mutations via ``pGCYOe`` carry their own route and
+remediation hint without entering the credits throttle window. An RPC rejection from Flow on
+``pGCYOe`` raises a typed ``FlowApiError`` rather than falling back.
+
+Nothing here retries a 4xx, follows a redirect, keeps a cookie Flow sets, or executes
+unallowed RPCs outside ``nzlxg`` and ``pGCYOe``. All state is per profile: one account's
+failure never affects another.
 """
 
 from __future__ import annotations
@@ -39,7 +45,7 @@ from gflow_cli.api.transports.batchexecute import parse_frames, rpc_errors
 from gflow_cli.auth.cookies import CookieStoreUnreadable, read_cookies_for, require_in_home
 from gflow_cli.browser_manager import profile_last_version
 from gflow_cli.config import Settings, get_settings
-from gflow_cli.errors import NetworkError, RateLimitError, SecurityError
+from gflow_cli.errors import FlowApiError, NetworkError, RateLimitError, SecurityError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -48,7 +54,7 @@ log = structlog.get_logger(__name__)
 
 _ORIGIN = "https://flow.google.com"
 _BATCHEXECUTE = f"{_ORIGIN}/_/AiSandboxAngularFrontend/data/batchexecute"
-_ALLOWED_RPCIDS = frozenset({"nzlxg"})
+_ALLOWED_RPCIDS = frozenset({"nzlxg", "pGCYOe"})
 _ROUTE = "credits_wire"
 _THROTTLED_HINT = "Flow is throttling this account; wait a minute, then read the balance again."
 _THROTTLE_DEFAULT_S = 60.0
@@ -94,6 +100,9 @@ class _Tokens:
     bl: str | None
 
 
+Tokens = _Tokens
+
+
 # Per process, per profile: the shell's tokens, profiles Flow said are signed out (with the
 # reason it gave), throttle windows (monotonic deadline, the status that opened it), and one
 # lock each.
@@ -131,6 +140,9 @@ def _wiz(text: str, key: str) -> str | None:
     return match.group(1) if match else None
 
 
+extract_wiz_token = _wiz
+
+
 def _throttled_error(status: int, retry_after: float) -> RateLimitError | NetworkError:
     if status == 429:
         return RateLimitError(
@@ -154,7 +166,7 @@ def _gate(profile_dir: Path) -> None:
         del _throttled[profile_dir]
 
 
-def _check(response: httpx.Response, profile_dir: Path) -> None:
+def _check(response: httpx.Response, profile_dir: Path, *, rpcid: str = "nzlxg") -> None:
     if names := sorted(
         {h.split("=", 1)[0].strip() for h in response.headers.get_list("set-cookie")}
     ):
@@ -170,6 +182,17 @@ def _check(response: httpx.Response, profile_dir: Path) -> None:
         raise WireReadUnavailable(WireFallbackReason.HTTP_401)
     if status in (429, 503):
         window = parse_retry_after(response) or _THROTTLE_DEFAULT_S
+        if rpcid == "pGCYOe":
+            raise RateLimitError(
+                f"HTTP {status}",
+                status=status,
+                route="media_trash_wire",
+                retry_after=window,
+                remediation_hint=(
+                    "Flow rate-limited media trash/restore operations. Wait before retrying."
+                ),
+                charged="no",
+            )
         _throttled[profile_dir] = (_clock() + window, status)
         raise _throttled_error(status, window)
     if status == 400:
@@ -184,7 +207,12 @@ async def _send(client: httpx.AsyncClient, request: httpx.Request) -> httpx.Resp
         return await client.send(request)
 
 
-def _rpc_request(rpcid: str, tokens: _Tokens, headers: dict[str, str]) -> httpx.Request:
+def _rpc_request(
+    rpcid: str,
+    tokens: _Tokens,
+    headers: dict[str, str],
+    payload: list[Any] | None = None,
+) -> httpx.Request:
     if rpcid not in _ALLOWED_RPCIDS:
         msg = f"rpcid {rpcid!r} is not on the wire allow-list"
         raise ValueError(msg)
@@ -192,7 +220,10 @@ def _rpc_request(rpcid: str, tokens: _Tokens, headers: dict[str, str]) -> httpx.
     _reqid += 100_000
     query = {"rpcids": rpcid, "source-path": "/", "bl": tokens.bl, "f.sid": tokens.fsid}
     query |= {"hl": "en", "_reqid": str(_reqid), "rt": "c"}
-    body = urlencode({"f.req": json.dumps([[[rpcid, "[]", None, "generic"]]]), "at": tokens.at})
+    inner_json = json.dumps(payload, separators=(",", ":")) if payload is not None else "[]"
+    body = urlencode(
+        {"f.req": json.dumps([[[rpcid, inner_json, None, "generic"]]]), "at": tokens.at}
+    )
     return httpx.Request(
         "POST",
         f"{_BATCHEXECUTE}?{urlencode({k: v for k, v in query.items() if v is not None})}",
@@ -208,6 +239,9 @@ def _rpc_request(rpcid: str, tokens: _Tokens, headers: dict[str, str]) -> httpx.
             "sec-fetch-dest": "empty",
         },
     )
+
+
+build_rpc_request = _rpc_request
 
 
 async def _shell_tokens(
@@ -268,8 +302,11 @@ async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     return await asyncio.wait_for(future, _TOTAL_S)
 
 
-async def read_credits(profile_dir: Path) -> CreditsInfo:
-    """The balance over the wire, or :class:`WireReadUnavailable`. Never starts a browser."""
+async def _execute_direct_rpc(
+    profile_dir: Path,
+    rpcid: str,
+    payload: list[Any] | None = None,
+) -> tuple[httpx.Response, float]:
     require_in_home(profile_dir)  # before anything reads the profile (row 19)
     _gate(profile_dir)
     if get_settings().browser_proxy or getproxies():
@@ -303,10 +340,16 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
         ):
             tokens = await _shell_tokens(client, profile_dir, headers)
             _gate(profile_dir)  # another read's POST may have been throttled meanwhile
-            response = await _send(client, _rpc_request("nzlxg", tokens, headers))
-            _check(response, profile_dir)
+            response = await _send(client, _rpc_request(rpcid, tokens, headers, payload=payload))
+            _check(response, profile_dir, rpcid=rpcid)
     except (TimeoutError, httpx.TransportError):
         raise WireReadUnavailable(WireFallbackReason.NETWORK) from None
+    return response, time.perf_counter() - started
+
+
+async def read_credits(profile_dir: Path) -> CreditsInfo:
+    """The balance over the wire, or :class:`WireReadUnavailable`. Never starts a browser."""
+    response, elapsed = await _execute_direct_rpc(profile_dir, "nzlxg")
     frames = [payload for rpcid, payload in parse_frames(response.text) if rpcid == "nzlxg"]
     try:
         info = CreditsInfo.from_nzlxg(frames[0] if frames else None)
@@ -316,8 +359,50 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
             # Only the numeric status: a real rate-limit code shows up here before we act on it.
             log.info("credits.wire_rpc_error", codes=codes)
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE) from None
-    log.info("credits.wire_read", ms=round((time.perf_counter() - started) * 1000))
+    log.info("credits.wire_read", ms=round(elapsed * 1000))
     return info
+
+
+async def direct_set_archived_media(
+    profile_dir: Path, media_id: str, project_id: str, *, archived: bool
+) -> dict[str, Any]:
+    """Trash or restore a media item over the wire without a browser."""
+    from gflow_cli.api.transports._media_trash_wire import (
+        build_mutation_payload,
+        parse_mutation_response,
+    )
+
+    payload = build_mutation_payload(media_id, project_id, archived=archived)
+    response, elapsed = await _execute_direct_rpc(profile_dir, "pGCYOe", payload=payload)
+    frames = [p for rpcid, p in parse_frames(response.text) if rpcid == "pGCYOe"]
+    action = "trash" if archived else "restore"
+    if not frames:
+        _tokens.pop(profile_dir, None)
+        errors = rpc_errors(response.text)
+        if errors and any(e.code is not None for e in errors):
+            code = next(e.code for e in errors if e.code is not None)
+            log.info(f"media.{action}_wire_rpc_error", codes=[e.code for e in errors])
+            raise FlowApiError(
+                f"pGCYOe mutation rejected by Flow (code={code})",
+                status=response.status_code,
+                code=code,
+                route="pGCYOe",
+                charged="no",
+            )
+        raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
+    result = parse_mutation_response(frames[0], expected_media_id=media_id, archived=archived)
+    log.info(f"media.{action}_wire", ms=round(elapsed * 1000), media_id=media_id)
+    return result
+
+
+async def direct_trash_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
+    """Trash a media item over the wire without a browser."""
+    return await direct_set_archived_media(profile_dir, media_id, project_id, archived=True)
+
+
+async def direct_restore_media(profile_dir: Path, media_id: str, project_id: str) -> dict[str, Any]:
+    """Restore a media item over the wire without a browser."""
+    return await direct_set_archived_media(profile_dir, media_id, project_id, archived=False)
 
 
 def session_recovered(profile_dir: Path) -> None:

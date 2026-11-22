@@ -624,3 +624,24 @@ class TestRemovedGeminiKeyNotice:
         monkeypatch.setenv("GFLOW_CLI_GEMINI_API_KEY", "AIza-old")
         monkeypatch.delenv("GFLOW_CLI_LLM_API_KEY", raising=False)
         assert Settings().llm_api_key is None
+
+
+class TestGeminiTtsKey:
+    def test_dedicated_key_is_secret_and_defaults_to_none(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pydantic import SecretStr
+
+        monkeypatch.setenv("GFLOW_CLI_GEMINI_TTS_API_KEY", "gemini-secret")
+        settings = Settings()
+        assert isinstance(settings.gemini_tts_api_key, SecretStr)
+        assert settings.gemini_tts_api_key.get_secret_value() == "gemini-secret"
+        assert "gemini-secret" not in repr(settings)
+        assert settings.model_dump_json().find("gemini-secret") == -1
+
+    def test_llm_key_is_not_reused_for_gemini_tts(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GFLOW_CLI_LLM_API_KEY", "unrelated-secret")
+        settings = Settings()
+        assert settings.gemini_tts_api_key is None

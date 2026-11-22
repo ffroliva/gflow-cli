@@ -46,12 +46,12 @@ import click
 from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
 from gflow_cli.mcp import server as mcp_server
-from gflow_cli.mcp import tools as mcp_tools
 from tests.mcp._cli_tree import cli_leaves
 
 # CLI leaf → MCP tool that covers it. One tool may cover several leaves when a
 # parameter selects the behaviour (e.g. gflow_generate_video's ``mode``).
 CLI_TO_MCP: dict[str, str] = {
+    "audio narrate": "gflow_narrate",
     "character list": "gflow_character_list",
     "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
@@ -64,6 +64,9 @@ CLI_TO_MCP: dict[str, str] = {
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
     "video generate": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
+    "video assemble": "gflow_video_assemble",  # local, credit-free media processing
+    "video transcribe": "gflow_video_transcribe",
+    "video captions": "gflow_video_captions",
     "models": "gflow_list_models",  # bare `gflow models` is `models list` (#1196)
     "models list": "gflow_list_models",
     "models show": "gflow_list_models",  # the catalog carries every model's show detail
@@ -86,6 +89,8 @@ CLI_TO_MCP: dict[str, str] = {
     "instructions rm": "gflow_instructions_rm",
     "instructions apply": "gflow_instructions_apply",
     "instructions toggle-mode": "gflow_instructions_toggle_mode",
+    "media trash": "gflow_media_trash",
+    "media restore": "gflow_media_restore",
 }
 
 # CLI leaf → reason it deliberately has NO MCP surface. "not yet ported"
@@ -278,11 +283,13 @@ _PARAM_ALIASES: dict[str, str] = {
     "disabled": "enabled",
     "output_file": "out_file",  # --out-file PATH (#1158)
     "out_dir_deprecated": "out_dir",  # video upscale: deprecated -o DIR for --out DIR
+    "yes": "confirm",  # CLI --yes confirmation flag -> MCP confirm boolean (#1363)
 }
 
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked
 #: admission, NOT an exemption: it exists so a known hole cannot widen unnoticed.
 _OPTION_EXEMPT: dict[str, str] = {
+    "audio narrate:text_file": "reads a local file; the tool takes the text directly",
     "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
     "image t2i:continue_on_error": "batch-only semantics — see `image t2i:prompts`",
     "image generate:prompts": "resolves to `image t2i`; same reason as `image t2i:prompts`",
@@ -293,6 +300,10 @@ _OPTION_EXEMPT: dict[str, str] = {
         "coarse mapping — gflow_list_models returns every model; the id is its filter (#1196)"
     ),
     "video i2v:end_image_deprecated": "deprecated alias retained for CLI compatibility only",
+    "video t2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
 }
 
 
@@ -304,24 +315,25 @@ def _leaf_params(path: str) -> set[str]:
     return {p.name for p in cmd.params if p.name}
 
 
-def _tool_params(tool_name: str) -> set[str]:
+def _tool_params(fn: Any) -> set[str]:
     """Declared parameter names of a registered MCP tool, unwrapping decorators."""
-    fn: Any = getattr(mcp_tools, tool_name)
     while hasattr(fn, "__wrapped__"):
         fn = fn.__wrapped__
     return set(inspect.signature(fn).parameters) - {"self"}
 
 
-def test_every_cli_option_reaches_its_mcp_tool() -> None:
+def test_every_cli_option_reaches_its_mcp_tool(mcp_server: Any) -> None:
     """A mapped leaf's options must exist on the tool, be CLI-only, or be recorded.
 
     This is the check command-level parity cannot make. Its first run found #689.
     """
     unmirrored: list[str] = []
     for leaf, tool in sorted(CLI_TO_MCP.items()):
-        if not hasattr(mcp_tools, tool):
+        # Read the registry, not `tools`: tools in their own modules were silently skipped.
+        registered = mcp_server._tool_manager._tools.get(tool)
+        if registered is None:
             continue  # test_mapped_tools_are_registered owns that failure
-        tool_params = _tool_params(tool)
+        tool_params = _tool_params(registered.fn)
         for raw in sorted(_leaf_params(leaf) - _CLI_ONLY_PARAMS):
             candidates = {raw, _PARAM_ALIASES.get(raw, raw)}
             if candidates & tool_params or f"{leaf}:{raw}" in _OPTION_EXEMPT:

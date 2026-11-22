@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[2]
 # Rule: True means the command submits a new Flow generation (video spends Veo credits,
 # image spends the daily image quota). Reads, exports, upscales and local work are False.
 EXPECTED_TREE: dict[str, bool] = {
+    "audio narrate": False,
     "auth": False,
     "auth login": False,
     "auth status": False,
@@ -72,6 +73,7 @@ EXPECTED_TREE: dict[str, bool] = {
     "video r2v": True,
     "video chain": True,
     "video extend": True,
+    "video assemble": False,
     "video generate": True,
     "video upscale": False,
     "image upload": False,
@@ -105,6 +107,10 @@ EXPECTED_TREE: dict[str, bool] = {
     "mcp run": False,
     "mcp setup": False,
     "serve": False,
+    "video transcribe": False,
+    "video captions": False,
+    "media trash": False,
+    "media restore": False,
 }
 
 

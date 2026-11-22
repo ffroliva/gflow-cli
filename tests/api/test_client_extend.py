@@ -20,7 +20,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.errors import ExtendUnavailableError
+from gflow_cli.errors import CreditCapExceededError, ExtendUnavailableError
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "project_initial_data_extend_models.json"
 
@@ -70,6 +70,42 @@ async def test_happy_path_returns_new_media(tmp_path: Path) -> None:
     )
     assert started.media_id == NEW_MEDIA
     assert started.model_key == "veo_3_1_extension_lite"
+
+
+@pytest.mark.asyncio
+async def test_credit_cap_refuses_before_recaptcha_mint(tmp_path: Path) -> None:
+    c = _client(tmp_path)
+    with pytest.raises(CreditCapExceededError) as caught:
+        await c.extend_video(
+            media_id=MEDIA,
+            project_id=PROJECT,
+            scene_id=SCENE,
+            position=1,
+            prompt="p",
+            max_credits=0,
+        )
+    assert caught.value.quoted > 0
+    assert caught.value.charged == "no"
+    c._mint_recaptcha_token.assert_not_awaited()  # type: ignore[attr-defined]
+    c._post_json.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_migrated_extend_cap_refuses_before_page_checkout(tmp_path: Path) -> None:
+    c = _client(tmp_path)
+    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
+    with pytest.raises(CreditCapExceededError) as caught:
+        await c.extend_video_migrated(
+            media_id=MEDIA,
+            project_id=PROJECT,
+            prompt="continue",
+            aspect=None,
+            out_path=tmp_path / "out.mp4",
+            max_credits=15,
+        )
+    assert caught.value.quoted is None
+    assert caught.value.max_credits == 15
+    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

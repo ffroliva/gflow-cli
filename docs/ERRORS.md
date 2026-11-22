@@ -22,11 +22,18 @@ same members, and the worker queue persists the same members for a queued task.
 | `next_action` | yes | What a caller should do (values below) |
 | `operation_id` | no | The local job or media id, when one exists, so a follow-up can find it |
 | `retry_after` | no | Seconds to wait, when Flow said so and `next_action` is `retry_after` |
-| `completed_media_ids` | no | A partial `video chain`: the media ids of the links Flow made and billed |
+| `completed_media_ids` | no | Media ids completed before a partial chain or a later per-command cap refusal |
+| `quoted` | `CreditCapExceededError` | Flow's pre-submit quote in credits, or `null` when unreadable |
+| `max_credits` | `CreditCapExceededError` | The caller's per-command credit ceiling |
 
 `charged`, `next_action`, `operation_id`, `retry_after` and `completed_media_ids` were added in
 [#1201](https://github.com/ffroliva/gflow-cli/issues/1201). They are additive: no
 existing member changed.
+
+`CreditCapExceededError` (exit 45) is gflow's refusal when Flow's pre-submit quote is missing
+or over the requested cap. It reports `quoted`, `max_credits`, `charged: no`, and
+`next_action: fix_input`; a cap refusal after completed chain/extend/movie work also carries
+the completed media ids and reads `charged: yes` / `reconcile`.
 
 ### Result-shaped failures
 
@@ -179,7 +186,9 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/model-mode-incompatibility` | `ModelModeIncompatibilityError` | 17 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/video-model-selection` | `VideoModelSelectionError` | 18 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/scene-concat` | `SceneConcatError` | 19 | `no` | `fix_input` |
+| `https://gflow-cli.dev/errors/video-assembly` | `VideoAssemblyError` | 1 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/frame-extraction` | `FrameExtractionError` | 20 | `maybe` | `fix_input` |
+| `https://gflow-cli.dev/errors/video-processing` | `VideoProcessingError` | 20 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/chain-partial` | `ChainPartialError` | 21 | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/upscale-unavailable` | `UpscaleUnavailableError` | 22 | `no` | `none` |
 | `https://gflow-cli.dev/errors/server-cancel-unavailable` | `ServerCancelUnavailableError` | 22 | `maybe` | `reconcile` |
@@ -199,6 +208,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/insufficient-credits` | `InsufficientCreditsError` | 37 | `no` | `wait` |
 | `https://gflow-cli.dev/errors/flow-account-chooser` | `FlowAccountChooserError` | 38 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/flow-access-unavailable` | `FlowAccessUnavailableError` | 39 | `no` | `none` |
+| `https://gflow-cli.dev/errors/credit-cap-exceeded` | `CreditCapExceededError` | 45 | `no` | `fix_input` |
 
 ### Envelopes built without an error class
 
@@ -213,6 +223,7 @@ members. They have no exit code of their own.
 | `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/profile-marker-missing` | MCP `gflow_auth_status` | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/cookie-store-unreadable` | MCP `gflow_auth_status` | — | `no` | `reauth` |
+| `https://gflow-cli.dev/errors/profile-unavailable` | MCP `gflow_auth_status`, the headless Chrome cookie read could not run (`detail` names the error class) | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |
@@ -262,6 +273,7 @@ Specific error causes move into the 40–63 range. Codes 10–39 remain unchange
 | `8` | `3` | `AuthMissingError` (missing credentials; merged with auth code 3) |
 | `9` | `44` | `TransportTimeoutError` (browser or network timeout) |
 | `10–39` | `10–39` | Specific causes (WAF, config, data store, credits, etc.; unchanged). `22` stays `22` for both `UpscaleUnavailableError` and `ServerCancelUnavailableError` (`gflow cancel` on a submitted job, #1198) |
+| `45` | `45` | `CreditCapExceededError` (Flow's pre-submit quote is unreadable or exceeds `--max-credits`, #1355; same code in both modes) |
 | `130` | `130` | Interrupted by user (unchanged) |
 
 In the shared `--json` error envelope (and MCP queued failures), `exit_code` reports the

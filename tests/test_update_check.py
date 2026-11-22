@@ -1625,3 +1625,30 @@ class TestSweepSetAside:
         report = uc.run_update(check=True)
         assert sweep_called
         assert not report.upgraded
+
+
+@pytest.mark.parametrize(
+    ("inst", "expected"),
+    [
+        (None, 'pip install "gflow-cli[tts]", or `uv sync --extra tts`'),
+        (
+            uc.Installer("pipx", ("pipx", "upgrade", "gflow-cli")),
+            'pipx install --force "gflow-cli[tts]"',
+        ),
+        (
+            uc.Installer("uv", ("uv", "tool", "upgrade", "gflow-cli")),
+            'uv tool install --force "gflow-cli[tts]"',
+        ),
+        (
+            uc.Installer("pip", ("python", "-m", "pip", "install", "--upgrade", "--user")),
+            'pip install --user "gflow-cli[tts]"',
+        ),
+    ],
+)
+def test_extra_install_hint_follows_the_installer(
+    monkeypatch: pytest.MonkeyPatch, inst: uc.Installer | None, expected: str
+) -> None:
+    monkeypatch.setattr(uc, "_installed_extras", lambda: ())
+    monkeypatch.setattr(uc, "installer", lambda: inst)
+
+    assert expected in uc.extra_install_hint("tts")

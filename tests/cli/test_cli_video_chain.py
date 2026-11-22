@@ -626,7 +626,7 @@ def test_chain_dry_run_rejects_a_per_link_omni_flash_override(tmp_path: Path) ->
 # The contract pinned below: `pillow` joins `av` in the `chain` extra, `av` moves
 # to module level in media.py so both dependencies fail at the SAME point, and
 # that point is wrapped in try/except ImportError -> FrameExtractionError (exit
-# 20) whose remediation names the extra and both packages. The guard sits ahead
+# 20) whose remediation names the extra and its packages. The guard sits ahead
 # of the manifest read, the --dry-run short-circuit and the confirm prompt, so a
 # caller gets a typed, stable failure before anything is read, prompted, or
 # launched. There is no one-link exemption: `video chain` requires `[chain]`.
@@ -678,7 +678,7 @@ def _break_chain_dependency(monkeypatch: pytest.MonkeyPatch, dep: str) -> None:
 
 
 def _assert_names_the_chain_extra(text: str) -> None:
-    """The remediation must name the extra AND both packages it has to install."""
+    """The remediation must name the extra and its required packages."""
     flat = _plain(text)
     assert "gflow-cli[chain]" in flat, f"remediation must name the extra: {flat!r}"
     assert re.search(r"\bav\b", flat, re.IGNORECASE), f"remediation must name av: {flat!r}"
@@ -691,7 +691,7 @@ def test_chain_dry_run_without_chain_extra_exits_20_and_launches_nothing(
 ) -> None:
     """A missing ``[chain]`` dependency is a typed exit 20, not a generic exit 1.
 
-    Parametrized over both packages because the whole point of moving ``import
+    Parametrized over both chain imports because the whole point of moving ``import
     av`` to module level is that ``av`` and ``PIL`` fail at the SAME place; a fix
     that guards only one of them leaves the other on the "file a bug" path.
     """
@@ -837,6 +837,7 @@ def test_chain_extra_declares_pillow_alongside_av() -> None:
     requirements = {Requirement(raw).name.lower(): Requirement(raw) for raw in extra}
 
     assert "av" in requirements, f"the chain extra must keep av: {extra}"
+    assert "numpy" not in requirements
     assert "pillow" in requirements, (
         "media.py imports PIL at module level, so `gflow-cli[chain]` must install "
         f"pillow; the extra declares only {sorted(requirements)} (#813)"

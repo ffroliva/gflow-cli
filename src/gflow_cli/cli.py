@@ -22,11 +22,13 @@ from gflow_cli import __version__, json_output, profile_store, telemetry, teleme
 from gflow_cli import auth as auth_mod
 from gflow_cli._cli_helpers import (
     OutputFormat,
+    _handle_gflow_error,  # pyright: ignore[reportPrivateUsage]
     command_tree,
     help_json_path,
     output_format_option,
     spends_credits,
 )
+from gflow_cli.cli_audio import audio as _audio_group
 from gflow_cli.cli_cancel import cancel as _cancel_command
 from gflow_cli.cli_capabilities import capabilities as _capabilities_command
 from gflow_cli.cli_character import character as _character_group
@@ -38,6 +40,7 @@ from gflow_cli.cli_gen import image_gen as _image_gen_command
 from gflow_cli.cli_gen import video_gen as _video_gen_command
 from gflow_cli.cli_image import image as _image_group
 from gflow_cli.cli_instructions import instructions as _instructions_group
+from gflow_cli.cli_media import media as _media_group
 from gflow_cli.cli_models import models as _models_command
 from gflow_cli.cli_movie import movie as _movie_group
 from gflow_cli.cli_project import project as _project_group
@@ -409,9 +412,15 @@ def auth_status(profile: str | None) -> None:
     from gflow_cli.auth import verification
 
     console.print("[dim]Probing Flow session (may take up to ~2 min on a slow network)...[/dim]")
-    status_result = asyncio.run(
-        verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
-    )
+    from gflow_cli.errors import ProfileLockedError
+
+    try:
+        status_result = asyncio.run(
+            verification.verify_flow_profile(auth_mod.profile_dir(name), source="status")
+        )
+    except ProfileLockedError as exc:
+        # #1400: held by another gflow process or a Chrome window; its own hint says which.
+        sys.exit(_handle_gflow_error(exc, cli_command="auth status"))
     if not status_result.authenticated:
         if status_result.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
             # #796: local profile state, not the network. Sending this user to
@@ -428,6 +437,13 @@ def auth_status(profile: str | None) -> None:
                 f"[yellow]{escape(str(status_result.detail))}[/yellow] "
                 "Close any Chrome window using this profile, then re-run "
                 f"[bold]gflow auth login --profile {name}[/bold].",
+            )
+        elif status_result.outcome is verification.FlowSessionOutcome.PROFILE_UNAVAILABLE:
+            # #1400: the headless cookie read could not run; local, not the network.
+            console.print(
+                f"[yellow]{escape(str(status_result.detail))}[/yellow] "
+                "The cause is on this machine, not the network. Close any Chrome window "
+                "using this profile, then retry.",
             )
         elif status_result.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
             # Re-login cannot fix an unreachable endpoint — don't send the
@@ -460,7 +476,9 @@ def _render_renew_row(
         who = f" as [bold]{escape(r['email'])}[/bold]" if r["email"] else ""
         console.print(f"[green]{name}: session renewed and verified{who}.[/green]")
     elif r["result"] == "in_use":
-        console.print(f"[dim]{name}: in use by another gflow process — skipped.[/dim]")
+        console.print(
+            f"[dim]{name}: in use by another gflow process or a Chrome window — skipped.[/dim]"
+        )
     elif r["result"] in ("engine_downgrade", "launch_error"):
         reason = (
             "profile was written by a newer browser"
@@ -486,6 +504,11 @@ def _render_renew_row(
         console.print(
             f"[yellow]{name}: not renewed — {reason}.[/yellow] Retry later; if it "
             f"persists, run [bold]gflow auth login --profile {name}[/bold].",
+        )
+    elif r["result"] == FlowSessionOutcome.PROFILE_UNAVAILABLE.value:
+        console.print(
+            f"[yellow]{name}: the session check could not run on this machine.[/yellow] "
+            "Close any Chrome window using this profile, then retry.",
         )
     elif r["result"] == FlowSessionOutcome.VERIFICATION_ERROR.value:
         console.print(
@@ -693,6 +716,7 @@ def _resolve_or_prompt(default_for_first_run: str) -> str:
 
 
 main.add_command(_cancel_command)
+main.add_command(_audio_group)
 main.add_command(_capabilities_command)
 main.add_command(_character_group)
 main.add_command(_credits_group)
@@ -704,6 +728,7 @@ main.add_command(_movie_group)
 main.add_command(_project_group)
 main.add_command(_video_group)
 main.add_command(_image_group)
+main.add_command(_media_group)
 for _name in ("generate", "gen"):  # bridge verbs (#1193), kept in cli_gen; `gen` is an alias
     _video_group.add_command(_video_gen_command, name=_name)
     _image_group.add_command(_image_gen_command, name=_name)

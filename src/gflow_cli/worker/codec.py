@@ -221,7 +221,6 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
     reference_entities = tuple(payload.get("reference_entities", []))
     reference_entity_names = tuple(payload.get("reference_entity_names", []))
     count = payload.get("count", 1)
-
     return GenerateImageRequest(
         prompt=prompt,
         aspect=aspect,
@@ -280,6 +279,14 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
     duration = payload.get("duration")
     count = payload.get("count", 1)
     seed = payload.get("seed")
+    raw_max_credits = payload.get("max_credits")
+    if raw_max_credits is not None and (
+        isinstance(raw_max_credits, bool)
+        or not isinstance(raw_max_credits, int)
+        or raw_max_credits < 0
+    ):
+        raise ValueError("max_credits must be a non-negative integer")
+    max_credits = raw_max_credits
 
     start_image = Path(payload["start_image"]) if payload.get("start_image") else None
     start_image_ref_id = payload.get("start_image_ref")
@@ -339,4 +346,5 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         reference_entity_names=reference_entity_names,
         reference_audio=reference_audio,
         ui_mode=ui_mode,
+        max_credits=max_credits,
     )

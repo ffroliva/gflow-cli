@@ -32,6 +32,7 @@ Commands:
     i2v                         Generate a video from an initial frame + motion prompt.
     r2v                         Generate a video from reference images + prompt.
     chain                       Render a JSONL manifest as a last-frame I2V chain.
+    assemble                    Join local clips with optional local audio tracks.
 
   scene     Compose Flow Scenes (Add Clip) — credit-free REST.
     create                      Compose ordered, trimmable clips into a scene (optional extended .mp4).
@@ -300,6 +301,65 @@ Notes:
 - The result is saved as `<output_dir>/images/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>`
   (extension matches the returned format — usually `.jpg`).
 
+## `gflow audio narrate`
+
+Create a local narration track from text with the keyless Edge provider or Gemini TTS. The
+narration text is sent to the selected provider; this opens no browser and uses no Flow credits.
+Provide exactly one of positional `TEXT` or `--text-file FILE` (UTF-8). The output file must not
+exist and its parent directory must already exist. Edge writes MP3; Gemini writes WAV. Then pass
+that file to `gflow video assemble --voiceover`.
+
+```text
+gflow audio narrate TEXT --out-file FILE [--text-file UTF8_FILE] [--provider edge|gemini]
+  [--voice ID] [--rate +/-N%] [--pitch +/-NHz] [--json]
+```
+
+Install Edge support with `pip install 'gflow-cli[tts]'`; it defaults to `en-US-AndrewNeural`.
+`--rate` and `--pitch` apply to Edge. It uses Microsoft's unofficial consumer Read Aloud
+endpoint, with no SLA; Microsoft may change it. The optional `edge-tts` package has its own
+LGPL/GPL license terms.
+Gemini defaults to the `Algieba` voice and requires the dedicated
+`GFLOW_CLI_GEMINI_TTS_API_KEY`; it does not reuse `GFLOW_CLI_LLM_API_KEY`. Gemini does not support
+custom rate or pitch. Provider errors are typed and do not expose the narration text or key.
+
+## `gflow video transcribe` and `gflow video captions`
+
+Transcribe a local video or catalog media UUID to SubRip (`.srt`), then optionally burn those
+captions into a local MP4. Both commands are local post-processing: they open no browser and
+spend no Flow credits. Install media support with `pip install 'gflow-cli[chain]'`.
+
+```text
+gflow video transcribe FILE [--out-file FILE.srt] [--language CODE] [--profile NAME] [--json]
+gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--json]
+```
+
+`FILE` is a local video path or catalog video UUID. `transcribe` defaults to `<name>.srt`;
+`captions` defaults to `<name>-captions.mp4`. When `--srt` is omitted, captions transcribes
+first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
+burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. It
+chooses a system font with broad glyph coverage; CJK coverage depends on fonts installed
+on the machine.
+
+Transcription sends only extracted 16 kHz mono WAV audio to the configured
+`GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional
+`GFLOW_CLI_LLM_API_KEY` and `GFLOW_CLI_TRANSCRIBE_MODEL` (`whisper-1` when unset). gflow refuses
+before extracting or sending audio while the built-in Google Gemini endpoint is configured;
+set the base URL to an OpenAI, Groq, or local Whisper-compatible server. The response must
+provide timed segments for SRT output. `GFLOW_CLI_TRANSCRIBE_MODEL` selects the audio
+model independently of `GFLOW_CLI_LLM_MODEL`, which remains the prompt tools' model.
+
+```bash
+gflow video transcribe out/clip.mp4 --language en --json
+gflow video captions out/clip.mp4 --srt out/clip.srt --out-file out/clip-captioned.mp4
+```
+
+`--json` reports the source, output paths, duration, and segment or frame counts. `-o id`
+prints the generated `.srt` or `.mp4` path. Errors use exit 11 (`ConfigurationError`, including
+the default endpoint and invalid SRT), 16 (`DataStoreError`, catalog lookup), 20
+(`FrameExtractionError`, missing chain extra or unreadable media), 4 (`RateLimitError`), or 6
+(`NetworkError`). Output files are written through a temporary file and renamed into place;
+the input file is never overwritten.
+
 ## `gflow video upscale`
 
 Upscale or export a **platform-generated** video to 1080p Full HD, download it at 720p,
@@ -420,8 +480,9 @@ prompts through one Flow session/project.
 > Imagen 4, Agent instructions and `image batch` remain unavailable on that host and
 > fail before submit. On Flow's agent-only composer (#799), t2i runs through the agent
 > driver; see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's
-> 2026-11-20 build that driver stops before submit with exit 23, because its settings button
-> is not rendered there; porting it is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387).
+> 2026-11-20 build an account with no Agent switch is still reported as selector drift
+> (exit 23) before submit: none has been observed there
+> ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)).
 
 ```text
 gflow image t2i PROMPT [PROMPT ...] [OPTIONS]
@@ -788,7 +849,8 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > 4/6/8/10 for omni-flash; every integer 3–15 for omni-1.2-flash (at most 10 with `--end-frame`); 4/6/8/10
 > when `--model` is omitted),
 > `--count INTEGER` (1–4; >1 multiplies credit cost), `--aspect [9:16|16:9]`,
-> `--profile NAME`, `--out-dir DIR` (default `tmp/`).
+> `--profile NAME`, `--out-dir DIR` (default `tmp/`), and `--max-credits INTEGER` (hard
+> per-command cap; defaults to `GFLOW_CLI_MAX_CREDITS`).
 >
 > **Leaving models (#1375).** Flow retires `omni-flash` (Omni 1.1 Flash), `veo-fast` and
 > `veo-quality` on 2026-12-05. `gflow models` shows the date in its `retires on` column, and a
@@ -836,10 +898,21 @@ All prompts in a batch share one Flow project. The editor is opened once and sta
 > **actually used** after submit: a run whose end frame was silently dropped
 > fails loudly rather than reporting a clip that ignored it as a success.
 
+**Per-command credit cap (#1355).** Billed video commands (`video t2v`/`i2v`/`r2v`/`generate`,
+`video chain`/`extend`, and `movie run`) accept `--max-credits N`. `GFLOW_CLI_MAX_CREDITS=N`
+sets the default; an explicit flag wins. Use `--no-max-credits` to ignore the environment
+default for one CLI command. MCP calls use the environment default when `max_credits` is
+omitted, and cannot clear that default for one call. On the migrated classic composer gflow reads the
+integer from Flow's settings-pane quote before upload or submit. If the quote is unreadable,
+or exceeds the cap, the command refuses with `CreditCapExceededError` (exit 45) and reports
+`charged: no` when nothing was submitted. Chain, extend, and movie runs count prior quoted
+spend against the same cap. On routes without a measured pre-submit quote, a set cap refuses
+closed with exit 45. Image commands do not accept this option.
+
 ## `gflow video t2v`
 
 Generate a video from a text prompt only. On Flow's agent-only composer (#799), t2v runs
-through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's 2026-11-20 build the agent-only driver stops before submit with exit 23, because its settings button is not rendered there; porting it is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387).
+through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's 2026-11-20 build an account with no Agent switch is still reported as selector drift (exit 23) before submit: none has been observed there ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)).
 
 ```text
 gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]
@@ -1410,6 +1483,40 @@ gflow tools run creative-director "a cat on a couch" --style cinema --json
 To author your own tool, drop a TOML in `<GFLOW_CLI_HOME>/tools/` — see
 [TOOLS.md § My Tools](TOOLS.md).
 
+## `gflow video assemble`
+
+Join one or more local video files or catalog media IDs into an MP4. This command
+works entirely on your machine and uses no Flow credits. Catalog IDs need a local
+copy whose recorded size and SHA-256 still match.
+
+```text
+gflow video assemble CLIPS... --out-file PATH [OPTIONS]
+
+Options:
+  --music PATH                Optional local music audio file.
+  --voiceover PATH            Optional local voiceover audio file.
+  --clip-volume FLOAT         Clip audio gain, 0–1 (default 1).
+  --music-volume FLOAT        Music gain, 0–1 (default 0.3).
+  --voiceover-volume FLOAT    Voiceover gain, 0–1 (default 1).
+  --duck / --no-duck          Duck music and clip audio under voiceover (default on).
+  --profile NAME              Profile to resolve catalog IDs.
+  --out-file PATH             Required output path; existing files are refused.
+  --json                      Emit the result as JSON.
+```
+
+The output uses the first clip's dimensions and frame rate. If either first-clip dimension is odd, it rounds down to the nearest even value. Clips with aspect ratios differing by more than 1% are refused; clips at the same ratio can be resized. Audio is normalized
+to stereo 44.1 kHz AAC. A volume outside 0–1, unreadable input, or output path
+that aliases an input fails before replacing source media; a failed render removes
+its partial output.
+
+```bash
+gflow video assemble intro.mp4 scene.mp4 outro.mp4 --music score.wav \
+  --voiceover narration.wav --out-file finished.mp4 --json
+```
+
+For clips already in a Flow project that need no audio mix, use
+[`gflow scene create`](#gflow-scene) for server-side composition instead.
+
 ## `gflow scene`
 
 Compose ordered, trimmable video clips into a Flow **Scene** (the "Add Clip"
@@ -1777,6 +1884,50 @@ same command prints `cloud_uri_1`, `cloud_uri_2`, and so on instead of
 `local_path_N` rows.
 
 Exit codes: `0` success, `2` media ID not found in the local database, `16` database error (see exit code table below).
+
+## `gflow media trash` and `gflow media restore`
+
+Move generated media items (images, videos) to Flow's Trash or restore them back to the project ([#1363](https://github.com/ffroliva/gflow-cli/issues/1363)).
+
+Flow provides a restorable Trash: moving an item to Trash removes it from Flow project views and collections without permanently destroying it. Trashing and restoring are **credit-free** (0 credits) and execute directly over the wire using batchexecute RPC `pGCYOe`.
+
+### `gflow media trash`
+
+```text
+gflow media trash ID [OPTIONS]
+
+Options:
+  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --profile TEXT                 Profile name to disambiguate or scope the lookup.
+  -y, --yes                      Confirm trashing media without an interactive prompt.
+  -o, --output [json|table|id]   Output format (json|table|id). [default: table]
+  --json                         Alias for -o json.
+```
+
+- Accepts a Flow media UUID (`flow_media_id`), local catalog asset ID, or workflow UUID.
+- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- Resolves the Flow project ID from the local catalog when `--project` is omitted.
+- If the identifier matches assets across multiple profiles and `--profile` is unset, raises exit 16 (`DataStoreError`) requesting `--profile`.
+- In interactive environments, prompts `Move <kind> <id> in project <project_id> (profile: <profile>) to Flow's Trash? [y/N]: ` unless `--yes` (`-y`) is supplied.
+- In non-interactive environments (scripts, CI), `--yes` is required (exits 2 if omitted; emits JSON problem document when `--json` is set).
+
+### `gflow media restore`
+
+```text
+gflow media restore ID [OPTIONS]
+
+Options:
+  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --profile TEXT                 Profile name to disambiguate or scope the lookup.
+  -o, --output [json|table|id]   Output format (json|table|id). [default: table]
+  --json                         Alias for -o json.
+```
+
+- Restores a trashed media item back to its Flow project over the wire.
+- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- Clears the `metadata.archived` flag and resets `collection_id` via `pGCYOe`.
+
+Exit codes: `0` success, `2` confirmation missing in non-interactive shell or usage error, `16` ambiguous asset across profiles or catalog record missing.
 
 ## `gflow data sync`
 
@@ -2531,7 +2682,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | Code | Error class           | Meaning                                          | Remediation                                                |
 |------|-----------------------|--------------------------------------------------|------------------------------------------------------------|
 | `0`  | —                     | Success                                          | —                                                          |
-| `1`  | unhandled / unmapped  | Anything not derived from `GFlowError`, a typed error with no code of its own (e.g. a reCAPTCHA mint failure, `type` `…/errors/recaptcha-mint`, [#915](https://github.com/ffroliva/gflow-cli/issues/915) — branch on the `--json` `type`) — **or a deliberate CLI verdict**: `gflow auth status` exits 1 for a dead/unverifiable session | Re-run with `--verbose`; for `auth status` follow the printed hint; file a bug if it persists |
+| `1`  | unhandled / unmapped  | Anything not derived from `GFlowError`, a typed error with no code of its own (e.g. `VideoAssemblyError` for local media processing, or a reCAPTCHA mint failure, `type` `…/errors/recaptcha-mint`, [#915](https://github.com/ffroliva/gflow-cli/issues/915) — branch on the `--json` `type`) — **or a deliberate CLI verdict**: `gflow auth status` exits 1 for a dead/unverifiable session | Re-run with `--verbose`; for `auth status` follow the printed hint; file a bug if it persists |
 | `2`  | usage error (Click)   | Bad usage / missing arg / profile missing        | Standard CLI usage error                                   |
 | `3`  | `AuthExpiredError`    | Session cookies rejected by Flow (401/403), or Flow served one of its OAuth/sign-in routes instead of the page gflow asked for ([#756](https://github.com/ffroliva/gflow-cli/issues/756)) | `gflow auth login --profile <name>` — **but read the error's own `remediation_hint` first.** `AisandboxAuthError` shares this code. (Before v0.87.1, when `gflow credits` failed on an account migrated to `flow.google.com`, re-logging in could not help and could roll the profile's browser-strategy marker back ([#795](https://github.com/ffroliva/gflow-cli/issues/795), [#791](https://github.com/ffroliva/gflow-cli/issues/791)).) Since v0.87.1 a credits exit 3 means a sign-in landing, fixable with `gflow credits --refresh` |
 | `4`  | `RateLimitError`      | Quota / rate limit hit, exhausted retries        | Wait + reduce `GFLOW_CLI_CONCURRENCY`                      |
@@ -2570,6 +2721,7 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `37` | `InsufficientCreditsError` | The account's balance is short **for the model it asked for**, so Flow **replaced** the submit control with its `Insufficient credits warning` instead of disabling it. Short, not necessarily empty: measured 2026-09-07, an account holding **50** credits requesting `--model veo-quality` (**100**) rendered the warning. Recognised by the warning's class, so it does not depend on the UI language ([#745](https://github.com/ffroliva/gflow-cli/issues/745)). Explicitly **not** selector drift (23): reporting it as drift told users to file a frontend bug over a credit shortfall | Check the balance with `gflow credits user`, then pick a cheaper `--model` (`veo-lite` costs 10), top up, or wait for the allowance to reset. Nothing was submitted, so no credit was spent. `gflow image` draws on a separate daily quota and may still work |
 | `38` | `FlowAccountChooserError` | The post-migration hop landed on Google's account chooser and the profile's recorded account (`.gflow_account`) could not be selected automatically (row absent, click-through did not return to the editor, or `--account` mismatch) | **Not retryable**: run `gflow auth login --profile <name>` and complete the chooser manually, while signed in as the recorded account (re-run `gflow auth login` if the chooser offers a different session) |
 | `39` | `FlowAccessUnavailableError` | Flow loaded and routed to its own "you don't have access" screen (`<flow-pinhole-unavailable-screen>`): this Google account has no Flow entitlement. Detected by component, not by URL — the hop is client-side (`flow.google.com/` answers 200) and the path varies (`/unavailable`, `/u/8/unavailable`). Explicitly **not** auth expiry (3/8) and **not** selector drift (23): nothing expired and nothing drifted | **Not retryable, and signing in again cannot change it.** Flow needs an age-verified account in a supported region on a Google AI Plus/Pro/Ultra or qualifying Workspace plan — check which applies at [Google's eligibility page](https://support.google.com/flow/answer/16353333) and open https://flow.google.com in a browser on this account to confirm |
+| `45` | `CreditCapExceededError` | Flow's quote is missing or exceeds `--max-credits`; includes `quoted` and `max_credits` | Choose a cheaper setting or raise the cap; when no quote is exposed, run without a cap. If submission may have occurred, reconcile before retrying. |
 | `130`| SIGINT                | User-interrupted (Ctrl-C)                        | —                                                          |
 
 **Exit code 16 — data store / migration error.** Fires when:

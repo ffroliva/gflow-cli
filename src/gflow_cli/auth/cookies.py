@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -211,17 +213,74 @@ async def _get_chrome_cookies_playwright(profile_dir: Path) -> ChromeCookieSnaps
     )
 
 
+# macOS: browser_cookie3 raises a Keychain prompt per read and cannot decrypt our jar.
+_SKIP_DIRECT_READ = sys.platform == "darwin"
+
+
+def _macos_store_is_missing(profile_dir: Path) -> bool:
+    """Check the macOS cookie store before the headless read; True when there is none.
+
+    #796: Chrome razes a store it cannot read, so a corrupt one must not reach it. A
+    non-SQLite header or a malformed body raises ``sqlite3.DatabaseError``, as the
+    browser_cookie3 read did before Chrome launched. A store this process cannot open,
+    or one another process holds locked, is left to the headless read: that is what the
+    direct read did, and its profile lease reports a running Chrome by name.
+    """
+    try:
+        cookies_file = get_cookies_path(profile_dir)
+    except FileNotFoundError:
+        return True
+    try:
+        with open(cookies_file, "rb") as jar:
+            header = jar.read(16)
+    except OSError:
+        logger.info("cookie_store_unreadable_falling_back", profile=str(profile_dir))
+        return False
+    if not header:  # an empty store is a fresh profile: Chrome initialises it
+        return False
+    if header != b"SQLite format 3\x00":
+        raise sqlite3.DatabaseError("file is not a database")
+    uri = f"{cookies_file.resolve().as_uri()}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True, timeout=2)
+        try:
+            # quick_check decodes every record; count(*) passes a store with corrupt rows.
+            verdict = conn.execute("PRAGMA quick_check").fetchone()
+        finally:
+            conn.close()
+        if not verdict or verdict[0] != "ok":
+            raise sqlite3.DatabaseError("cookie store failed its integrity check")
+    except sqlite3.OperationalError:
+        # Locked or busy (a running Chrome), not corrupt: let the lease say so.
+        logger.info("cookie_store_busy_falling_back", profile=str(profile_dir))
+    return False
+
+
 async def get_chrome_cookie_snapshot(profile_dir: Path) -> ChromeCookieSnapshot:
     """Return the Chrome cookies needed by the Flow session probe.
 
     Strategy:
     1. browser_cookie3 direct SQLite read, with httpx cookies filtered to labs.google.
     2. marker-gated Playwright fallback when browser-cookie3 reports decryption failure.
+
+    On macOS step 1 is skipped: browser_cookie3 fetches "Chrome Safe Storage" from the
+    Keychain (a password prompt on every call) and then fails to decrypt this profile's
+    jar anyway, so the Playwright read is the one that decrypts there. Same reason
+    ``wire_reads`` is off by default on macOS.
     """
+    if _SKIP_DIRECT_READ:
+        # Off the event loop: a store Chrome holds locked waits out the busy timeout.
+        if await asyncio.to_thread(_macos_store_is_missing, profile_dir):
+            return ChromeCookieSnapshot(httpx_cookies={}, google_session=False)
+        return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
     try:
         return _get_chrome_cookies3(profile_dir=profile_dir)
-    except PermissionError:
-        logger.info("cookie_decryption_failed_falling_back_to_playwright", profile=str(profile_dir))
+    except PermissionError as exc:
+        logger.info(
+            "cookie_decryption_failed_falling_back_to_playwright",
+            profile=str(profile_dir),
+            error=type(exc.__cause__ or exc).__name__,  # the class only, never its text
+        )
         return await _get_chrome_cookies_playwright(profile_dir=profile_dir)
 
 

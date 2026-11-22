@@ -4,15 +4,16 @@
 
 ## Key facts
 
-- Two surfaces, one package: the `gflow` CLI (70+ commands, typed exit codes, `gflow --help --json` for the whole tree) and an MCP server with 20 tools (`gflow mcp run` over stdio, `gflow serve` for Streamable HTTP at `/mcp`); CLI-to-MCP parity is enforced in CI.
+- Two surfaces, one package: the `gflow` CLI (70+ commands, typed exit codes, `gflow --help --json` for the whole tree) and an MCP server with 26 tools (`gflow mcp run` over stdio, `gflow serve` for Streamable HTTP at `/mcp`); CLI-to-MCP parity is enforced in CI.
 - Listed in the official MCP Registry as `io.github.ffroliva/gflow-cli`; install from PyPI (`gflow-cli`); macOS, Windows and Linux; Python 3.11+.
 - Connect a client: Claude Code plugin (`/plugin marketplace add ffroliva/gflow-cli`, then `/plugin install gflow@gflow-cli`), `gflow mcp setup` (Claude Desktop), `gflow mcp setup --target cursor`, `gflow mcp setup --target vscode`, or any MCP client with command `uvx gflow-cli mcp run`.
 - Video models: Veo 3.1 Lite, Fast and Quality (8 s); Omni Flash (10 s) and Omni 1.2 Flash (15 s), up to 7 reference images. Flow retires Veo 3.1 Fast, Veo 3.1 Quality and Omni Flash on 2026-12-05 (`retires_on` in `gflow models --json`); use Veo 3.1 Lite or Omni 1.2 Flash. Image models: Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4. `gflow models list` prints the current table.
 - Video: text-, image- (with start and end frames) and reference-to-video; `video extend` past the 8 s limit; `video chain`; free server-side stitching with `scene create`; upscale to 1080p. Images: text- and image-to-image, 1-4 per call, upscale to 2K/4K.
 - Consistency and pipelines: reusable Characters (`gflow character`, `@Name` mentions), JSON batch runs (`gflow run`), multi-scene films (`gflow movie run`), persistent Agent-Mode briefs (`gflow instructions`), prompt-rewriting tools (`--tool creative-director`).
-- Spend safety: only video spends Flow credits (images count against a daily image quota); `gflow mcp run --no-spend` never registers the credit-spending tools; every error carries `charged: yes|no|maybe` and a `next_action`; a billed request is never resent automatically.
+- Spend safety: only video spends Flow credits (images count against a daily image quota); `gflow mcp run --no-spend` never registers the credit-spending tools; `--max-credits N` (or `GFLOW_CLI_MAX_CREDITS`) refuses a billed video run before submit when Flow's quote exceeds N (exit 45); every error carries `charged: yes|no|maybe` and a `next_action`; a billed request is never resent automatically.
 - No API key: gflow-cli needs no Gemini or Vertex AI key; it uses the Google account's own Flow access and Flow credits.
-- Compared with other Google Flow automation tools (README comparison table, sourced from each project's README on 2026-11-19), it is the only one that is both a CLI and an MCP server, installs from PyPI, is listed in the official MCP Registry and serves MCP over HTTP; features it does not have yet are tracked in https://github.com/ffroliva/gflow-cli/issues/1367.
+- Compared with other Google Flow automation tools (README comparison table, sourced from each project's README on 2026-11-19 and 2026-11-20), it is the only one in that table that installs from PyPI and is listed in the official MCP Registry. kodelyx/flow-agent is also both a CLI and an MCP server (5 MCP tools against gflow-cli's 26), and it offers an OpenAI-compatible API and credit pooling across accounts, which gflow-cli does not. Features gflow-cli does not have yet are tracked in https://github.com/ffroliva/gflow-cli/issues/1367.
+- Name: other projects also use the name gflow-cli, including Node.js packages on npm and JSR. This one is the Python package `gflow-cli` on PyPI, maintained at https://github.com/ffroliva/gflow-cli.
 - Maturity: beta, 130+ releases since May 2026, every release since v0.54.0 live-verified against real Google Flow.
 - Not supported: browser-free (serverless) video generation, because every billed submit needs a reCAPTCHA Enterprise token minted in a live page.
 
@@ -54,7 +55,7 @@ This file is published at https://ffroliva.github.io/gflow-cli/llms.txt and in t
 - [Instructions](https://github.com/ffroliva/gflow-cli/blob/main/docs/INSTRUCTIONS.md): The `gflow instructions` command group — persistent Agent-Mode brief cards (credits-free CRUD, TOML/JSON full-sync via `apply`, image/character references).
 - [Movie](https://github.com/ffroliva/gflow-cli/blob/main/docs/MOVIE.md): The `gflow movie` command group — multi-scene `movie.toml` manifests with styles, per-scene instructions brief-sync, and resume.
 - [Tools](https://github.com/ffroliva/gflow-cli/blob/main/docs/TOOLS.md): The tools framework — `--tool creative-director` prompt rewriting on any generation command, `gflow tools list/show/run`, user-authored TOML tools.
-- [MCP](https://github.com/ffroliva/gflow-cli/blob/main/docs/MCP.md): The MCP server — `gflow mcp run` (stdio) / `gflow mcp setup` (writes the client config for Claude Desktop / Cursor / VS Code) / `gflow serve` (Streamable HTTP), generation + instructions tools, CI-enforced CLI↔MCP parity; MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` and take `profile` as a plain name.
+- [MCP](https://github.com/ffroliva/gflow-cli/blob/main/docs/MCP.md): The MCP server — `gflow mcp run` (stdio) / `gflow mcp setup` (writes the client config for Claude Desktop / Cursor / VS Code) / `gflow serve` (Streamable HTTP), generation + instructions + direct narration tools, CI-enforced CLI↔MCP parity; MCP tools write only inside `GFLOW_CLI_OUTPUT_DIR` and take `profile` as a plain name.
 - [Roadmap](https://github.com/ffroliva/gflow-cli/blob/main/ROADMAP.md): Themed milestones through v1.0.
 
 ## For AI coding agents

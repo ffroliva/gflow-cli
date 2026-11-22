@@ -2,6 +2,7 @@
   "methods": {
     "_absent_chip_verdict": "function (self, page: 'Page', project_id: 'str', trigger: 'Locator', *, timeout_s: 'float', early_s: 'float', error: 'Exception') -> 'ComposerKind' sha=8a1120989556f9be",
     "_agent_chip_pressed": "staticmethod (page: 'Page') -> 'bool | None' sha=60e3ae808586a483",
+    "_apply_duration_setting": "function (self, page: 'Page', pane: 'Locator', request: 'GenerateVideoRequest', model: 'VideoModel | None') -> 'None' sha=33db111dce5922ea",
     "_await_submit_enabled": "function (self, page: 'Page', submit: 'Locator', *, disabled: 'str', missing: 'str | None' = None) -> 'None' sha=c8455c449ec81621",
     "_await_terminal": "staticmethod (terminal: 'asyncio.Future[GenerationRecord]', done_no_url: 'asyncio.Future[GenerationRecord]', *, deadline: 'float', workflow_id: 'str') -> 'GenerationRecord' sha=642d4de89265d90e",
     "_blocking_overlays": "function (self, page: 'Page') -> 'Any' sha=540479d84dc4297b",
@@ -11,7 +12,7 @@
     "_close_pane": "function (self, page: 'Page', *, strict: 'bool' = True) -> 'None' sha=99fd4631b8e5238e",
     "_dismiss_cookie_bar": "function (self, page: 'Page') -> 'None' sha=a8fde4def0aaa52c",
     "_dismiss_dialog": "staticmethod (page: 'Page') -> 'None' sha=63c5af67e45b4529",
-    "_exit_agent_mode": "classmethod (cls, page: 'Page') -> 'tuple[AgentModeExit, Exception | None]' sha=61080f412b1cc636",
+    "_exit_agent_mode": "classmethod (cls, page: 'Page') -> 'tuple[AgentModeExit, Exception | None]' sha=d6284f4902b4f7b0",
     "_is_agent_only_composer": "staticmethod (page: 'Page', trigger: 'Any') -> 'bool' sha=6cb473875cfbd3cb",
     "_mention_by_name": "function (self, page: 'Page', name: 'str', *, expect_chips: 'int') -> 'None' sha=ec2ffe3f8a381885",
     "_mention_by_token": "function (self, page: 'Page', query: 'str', token: 'str', media_id: 'str', *, expect_chips: 'int') -> 'None' sha=c4ab152ce23d6710",
@@ -32,7 +33,7 @@
     "_verify_submit_target": "function (self, page: 'Page', submit: 'Locator') -> 'None' sha=ce537cacf502d76b",
     "_why_the_click_missed": "function (self, page: 'Page', locator: 'Any', named: 'str', timeout: 'int') -> 'str' sha=393a079f4f6d7140",
     "apply_image_settings": "function (self, page: 'Page', request: 'GenerateImageRequest') -> 'None' sha=9a08b47faf24da65",
-    "apply_video_settings": "function (self, page: 'Page', request: 'GenerateVideoRequest') -> 'None' sha=3ef511c74485fc15",
+    "apply_video_settings": "function (self, page: 'Page', request: 'GenerateVideoRequest') -> 'int | None' sha=9b1144b2a8de8e5b",
     "attach_character_entities": "function (self, page: 'Page', *, entity_ids: 'tuple[str, ...]', names: 'tuple[str, ...]', clear: 'bool' = True) -> 'tuple[str, ...]' sha=6073f0fd19a2af09",
     "attach_end_frame": "function (self, page: 'Page', project_id: 'str', image_path: 'Path') -> 'str' sha=79c8aaa2df402fdd",
     "attach_existing_references": "function (self, page: 'Page', refs: 'tuple[ImageRef, ...]', tokens: 'dict[str, str]') -> 'tuple[str, ...]' sha=e83f5f7bf7efbe9a",
@@ -140,7 +141,7 @@
     "request_body": "function (request: 'Any') -> 'str' sha=5bd59f1d6a05e9c7",
     "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=501c1df69835b67c",
     "run_images": "function (page: 'Page', request: 'GenerateImageRequest', *, project_id: 'str | None', out_dir: 'Path | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=88c7455fbe9ada5e",
-    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=d84a1c4ab20578d2",
+    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=81a97185c83d1ff9",
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"
   },
   "public_functions": {
@@ -154,7 +155,7 @@
     "request_body": "function (request: 'Any') -> 'str' sha=5bd59f1d6a05e9c7",
     "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=501c1df69835b67c",
     "run_images": "function (page: 'Page', request: 'GenerateImageRequest', *, project_id: 'str | None', out_dir: 'Path | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=88c7455fbe9ada5e",
-    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=d84a1c4ab20578d2",
+    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=81a97185c83d1ff9",
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"
   }
 }

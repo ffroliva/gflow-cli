@@ -26,7 +26,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 | | |
 |---|---|
 | **What it is** | One Python package that is both a CLI (`gflow`) and an MCP server (`gflow mcp run`, `gflow serve`) for Google Flow |
-| **Agent surface** | **20 MCP tools** plus resources and prompts, over stdio and Streamable HTTP; listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.ffroliva/gflow-cli` |
+| **Agent surface** | **26 MCP tools** plus resources and prompts, over stdio and Streamable HTTP; listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.ffroliva/gflow-cli` |
 | **Terminal surface** | 70+ commands with typed exit codes, most with `--json` output; `gflow --help --json` prints the whole tree for agents |
 | **Video models** | Veo 3.1 Lite, Fast and Quality; Omni Flash and Omni 1.2 Flash (up to 15 s, up to 7 reference images) |
 | **Image models** | Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4 |
@@ -75,6 +75,7 @@ Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x
 # 1 · Install (uv recommended; also: pip install gflow-cli)
 uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
+# optional extras: 'gflow-cli[tts]' for `audio narrate` (Edge), 'gflow-cli[chain]' for `video chain`/`assemble`/`captions`
 # later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
 # Windows pip install at 0.99.0 or older? Upgrade once by hand first (#1298):
 #   close every gflow process, then <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
@@ -128,13 +129,13 @@ For the full 10-minute walkthrough with troubleshooting and multi-account setup,
 | Video | Omni Flash (1.1) | `omni-flash` | 10 s, 7 reference images; Flow retires it on 2026-12-05 |
 | Video | Veo 3.1 Quality | `veo-quality` | 8 s; Flow retires it on 2026-12-05 |
 | Video | Veo 3.1 Fast | `veo-fast` | 8 s, 3 reference images; Flow retires it on 2026-12-05 |
-
-For the three models Flow retires on 2026-12-05, use `veo-lite` or `omni-1.2` instead ([known issue](KNOWN_ISSUES.md#flow-retires-omni-11-flash-veo-31-fast-and-veo-31-quality-on-2026-12-05)).
 | Video | Veo 3.1 Lite | `veo-lite` | 8 s, 3 reference images |
 | Image | Nano Banana 2.1 | `nano2` | 10 reference images |
 | Image | Nano Banana Pro | `nano-pro` | 10 reference images |
 | Image | Nano Banana 2 Lite | `nano2-lite` | 3 reference images |
 | Image | Imagen 4 (not in Flow's own menu) | `imagen4` | 3 reference images |
+
+For the three models Flow retires on 2026-12-05, use `veo-lite` or `omni-1.2` instead ([known issue](KNOWN_ISSUES.md#flow-retires-omni-11-flash-veo-31-fast-and-veo-31-quality-on-2026-12-05)).
 
 Video comes in 16:9 and 9:16; images in 16:9, 4:3, 1:1, 3:4 and 9:16. Which models and durations your account sees depends on your Flow plan; `gflow capabilities` reports what this install can drive.
 
@@ -150,37 +151,41 @@ Video comes in 16:9 and 9:16; images in 16:9, 4:3, 1:1, 3:4 and 9:16. Which mode
 
 ## How does gflow-cli compare with other Google Flow automation tools?
 
-Compared from each project's own README on 2026-11-19. "—" means that README does not state it.
+Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent column on 2026-11-20). "—" means that README does not state it.
 
-| | **gflow-cli** | [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) | [ByteLandTechnology/flow-mcp](https://github.com/ByteLandTechnology/flow-mcp) | [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli) | [crisng95/flowkit](https://github.com/crisng95/flowkit) |
-|---|---|---|---|---|---|
-| Surfaces | **CLI and MCP server**, parity enforced in CI | MCP server, local web panel | MCP server | CLI | Chrome extension, local REST API, dashboards |
-| Install | **`uv tool install gflow-cli` (PyPI)** | git clone, npm build | npm, binaries | npm | git clone, load unpacked extension |
-| Official MCP Registry | **Yes** | — | — | no MCP | no MCP |
-| MCP over HTTP | **Yes** (`gflow serve`) | — | — | no MCP | no MCP |
-| macOS / Windows / Linux | **All three** | macOS, Windows | All three | — | All three |
-| Licence | MIT | — | MIT | MIT | MIT |
-| Video, image, start/end frames, references | Yes | Yes | Yes | Yes | Yes |
-| Extend past 8 s | Yes | Yes | Yes | Yes (to 148 s) | — |
-| Characters | Yes | Yes, with edit | Yes, with edit | Yes | Yes |
-| Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | 2K, 4K | 4K |
-| Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — |
-| `charged` field on every error | **Yes** | — | — | — | — |
-| Per-call credit cap | Planned ([#1355](https://github.com/ffroliva/gflow-cli/issues/1355)) | Yes (`max_credits`) | — | — | — |
-| Video-to-video edit | Planned ([#1356](https://github.com/ffroliva/gflow-cli/issues/1356)) | Yes | Yes | — | — |
-| Narration audio | Planned ([#1357](https://github.com/ffroliva/gflow-cli/issues/1357)) | Yes | — | — | Yes |
-| Captions | Planned ([#1358](https://github.com/ffroliva/gflow-cli/issues/1358)) | Yes | — | — | — |
-| Join clips | Yes, server-side and free (`scene create`); music and voiceover mix planned ([#1359](https://github.com/ffroliva/gflow-cli/issues/1359)) | Yes, with music and voiceover | — | Yes (scene) | Yes, with music and narration |
-| Bulk agent-mode image batch | Planned ([#1361](https://github.com/ffroliva/gflow-cli/issues/1361)) | Yes | Yes | — | — |
-| Web control panel | Planned ([#1364](https://github.com/ffroliva/gflow-cli/issues/1364)) | Yes | — | — | Yes |
-| Machine-readable self-description | **`capabilities`, `--help --json`, `models`, `llms.txt`, agent skills** | — | — | — | Agent skills |
-| Live-verified against real Flow every release | **Yes** (since v0.54.0) | — | — | — | — |
+| | **gflow-cli** | [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) | [ByteLandTechnology/flow-mcp](https://github.com/ByteLandTechnology/flow-mcp) | [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) | [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli) | [crisng95/flowkit](https://github.com/crisng95/flowkit) |
+|---|---|---|---|---|---|---|
+| Surfaces | **CLI and MCP server (26 tools)**, parity enforced in CI | MCP server, local web panel | MCP server | CLI, MCP server (5 tools), OpenAI-compatible REST API | CLI | Chrome extension, local REST API, dashboards |
+| Install | **`uv tool install gflow-cli` (PyPI)** | git clone, npm build | npm, binaries | clone, `pip install -e`, unpacked Chrome extension, bridge process | npm | git clone, load unpacked extension |
+| Official MCP Registry | **Yes** | — | — | — | no MCP | no MCP |
+| MCP over HTTP | **Yes** (`gflow serve`) | — | — | SSE (per its `docs/MCP_GUIDE.md`) | no MCP | no MCP |
+| macOS / Windows / Linux | **All three** | macOS, Windows | All three | — | — | All three |
+| Licence | MIT | — | MIT | MIT (README; no licence file in the repository) | MIT | MIT |
+| Video, image, start/end frames, references | Yes | Yes | Yes | Text- and image-to-video, text-to-image | Yes | Yes |
+| Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
+| Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
+| Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | 4K |
+| OpenAI-compatible API | No | — | — | **Yes** | — | — |
+| Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | **Yes** | — | — |
+| Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
+| `charged` field on every error | **Yes** | — | — | — | — | — |
+| Per-call credit cap | Yes (`--max-credits`, read from Flow's own quote) | Yes (`max_credits`) | — | — | — | — |
+| Video-to-video edit | Planned ([#1356](https://github.com/ffroliva/gflow-cli/issues/1356)) | Yes | Yes | — | — | — |
+| Narration audio | Yes (audio narrate: edge-tts or Gemini voices) | Yes | — | — | — | Yes |
+| Captions | Yes (`video captions`, `.srt` export) | Yes | — | — | — | — |
+| Join clips | Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`) | Yes, with music and voiceover | — | — | Yes (scene) | Yes, with music and narration |
+| Bulk agent-mode image batch | Planned ([#1361](https://github.com/ffroliva/gflow-cli/issues/1361)) | Yes | Yes | — | — | — |
+| Web control panel | Planned ([#1364](https://github.com/ffroliva/gflow-cli/issues/1364)) | Yes | — | — | — | Yes |
+| Machine-readable self-description | **`capabilities`, `--help --json`, `models`, `llms.txt`, agent skills** | — | — | — | — | Agent skills |
+| Live-verified against real Flow every release | **Yes** (since v0.54.0) | — | — | — | — | — |
 
 The full list of planned items is in [#1367](https://github.com/ffroliva/gflow-cli/issues/1367). A correction to a cell is welcome as an issue or a pull request.
 
 ## FAQ
 
 **Is gflow-cli an official Google tool?** No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.
+
+**Is this the gflow-cli package on npm or JSR?** No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at [github.com/ffroliva/gflow-cli](https://github.com/ffroliva/gflow-cli) and listed in the MCP Registry as `io.github.ffroliva/gflow-cli`.
 
 **Do I need a Gemini or Vertex AI API key?** No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.
 

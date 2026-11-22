@@ -155,6 +155,17 @@ Default: unset (the legacy exit codes). Set it to `2` to opt in to the stable ex
 `8→3`, `9→44`. Any other value keeps the legacy codes. It works from the environment or from
 `.env`. The full table and the coming default switch are in [ERRORS.md](ERRORS.md).
 
+### `GFLOW_CLI_MAX_CREDITS`
+
+**What:** Default hard per-command credit cap for billed video generation.
+**Default:** unset (no cap)
+**CLI override:** `--max-credits N` on video generation, chain, extend, and `movie run`.
+Use `--no-max-credits` on one CLI command to ignore this default.
+
+When set, gflow compares the cap with Flow's own pre-submit credit quote. A missing or
+over-limit quote refuses before submit with exit 45. Chain, extend, and movie commands
+deduct earlier quoted spend from the same command budget. Images do not use this setting.
+
 ### `GFLOW_CLI_PROVIDER`
 
 **What:** Backend to use for generations.
@@ -187,24 +198,49 @@ URL (`https://user:pass@host`) are rejected; pass the credential via
 `GFLOW_CLI_LLM_API_KEY`. Redirects are never followed, because `urllib` would re-send your
 `Authorization` header to whatever host a redirect names.
 
+`gflow video transcribe` and `gflow video captions` also use this base URL, but require its
+`/audio/transcriptions` route to return timed segments. The built-in Google Gemini endpoint
+does not provide that route, so gflow refuses before extracting or sending audio while it is
+the configured default. Set this value to OpenAI, Groq, or a local Whisper-compatible server;
+the audio is sent only to that configured endpoint.
+
 #### `GFLOW_CLI_LLM_API_KEY`
 
 **What:** The credential gflow presents to that endpoint, as `Authorization: Bearer`.
 **Default:** unset — and **optional**. When unset the header is omitted entirely, which is
 what a keyless local gateway expects.
-**Note:** this is the *only* key gflow holds. Provider keys (OpenAI, Anthropic, Google…)
-stay with your gateway; gflow never sees them.
+**Note:** this key is for the prompt-tools gateway; narration uses the separate
+`GFLOW_CLI_GEMINI_TTS_API_KEY` when Gemini is selected.
+
+#### `GFLOW_CLI_GEMINI_TTS_API_KEY`
+
+**What:** Dedicated Google Gemini credential for `gflow audio narrate --provider gemini`.
+**Default:** unset. Gemini narration fails before sending a request when this key is absent.
+**Security:** this key is separate from `GFLOW_CLI_LLM_API_KEY`; neither setting is used as a
+fallback for the other. Narration text is sent to Google's Gemini TTS endpoint.
+
+The default Edge provider is keyless and requires the optional `gflow-cli[tts]` extra. It uses
+Microsoft's unofficial consumer Read Aloud endpoint, which has no SLA and may change. The
+`edge-tts` optional dependency carries LGPL/GPL license terms; use Gemini if those terms or the
+endpoint's availability are unsuitable.
 
 #### `GFLOW_CLI_LLM_MODEL`
 
-**What:** Model to request. Because gateways route on the model string, this doubles as the
-provider selector (e.g. `openai/gpt-4o-mini`, `google/gemini-2.5-flash`).
+**What:** Model to request for prompt tools. Because gateways route on the model string, this
+doubles as the provider selector (e.g. `openai/gpt-4o-mini`, `google/gemini-2.5-flash`).
 **Default:** unset.
 **Precedence:** a tool's TOML `config.model` pin > `GFLOW_CLI_LLM_MODEL` > the default
 endpoint's own default > omitted, letting the gateway choose. The builtin tools pin
 nothing on purpose: a hardcoded vendor model name is rejected by any gateway that does not
 serve it. Note Google's compat endpoint has **no** server-side default and answers
 `400 "model is not specified"`, so the default endpoint ships a matching default model.
+
+#### `GFLOW_CLI_TRANSCRIBE_MODEL`
+
+**What:** Audio transcription model requested by `gflow video transcribe` and
+`gflow video captions` (when `--srt` is omitted) on `{base_url}/audio/transcriptions`.
+**Default:** `whisper-1`.
+**Scope:** Used only by transcription; `GFLOW_CLI_LLM_MODEL` is never read for it.
 
 #### When is the tool active?
 

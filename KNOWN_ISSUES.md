@@ -1589,11 +1589,16 @@ composer is reported only when no toggle appears after the panel is closed.
 Flow's 2026-11-20 build replaced the Agent chip (`button.agent-mode-chip`) with a switch
 (`flow-agent-mode-switch`), and closes the panel through `right_panel_close` instead of
 `close`; gflow matches both builds. On the 2026-11-20 build an account with no classic arm at
-all has not been observed. If one exists, it is reported as selector drift (exit 23) rather
-than driven, because this composer's settings button is measured only on the older build
-([spike](docs/superpowers/spikes/2026-11-20-agent-mode-switch-and-panel-rendering.md)). Porting the
-driver to the 2026-11-20 build is [#1387](https://github.com/ffroliva/gflow-cli/issues/1387)
-([spike](docs/superpowers/spikes/2026-11-20-agent-only-driver-on-the-new-build.md)).
+all has still not been observed. If one exists, it is still reported as selector drift (exit
+23), not driven ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)). That build's
+Agent-settings opener, a `settings_2` gear, also renders on recoverable accounts in agent mode,
+so it is not evidence that an account has no classic arm; calling a recoverable account whose
+switch is missing or late agent-only would write its Agent-settings defaults. The driver itself
+is ported to that build: it opens Agent settings through the gear, waits out the pane's queued
+saves before it submits, and opens a closed agent panel first (submitted from the compact prompt
+box alone, a run saw no credit gate and timed out). That port was measured on a recoverable
+account held in agent mode, not on such an account
+([spike](docs/superpowers/spikes/2026-11-21-agent-settings-on-the-new-build.md)).
 
 The **negative** controls were measured live at $0 on 2026-09-13, which is what makes the
 discriminator more than a guess: a healthy migrated composer carries its Agent toggle
@@ -1735,7 +1740,9 @@ use `--browser chrome` there.
 Since PR #168 the production entry point is `verify_flow_profile`, which reads
 the session cookie **directly from Chrome's SQLite store** via `browser_cookie3`
 (a no-browser fast path) and only falls back to launching Playwright when that
-decryption fails. This adds two more local surfaces to check when verification
+decryption fails. On macOS the direct read is skipped and the Playwright read runs
+straight away: browser_cookie3 raises a Keychain prompt there and still cannot decrypt the
+profile's jar. This adds two more local surfaces to check when verification
 fails unexpectedly: a Windows **DPAPI decrypt failure** (cross-user / cross-machine
 key — surfaces as a `RuntimeError` that `auth/cookies.py` normalizes to
 `PermissionError` to trigger the Playwright fallback) and a **locked cookie DB**

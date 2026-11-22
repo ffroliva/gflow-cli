@@ -367,6 +367,12 @@ class Settings(BaseSettings):
         ),
     )
 
+    max_credits: int | None = Field(
+        default=None,
+        ge=0,
+        description="Default per-command video credit cap; overridden by --max-credits.",
+    )
+
     # --- cloud storage ----------------------------------------------------
     storage_uri: str | None = Field(
         default=None,
@@ -445,6 +451,13 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_LLM_API_KEY."
         ),
     )
+    gemini_tts_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Dedicated credential for Gemini text-to-speech. It is not shared with the "
+            "prompt-tools LLM key. Override via GFLOW_CLI_GEMINI_TTS_API_KEY."
+        ),
+    )
     llm_model: str | None = Field(
         default=None,
         description=(
@@ -453,6 +466,10 @@ class Settings(BaseSettings):
             "A tool's TOML config.model pin takes precedence. "
             "Override via GFLOW_CLI_LLM_MODEL."
         ),
+    )
+    transcribe_model: str = Field(
+        default="whisper-1",
+        description="Audio transcription model. Override via GFLOW_CLI_TRANSCRIBE_MODEL.",
     )
 
     @field_validator("llm_base_url", mode="before")
@@ -660,9 +677,10 @@ class Settings(BaseSettings):
     wire_reads: bool = Field(
         default_factory=lambda: sys.platform != "darwin",
         description=(
-            "Read the credit balance directly from flow.google.com with the profile's saved "
-            "cookies, without starting Chrome; a failure falls back to the browser read, except "
-            "Flow throttling (HTTP 429/503), which is reported as an error. Skipped while "
+            "Read the credit balance (nzlxg) and execute media trash/restore mutations (pGCYOe) "
+            "directly from flow.google.com with the profile's saved cookies, without starting "
+            "Chrome; a failure falls back to the browser execution, except Flow throttling "
+            "(HTTP 429/503) or RPC refusal, which is reported as an error. Skipped while "
             "any proxy is configured (GFLOW_CLI_BROWSER_PROXY, the environment, the OS). "
             "Default on, except on macOS (reading the cookies there can raise a Keychain "
             "prompt). Set GFLOW_CLI_WIRE_READS=0 to always use the browser."

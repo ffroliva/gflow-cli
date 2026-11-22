@@ -132,7 +132,7 @@ function gate(quoted) {
     window.log.approvedTitles.push(title.textContent);
     answer();
     window.log.approvals++;
-    if (window.log.approvals < S.gates) setTimeout(gate, S.delay); else produce();
+    if (window.log.approvals < S.gates) setTimeout(gate, 0); else produce();
   };
   rows[2].onclick = () => { answer(); window.log.rejections++; };
   document.getElementById('chat').appendChild(m);
@@ -231,6 +231,7 @@ if (S.prePending) {
 @pytest.fixture(autouse=True)
 def _fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(aoc, "POLL_S", 0.05)
+    monkeypatch.setattr(aoc, "CHAT_POLL_S", 0.05)
     monkeypatch.setattr(aoc, "IDLE_S", 0.8)
     monkeypatch.setattr(aoc, "GATE_SETTLE_S", 2.0)
     monkeypatch.setattr(aoc, "LISTING_RETRY_S", 1.2)
@@ -873,7 +874,7 @@ async def test_a_non_google_src_is_never_requested(tmp_path: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_defaults_are_applied_then_restored_and_confirm_is_kept(page: Page) -> None:
+async def test_defaults_and_confirm_are_restored_after_a_run(page: Page) -> None:
     await _load(page)
     composer = aoc.AgentOnlyComposer()
     snap = await composer.apply_defaults(
@@ -893,7 +894,7 @@ async def test_defaults_are_applied_then_restored_and_confirm_is_kept(page: Page
     assert applied["confirm"] == 1
     assert restored["groups"] == [0, 1, 0, 0]
     assert restored["models"]["video"] == "Omni 1.1 Flash"
-    assert restored["confirm"] == 1, "confirm is a standing choice, never restored"
+    assert restored["confirm"] == 0, "the account's original confirm choice is restored"
 
 
 @pytest.mark.asyncio
@@ -1262,7 +1263,9 @@ def _clicks_time_out() -> MagicMock:
     loc.last = loc.first = loc
     loc.locator.return_value = loc
     loc.nth.return_value = loc
+    loc.element_handle = AsyncMock(return_value=MagicMock(name="approved_gate_handle"))
     page.locator.return_value = loc
+    page.wait_for_function = AsyncMock()
     return page
 
 
@@ -1306,11 +1309,13 @@ async def test_an_approved_gate_that_never_turns_read_only_is_drift() -> None:
     loc = page.locator.return_value
     loc.click = AsyncMock()
     loc.nth.return_value = loc
-    loc.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout exceeded"))
+    page.wait_for_function = AsyncMock(side_effect=PlaywrightTimeoutError("Timeout exceeded"))
     with pytest.raises(UiSelectorDriftError, match="did not turn read-only"):
         await aoc.AgentOnlyComposer()._approve_gate(page, 0)  # pyright: ignore[reportPrivateUsage]
     assert {c.args for c in loc.nth.call_args_list} == {(0,)}  # the gate that was read
-    assert loc.wait_for.await_args.kwargs["state"] == "detached"
+    # It waits on the approved gate's own element, not an index that can re-resolve.
+    assert page.wait_for_function.await_args.kwargs["arg"] is loc.element_handle.return_value
+    assert loc.element_handle.await_args.kwargs["timeout"] == 5000
 
 
 @pytest.mark.asyncio

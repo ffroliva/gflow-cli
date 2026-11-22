@@ -31,6 +31,7 @@ __all__ = [
     "ChainPartialError",
     "ConfigurationError",
     "ContentPolicyError",
+    "CreditCapExceededError",
     "DataIntegrityError",
     "DataMigrationError",
     "DataStoreError",
@@ -69,6 +70,7 @@ __all__ = [
     "UiSelectorDriftError",
     "UpscaleUnavailableError",
     "VideoModelSelectionError",
+    "VideoAssemblyError",
     "WafRejectionError",
     "WireFormatError",
     "active_exit_code",
@@ -119,6 +121,8 @@ class ProblemDetails(TypedDict, total=False):
     operation_id: str  # gflow extension (#1201) — local job / media id, when one exists
     retry_after: float  # gflow extension (#1201) — seconds, with next_action retry_after
     completed_media_ids: list[str]  # gflow extension (#1201) — a partial chain's billed links
+    quoted: int | None  # gflow extension — Flow's pre-submit credit quote
+    max_credits: int  # gflow extension — caller's credit ceiling
 
 
 class GFlowError(Exception):
@@ -285,7 +289,8 @@ class FlowApiError(GFlowError):
         "Check request parameters and network connection, then retry the API call."
     )
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, code: int | None = None, **kwargs: Any) -> None:
+        self.code = code
         # `bool` is a subclass of `int`, so `isinstance(True, int)` is True.
         # Exclude bools explicitly so an accidental FlowApiError(True, ...) takes
         # the new-style path (and surfaces as a TypeError downstream) instead of
@@ -427,6 +432,7 @@ class RateLimitError(FlowApiError):
         route: str = "",
         remediation_hint: str | None = None,
         retry_after: float | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -434,6 +440,7 @@ class RateLimitError(FlowApiError):
             instance=instance,
             route=route,
             remediation_hint=remediation_hint,
+            charged=charged,
         )
         self.retry_after = retry_after
 
@@ -538,6 +545,7 @@ class WireFormatError(FlowApiError):
         route: str = "",
         remediation_hint: str | None = None,
         discovery: dict[str, Any] | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -545,6 +553,7 @@ class WireFormatError(FlowApiError):
             instance=instance,
             route=route,
             remediation_hint=remediation_hint,
+            charged=charged,
         )
         self.discovery = discovery or {}
 
@@ -901,6 +910,56 @@ class UiSelectorDriftError(GFlowError):
         "(review artifacts before sharing — screenshots may show your account "
         "name/avatar; do NOT include tokens or signed URLs)."
     )
+
+
+class CreditCapExceededError(GFlowError):
+    """Flow's quoted generation cost is over the caller's per-command cap."""
+
+    problem_type = "https://gflow-cli.dev/errors/credit-cap-exceeded"
+    title = "Credit cap exceeded"
+    _default_remediation = "Raise --max-credits or choose a cheaper generation setting."
+    charged: Charged = "no"
+    next_action: NextAction = "fix_input"
+    quoted: int | None = None
+    max_credits: int = 0
+
+    def __init__(
+        self,
+        detail: str = "",
+        *,
+        quoted: int | None = None,
+        max_credits: int = 0,
+        route: str = "",
+        completed_media_ids: list[str] | None = None,
+    ) -> None:
+        detail = detail or (
+            f"Flow quoted {quoted} credits, exceeding the maximum of {max_credits}."
+            if quoted is not None
+            else f"Flow's credit quote was unavailable; the maximum is {max_credits}."
+        )
+        super().__init__(
+            detail,
+            status=422,
+            route=route,
+            remediation_hint=(
+                "This surface shows no price before submit; run without a credit cap."
+                if quoted is None
+                else None
+            ),
+            charged="no",
+            next_action="fix_input",
+        )
+        self.quoted = quoted
+        self.max_credits = max_credits
+        self.completed_media_ids = completed_media_ids or []
+
+    def to_problem_details(self) -> ProblemDetails:
+        out = super().to_problem_details()
+        out["quoted"] = self.quoted
+        out["max_credits"] = self.max_credits
+        if getattr(self, "completed_media_ids", None):
+            out["completed_media_ids"] = self.completed_media_ids
+        return out
 
 
 class InsufficientCreditsError(GFlowError):
@@ -1580,9 +1639,9 @@ class DataIntegrityError(DataStoreError):
 class FrameExtractionError(GFlowError):
     """Raised when the video-chain last-frame extractor cannot produce a frame.
 
-    Covers both the missing-optional-dependency case (the ``chain`` extra was
+    Covers the missing-optional-dependency case (the ``chain`` extra was
     skipped, so ``av`` and/or ``pillow`` are absent) and an undecodable /
-    truncated input video. The remediation names the extra AND both packages it
+    truncated input video. The remediation names the extra AND its required packages
     carries so an operator hitting the missing-dependency path can self-serve —
     it used to say only "PyAV", which left a missing Pillow undiagnosable (#813).
     """
@@ -1593,9 +1652,31 @@ class FrameExtractionError(GFlowError):
     title = "Last-frame extraction failed"
     _default_remediation = (
         "Verify input video file is readable and non-corrupt. Ensure the "
-        "gflow-cli[chain] extra and both packages it carries (av, pillow) are "
+        "gflow-cli[chain] extra and its packages (av, pillow) are "
         "installed: pip install 'gflow-cli[chain]'"
     )
+
+
+class VideoAssemblyError(GFlowError):
+    """Raised when local video or audio inputs cannot be assembled."""
+
+    problem_type = "https://gflow-cli.dev/errors/video-assembly"
+    charged = "no"
+    next_action = "fix_input"
+    title = "Local video assembly failed"
+    _default_remediation = (
+        "Check that the local media files are readable and the output path is writable."
+    )
+
+
+class VideoProcessingError(FrameExtractionError):
+    """Raised when local video decoding or caption rendering fails."""
+
+    problem_type = "https://gflow-cli.dev/errors/video-processing"
+    title = "Video processing failed"
+    charged = "no"
+    next_action = "fix_input"
+    _default_remediation = "Check that the local video is readable and its codecs are supported."
 
 
 class ChainPartialError(GFlowError):
@@ -1749,6 +1830,7 @@ EXIT_CODE_MAP: dict[type[GFlowError], int] = {
     # from generic error (1) without parsing stderr.
     UiSelectorDriftError: 23,
     InsufficientCreditsError: 37,
+    CreditCapExceededError: 45,
     # ModelModeIncompatibilityError + VideoModelSelectionError BEFORE
     # ConfigurationError (their parent) so the isinstance walk lands on 17/18,
     # not 11. Per [[exit-code-map-ordering-invariant-test-pitfall]].

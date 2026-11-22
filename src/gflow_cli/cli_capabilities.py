@@ -59,6 +59,11 @@ _MIGRATED_VIDEO = (
     "a character given by id without a name, and extend chains, --scene and --seed. "
     "The agent-only composer (#799) takes text-to-video only."
 )
+_CREDIT_CAP_NOTE = (
+    "The billed video commands accept a per-command `--max-credits` cap (also "
+    "`GFLOW_CLI_MAX_CREDITS`); gflow checks Flow's own pre-submit quote and refuses "
+    "when it is unreadable or exceeds the cap (exit 45)."
+)
 _AUTO_PREFIX = (
     "Host is chosen per request from what Flow serves (not checked here). "
     "Requests gflow cannot drive on flow.google.com yet fall back to the labs driver "
@@ -141,13 +146,13 @@ def _host_entries(flow_host: str) -> dict[str, Entry]:
     if flow_host == "labs.google":
         return {
             GENERATE_IMAGE: ("unknown", _LABS_NOTE),
-            GENERATE_VIDEO: ("unknown", _LABS_NOTE),
+            GENERATE_VIDEO: ("unknown", f"{_LABS_NOTE} {_CREDIT_CAP_NOTE}"),
             UPLOAD: ("partial", _UPLOAD_BASE),
         }
     prefix = "" if flow_host == "flow.google.com" else _AUTO_PREFIX
     return {
         GENERATE_IMAGE: ("partial", prefix + _MIGRATED_IMAGE),
-        GENERATE_VIDEO: ("partial", prefix + _MIGRATED_VIDEO),
+        GENERATE_VIDEO: ("partial", f"{prefix}{_MIGRATED_VIDEO} {_CREDIT_CAP_NOTE}"),
         UPLOAD: ("partial", _UPLOAD_BASE + _UPLOAD_MIGRATED),
     }
 

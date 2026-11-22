@@ -5,8 +5,8 @@ Each tool is registered on the shared MCPServer instance and delegates
 to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
-agentic loops from burning credits. There is NO credit-budget accounting —
-rate limiting is the only spend brake (#495).
+agentic loops from burning credits. Per-call spend is capped by ``max_credits``
+on ``gflow_generate_video`` (#1355); there is no per-session or daily budget (#495).
 
 Task claiming: the direct-execution path enqueues a task then claims it via
 the atomic ``QueueRepository.claim_task`` (the same BEGIN IMMEDIATE claim the
@@ -52,6 +52,7 @@ from gflow_cli.data.queries import list_projects
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
+from gflow_cli.mcp.auth_status_errors import auth_status_error
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -1232,35 +1233,29 @@ def _build_video_payload(
     ui_mode: str | None = None,
     reference_entities: list[str] | None = None,
     reference_entity_names: list[str] | None = None,
+    max_credits: int | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "prompt": prompt,
-        "mode": mode,
-        "aspect": aspect,
-        "count": count,
-    }
-    if ui_mode is not None:
-        payload["ui_mode"] = ui_mode
-    if model is not None:
-        payload["model"] = model
-    if duration is not None:
-        payload["duration"] = duration
-    if resolution is not None:
-        payload["resolution"] = resolution
-    if tool_specs:
-        payload["tool_specs"] = list(tool_specs)
-    if project is not None:
-        payload["project_id"] = project
-    if project_name is not None:
-        payload["project_name"] = project_name
-    if output is not None:
-        payload["output_file"] = output
-    # Omitted rather than written empty when unused: `codec.build_video_request`
-    # already reads both keys, so an empty list is a real (and wrong) instruction.
-    if reference_entities:
-        payload["reference_entities"] = list(reference_entities)
-    if reference_entity_names:
-        payload["reference_entity_names"] = list(reference_entity_names)
+    payload: dict[str, Any] = {"prompt": prompt, "mode": mode, "aspect": aspect, "count": count}
+    names = list(reference_entity_names) if reference_entity_names else None
+    payload.update(
+        {
+            key: value
+            for key, value in (
+                ("ui_mode", ui_mode),
+                ("model", model),
+                ("duration", duration),
+                ("resolution", resolution),
+                ("project_id", project),
+                ("project_name", project_name),
+                ("output_file", output),
+                ("max_credits", max_credits),
+                ("tool_specs", list(tool_specs) if tool_specs else None),
+                ("reference_entities", list(reference_entities) if reference_entities else None),
+                ("reference_entity_names", names),
+            )
+            if value is not None
+        }
+    )
     return payload
 
 
@@ -1279,6 +1274,7 @@ def _build_video_payload(
         "to r2v). "
         "Reference a SAVED character via @Name; pass one-off "
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
+        "max_credits uses Flow's quote as a hard cap and refuses missing or over-limit quotes. "
         "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
         "before spending credits if unreachable; 'agentic' is not supported for video. "
         "out_file, if given, must resolve inside the configured output directory. "
@@ -1299,6 +1295,7 @@ async def gflow_generate_video(  # NOSONAR
     duration: int | None = None,
     resolution: str | None = None,
     count: int = 1,
+    max_credits: Annotated[int | None, Field(ge=0)] = None,
     tools: _ToolsParam = None,
     profile: str = _DEFAULT_PROFILE,
     project: str | None = None,
@@ -1358,6 +1355,7 @@ async def gflow_generate_video(  # NOSONAR
             other model, or on the labs editor, the job fails pre-submit with the
             exit-11-equivalent envelope and no credits spent.
         count: Number of videos to generate (mirrors the CLI ``--count``; default 1).
+        max_credits: Flow quote cap. Omission uses the environment default, which MCP cannot clear.
         tools: Optional list of prompt tools to apply before generation.
             Each item is ``{"name": str, "options": dict}``.  Valid names
             include ``"creative-director"`` (which supports an ``options``
@@ -1409,6 +1407,8 @@ async def gflow_generate_video(  # NOSONAR
     """
     if (proj_err := _validate_project(project)) is not None:
         return proj_err
+    if max_credits is not None and max_credits < 0:
+        return _bad_param("Invalid max_credits", "max_credits must be >= 0.")
     # #1008: a video moved to a local file cannot live in a cloud bucket.
     if isinstance(resolved := _resolve_out_file(out_file, local_only=True), dict):
         return resolved
@@ -1522,15 +1522,13 @@ async def gflow_generate_video(  # NOSONAR
         ui_mode=ui_mode,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
+        max_credits=max_credits,
     )
     payload.update(media)
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(
-        profile=resolved_profile,
-        task_type=mode,
-        payload=payload,
-        wait=wait,
+        profile=resolved_profile, task_type=mode, payload=payload, wait=wait
     )
 
     # Annotate the result with the original request parameters for context.
@@ -1545,6 +1543,7 @@ async def gflow_generate_video(  # NOSONAR
         "duration": duration,
         "resolution": resolution,
         "count": count,
+        "max_credits": max_credits,
         "tools": tools or [],
         "tool_specs": list(tool_specs),
         "profile": resolved_profile,
@@ -2198,58 +2197,8 @@ async def gflow_auth_status(profile: str = _DEFAULT_PROFILE) -> dict[str, Any]:
             "user_email": status.user_email,
             "wire": wire,
         }
-    if status.outcome is verification.FlowSessionOutcome.PROFILE_MARKER_MISSING:
-        # #796: a local profile-state fault. Not retryable (the marker will not
-        # reappear on its own) and not an expired session, so neither 503 nor 401
-        # describes it — an agent that retries or re-logins here learns nothing.
-        error = {
-            "type": "https://gflow-cli.dev/errors/profile-marker-missing",
-            "title": "Profile is missing its browser-strategy marker",
-            "status": 409,
-            "detail": status.detail,
-            "message": status.detail,
-            **outcome_members("no", "reauth"),
-            "remediation_hint": (
-                "This profile has no `.gflow_browser_strategy` marker, so its "
-                "cookies cannot be read. Re-run `gflow auth login --browser "
-                "chrome` for this profile to rewrite it."
-            ),
-        }
-    elif status.outcome is verification.FlowSessionOutcome.COOKIE_STORE_UNREADABLE:
-        # #796: local file state like the marker case — a retry re-reads the
-        # same broken file, so not retryable, and not a network 503.
-        error = {
-            "type": "https://gflow-cli.dev/errors/cookie-store-unreadable",
-            "title": "Profile cookie store is unreadable",
-            "status": 409,
-            "detail": status.detail,
-            "message": status.detail,
-            **outcome_members("no", "reauth"),
-            "remediation_hint": (
-                "This profile's Chrome cookie database is corrupt or unreadable. "
-                "Close any Chrome window using this profile, then re-run "
-                "`gflow auth login` for it."
-            ),
-        }
-    elif status.outcome is verification.FlowSessionOutcome.VERIFICATION_ERROR:
-        # A network/endpoint problem is not fixed by re-login — the
-        # machine-readable discriminators must say so too (post-merge review:
-        # labeling this 401/auth-expired sent type-dispatching agents into an
-        # unnecessary interactive re-login on every network blip).
-        error: dict[str, Any] = {
-            "type": "https://gflow-cli.dev/errors/verification-error",
-            "title": "Flow session verification failed",
-            "status": 503,
-            "detail": status.detail,
-            "message": status.detail,
-            **outcome_members("no", "retry"),
-            "remediation_hint": (
-                "Could not verify the Flow session (network or endpoint "
-                "problem). Check connectivity and retry; re-login is only "
-                "needed if the session is actually dead."
-            ),
-        }
-    else:
+    error = auth_status_error(status)
+    if error is None:
         from gflow_cli.errors import AuthExpiredError
 
         error = {
@@ -2688,3 +2637,4 @@ __all__ = [
     "_gflow_error_dict",
     "_run_generation_task",
 ]
+from gflow_cli.mcp.video_assembly import gflow_video_assemble  # noqa: E402, F401  # pyright: ignore[reportUnusedImport]
