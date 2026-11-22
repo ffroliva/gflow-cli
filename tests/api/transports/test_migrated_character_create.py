@@ -3,7 +3,7 @@
 Two layers. The reply readers (``verify_patch``, ``created_entity``, ``bound_upload``) are
 pure. The driver's decisions are pinned with its I/O seams replaced: what it does when a
 gesture's outcome is lost or late, which a live run reaches only by chance. The gestures
-themselves are covered by ``tests/e2e/test_character_create_from_files_e2e.py``.
+themselves are covered by ``tests/e2e/test_character_create_from_files_bdd.py``.
 """
 
 from __future__ import annotations
@@ -1284,3 +1284,38 @@ class TestBodyRefusal:
         monkeypatch.setattr(mc, "_rpc_replies", _replies({"maseQ": err}))
         with pytest.raises(MediaUploadRejectedError, match="IMAGE_REJECTED"):
             await mc._upload_body(_Page(), PID, EID, tmp_path / "b.jpg")  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+
+
+class TestCodeRabbitSecondRound:
+    def test_a_malformed_patch_echo_is_drift_on_the_write_rpc(self) -> None:
+        with pytest.raises(WireFormatError) as exc:
+            mc.verify_patch([[PID]], entity_id=EID, name="Nora")
+        assert exc.value.route == "batchexecute:rzMKMb"
+
+    async def test_a_reply_read_after_the_collector_returned_changes_nothing(self) -> None:
+        import asyncio
+
+        page = _DelayedWirePage(
+            (0.2, _Response("https://x/batchexecute", _body(("maseQ", [2])))),
+        )
+        got = await mc._rpc_replies(page, ("maseQ",), page.act, timeout_s=0.05)  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+        await asyncio.sleep(0.3)
+        assert got == {}
+
+    async def test_the_editor_is_not_reopened_after_the_last_body_attempt(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        reopened: list[int] = []
+
+        async def unbound(*_: Any, **__: Any) -> tuple[str, ...]:
+            return ("wf-portrait",)
+
+        async def reopen(*_: Any) -> None:
+            reopened.append(1)
+
+        monkeypatch.setattr(mc, "_rpc_replies", _replies({}))
+        monkeypatch.setattr(mc, "_settled_refs", unbound)
+        monkeypatch.setattr(mc, "_open_editor", reopen)
+        with pytest.raises(MediaUploadRejectedError):
+            await mc._upload_body(_Page(), PID, EID, tmp_path / "b.jpg")  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
+        assert reopened == [1]

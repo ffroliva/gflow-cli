@@ -145,7 +145,9 @@ def _str(node: object) -> str | None:
     return node if isinstance(node, str) and node else None
 
 
-def _character_row_header(cells: list[Any], payload: object) -> tuple[str, str, list[Any]]:
+def _character_row_header(
+    cells: list[Any], payload: object, rpcid: str = PROJECT_READ_RPC
+) -> tuple[str, str, list[Any]]:
     info = _list(cells[3]) if len(cells) > 3 else None
     project = _str(cells[0]) if cells else None
     entity = _str(cells[1]) if len(cells) > 1 else None
@@ -156,57 +158,61 @@ def _character_row_header(cells: list[Any], payload: object) -> tuple[str, str, 
         or len(info) < 2
         or type(info[0]) is not int
     ):
-        raise _drift(payload, "a character row has no [project, entity, _, [kind, name, …]]")
+        raise _drift(payload, "a character row has no [project, entity, _, [kind, name, …]]", rpcid)
     return project, entity, info
 
 
-def _workflow_ids(parts: list[Any], payload: object) -> tuple[str, ...]:
+def _workflow_ids(
+    parts: list[Any], payload: object, rpcid: str = PROJECT_READ_RPC
+) -> tuple[str, ...]:
     images_cell = parts[0] if parts else None
     images = _list(images_cell)
     if images_cell is not None and images is None:
-        raise _drift(payload, "character images are not [[workflow_id, …], …]")
+        raise _drift(payload, "character images are not [[workflow_id, …], …]", rpcid)
     ids: list[str] = []
     for ref in images or []:
         cells = _list(ref)
         if cells is None:
-            raise _drift(payload, "a character image ref is not [workflow_id, …]")
+            raise _drift(payload, "a character image ref is not [workflow_id, …]", rpcid)
         if cells and (wf := _str(cells[0])) is not None:
             ids.append(wf)
     return tuple(ids)
 
 
-def _character_voice(parts: list[Any], payload: object) -> str | None:
+def _character_voice(
+    parts: list[Any], payload: object, rpcid: str = PROJECT_READ_RPC
+) -> str | None:
     voice_cell = parts[1] if len(parts) > 1 else None
     voice_refs = _list(voice_cell)
     if voice_cell is not None and voice_refs is None:
-        raise _drift(payload, "character voice refs are not [[_, wire_id], …]")
+        raise _drift(payload, "character voice refs are not [[_, wire_id], …]", rpcid)
     voice_id: str | None = None
     if voice_refs:
         first_ref = _list(voice_refs[0])
         if first_ref is None or len(first_ref) < 2:
-            raise _drift(payload, "character voice ref has no [_, wire_id]")
+            raise _drift(payload, "character voice ref has no [_, wire_id]", rpcid)
         voice_id = _str(first_ref[1])
     return voice_from_wire(voice_id) if voice_id else None
 
 
-def _character_parts(info: list[Any], payload: object) -> list[Any]:
+def _character_parts(info: list[Any], payload: object, rpcid: str = PROJECT_READ_RPC) -> list[Any]:
     raw = info[2] if len(info) > 2 else None
     if raw is None:
         return []
     parts = _list(raw)
     if parts is None:
-        raise _drift(payload, "character parts (info[2]) is not a list")
+        raise _drift(payload, "character parts (info[2]) is not a list", rpcid)
     return parts
 
 
-def _character(row: object, payload: object) -> Character | None:
+def _character(row: object, payload: object, rpcid: str = PROJECT_READ_RPC) -> Character | None:
     cells = _list(row) or []
-    project, entity, info = _character_row_header(cells, payload)
+    project, entity, info = _character_row_header(cells, payload, rpcid)
     if info[0] != 1:
         return None
-    parts = _character_parts(info, payload)
-    workflow_ids = _workflow_ids(parts, payload)
-    voice = _character_voice(parts, payload)
+    parts = _character_parts(info, payload, rpcid)
+    workflow_ids = _workflow_ids(parts, payload, rpcid)
+    voice = _character_voice(parts, payload, rpcid)
     personality = _str(parts[2]) if len(parts) > 2 else None
     return Character(
         entity_id=entity,
@@ -340,7 +346,7 @@ def verify_patch(
     The editor commits on blur; success is read from the reply Flow sends back, never
     from the DOM: a field can show the typed text while the write was dropped."""
     rows = _list(payload)
-    char = _character(rows[0], payload) if rows else None
+    char = _character(rows[0], payload, PATCH_RPC) if rows else None
     if char is None:
         raise _drift(payload, "the reply carries no character", PATCH_RPC)
     asked = {"name": name, "voice": voice, "personality": personality}
@@ -360,7 +366,8 @@ def verify_patch(
 @dataclass(frozen=True)
 class CreatedCharacter:
     """What a file-built create leaves behind: the entity and its bound images, in slot
-    order (portrait first). A media id lost with its upload reply is left out."""
+    order (portrait first). ``media_ids`` stays aligned with ``workflow_ids``: a media id
+    lost with its upload reply is an empty string, as the catalog records it."""
 
     entity_id: str
     workflow_ids: tuple[str, ...]
@@ -564,9 +571,12 @@ async def _rpc_replies(
     be told from a request that was never made."""
     got: dict[str, Any] = {}
     first, done = asyncio.Event(), asyncio.Event()
+    closed = False
 
     async def on_response(response: Any) -> None:
         text = await _batchexecute_text(response)
+        if closed:  # a body read that outlived the collector must not change its result
+            return
         refused = _collect_frames(got, text, rpcids) if text else False
         if refused or UPLOAD_RPC in got:
             first.set()
@@ -589,6 +599,7 @@ async def _rpc_replies(
                 "migrated.character_reply_missing", missing=[r for r in rpcids if r not in got]
             )
     finally:
+        closed = True
         page.remove_listener("response", on_response)
         page.remove_listener("request", on_request)
     return got
@@ -1031,7 +1042,8 @@ async def _upload_body(
             log.info("migrated.character_upload_bound_without_reply", slot=1)
             return refs[1], None  # bound, but the lost reply took its media id with it
         log.warning("migrated.character_upload_unbound", slot=1, attempt=attempt)
-        await _open_editor(page, project_id, entity_id)
+        if attempt == 1:
+            await _open_editor(page, project_id, entity_id)
     raise MediaUploadRejectedError(
         detail=f"flow.google.com never bound {body.name} as the body image (2 attempts)"
     )
