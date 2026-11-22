@@ -1256,3 +1256,126 @@ def test_a_video_into_an_existing_project_keeps_its_title(tmp_path: Path) -> Non
         project = repo.get_project("default", "flow-project-1")
         assert project is not None
         assert (project.title, project.source) == ("my-project", "gflow-cli")
+
+
+def test_an_in_place_extend_marks_stale_local_copy_and_records_new_download(tmp_path: Path) -> None:
+    """#1299: an in-place extend must not leave the pre-extend download's local_files
+    row (old bytes and sha256) as the verified local copy; after the extend, the stale copy
+    must be marked (sha256 cleared) so verified_local_path does not return it, and the new
+    download must be recorded and returned."""
+    import hashlib
+
+    from gflow_cli.data.models import LocalFileRecord
+    from gflow_cli.data.repository import verified_local_path
+
+    pre_file = tmp_path / "pre_extend.mp4"
+    pre_file.write_bytes(b"original-7s-video")
+    new_file = tmp_path / "post_extend.mp4"
+    new_file.write_bytes(b"grown-11s-extended-video")
+    real_old_sha = hashlib.sha256(b"original-7s-video").hexdigest()
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-old",
+                profile_name="p",
+                asset_id="src",
+                path=pre_file,
+                media_type="video/mp4",
+                bytes=len(b"original-7s-video"),
+                sha256=real_old_sha,
+            )
+        )
+        asset_before = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
+        assert asset_before is not None
+        assert verified_local_path(asset_before.local_files[0]) == pre_file.resolve()
+
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+            local_path=new_file,
+        )
+
+        asset_after = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
+        assert asset_after is not None
+
+        old_copy = next(f for f in asset_after.local_files if f.path == pre_file.resolve())
+        assert old_copy.sha256 is None
+        assert verified_local_path(old_copy) is None
+
+        new_copy = next(f for f in asset_after.local_files if f.path == new_file.resolve())
+        assert new_copy.sha256 is not None
+        assert verified_local_path(new_copy) == new_file.resolve()
+
+        verified_paths = [
+            p for f in asset_after.local_files if (p := verified_local_path(f)) is not None
+        ]
+        assert verified_paths == [new_file.resolve()]
+
+
+def test_record_completed_video_leaves_started_extend_completed_with_local_file(
+    tmp_path: Path,
+) -> None:
+    """#1299 Item 1: a successful Veo-key extend returning a new media id must leave its
+    catalog row completed (MEDIA_GENERATION_STATUS_SUCCESSFUL) rather than pending, and
+    record the downloaded file in local_files."""
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.data.repository import verified_local_path
+
+    out_file = tmp_path / "extended_seg.mp4"
+    out_file.write_bytes(b"new-extension-segment")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id=_EXT_PROJECT,
+            aspect="16:9",
+            started=ExtendStarted(
+                media_id="new-ext-media-1",
+                workflow_id="wf-ext-1",
+                model_key="veo_3_1_extension_lite",
+                unit_cost=10,
+            ),
+        )
+
+        row_pending = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id='new-ext-media-1'"
+        ).fetchone()
+        assert row_pending is not None
+        assert row_pending[0] == "pending"
+        asset_pending = repo.get_asset_by_flow_media_id("p", "new-ext-media-1")
+        assert asset_pending is not None
+        assert len(asset_pending.local_files) == 0
+
+        recorder.record_completed_video(
+            profile_name="p",
+            _profile_dir=tmp_path,
+            result=VideoResult(
+                status=VideoStatus(
+                    media_id="new-ext-media-1",
+                    status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                ),
+                local_path=out_file,
+                project_id=_EXT_PROJECT,
+                workflow_id="wf-ext-1",
+            ),
+        )
+
+        row_done = store.conn.execute(
+            "SELECT status, model FROM assets WHERE flow_media_id='new-ext-media-1'"
+        ).fetchone()
+        assert row_done is not None
+        assert row_done[0] == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        assert row_done[1] == "veo_3_1_extension_lite"
+        asset_done = repo.get_asset_by_flow_media_id("p", "new-ext-media-1")
+        assert asset_done is not None
+        assert asset_done.metadata_json == {"unit_cost": 10}
+        assert len(asset_done.local_files) == 1
+        assert verified_local_path(asset_done.local_files[0]) == out_file.resolve()

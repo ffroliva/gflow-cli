@@ -1197,3 +1197,162 @@ def test_a_resumed_rerender_keeps_the_instruction_out_of_the_command() -> None:
     assert command.startswith("gflow scene create --project proj --profile p wf-1")
     assert "(" not in command
     assert "earlier clips" in rest
+
+
+@pytest.mark.asyncio
+async def test_migrated_session_new_id_leaves_row_completed_and_drives_readers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1299 Item 1 & 4: on flow.google.com, a Veo-key extend returning a new media id
+    leaves the catalog row completed, records the local file, and drives list_videos,
+    data media, and MCP ref resolvers."""
+    from gflow_cli.cli_video import _extend_migrated_session
+    from gflow_cli.data.queries import list_videos
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository, verified_local_path
+    from gflow_cli.data.store import DataStore
+    from gflow_cli.mcp.tools import _ref_meta_entry
+
+    out_file = tmp_path / "out.mp4"
+    out_file.write_bytes(b"veo-segment-bytes")
+    fake = _MigratedClient(done=True, media="new-media-id")
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+
+    db_path = tmp_path / "gflow.db"
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="continue",
+            aspect=None,
+            output_file=out_file,
+            project_id=PROJECT,
+            as_json=True,
+            recorder=recorder,
+        )
+
+        row_status = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id = 'new-media-id'"
+        ).fetchone()
+        assert row_status is not None
+        assert row_status[0] == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        asset = repo.get_asset_by_flow_media_id("p", "new-media-id")
+        assert asset is not None
+        assert len(asset.local_files) == 1
+        assert verified_local_path(asset.local_files[0]) == out_file.resolve()
+
+        videos = list_videos(db_path=db_path, profile="p", limit=10, offset=0)
+        row = next(v for v in videos if v.media_id == "new-media-id")
+        assert row.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        assert row.copy_count == 1
+        assert row.local_path == str(out_file.resolve())
+
+        entry = _ref_meta_entry(asset)
+        assert entry["local_path"] == str(out_file.resolve())
+        assert entry["local_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_migrated_session_in_place_drives_write_and_read_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1299 Item 2 & 4: an in-place extend must not leave the pre-extend download as
+    verified local copy; write path invalidates stale copy and records new download;
+    all readers (list_videos, MCP refs, verified_local_path) meet at the new file."""
+    import hashlib
+
+    from gflow_cli.cli_video import _extend_migrated_session
+    from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
+    from gflow_cli.data.queries import list_videos
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository, verified_local_path
+    from gflow_cli.data.store import DataStore
+    from gflow_cli.mcp.tools import _ref_meta_entry, _resolve_ref_local_path
+
+    pre_file = tmp_path / "old.mp4"
+    pre_file.write_bytes(b"pre-extend-bytes")
+    pre_sha = hashlib.sha256(b"pre-extend-bytes").hexdigest()
+
+    new_file = tmp_path / "grown.mp4"
+    new_file.write_bytes(b"grown-in-place-bytes")
+
+    fake = _MigratedClient(done=True, media=MEDIA)
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+
+    db_path = tmp_path / "gflow.db"
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("p", tmp_path)
+        repo.upsert_project(
+            ProjectRecord(
+                id="pr", profile_name="p", flow_project_id=PROJECT, title="t", source="generated"
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id="src",
+                profile_name="p",
+                flow_project_id=PROJECT,
+                flow_media_id=MEDIA,
+                flow_workflow_id="src-wf",
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                model="veo_3_1_lite",
+                aspect_ratio="portrait",
+                width=None,
+                height=None,
+                duration_seconds=8.0,
+                seed=None,
+                metadata_json={"display_name": "source_clip"},
+            )
+        )
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-old",
+                profile_name="p",
+                asset_id="src",
+                path=pre_file,
+                media_type="video/mp4",
+                bytes=len(b"pre-extend-bytes"),
+                sha256=pre_sha,
+            )
+        )
+
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="grow",
+            aspect=None,
+            output_file=new_file,
+            project_id=PROJECT,
+            as_json=True,
+            recorder=recorder,
+        )
+
+        asset = repo.get_asset_by_flow_media_id("p", MEDIA)
+        assert asset is not None
+
+        old_lf = next(f for f in asset.local_files if f.path == pre_file.resolve())
+        assert old_lf.sha256 is None
+        assert verified_local_path(old_lf) is None
+
+        new_lf = next(f for f in asset.local_files if f.path == new_file.resolve())
+        assert new_lf.sha256 is not None
+        assert verified_local_path(new_lf) == new_file.resolve()
+
+        mcp_path, err = _resolve_ref_local_path(repo, "p", MEDIA)
+        assert err is None
+        assert mcp_path == str(new_file.resolve())
+
+        entry = _ref_meta_entry(asset)
+        assert entry["local_path"] == str(new_file.resolve())
+
+        videos = list_videos(db_path=db_path, profile="p", limit=10, offset=0)
+        row = next(v for v in videos if v.media_id == MEDIA)
+        assert row.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"

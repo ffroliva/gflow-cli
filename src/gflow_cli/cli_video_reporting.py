@@ -10,15 +10,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
+import structlog
 from rich.console import Console
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import OutputFormat
 from gflow_cli.api.transports import migrated_extend
-from gflow_cli.errors import FlowApiError, GFlowError
+from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 
 if TYPE_CHECKING:
     from gflow_cli.api.video import VideoResult
+
+_logger = structlog.get_logger(__name__)
 
 __all__ = [
     "_chain_json",
@@ -30,6 +33,7 @@ __all__ = [
     "_migrated_extend_payload",
     "_print_chain_plan",
     "_print_extend_plan",
+    "_record_migrated_extend",
     "_report_migrated_extend",
 ]
 
@@ -271,6 +275,58 @@ def _migrated_extend_payload(
             "seed": None,
         },
     }
+
+
+def _record_migrated_extend(  # noqa: PLR0913
+    recorder: Any,
+    target: Path | None,
+    *,
+    profile_name: str,
+    profile_dir: Path | None,
+    media_id: str,
+    project_id: str | None,
+    outcome: migrated_extend.ExtendOutcome,
+) -> None:
+    """Record completed migrated extend (in-place or new-id) to catalog (#1184, #1299)."""
+    if recorder is None or target is None:
+        return
+    try:
+        if outcome.record.media_id == media_id:
+            try:
+                recorder.record_extended_in_place(
+                    profile_name,
+                    media_id,
+                    outcome.record.workflow_id,
+                    outcome.model_key,
+                    local_path=target,
+                )
+            except TypeError:
+                recorder.record_extended_in_place(
+                    profile_name,
+                    media_id,
+                    outcome.record.workflow_id,
+                    outcome.model_key,
+                )
+        elif hasattr(recorder, "record_completed_video"):
+            from gflow_cli.api.video import VideoResult, VideoStatus
+            from gflow_cli.storage import cloud_info_from_path
+
+            recorder.record_completed_video(
+                profile_name=profile_name,
+                _profile_dir=profile_dir,
+                result=VideoResult(
+                    status=VideoStatus(
+                        media_id=outcome.record.media_id,
+                        status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                    ),
+                    local_path=target,
+                    project_id=project_id,
+                    workflow_id=outcome.record.workflow_id,
+                ),
+                cloud_storage_info=cloud_info_from_path(target),
+            )
+    except DataStoreError as exc:
+        _logger.warning("extend_record_failed", error_class=type(exc).__name__)
 
 
 def _report_migrated_extend(  # noqa: PLR0913

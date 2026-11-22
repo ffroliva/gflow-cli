@@ -99,11 +99,23 @@ class AssetsRepo(RepositoryBase):
             raise DataIntegrityError(detail=str(exc), route="data.upsert_asset") from exc
         return cast("AssetRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]
 
-    def update_asset_status(self, profile_name: str, flow_media_id: str, status: str) -> None:
+    def update_asset_status(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        status: str,
+        *,
+        workflow_id: str | None = None,
+    ) -> None:
         with self._store.transaction(immediate=True):
             self._store.conn.execute(
-                "UPDATE assets SET status = ? WHERE profile_name = ? AND flow_media_id = ?",
-                (status, profile_name, flow_media_id),
+                """
+                UPDATE assets
+                SET status = ?,
+                    flow_workflow_id = COALESCE(?, flow_workflow_id)
+                WHERE profile_name = ? AND flow_media_id = ?
+                """,
+                (status, workflow_id, profile_name, flow_media_id),
             )
 
     def note_asset_extended(
@@ -129,6 +141,17 @@ class AssetsRepo(RepositoryBase):
                 WHERE profile_name = ? AND flow_media_id = ?
                 """,
                 (model_key, workflow_id, _utc_now(), profile_name, flow_media_id),
+            )
+            self._store.conn.execute(
+                """
+                UPDATE local_files
+                SET sha256 = NULL
+                WHERE profile_name = ?
+                  AND asset_id IN (
+                      SELECT id FROM assets WHERE profile_name = ? AND flow_media_id = ?
+                  )
+                """,
+                (profile_name, profile_name, flow_media_id),
             )
 
     def set_asset_display_name(
