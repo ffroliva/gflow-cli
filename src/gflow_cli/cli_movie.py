@@ -552,16 +552,23 @@ def _handle_scene_failure(
 ) -> None:
     scene_media_ids = getattr(exc, "completed_media_ids", [])
     billed_quote = getattr(exc, "quoted_credits", None)
+    prior_work_billed = (
+        bool(set(run_media_ids or []) - set(scene_media_ids))
+        or bool(run_character_ids)
+        or billed_quote is not None
+        or (bool(scene_media_ids) and not isinstance(exc, CreditCapExceededError))
+    )
+    if run_media_ids is not None:
+        run_media_ids.extend(
+            media_id for media_id in scene_media_ids if media_id not in run_media_ids
+        )
     if context.budget.remaining is not None and (billed_quote is not None or scene_media_ids):
         if billed_quote is None:
             context.budget.remaining = 0
         else:
             context.budget.record_spend(billed_quote)
     _preserve_movie_cap_partials(exc, context.manifest, context.state, run_media_ids or [])
-    mark_prior_work_billed(
-        exc,
-        bool(set(run_media_ids or []) - set(scene_media_ids)) or bool(run_character_ids),
-    )
+    mark_prior_work_billed(exc, prior_work_billed)
     log.error(
         "movie.scene_failed",
         scene_id=scene.id,
@@ -809,7 +816,7 @@ async def _create_movie_characters(
     for char in entity_chars:
         console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
         try:
-            await _create_character(
+            generated_new = await _create_character(
                 client=client,
                 recorder=recorder,
                 char=char,
@@ -822,7 +829,8 @@ async def _create_movie_characters(
         except Exception as exc:
             mark_prior_work_billed(exc, bool(billed_character_names))
             raise
-        billed_character_names.append(char.name)
+        if generated_new:
+            billed_character_names.append(char.name)
     return billed_character_names
 
 
@@ -836,7 +844,7 @@ async def _create_character(
     profile_dir: Path,
     state: MovieState,
     state_path: Path,
-) -> None:
+) -> bool:
     """Create one native (entity-identity) character and persist its state.
 
     Builds the face (slot 0) and optional body (slot 1) image requests, runs
@@ -897,6 +905,7 @@ async def _create_character(
             label = f"slot{slot}"
         path_display = p or "(unavailable)"
         console.print(f"    {label}: {path_display}")
+    return result.generated_new
 
 
 def _resolve_entities(

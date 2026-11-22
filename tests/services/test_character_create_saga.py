@@ -458,6 +458,24 @@ async def test_pre_submit_drift_on_body_reconciles_face_charge() -> None:
 
     assert info.value.charged == "yes"
     assert info.value.next_action == "reconcile"
+    client.delete_characters.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_after_generation_is_marked_billed() -> None:
+    from gflow_cli.errors import GFlowError
+
+    client = _make_client()
+    client.commit_workflow = AsyncMock(side_effect=GFlowError("commit failed", charged="no"))
+
+    with pytest.raises(GFlowError) as info:
+        await character_create(client, _make_recorder(), **_saga_kwargs())
+
+    assert (info.value.charged, info.value.next_action, info.value.retryable) == (
+        "yes",
+        "reconcile",
+        False,
+    )
 
 
 # ---------------------------------------------------------------------------

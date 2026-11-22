@@ -810,9 +810,9 @@ def test_batch_partial_error_inherits_cause_charge_without_partial_results() -> 
 
 def test_marking_prior_work_billed_disables_retry_for_retryable_error() -> None:
     from gflow_cli.api.credit_cap import mark_prior_work_billed
-    from gflow_cli.errors import FlowAgentUiError, is_retryable
+    from gflow_cli.errors import FlowAppError, is_retryable
 
-    error = FlowAgentUiError("selector drift")
+    error = FlowAppError("selector drift", remediation_hint="retry in a moment")
     mark_prior_work_billed(error, True)
 
     assert error.resolved_next_action() == "reconcile"
@@ -820,6 +820,8 @@ def test_marking_prior_work_billed_disables_retry_for_retryable_error() -> None:
     problem = error.to_problem_details()
     assert problem["charged"] == "yes"
     assert problem["next_action"] == "reconcile"
+    assert "check Flow" in error.remediation_hint
+    assert "retry in a moment" not in error.remediation_hint
 
 
 def test_batch_partial_without_results_inherits_cause_recovery_metadata() -> None:

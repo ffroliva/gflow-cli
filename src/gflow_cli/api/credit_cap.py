@@ -16,6 +16,9 @@ def mark_prior_work_billed(exc: Exception, prior_work_billed: bool) -> Exception
         exc.charged = "yes"
         exc.next_action = "reconcile"
         exc.retryable = False
+        exc.remediation_hint = (
+            "Earlier steps of this command were billed; check Flow before re-running."
+        )
     return exc
 
 

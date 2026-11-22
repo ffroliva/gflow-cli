@@ -64,11 +64,11 @@ async def test_movie_second_character_failure_reconciles_first_character_charge(
     client_cm.__aenter__ = AsyncMock(return_value=client_cm)
     client_cm.__aexit__ = AsyncMock(return_value=False)
 
-    async def create_character(**kwargs: object) -> None:
+    async def create_character(**kwargs: object) -> bool:
         char = kwargs["char"]
         if char.name == "A":
             state.characters["A"] = CharacterState(entity_id="entity-A", image_paths=[])
-            return
+            return True
         raise drift
 
     with (
@@ -113,8 +113,9 @@ async def test_movie_scene_drift_reconciles_a_billed_character(tmp_path: Path) -
     client_cm.__aenter__ = AsyncMock(return_value=client_cm)
     client_cm.__aexit__ = AsyncMock(return_value=False)
 
-    async def create_character(**_: object) -> None:
+    async def create_character(**_: object) -> bool:
         state.characters["A"] = CharacterState(entity_id="entity-A", image_paths=[])
+        return True
 
     with (
         patch("gflow_cli.cli_movie.get_settings"),

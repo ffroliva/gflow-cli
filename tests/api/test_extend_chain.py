@@ -204,7 +204,7 @@ async def test_a_retryable_poll_failure_after_submit_says_reconcile() -> None:
     )
     err = result.error
     assert isinstance(err, RateLimitError)
-    assert (err.charged, err.resolved_next_action(), err.retryable) == ("maybe", "reconcile", False)
+    assert (err.charged, err.resolved_next_action(), err.retryable) == ("yes", "reconcile", False)
     assert "retry" not in (err.remediation_hint or "").lower()
 
 
@@ -238,3 +238,30 @@ async def test_pre_submit_failure_after_a_completed_segment_is_not_retryable() -
     assert result.error.resolved_next_action() == "reconcile"
     assert is_retryable(result.error) is False
     assert result.error.to_problem_details()["charged"] == "yes"
+
+
+@pytest.mark.asyncio
+async def test_poll_failure_after_submit_is_charged_even_without_prior_completion() -> None:
+    from gflow_cli.errors import GFlowError
+
+    class _SecondPollFails(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            self.events.append(f"poll-{media_id}")
+            if media_id == "media-2":
+                raise GFlowError("poll failed", charged="no")
+            return object()
+
+    result = await run_extend_chain(
+        _SecondPollFails(),
+        media_id=MEDIA,
+        project_id=PROJECT,
+        scene_id=SCENE,
+        prompts=["a", "b"],
+    )
+
+    assert result.error is not None
+    assert (result.error.charged, result.error.next_action, result.error.retryable) == (
+        "yes",
+        "reconcile",
+        False,
+    )
