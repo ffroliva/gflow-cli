@@ -118,14 +118,22 @@ def _poll_failure(exc: GFlowError | ValueError, *, segment: int, media_id: str) 
     if not error.operation_id:
         error.operation_id = media_id
     action = error.resolved_next_action()
-    if action != "reconcile" and action not in {"reauth", "fix_input"}:
+    in_flight = (
+        f"Flow took segment {segment} ({media_id}), so it may have charged for it. "
+        "Check the scene on Flow before running it again."
+    )
+    if action in {"reauth", "fix_input"}:
+        # The advice stands (log in again / fix the input), but the accepted segment may be
+        # billed either way: never report it as uncharged, and say so before a re-run.
+        if error.charged != "yes":
+            error.charged = "maybe"
+        error.retryable = False
+        error.remediation_hint = f"{in_flight} {error.remediation_hint or ''}".strip()
+    elif action != "reconcile":
         error.charged = "maybe"
         error.next_action = "reconcile"
         error.retryable = False
-        error.remediation_hint = (
-            f"Flow took segment {segment} ({media_id}), so it may have charged for it. "
-            "Check the scene on Flow before running it again."
-        )
+        error.remediation_hint = in_flight
     return error
 
 

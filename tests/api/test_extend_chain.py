@@ -244,19 +244,22 @@ async def test_pre_submit_failure_after_a_completed_segment_is_not_retryable() -
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("error_type,action", [("content", "fix_input"), ("auth", "reauth")])
+@pytest.mark.parametrize(
+    "error_type,action",
+    [("content", "fix_input"), ("auth", "reauth"), ("missing", "reauth")],
+)
 async def test_poll_failure_preserves_non_retry_advice_and_segment_hint(
     error_type: str, action: str
 ) -> None:
-    from gflow_cli.errors import AuthExpiredError, ContentPolicyError
+    from gflow_cli.errors import AuthExpiredError, AuthMissingError, ContentPolicyError
 
-    error = (
-        ContentPolicyError("unsafe prompt")
-        if error_type == "content"
-        else AuthExpiredError("expired")
-    )
+    error = {
+        "content": ContentPolicyError("unsafe prompt"),
+        "auth": AuthExpiredError("expired"),
+        # A class whose default is charged="no": the accepted segment must not read uncharged.
+        "missing": AuthMissingError("browser context gone"),
+    }[error_type]
     original_hint = error.remediation_hint
-    original_charged = error.charged
 
     class _PollFails(_FakeClient):
         async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
@@ -266,10 +269,13 @@ async def test_poll_failure_preserves_non_retry_advice_and_segment_hint(
         _PollFails(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
     )
     assert result.error is error
-    # The only segment is still in flight: nothing finished, so nothing is proven billed.
-    assert error.charged == original_charged != "yes"
+    # The only segment is in flight: not proven billed, never reported uncharged either.
+    assert error.charged == "maybe"
     assert error.resolved_next_action() == action
-    assert error.remediation_hint == original_hint
+    assert error.retryable is False
+    hint = error.remediation_hint or ""
+    assert hint.startswith("Flow took segment 1 (media-1)")
+    assert hint.endswith((original_hint or "").strip())
     assert error.operation_id == "media-1"
 
 
