@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.test_out_file_cli_e2e import _is_image
+
 pytestmark = pytest.mark.e2e
 
 _LLM_ENV_VARS = ("GFLOW_CLI_LLM_API_KEY", "GFLOW_CLI_LLM_BASE_URL")
@@ -46,8 +48,6 @@ _VIDEO_PROMPT = "a paper boat drifting downstream"
 _TOOL = "creative-director"
 _IMAGE_TIMEOUT_S = 240
 _VIDEO_TIMEOUT_S = 600
-
-_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def _run_gflow(
@@ -146,7 +146,7 @@ def test_t2i_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
     ]
     assert images, "no image written"
     assert images[0].stat().st_size > 1024
-    assert images[0].read_bytes()[:8] == _PNG_MAGIC
+    assert _is_image(images[0]), f"{images[0]} is neither PNG nor JPEG"
 
     conn = _open_db(e2e_env)
     try:
