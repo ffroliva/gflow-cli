@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import OutputFormat
@@ -59,7 +60,7 @@ def _emit_video_result(
                 or result.status.error_message
                 or "unknown reason"
             )
-            Console(stderr=True).print(f"[red]Video generation failed:[/red] {reasons}")
+            Console(stderr=True).print(f"[red]Video generation failed:[/red] {escape(reasons)}")
             raise SystemExit(1)
         if result.status.media_id:
             click.echo(result.status.media_id)
@@ -77,7 +78,7 @@ def _emit_video_result(
             or result.status.error_message
             or "unknown reason"
         )
-        console.print(f"[red]Video generation failed:[/red] {reasons}")
+        console.print(f"[red]Video generation failed:[/red] {escape(reasons)}")
         raise SystemExit(1)
 
     console.print(f"[bold green]Saved:[/bold green] {result.local_path}")

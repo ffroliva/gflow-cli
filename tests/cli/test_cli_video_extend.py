@@ -930,6 +930,33 @@ def test_a_failed_migrated_extend_names_flows_error() -> None:
     assert "may have been billed" in str(info.value)
 
 
+@pytest.mark.parametrize("output_format", ["table", "id"])
+def test_a_failed_video_prints_flows_error_text_literally(
+    output_format: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1111: Flow's error text reaches Rich; a ``[/x]`` in it must print, not raise."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from gflow_cli.api.video import VideoResult, VideoStatus
+    from gflow_cli.cli_video_reporting import _emit_video_result
+
+    text = "Flow failed the generation (code 13): bad [/x] tag"
+    result = VideoResult(
+        status=VideoStatus(
+            media_id="m", status="MEDIA_GENERATION_STATUS_FAILED", error_message=text
+        ),
+        local_path=None,
+    )
+    out = StringIO()
+    with pytest.raises(SystemExit):
+        _emit_video_result(
+            "video t2v", None, result, output_format, False, Console(file=out, width=200)
+        )
+    assert text in out.getvalue() + capsys.readouterr().err
+
+
 @pytest.mark.parametrize(
     ("key", "expected"),
     [
