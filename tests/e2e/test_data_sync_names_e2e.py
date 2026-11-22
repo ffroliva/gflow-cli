@@ -46,6 +46,7 @@ import pytest
 
 from gflow_cli.data.store import DataStore
 from gflow_cli.services.catalog_sync import parse_project_listing
+from tests.e2e._redacted_env import RedactedEnv
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -55,7 +56,7 @@ pytestmark = pytest.mark.e2e
 _SYNC_PROJECT_ENV = "GFLOW_CLI_E2E_SYNC_PROJECT"
 
 
-def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_gflow(args: list[str], env: RedactedEnv) -> subprocess.CompletedProcess[str]:
     """Run `gflow <args>` with JSON structlog on stderr so events are assertable.
 
     ``GFLOW_CLI_HOME`` is dropped so the child resolves the REAL platformdirs
@@ -63,13 +64,13 @@ def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
     isolated ``GFLOW_CLI_DB_PATH`` is kept — the catalog under test is the one
     this test seeds itself.
     """
-    child_env = {k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"}
+    child_env = RedactedEnv({k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"})
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
         text=True,
         check=False,
-        env={**child_env, "GFLOW_CLI_LOG_FORMAT": "json"},
+        env=child_env | {"GFLOW_CLI_LOG_FORMAT": "json"},
     )
 
 
@@ -95,7 +96,7 @@ def _read_rows(db: Path, media_ids: list[str]) -> dict[str, str | None]:
 
 @pytest.mark.e2e_auth
 def test_e2e_sync_restores_names_marks_ghosts_idempotent(
-    e2e_env: dict[str, str],
+    e2e_env: RedactedEnv,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from pathlib import Path as _Path

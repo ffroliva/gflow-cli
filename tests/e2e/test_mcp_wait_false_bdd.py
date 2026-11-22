@@ -30,6 +30,7 @@ from pytest_bdd import given, scenarios, then, when
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.worker.queue import QueueRepository
+from tests.e2e._redacted_env import RedactedEnv
 
 scenarios("../features/mcp_wait_false.feature")
 
@@ -46,7 +47,7 @@ class _StdioClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=stderr_log.open("wb"),  # the server's events, for a failed run
-            env={**os.environ, "PYTHONUTF8": "1"},
+            env=RedactedEnv({**os.environ, "PYTHONUTF8": "1"}),
         )
         self._lines: queue.Queue[dict[str, Any]] = queue.Queue()
         self._next_id = 0

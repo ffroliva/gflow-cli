@@ -45,7 +45,9 @@ pytestmark = [
 
 
 @pytest.mark.parametrize("locale", ["de-DE", "pt-BR"])
-def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> None:
+def test_image_t2i_succeeds_under_non_en_locale(
+    e2e_env: RedactedEnv, locale: str, tmp_path: Path
+) -> None:
     """Run ``gflow image t2i`` under a non-EN locale and assert mp4-or-png exists.
 
     The selector cascade is exercised end-to-end: onboarding bypass, "+ New
@@ -53,7 +55,7 @@ def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> 
     (SUBMIT_BUTTON_SELECTORS). If any locale-text fallback is broken, the
     Playwright timeout will fail this test before any image is produced.
     """
-    env = RedactedEnv(os.environ)
+    env = e2e_env.copy()
     env["GFLOW_CLI_LOCALE"] = locale
     out_dir = tmp_path / f"locale_{locale}"
     out_dir.mkdir()

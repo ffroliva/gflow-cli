@@ -46,6 +46,7 @@ from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.video import VideoModel
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.errors import FlowHostMigratedError, WireFormatError
+from tests.e2e._redacted_env import RedactedEnv
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
@@ -125,25 +126,6 @@ def e2e_nosession_profile() -> Iterator[Path]:
     finally:
         time.sleep(0.5)  # let Chrome release the Windows profile lock
         shutil.rmtree(path, ignore_errors=True)
-
-
-class RedactedEnv(dict[str, str]):
-    """Environment mapping whose repr and str conceal variable values (#1382).
-
-    Retains the exact mapping behavior required by ``subprocess.run(env=...)``
-    while replacing all values with ``'***'`` in formatted output, ensuring
-    failing tests and pytest failure reports (including ``--showlocals``)
-    never leak environment secrets or API tokens.
-    """
-
-    def __repr__(self) -> str:
-        return repr({k: "***" for k in self})
-
-    def __str__(self) -> str:
-        return str({k: "***" for k in self})
-
-    def copy(self) -> RedactedEnv:
-        return RedactedEnv(self)
 
 
 @pytest.fixture

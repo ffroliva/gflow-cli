@@ -21,7 +21,7 @@ import pytest
 from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.video import VideoModel
 from gflow_cli.mcp import tools as mcp_tools
-from tests.e2e.conftest import until_retired
+from tests.e2e.conftest import RedactedEnv, until_retired
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video, until_retired(VideoModel.OMNI_FLASH)]
 
@@ -41,11 +41,10 @@ def _project_args() -> list[str]:
 
 
 def test_e2e_cli_warns_on_stderr_and_keeps_json_stdout_clean(
-    e2e_env: dict[str, str], tmp_path: Path
+    e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
     _require_video()
     env = e2e_env.copy()
-    env.pop("GFLOW_CLI_HOME", None)  # the real home holds the live Chrome session
 
     proc = subprocess.run(
         [
