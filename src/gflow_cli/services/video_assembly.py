@@ -514,40 +514,22 @@ def _probe_directory_mtime(parent: Path) -> float:
         ) from exc
 
 
-def _unlink_matching_candidate(path: Path, expected: os.stat_result, original_path: Path) -> None:
-    try:
-        cur = os.lstat(path)
-    except OSError:
-        return
-    if (
-        (cur.st_dev, cur.st_ino) != (expected.st_dev, expected.st_ino)
-        or cur.st_size != 0
-        or not stat.S_ISREG(cur.st_mode)
-    ):
-        return
-    try:
-        path.unlink()
-        _log.info("cleared_stale_reservation", path=str(original_path))
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise VideoAssemblyError(
-            detail=f"Could not remove stale output reservation: {original_path} ({exc})",
-            route="video.assemble",
-            charged="no",
-        ) from exc
-
-
 def _rename_dance_clear(output: Path, st: os.stat_result) -> None:
     stale_candidate = output.with_name(f".gflow-stale-{secrets.token_hex(8)}")
     try:
         _platform_no_replace_rename(output, stale_candidate)
     except FileNotFoundError:
         return
-    except OSError as exc:
-        if exc.errno is None or exc.errno in _FALLBACK_ERRNOS:
-            _unlink_matching_candidate(output, st, output)
-            return
+    except (OSError, ImportError) as exc:
+        if isinstance(exc, ImportError) or exc.errno is None or exc.errno in _FALLBACK_ERRNOS:
+            raise VideoAssemblyError(
+                detail=(
+                    f"Output already exists: {output} (the output is an empty leftover from an "
+                    "interrupted run, this filesystem cannot clear it safely, delete it manually)"
+                ),
+                route="video.assemble",
+                charged="no",
+            ) from exc
         raise VideoAssemblyError(
             detail=f"Could not remove stale output reservation: {output} ({exc})",
             route="video.assemble",
@@ -567,12 +549,14 @@ def _rename_dance_clear(output: Path, st: os.stat_result) -> None:
             try:
                 _platform_no_replace_rename(stale_candidate, output)
             except OSError as restore_exc:
-                _log.warning(
-                    "could_not_restore_stale_candidate",
-                    stale_path=str(stale_candidate),
-                    output=str(output),
-                    error=str(restore_exc),
-                )
+                raise VideoAssemblyError(
+                    detail=(
+                        f"Could not restore output {output} from temporary reservation "
+                        f"{stale_candidate}: {restore_exc}"
+                    ),
+                    route="video.assemble",
+                    charged="no",
+                ) from restore_exc
     except FileNotFoundError:
         return
     except OSError as exc:
@@ -671,7 +655,11 @@ def _platform_no_replace_rename(temp_output: Path, output: Path) -> None:
 
 
 def _reserved_replace_publish(temp_output: Path, output: Path) -> None:
-    """Publish via exclusive reservation and replace as a last resort on unassisted filesystems."""
+    """Publish via exclusive reservation and replace as a last resort on unassisted filesystems.
+
+    This path is best-effort: it assumes the reserving run is not suspended for longer
+    than the 60 s stale threshold.
+    """
     try:
         descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
     except FileExistsError as exc:
@@ -692,7 +680,7 @@ def _reserved_replace_publish(temp_output: Path, output: Path) -> None:
             raise VideoAssemblyError(
                 detail=f"Output already exists: {output}", route="video.assemble"
             ) from exc
-        if (current_st.st_dev, current_st.st_ino) != target_id:
+        if (current_st.st_dev, current_st.st_ino) != target_id or current_st.st_size != 0:
             raise VideoAssemblyError(
                 detail=f"Output already exists: {output}", route="video.assemble"
             )
@@ -751,6 +739,15 @@ def publish_output(temp_output: Path, output: Path) -> None:
             temp_output.unlink()
         except OSError:
             pass
+
+
+def _stat_published_size(output: Path) -> int:
+    try:
+        return output.stat().st_size
+    except FileNotFoundError:
+        if output.exists():
+            return output.stat().st_size
+        raise
 
 
 def assemble_videos(
@@ -818,7 +815,7 @@ def assemble_videos(
             width=layout.size[0],
             height=layout.size[1],
             frame_rate=layout.frame_rate,
-            bytes=output.stat().st_size,
+            bytes=_stat_published_size(output),
         )
     except VideoAssemblyError:
         raise
