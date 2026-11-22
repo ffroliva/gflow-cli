@@ -10,7 +10,7 @@ Counters are kept in `<GFLOW_CLI_HOME>/telemetry.db`, separately from the catalo
 grouped by ISO week and retained for 53 weeks. gflow counts command and flag names, outcomes, coarse
 duration buckets, command transitions, crash fingerprints made from exception and code names, and
 generation details read from the local catalog. It also records the storage service category and MCP
-client category, and, for runs that selected a browser engine, the engine and the Flow site that served them. Prompts, argument values and other free-form text are not used as counter keys.
+client category, image transport, and, for runs that selected a browser engine, the engine and the Flow site that served them. Prompts, argument values and other free-form text are not used as counter keys.
 
 `gflow telemetry show` prints the current week's report as JSON, including its random per-week
 `report_id`; this is the report sent by the uploader. `gflow data stats` shows your own local usage
@@ -35,6 +35,7 @@ counts.
 | `crashes` | Counts of code-only crash fingerprints by surface. A fingerprint contains exception class names, up to three gflow-cli function names, and a third-party package marker where relevant. |
 | `engines` | Counts of generation, project and catalog commands and queued jobs that selected a browser engine, by engine: `playwright`, `patchright`, or `other`. A run is counted when the engine is selected, so a launch that then fails (a missing patchright install, a locked profile) still counts, which is what sizes an engine-specific failure. `gflow auth` commands and runs that launch no browser are not counted. |
 | `hosts` | For the same runs, the Flow site that served them, as observed from the page address when a generation is routed: `labs` (labs.google), `flow` (flow.google.com), or `unknown` when the run routed no generation (for example a credits, project or character read, or a run that failed first). It records which site served a run and says nothing about what that site supports. |
+| `transports` | Counts of image generations by transport: `direct` (direct HTTP), `ui` (UI automation), or `other`. Runs that noted no transport count as `unknown`. |
 | `tools` | Counts by packaged prompt-tool name and whether it expanded or left the prompt unchanged. Custom tools, including tools that shadow a packaged name, are counted only as `custom`. |
 
 ## What is never sent
@@ -82,7 +83,7 @@ read your IP address or locale to make this decision, and never sends the timezo
 Local counters still work in the EU/EEA and remain on your device unless you consent. To allow
 weekly uploads, run `gflow telemetry on`; this records your choice locally in
 `<GFLOW_CLI_HOME>/telemetry.consent`, together with the notice version you agreed to. When the
-notice changes (version 3 added the browser engine and the Flow site), uploads stop until you run
+notice changes (version 4 added image transport), uploads stop until you run
 `gflow telemetry on` again. Run `gflow telemetry off` to withdraw consent and stop
 counting and uploads. Environment kill switches still take precedence.
 
@@ -119,13 +120,13 @@ the sender is `src/gflow_cli/telemetry_upload.py` in this repository.
 
 ## Notice
 
-Notice version: 3
+Notice version: 4
 
 ```text
 gflow sends weekly usage totals to improve it, and we share overall figures publicly and with
-sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, and
-your country as a total. No ID, prompts, paths or account details. Each report is added to
-totals and discarded.
+sponsors. Commands, flag names, models, browser engine, image transport, the Flow site used,
+error codes, and your country as a total. No ID, prompts, paths or account details. Each
+report is added to totals and discarded.
 Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0
 See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY
 ```
@@ -133,7 +134,7 @@ See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETR
 The notice shown in the EU/EEA:
 
 ```text
-gflow can send weekly usage totals to help improve it; overall figures are shared publicly and with sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, and your country as a total. No ID, prompts, paths or account details. Each report is added to totals and discarded.
+gflow can send weekly usage totals to help improve it; overall figures are shared publicly and with sponsors. Commands, flag names, models, browser engine, image transport, the Flow site used, error codes, and your country as a total. No ID, prompts, paths or account details. Each report is added to totals and discarded.
 In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry off)
 See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY
 ```

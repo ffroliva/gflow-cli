@@ -159,6 +159,8 @@ class ImageRecordingMixin(RecorderCore):
         # persists the browser-searchable caption in plaintext.
         if image.display_name and self.prompt_mode == "store":
             metadata["display_name"] = image.display_name
+        if image.transport is not None:
+            metadata["transport"] = image.transport
         repo.upsert_asset(
             AssetRecord(
                 id=asset_id,
