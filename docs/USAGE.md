@@ -1717,7 +1717,9 @@ Options:
 By default, `images` and `videos` aggregate rows by Flow media ID. If an asset
 has multiple local copies (e.g. re-downloaded to different paths), they appear
 as a single row with a `COPIES` count and the path of the latest copy. Use
-`--all-copies` to see every path as a separate row.
+`--all-copies` to see every path as a separate row. Copies superseded by an in-place
+`video extend` ([#1299](https://github.com/ffroliva/gflow-cli/issues/1299)) are not
+listed or counted; see [DATA_LAYER.md § Superseded copies](DATA_LAYER.md#superseded-copies).
 
 A project's `title` is the one gflow recorded when it first saw the project: the real title
 for one `gflow project create` made, but a placeholder (`gflow-cli video`, or empty for an image
