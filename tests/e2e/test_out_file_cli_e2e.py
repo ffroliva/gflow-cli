@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -35,7 +37,7 @@ def _saved(target: Path) -> Path:
     return found[0]
 
 
-def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_gflow(args: list[str], env: RedactedEnv) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
@@ -45,7 +47,7 @@ def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
     )
 
 
-def test_e2e_out_file_new_flag(e2e_env: dict[str, str], tmp_path: Path) -> None:
+def test_e2e_out_file_new_flag(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     """gflow image t2i with --out-file writes the image."""
     target = tmp_path / "a.png"
     proc = _run_gflow(
@@ -56,9 +58,7 @@ def test_e2e_out_file_new_flag(e2e_env: dict[str, str], tmp_path: Path) -> None:
     _saved(target)
 
 
-def test_e2e_dash_o_path_is_rejected_with_remediation(
-    e2e_env: dict[str, str], tmp_path: Path
-) -> None:
+def test_e2e_dash_o_path_is_rejected_with_remediation(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     """#1158: gflow image t2i with -o <path> exits 2 with remediation before generating."""
     target = tmp_path / "b.png"
     proc = _run_gflow(
@@ -70,11 +70,9 @@ def test_e2e_dash_o_path_is_rejected_with_remediation(
     assert not target.exists()
 
 
-def test_e2e_out_file_is_refused_under_cloud_storage(
-    e2e_env: dict[str, str], tmp_path: Path
-) -> None:
+def test_e2e_out_file_is_refused_under_cloud_storage(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     """S12 (#1008): with an s3:// storage URI, video t2v --out-file exits 11 before submit ($0)."""
-    env = {**e2e_env, "GFLOW_CLI_STORAGE_URI": "s3://gflow-e2e-refusal/gflow/"}
+    env = e2e_env | {"GFLOW_CLI_STORAGE_URI": "s3://gflow-e2e-refusal/gflow/"}
     proc = _run_gflow(
         ["video", "t2v", "a red kite over a beach", "--out-file", str(tmp_path / "c.mp4")],
         env,

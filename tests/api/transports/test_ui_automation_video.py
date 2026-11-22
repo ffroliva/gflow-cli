@@ -287,24 +287,27 @@ class TestSwitchToVideoMode:
     @pytest.mark.asyncio
     async def test_raises_when_trigger_missing(self) -> None:
         page = _cascade_page(set())
-        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger"):
+        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger") as info:
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+        assert info.value.charged == "no"
 
     @pytest.mark.asyncio
     async def test_raises_when_video_tab_missing(self) -> None:
         from gflow_cli.api.transports import ui_automation_video as mod
 
         page = _cascade_page({mod.MODE_SWITCH_TRIGGER_SELECTORS[0]})
-        with pytest.raises(UiSelectorDriftError, match="Video tab"):
+        with pytest.raises(UiSelectorDriftError, match="Video tab") as info:
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+        assert info.value.charged == "no"  # #1336: editor mode selection is pre-submit
 
     @pytest.mark.asyncio
     async def test_submode_miss_raises_drift_error(self) -> None:
         # The sub-mode probe is the same selector-cascade pattern as the
         # mode-switch trigger and must carry the same typed-error contract.
         page = _cascade_page(set())
-        with pytest.raises(UiSelectorDriftError, match="video_submode_references"):
+        with pytest.raises(UiSelectorDriftError, match="video_submode_references") as info:
             await VideoGenerationMixin._switch_video_sub_mode(page, "references", out_dir=None)
+        assert info.value.charged == "no"
 
 
 class TestWaitVideoEditorReady:
@@ -350,6 +353,7 @@ class TestSetOutputCountOne:
         page = _cascade_page(set())
         with pytest.raises(UiSelectorDriftError) as exc_info:
             await VideoGenerationMixin._set_output_count(page, 1)
+        assert exc_info.value.charged == "no"  # #1336: settings precede submit
         msg = str(exc_info.value)
         assert "count=1" in msg
         assert "bills" in msg  # the refusal explains the billing consequence
@@ -3578,8 +3582,9 @@ class TestSelectVideoDurationLocale:
 
         monkeypatch.setattr(editor_mode, "_PROBE_TIMEOUT_MS", 100)
         await page.set_content(_DURATION_TABS_HTML.format(tabs=_tabs("480p", "4K")))
-        with pytest.raises(UiSelectorDriftError, match="4s duration tab"):
+        with pytest.raises(UiSelectorDriftError, match="4s duration tab") as info:
             await VideoGenerationMixin._select_video_duration(page, 4, out_dir=None)
+        assert info.value.charged == "no"
         assert await page.evaluate("window.clicked") == []
 
 

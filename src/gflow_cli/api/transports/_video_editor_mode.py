@@ -34,6 +34,7 @@ from gflow_cli.errors import (
     FlowAppError,
     FlowHostMigratedError,
     UiSelectorDriftError,
+    nothing_submitted,
 )
 
 if TYPE_CHECKING:
@@ -357,7 +358,8 @@ class EditorModeMixin(FlowNetworkMixin):
             await raise_if_known_landing(
                 page, requested="the Flow editor", at="labs.switch_to_video_mode"
             )
-            raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="video")
+            with nothing_submitted():
+                raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="video")
         await trigger.click()
         await page.wait_for_timeout(800)
         video_tab = await VideoGenerationMixin._probe_selector_cascade(
@@ -367,13 +369,14 @@ class EditorModeMixin(FlowNetworkMixin):
         )
         if video_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_video_tab.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "video_mode_tab",
-                    "Video tab not found in the mode dropdown.",
-                    shot,
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "video_mode_tab",
+                        "Video tab not found in the mode dropdown.",
+                        shot,
+                    )
                 )
-            )
         await video_tab.click()
         await page.wait_for_timeout(1200)
         log.info("ui_automation_video.video_mode_entered")

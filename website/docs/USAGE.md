@@ -305,9 +305,10 @@ Notes:
 
 Create a local narration track from text with the keyless Edge provider or Gemini TTS. The
 narration text is sent to the selected provider; this opens no browser and uses no Flow credits.
-Provide exactly one of positional `TEXT` or `--text-file FILE` (UTF-8). The output file must not
-exist and its parent directory must already exist. Edge writes MP3; Gemini writes WAV. Then pass
-that file to `gflow video assemble --voiceover`.
+Provide exactly one of positional `TEXT` or `--text-file FILE` (UTF-8). Existing outputs are
+refused, except an empty leftover older than 60 s from an interrupted run, which is cleared.
+Parent directory must already exist. Edge writes MP3; Gemini writes WAV. Then pass that file to
+`gflow video assemble --voiceover`.
 
 ```text
 gflow audio narrate TEXT --out-file FILE [--text-file UTF8_FILE] [--provider edge|gemini]
@@ -1500,7 +1501,7 @@ Options:
   --voiceover-volume FLOAT    Voiceover gain, 0–1 (default 1).
   --duck / --no-duck          Duck music and clip audio under voiceover (default on).
   --profile NAME              Profile to resolve catalog IDs.
-  --out-file PATH             Required output path; existing files are refused.
+  --out-file PATH             Required output path. Existing outputs are refused, except an empty leftover older than 60 s from an interrupted run, which is cleared.
   --json                      Emit the result as JSON.
 ```
 
@@ -1588,11 +1589,12 @@ design + wire protocol: [CHARACTER](CHARACTER.md). Every subcommand takes
 
 ### `gflow character create`
 
-> ⚠️ **Costs credits.** `create` runs **two paid image generations**: a face
+> ⚠️ **Costs credits with `--face-prompt`.** The prompt-generated `create` runs **two paid image generations**: a face
 > reference (slot 0), then a front/side/back triptych body (slot 1) seeded by
 > that face. It runs as a **persist-before-spend, crash-recoverable saga** — the
 > entity id and workflow rows are recorded before the credited generation, so a
 > crashed run is recoverable. Generation requires a Chrome-strategy profile.
+> `--image` / `--body-image` generates nothing and spends no credits (see below).
 
 ```text
 gflow character create [OPTIONS]
@@ -1639,7 +1641,7 @@ gflow deletes nothing. The MCP twin is `gflow_character_create`.
 gflow character create --project <id> --name "Nora"   --image ./nora-face.png --body-image ./nora-body.png --voice Aoede
 ```
 
-There is **no aspect-ratio control** for characters. Generated images are
+There is **no aspect-ratio control** for characters. With `--face-prompt`, generated images are
 **downloaded** to local (or cloud) storage; the signed `fifeUrl` is used only at
 download time and never persisted. The result reports the entity id, the bound
 workflow ids, and each saved slot's local path (face, body).
@@ -1647,10 +1649,11 @@ workflow ids, and each saved slot's local path (face, body).
 **Running it twice with the same `--name` creates two characters, not one.** The
 command is not idempotent on name: each successful run mints a fresh entity and spends
 face (and body) image quota again. Check with `gflow character list` before re-running,
-and remove a duplicate with `gflow character rm`. What *is* guaranteed is **resume after
-an interrupted run**: if a create is killed mid-saga, the next run with the same name
+and remove a duplicate with `gflow character rm`. On the prompt-generated path, what *is*
+guaranteed is **resume after an interrupted run**: if a create is killed mid-saga, the next run with the same name
 picks up the recorded entity instead of minting a second one, so a crash costs no extra
-quota.
+quota. The `--image` path has no resume: a failure after the portrait upload is not
+retryable, so check `gflow character list` before re-running.
 
 ### `gflow character list`
 

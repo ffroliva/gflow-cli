@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import errno
 import os
+import secrets
+import stat
+import sys
 import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.data.models import AssetKind
@@ -15,10 +21,14 @@ from gflow_cli.data.repository import verified_local_path
 from gflow_cli.errors import DataStoreError, VideoAssemblyError
 from gflow_cli.services.media_recovery import resolve_asset
 
+_log = structlog.get_logger(__name__)
+
 _SAMPLE_RATE = 44100
 _CHANNELS = 2
 _CHUNK = 1024
 _DUCKING = "threshold=0.01:ratio=10:attack=5:release=400"
+# A live reservation lasts only for one os.replace; older empty files are abandoned.
+_STALE_RESERVATION_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -181,8 +191,6 @@ def _validate_assembly(
         raise VideoAssemblyError(
             detail="Output path must differ from every input.", route="video.assemble"
         )
-    if output.exists():
-        raise VideoAssemblyError(detail=f"Output already exists: {output}", route="video.assemble")
     if not output.parent.is_dir():
         raise VideoAssemblyError(
             detail=f"Output directory does not exist: {output.parent}", route="video.assemble"
@@ -191,6 +199,9 @@ def _validate_assembly(
         raise VideoAssemblyError(
             detail="Every input must be an existing local file.", route="video.assemble"
         )
+    clear_stale_reservation(output)
+    if output.exists():
+        raise VideoAssemblyError(detail=f"Output already exists: {output}", route="video.assemble")
 
 
 def _inspect_videos(clips: list[Path], av: Any) -> _VideoLayout:
@@ -483,6 +494,295 @@ def _write_output(
         )
 
 
+def _probe_directory_mtime(parent: Path) -> float:
+    """Create a temporary probe file to measure directory write time."""
+    try:
+        descriptor, probe_name = tempfile.mkstemp(prefix=".gflow-probe-", dir=parent)
+        try:
+            return os.stat(descriptor).st_mtime
+        finally:
+            os.close(descriptor)
+            try:
+                os.unlink(probe_name)
+            except OSError:
+                pass
+    except OSError as exc:
+        raise VideoAssemblyError(
+            detail=f"Could not probe output directory {parent}: {exc}",
+            route="video.assemble",
+            charged="no",
+        ) from exc
+
+
+_FALLBACK_ERRNOS = {
+    errno.ENOSYS,
+    errno.EINVAL,
+    errno.ENOTSUP,
+    errno.EOPNOTSUPP,
+    errno.EPERM,
+    errno.EXDEV,
+}
+_CLEAR_FALLBACK_ERRNOS = _FALLBACK_ERRNOS - {errno.EPERM}
+
+
+def _matches_pre_rename_reservation(output: Path, st: os.stat_result) -> bool:
+    try:
+        pre_st = os.lstat(output)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise VideoAssemblyError(
+            detail=f"Could not remove stale output reservation: {output} ({exc})",
+            route="video.assemble",
+            charged="no",
+        ) from exc
+
+    if not (
+        stat.S_ISREG(pre_st.st_mode)
+        and pre_st.st_size == 0
+        and (pre_st.st_dev, pre_st.st_ino) == (st.st_dev, st.st_ino)
+        and pre_st.st_mtime == st.st_mtime
+    ):
+        raise VideoAssemblyError(
+            detail=(
+                f"Output already exists: {output} (the output is an empty leftover from an "
+                "interrupted run, this filesystem cannot clear it safely, delete it manually)"
+            ),
+            route="video.assemble",
+            charged="no",
+        )
+    return True
+
+
+def _restore_stale_candidate(stale_candidate: Path, output: Path) -> None:
+    try:
+        _platform_no_replace_rename(stale_candidate, output)
+    except OSError as restore_exc:
+        raise VideoAssemblyError(
+            detail=(
+                f"Could not restore output {output} from temporary reservation "
+                f"{stale_candidate}: {restore_exc}"
+            ),
+            route="video.assemble",
+            charged="no",
+            remediation_hint=(
+                f"Check or restore the temporary reservation file manually: {stale_candidate}"
+            ),
+        ) from restore_exc
+
+
+def _rename_dance_clear(output: Path, st: os.stat_result) -> None:
+    if not _matches_pre_rename_reservation(output, st):
+        return
+
+    stale_candidate = output.with_name(f".gflow-stale-{secrets.token_hex(8)}")
+    try:
+        _platform_no_replace_rename(output, stale_candidate)
+    except FileNotFoundError:
+        return
+    except (OSError, ImportError) as exc:
+        if (
+            isinstance(exc, ImportError)
+            or (exc.errno is not None and exc.errno in _CLEAR_FALLBACK_ERRNOS)
+            or exc.errno is None
+        ):
+            raise VideoAssemblyError(
+                detail=(
+                    f"Output already exists: {output} (the output is an empty leftover from an "
+                    "interrupted run, this filesystem cannot clear it safely, delete it manually)"
+                ),
+                route="video.assemble",
+                charged="no",
+            ) from exc
+        raise VideoAssemblyError(
+            detail=f"Could not remove stale output reservation: {output} ({exc})",
+            route="video.assemble",
+            charged="no",
+        ) from exc
+
+    try:
+        renamed_st = os.lstat(stale_candidate)
+        is_reservation = (
+            stat.S_ISREG(renamed_st.st_mode)
+            and renamed_st.st_size == 0
+            and (
+                (renamed_st.st_dev, renamed_st.st_ino) == (st.st_dev, st.st_ino)
+                or renamed_st.st_mtime == st.st_mtime
+            )
+        )
+        if is_reservation:
+            try:
+                stale_candidate.unlink()
+            except OSError as unlink_exc:
+                _log.warning(
+                    "stale_reservation_unlink_failed",
+                    path=str(stale_candidate),
+                    error=str(unlink_exc),
+                )
+            _log.info("cleared_stale_reservation", path=str(output))
+        else:
+            _restore_stale_candidate(stale_candidate, output)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise VideoAssemblyError(
+            detail=f"Could not remove stale output reservation: {output} ({exc})",
+            route="video.assemble",
+            charged="no",
+        ) from exc
+
+
+def clear_stale_reservation(output: Path) -> None:
+    """Clear an abandoned zero-byte reservation left by an interrupted publish."""
+    try:
+        st = os.lstat(output)
+    except OSError:
+        return
+    if not stat.S_ISREG(st.st_mode) or st.st_size != 0:
+        return
+
+    probe_mtime = _probe_directory_mtime(output.parent)
+    if (probe_mtime - st.st_mtime) < _STALE_RESERVATION_S:
+        raise VideoAssemblyError(
+            detail=(
+                f"Output already exists: {output} (it is empty and may be another run's "
+                "in-progress publish or an interrupted one; retry after 60 s or delete it)"
+            ),
+            route="video.assemble",
+            charged="no",
+        )
+
+    _rename_dance_clear(output, st)
+
+
+def _linux_no_replace_rename(temp_output: Path, output: Path) -> None:
+    import ctypes
+
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError as exc:
+        raise OSError(errno.ENOSYS, f"Could not load libc: {exc}") from exc
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 not found in libc")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    ret = renameat2(
+        ctypes.c_int(-100),  # AT_FDCWD
+        os.fsencode(temp_output),
+        ctypes.c_int(-100),  # AT_FDCWD
+        os.fsencode(output),
+        ctypes.c_uint(1),  # RENAME_NOREPLACE
+    )
+    if ret != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def _darwin_no_replace_rename(temp_output: Path, output: Path) -> None:
+    import ctypes
+
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+    except OSError as exc:
+        raise OSError(errno.ENOSYS, f"Could not load libc: {exc}") from exc
+    renamex_np = getattr(libc, "renamex_np", None)
+    if renamex_np is None:
+        raise OSError(errno.ENOSYS, "renamex_np not found in libc")
+    renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    renamex_np.restype = ctypes.c_int
+    ret = renamex_np(
+        os.fsencode(temp_output),
+        os.fsencode(output),
+        ctypes.c_uint(4),  # RENAME_EXCL
+    )
+    if ret != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def _platform_no_replace_rename(temp_output: Path, output: Path) -> None:
+    """Atomically rename temp_output to output without replacing an existing destination."""
+    if sys.platform == "win32":
+        os.rename(temp_output, output)
+    elif sys.platform.startswith("linux"):
+        _linux_no_replace_rename(temp_output, output)
+    elif sys.platform == "darwin":
+        _darwin_no_replace_rename(temp_output, output)
+    else:
+        raise OSError(errno.ENOSYS, f"No platform atomic no-replace rename for {sys.platform}")
+
+
+def _reserved_replace_publish(temp_output: Path, output: Path) -> None:
+    """Publish via exclusive reservation and replace as a last resort on unassisted filesystems.
+
+    This path is best-effort: it assumes the reserving run is not suspended for longer
+    than the 60 s stale threshold.
+    """
+    try:
+        descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+    except FileExistsError as exc:
+        raise VideoAssemblyError(
+            detail=f"Output already exists: {output}", route="video.assemble"
+        ) from exc
+    try:
+        st = os.fstat(descriptor)
+        target_id = (st.st_dev, st.st_ino)
+    finally:
+        os.close(descriptor)
+
+    published = False
+    try:
+        try:
+            current_st = os.stat(output)
+        except OSError as exc:
+            raise VideoAssemblyError(
+                detail=f"Output already exists: {output}", route="video.assemble"
+            ) from exc
+        if (current_st.st_dev, current_st.st_ino) != target_id or current_st.st_size != 0:
+            raise VideoAssemblyError(
+                detail=f"Output already exists: {output}", route="video.assemble"
+            )
+        os.replace(temp_output, output)
+        published = True
+    except BaseException:
+        if not published:
+            try:
+                cur = os.stat(output)
+                if (
+                    (cur.st_dev, cur.st_ino) == target_id
+                    and stat.S_ISREG(cur.st_mode)
+                    and cur.st_size == 0
+                ):
+                    output.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def _publish_fallback(temp_output: Path, output: Path) -> None:
+    """Publish when hard links are unsupported, using platform rename or reservation."""
+    try:
+        _platform_no_replace_rename(temp_output, output)
+    except FileExistsError as exc:
+        raise VideoAssemblyError(
+            detail=f"Output already exists: {output}", route="video.assemble"
+        ) from exc
+    except OSError as exc:
+        if exc.errno is None or exc.errno in _FALLBACK_ERRNOS:
+            _reserved_replace_publish(temp_output, output)
+        else:
+            raise
+    except ImportError:
+        _reserved_replace_publish(temp_output, output)
+
+
 def publish_output(temp_output: Path, output: Path) -> None:
     """Atomically publish the completed file without replacing another writer's output."""
     try:
@@ -492,21 +792,12 @@ def publish_output(temp_output: Path, output: Path) -> None:
             detail=f"Output already exists: {output}", route="video.assemble"
         ) from exc
     except OSError:
-        try:
-            descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-        except FileExistsError as exc:
-            raise VideoAssemblyError(
-                detail=f"Output already exists: {output}", route="video.assemble"
-            ) from exc
-        os.close(descriptor)
-        try:
-            os.replace(temp_output, output)
-        except BaseException:
-            # The empty reservation is ours; never leave it behind as a fake output.
-            output.unlink(missing_ok=True)
-            raise
+        _publish_fallback(temp_output, output)
     else:
-        temp_output.unlink()
+        try:
+            temp_output.unlink()
+        except OSError:
+            pass
 
 
 def assemble_videos(
@@ -582,6 +873,16 @@ def assemble_videos(
         raise VideoAssemblyError(detail=str(exc), route="video.assemble") from exc
     finally:
         if temp_output is not None:
-            temp_output.unlink(missing_ok=True)
+            try:
+                temp_output.unlink(missing_ok=True)
+            except OSError as exc:
+                _log.warning(
+                    "could_not_remove_temp_output",
+                    path=str(temp_output),
+                    error=str(exc),
+                )
         for spool in audio_spools:
-            spool.unlink(missing_ok=True)
+            try:
+                spool.unlink(missing_ok=True)
+            except OSError:
+                pass

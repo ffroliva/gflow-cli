@@ -43,6 +43,7 @@ from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import (
     CreditBudget,
+    mark_prior_work_billed,
     preserve_credit_cap_partials,
     resolve_max_credits,
 )
@@ -550,12 +551,20 @@ def _handle_scene_failure(
 ) -> None:
     scene_media_ids = getattr(exc, "completed_media_ids", [])
     billed_quote = getattr(exc, "quoted_credits", None)
+    prior_work_billed = bool(set(run_media_ids or []) - set(scene_media_ids)) or (
+        bool(scene_media_ids) and not isinstance(exc, CreditCapExceededError)
+    )
+    if run_media_ids is not None:
+        run_media_ids.extend(
+            media_id for media_id in scene_media_ids if media_id not in run_media_ids
+        )
     if context.budget.remaining is not None and (billed_quote is not None or scene_media_ids):
         if billed_quote is None:
             context.budget.remaining = 0
         else:
             context.budget.record_spend(billed_quote)
     _preserve_movie_cap_partials(exc, context.manifest, context.state, run_media_ids or [])
+    mark_prior_work_billed(exc, prior_work_billed)
     log.error(
         "movie.scene_failed",
         scene_id=scene.id,
@@ -631,7 +640,14 @@ async def _run_one_scene(
         return video_result.local_path
 
     except Exception as exc:
-        _handle_scene_failure(exc, scene, prompt, reference_entities, context, run_media_ids)
+        _handle_scene_failure(
+            exc,
+            scene,
+            prompt,
+            reference_entities,
+            context,
+            run_media_ids,
+        )
         if continue_on_error and not isinstance(exc, CreditCapExceededError):
             console.print(f"    [red]Scene failed:[/red] {escape(str(exc))}")
             return None
@@ -684,25 +700,15 @@ async def _run_movie(
             # CHARACTER entity (face + optional body + optional embedded voice)
             # whose id is later attached as a reference to R2V scenes.
             # ------------------------------------------------------------------
-            entity_chars = [
-                c
-                for c in manifest.characters.values()
-                if c.identity == "entity" and c.name not in state.characters
-            ]
-            if entity_chars:
-                console.print("\n[bold]Characters[/bold]")
-            for char in entity_chars:
-                console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
-                await _create_character(
-                    client=client,
-                    recorder=recorder,
-                    char=char,
-                    project_id=manifest.project,
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    state=state,
-                    state_path=state_path,
-                )
+            await _create_movie_characters(
+                client=client,
+                recorder=recorder,
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+            )
 
             # ------------------------------------------------------------------
             # Scenes — one scene = one clip = one generation
@@ -780,6 +786,37 @@ async def _run_movie(
 # ---------------------------------------------------------------------------
 # Character creation helper (entity identity)
 # ---------------------------------------------------------------------------
+
+
+async def _create_movie_characters(
+    *,
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    manifest: MovieManifest,
+    state: MovieState,
+    state_path: Path,
+    profile_name: str,
+    profile_dir: Path,
+) -> None:
+    entity_chars = [
+        char
+        for char in manifest.characters.values()
+        if char.identity == "entity" and char.name not in state.characters
+    ]
+    if entity_chars:
+        console.print("\n[bold]Characters[/bold]")
+    for char in entity_chars:
+        console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
+        await _create_character(
+            client=client,
+            recorder=recorder,
+            char=char,
+            project_id=manifest.project,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            state=state,
+            state_path=state_path,
+        )
 
 
 async def _create_character(

@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from gflow_cli.cli import main as cli_main
 from gflow_cli.composition import Character, ManifestCard, Scene, SceneInstructions, StyleSpec
+from gflow_cli.errors import UiSelectorDriftError
 from gflow_cli.movie_manifest import (
     CharacterState,
     MovieManifest,
@@ -358,6 +359,158 @@ def _mock_client_cm() -> MagicMock:
 
 
 class TestRunMovieOrchestrator:
+    async def test_quote_without_media_id_does_not_count_as_prior_work(
+        self, tmp_path: Path
+    ) -> None:
+        from gflow_cli.api.credit_cap import CreditBudget
+        from gflow_cli.cli_movie import MovieRunContext, _BriefSyncCache, _handle_scene_failure
+
+        scene = Scene(id="s1", action="first scene")
+        manifest = _manifest(scenes=(scene,))
+        context = MovieRunContext(
+            manifest,
+            MovieState(title="T", project="p"),
+            tmp_path / "state.json",
+            "default",
+            tmp_path,
+            tmp_path,
+            _BriefSyncCache(),
+            CreditBudget(None),
+        )
+        error = UiSelectorDriftError(
+            detail="scene failed after quote", charged="no", retryable=True
+        )
+        error.quoted_credits = 5
+
+        _handle_scene_failure(error, scene, "prompt", (), context, [])
+
+        assert error.charged == "no"
+        assert error.retryable is True
+
+    async def test_failed_scene_media_counts_as_prior_work_for_later_drift(
+        self, tmp_path: Path
+    ) -> None:
+        from gflow_cli.api.credit_cap import CreditBudget
+        from gflow_cli.cli_movie import MovieRunContext, _BriefSyncCache, _run_one_scene
+
+        first = Scene(id="s1", action="first scene")
+        second = Scene(id="s2", action="second scene")
+        manifest = _manifest(scenes=(first, second))
+        state = MovieState(title="T", project="p")
+        context = MovieRunContext(
+            manifest,
+            state,
+            tmp_path / "state.json",
+            "default",
+            tmp_path,
+            tmp_path,
+            _BriefSyncCache(),
+            CreditBudget(None),
+        )
+        billed_failure = UiSelectorDriftError(detail="generation poll failed", charged="no")
+        billed_failure.completed_media_ids = ["scene-1-paid"]
+        drift = UiSelectorDriftError(detail="scene model selector drift", charged="no")
+        run_media_ids: list[str] = []
+
+        with (
+            patch("gflow_cli.cli_movie._sync_scene_instructions", new=AsyncMock()),
+            patch(
+                "gflow_cli.cli_movie._generate_scene",
+                new=AsyncMock(side_effect=[billed_failure, drift]),
+            ),
+        ):
+            await _run_one_scene(
+                client=MagicMock(),
+                recorder=MagicMock(),
+                scene=first,
+                context=context,
+                generated_any=False,
+                run_media_ids=run_media_ids,
+                continue_on_error=True,
+            )
+            await _run_one_scene(
+                client=MagicMock(),
+                recorder=MagicMock(),
+                scene=second,
+                context=context,
+                generated_any=True,
+                run_media_ids=run_media_ids,
+                continue_on_error=True,
+            )
+
+        assert run_media_ids == ["scene-1-paid"]
+        assert (drift.charged, drift.next_action, drift.retryable) == ("yes", "none", None)
+
+    async def test_resumed_character_patch_does_not_count_as_billed_this_run(
+        self, tmp_path: Path
+    ) -> None:
+        from gflow_cli.cli_movie import _run_movie
+
+        manifest = _manifest(
+            characters={"Hero": Character(name="Hero", identity="entity", face_prompt="face")},
+            scenes=(Scene(id="s", action="x"),),
+        )
+        state = MovieState(title="T", project="p")
+        state_path = tmp_path / "m-state.json"
+        drift = UiSelectorDriftError(detail="pre-submit drift", charged="no")
+
+        with (
+            patch("gflow_cli.cli_movie.get_settings"),
+            patch("gflow_cli.cli_movie.OperationRecorder") as rec,
+            patch("gflow_cli.cli_movie.FlowApiClient", return_value=_mock_client_cm()),
+            patch("gflow_cli.cli_movie._create_character", new=AsyncMock(return_value=False)),
+            patch("gflow_cli.cli_movie._generate_scene", new=AsyncMock(side_effect=drift)),
+        ):
+            rec.open.return_value = MagicMock()
+            await _run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name="default",
+                profile_dir=tmp_path / "p",
+                out_dir=tmp_path / "out",
+                continue_on_error=True,
+            )
+
+        assert drift.charged == "no"
+
+    async def test_later_scene_drift_reconciles_prior_scene_charge(self, tmp_path: Path) -> None:
+        from gflow_cli.api.credit_cap import CreditBudget
+        from gflow_cli.cli_movie import MovieRunContext, _BriefSyncCache, _run_one_scene
+
+        scene = Scene(id="s2", action="second scene")
+        manifest = _manifest(scenes=(scene,))
+        state = MovieState(title="T", project="p")
+        context = MovieRunContext(
+            manifest=manifest,
+            state=state,
+            state_path=tmp_path / "state.json",
+            profile_name="default",
+            profile_dir=tmp_path,
+            out_dir=tmp_path,
+            brief_cache=_BriefSyncCache(),
+            budget=CreditBudget(None),
+        )
+        error = UiSelectorDriftError(detail="scene model selector drift", charged="no")
+        with (
+            patch("gflow_cli.cli_movie._sync_scene_instructions", new=AsyncMock()),
+            patch("gflow_cli.cli_movie._generate_scene", new=AsyncMock(side_effect=error)),
+            patch("asyncio.sleep", new=AsyncMock()),
+            pytest.raises(UiSelectorDriftError) as info,
+        ):
+            await _run_one_scene(
+                client=MagicMock(),
+                recorder=MagicMock(),
+                scene=scene,
+                context=context,
+                generated_any=True,
+                run_media_ids=["scene-1-media"],
+                continue_on_error=False,
+            )
+
+        assert info.value.charged == "yes"
+        assert info.value.next_action == "none"
+
     async def test_happy_path_no_characters(self, tmp_path: Path) -> None:
         from gflow_cli.cli_movie import _run_movie
 

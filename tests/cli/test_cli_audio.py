@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
+from gflow_cli.services import video_assembly
 from gflow_cli.services.audio_narration import NarrationResult
 
 
@@ -84,3 +86,27 @@ def test_audio_narrate_expands_home_in_paths(
     assert response.exit_code == 0, response.output
     assert handler.call_args.kwargs["out_file"] == tmp_path / "voice.mp3"
     assert handler.call_args.kwargs["text_file"] == tmp_path / "script.txt"
+
+
+def test_audio_narrate_reports_stale_unlink_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import time
+
+    stale_out = tmp_path / "stale.mp3"
+    stale_out.touch()
+    past = time.time() - 120.0
+    os.utime(stale_out, (past, past))
+
+    def denied_rename(src: Path, dst: Path) -> None:
+        raise OSError(errno.EPERM, "stale file locked by antivirus")
+
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", denied_rename)
+
+    response = CliRunner().invoke(main, ["audio", "narrate", "hello", "--out-file", str(stale_out)])
+    assert response.exit_code != 0
+    assert (
+        "leftover could not be removed" in response.output
+        or "could not remove stale output reservation" in response.output.lower()
+    )

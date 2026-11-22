@@ -55,6 +55,8 @@ from typing import cast
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 # File-level e2e + cost sub-marker (registered in pyproject.toml).
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_character]
 
@@ -113,27 +115,23 @@ def _require_project() -> str:
     return project
 
 
-def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
+def _character_env(e2e_env: RedactedEnv) -> RedactedEnv:
     """Overlay character-locale + UTF-8 onto the isolated ``e2e_env``.
 
     ``e2e_env`` already pins PYTHONUTF8=1, an isolated GFLOW_CLI_DB_PATH, an
     isolated output dir, and the active profile. The DB is isolated so the
     idempotency assertion counts only THIS test's rows.
     """
-    env = dict(e2e_env)
+    env = e2e_env.copy()
     env["PYTHONUTF8"] = "1"  # explicit: accented names must round-trip byte-for-byte
-    # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a temp
-    # dir that holds no profiles, and `e2e_env` inherits it — a child process
-    # would resolve "no session for profile <name>" and exit 2 before touching
-    # Flow. Drop it so the subprocess finds the REAL platformdirs home where
-    # `gflow auth login` planted the session. The isolated GFLOW_CLI_DB_PATH is
-    # deliberately kept: only the catalog is isolated, not the session.
-    env.pop("GFLOW_CLI_HOME", None)
+    # `e2e_env` restores the developer's real GFLOW_CLI_HOME (or drops the
+    # autouse isolation if none was configured) so the subprocess resolves
+    # the profile session while keeping DB and output dir isolated (#745).
     return env
 
 
 def _run_gflow(
-    args: list[str], env: dict[str, str], timeout: float
+    args: list[str], env: RedactedEnv, timeout: float
 ) -> subprocess.CompletedProcess[str]:
     """Run ``gflow`` in a subprocess and capture stdout/stderr/exit-code.
 
@@ -202,7 +200,7 @@ def _open_db(env: dict[str, str]) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 
-def test_character_create_binds_parent_entity(e2e_env: dict[str, str]) -> None:
+def test_character_create_binds_parent_entity(e2e_env: RedactedEnv) -> None:
     """Live ``character create`` (1 image generation, zero credits): the face generation must
     bind to the created entity, and the read-back must land in the SAME
     existing project.
@@ -303,7 +301,7 @@ def test_character_create_binds_parent_entity(e2e_env: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> None:
+def test_character_create_partial_saga_recoverable(e2e_env: RedactedEnv) -> None:
     """A create interrupted mid-saga RESUMES on the next run instead of double-spending.
 
     The crash IS injected here, by flipping the recorded operation row back to
@@ -444,7 +442,7 @@ def test_character_create_partial_saga_recoverable(e2e_env: dict[str, str]) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_character_personality_utf8(e2e_env: dict[str, str]) -> None:
+def test_character_personality_utf8(e2e_env: RedactedEnv) -> None:
     """Accented ``--name`` and ``--personality`` survive the full create →
     read-back round-trip byte-for-byte.
 
@@ -535,7 +533,7 @@ def test_character_personality_utf8(e2e_env: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, str]) -> None:
+def test_character_create_format_prompt_clicks_format_button(e2e_env: RedactedEnv) -> None:
     """Live ``character create --format-prompt`` (1 image generation, zero credits): Flow's
     in-editor **Format** button must actually be found, enabled, and clicked.
 
@@ -629,7 +627,7 @@ def test_character_create_format_prompt_clicks_format_button(e2e_env: dict[str, 
 # ---------------------------------------------------------------------------
 
 
-def test_create_never_leaves_an_untitled_orphan(e2e_env: dict[str, str]) -> None:
+def test_create_never_leaves_an_untitled_orphan(e2e_env: RedactedEnv) -> None:
     """Whatever happens, the project must not gain an unnamed, ref-less entity.
 
     The saga creates its entity up front (free) and only names it in the final
@@ -710,7 +708,7 @@ def test_create_never_leaves_an_untitled_orphan(e2e_env: dict[str, str]) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_character_create_attaches_voice_and_personality(e2e_env: dict[str, str]) -> None:
+def test_character_create_attaches_voice_and_personality(e2e_env: RedactedEnv) -> None:
     """Live ``create --voice --personality`` then ``show``: BOTH must survive the round trip.
 
     **Until this test, ``--voice`` had never been exercised end-to-end.** A repo-wide

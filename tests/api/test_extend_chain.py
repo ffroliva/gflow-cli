@@ -206,3 +206,92 @@ async def test_a_retryable_poll_failure_after_submit_says_reconcile() -> None:
     assert isinstance(err, RateLimitError)
     assert (err.charged, err.resolved_next_action(), err.retryable) == ("maybe", "reconcile", False)
     assert "retry" not in (err.remediation_hint or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_pre_submit_failure_after_a_completed_segment_is_not_retryable() -> None:
+    from gflow_cli.errors import UiSelectorDriftError, is_retryable
+
+    class _SecondSubmitDrifts(_FakeClient):
+        async def extend_video(self, **kwargs: Any) -> ExtendStarted:
+            self._n += 1
+            if self._n == 2:
+                raise UiSelectorDriftError(detail="segment settings drift", charged="no")
+            self.events.append(f"submit{self._n}")
+            return ExtendStarted(
+                media_id=f"media-{self._n}",
+                workflow_id=f"wf-{self._n}",
+                model_key="veo_3_1_extension_lite",
+                unit_cost=10,
+            )
+
+    result = await run_extend_chain(
+        _SecondSubmitDrifts(),
+        media_id=MEDIA,
+        project_id=PROJECT,
+        scene_id=SCENE,
+        prompts=["a", "b"],
+    )
+
+    assert result.error is not None
+    assert result.error.charged == "yes"
+    assert result.error.resolved_next_action() == "none"
+    assert is_retryable(result.error) is False
+    assert result.error.to_problem_details()["charged"] == "yes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type,action", [("content", "fix_input"), ("auth", "reauth")])
+async def test_poll_failure_preserves_non_retry_advice_and_segment_hint(
+    error_type: str, action: str
+) -> None:
+    from gflow_cli.errors import AuthExpiredError, ContentPolicyError
+
+    error = (
+        ContentPolicyError("unsafe prompt")
+        if error_type == "content"
+        else AuthExpiredError("expired")
+    )
+    original_hint = error.remediation_hint
+    original_charged = error.charged
+
+    class _PollFails(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            raise error
+
+    result = await run_extend_chain(
+        _PollFails(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
+    )
+    assert result.error is error
+    # The only segment is still in flight: nothing finished, so nothing is proven billed.
+    assert error.charged == original_charged != "yes"
+    assert error.resolved_next_action() == action
+    assert error.remediation_hint == original_hint
+    assert error.operation_id == "media-1"
+
+
+@pytest.mark.asyncio
+async def test_poll_failure_after_a_finished_segment_is_charged() -> None:
+    from gflow_cli.errors import GFlowError
+
+    class _SecondPollFails(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            self.events.append(f"poll-{media_id}")
+            if media_id == "media-2":
+                raise GFlowError("poll failed", charged="no")
+            return object()
+
+    result = await run_extend_chain(
+        _SecondPollFails(),
+        media_id=MEDIA,
+        project_id=PROJECT,
+        scene_id=SCENE,
+        prompts=["a", "b"],
+    )
+
+    assert result.error is not None
+    assert (result.error.charged, result.error.next_action, result.error.retryable) == (
+        "yes",
+        "none",
+        None,
+    )
