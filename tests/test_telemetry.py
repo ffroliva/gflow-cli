@@ -354,8 +354,8 @@ def test_a_transport_outside_the_enum_is_other(tmp_home: Path) -> None:
     assert report["transports"] == {"other": 1}
 
 
-def test_a_launch_that_noted_no_transport_counts_unknown(tmp_home: Path) -> None:
-    telemetry.note_engine("playwright")
+def test_a_transport_unknown_counts_unknown(tmp_home: Path) -> None:
+    telemetry.note_transport("unknown")
     telemetry.record("cli", "image t2i", [], "0", 3.0)
     report = _report()
     assert report["transports"] == {"unknown": 1}

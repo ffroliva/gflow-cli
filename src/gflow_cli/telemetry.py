@@ -53,22 +53,22 @@ DB_FILE = "telemetry.db"
 OFF_FILE = "telemetry.off"
 CONSENT_FILE = "telemetry.consent"
 SCHEMA = 1
-NOTICE_VERSION = 3
+NOTICE_VERSION = 4
 NOTICE_TEXT = (
     "gflow sends weekly usage totals to improve it, and we share overall figures publicly and "
     "with\n"
-    "sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, and\n"
-    "your country as a total. No ID, prompts, paths or account details. Each report is added to\n"
-    "totals and discarded.\n"
+    "sponsors. Commands, flag names, models, browser engine, image transport, the Flow site used,\n"
+    "error codes, and your country as a total. No ID, prompts, paths or account details. Each\n"
+    "report is added to totals and discarded.\n"
     "Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0\n"
     "See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
 )
 NOTICE_TEXT_CONSENT = (
     "gflow can send weekly usage totals to help improve it; overall figures are shared publicly "
     "and "
-    "with sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, "
-    "and your country as a total. No ID, prompts, paths or account details. Each report is "
-    "added to totals and discarded.\n"
+    "with sponsors. Commands, flag names, models, browser engine, image transport, the Flow site "
+    "used, error codes, and your country as a total. No ID, prompts, paths or account details. "
+    "Each report is added to totals and discarded.\n"
     "In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry "
     "off)\n"
     "See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
@@ -450,7 +450,7 @@ _PROCESS_FACTS: dict[str, str] = {}
 _RUN_FACTS: ContextVar[dict[str, str] | None] = ContextVar("gflow_run_facts", default=None)
 _ENGINES = frozenset({"playwright", "patchright"})
 _HOSTS = {"labs": "labs", "migrated": "flow"}
-_TRANSPORTS = frozenset({"direct", "ui"})
+_TRANSPORTS = frozenset({"direct", "ui", "unknown"})
 
 
 def _facts() -> dict[str, str]:
@@ -490,14 +490,11 @@ def _take_run_facts() -> list[tuple[str, str]]:
     facts = _facts()
     noted = dict(facts)  # snapshot, then clear: a concurrent clear cannot raise here
     facts.clear()  # a host noted without a launch must not carry into a later run
-    if "engine" not in noted and "transport" not in noted:
-        return []
     out: list[tuple[str, str]] = []
     if "engine" in noted:
         out.append(("engine", noted["engine"]))
         out.append(("host", noted.get("host", "unknown")))
-        out.append(("transport", noted.get("transport", "unknown")))
-    elif "transport" in noted:
+    if "transport" in noted:
         out.append(("transport", noted["transport"]))
     return out
 
