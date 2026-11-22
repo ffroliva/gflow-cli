@@ -204,7 +204,7 @@ async def test_a_retryable_poll_failure_after_submit_says_reconcile() -> None:
     )
     err = result.error
     assert isinstance(err, RateLimitError)
-    assert (err.charged, err.resolved_next_action(), err.retryable) == ("yes", "reconcile", False)
+    assert (err.charged, err.resolved_next_action(), err.retryable) == ("maybe", "reconcile", False)
     assert "retry" not in (err.remediation_hint or "").lower()
 
 
@@ -253,6 +253,7 @@ async def test_poll_failure_preserves_non_retry_advice_and_segment_hint(
         else AuthExpiredError("expired")
     )
     original_hint = error.remediation_hint
+    original_charged = error.charged
 
     class _PollFails(_FakeClient):
         async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
@@ -262,14 +263,15 @@ async def test_poll_failure_preserves_non_retry_advice_and_segment_hint(
         _PollFails(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
     )
     assert result.error is error
-    assert error.charged == "yes"
+    # The only segment is still in flight: nothing finished, so nothing is proven billed.
+    assert error.charged == original_charged != "yes"
     assert error.resolved_next_action() == action
     assert error.remediation_hint == original_hint
     assert error.operation_id == "media-1"
 
 
 @pytest.mark.asyncio
-async def test_poll_failure_after_submit_is_charged_even_without_prior_completion() -> None:
+async def test_poll_failure_after_a_finished_segment_is_charged() -> None:
     from gflow_cli.errors import GFlowError
 
     class _SecondPollFails(_FakeClient):

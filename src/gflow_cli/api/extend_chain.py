@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import structlog
 
 from gflow_cli.api.credit_cap import mark_prior_work_billed, preserve_credit_cap_partials
-from gflow_cli.errors import GFlowError
+from gflow_cli.errors import RETRY_ACTIONS, GFlowError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Sequence
@@ -189,7 +189,19 @@ async def run_extend_chain(  # noqa: PLR0913
         except (GFlowError, ValueError) as exc:
             if isinstance(exc, GFlowError) and not exc.operation_id:
                 exc.operation_id = started.media_id  # #1201: billed; the handle to settle it
-            mark_prior_work_billed(exc, True)
+            if isinstance(exc, GFlowError) and exc.resolved_next_action() in RETRY_ACTIONS:
+                # #1201: a poll failure outlasting its retries must not advise re-running a
+                # segment Flow already took.
+                exc.charged = "maybe"
+                exc.next_action = "reconcile"
+                exc.retryable = False
+                exc.remediation_hint = (
+                    f"Flow took segment {index + 1} ({started.media_id}), so it may have "
+                    "charged for it. Check the scene on Flow before running it again."
+                )
+            # The in-flight segment's outcome is unknown (docs/ERRORS.md: maybe / reconcile);
+            # only a segment that already finished proves billed work.
+            mark_prior_work_billed(exc, bool(completed))
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,
