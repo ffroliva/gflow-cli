@@ -95,6 +95,9 @@ from gflow_cli.api.transports._mc_common import (
     AGENT_PANEL_CLOSE as AGENT_PANEL_CLOSE,
 )
 from gflow_cli.api.transports._mc_common import (
+    AGENT_SETTINGS_TUNE as AGENT_SETTINGS_TUNE,
+)
+from gflow_cli.api.transports._mc_common import (
     ANCHOR_TIMEOUT_S as ANCHOR_TIMEOUT_S,
 )
 from gflow_cli.api.transports._mc_common import (

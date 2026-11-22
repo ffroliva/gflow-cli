@@ -166,8 +166,9 @@ async def test_new_build_healthy_classic_page_is_not_touched(page: Page) -> None
 @pytest.mark.asyncio
 async def test_new_build_with_no_classic_arm_fails_closed_as_drift(page: Page) -> None:
     """Unobserved on the new build: an account with no switch at all. The panel is closed
-    once, no switch appears, and today's agent-only check finds no `tune`, so the run is
-    drift, never a guessed agent-only verdict."""
+    once and no switch appears. The compact box's `settings_2` gear also renders on
+    recoverable accounts in agent mode, so it is not evidence of the agent-only composer:
+    the run is drift, never a guessed agent-only verdict."""
     with pytest.raises(UiSelectorDriftError):
         await _run(page, build="new", agent=True, panel=True, classicArm=False)
     clicks: list[str] = await page.evaluate("window.CLICKS")
