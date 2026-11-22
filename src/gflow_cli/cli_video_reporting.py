@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import click
 import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import OutputFormat
@@ -59,7 +60,7 @@ def _emit_video_result(
                 or result.status.error_message
                 or "unknown reason"
             )
-            Console(stderr=True).print(f"[red]Video generation failed:[/red] {reasons}")
+            Console(stderr=True).print(f"[red]Video generation failed:[/red] {escape(reasons)}")
             raise SystemExit(1)
         if result.status.media_id:
             click.echo(result.status.media_id)
@@ -77,7 +78,7 @@ def _emit_video_result(
             or result.status.error_message
             or "unknown reason"
         )
-        console.print(f"[red]Video generation failed:[/red] {reasons}")
+        console.print(f"[red]Video generation failed:[/red] {escape(reasons)}")
         raise SystemExit(1)
 
     console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
@@ -260,7 +261,7 @@ def _migrated_extend_payload(
         "local_path": rendered,
         "output": rendered,
         "failure_reasons": [],
-        "error_message": None if ok else f"Flow reported status {record.status}",
+        "error_message": None if ok else record.failure_message,
         "scene_id": outcome.scene_id,
         "project_id": project_id,
         "model": outcome.model_key,
@@ -383,7 +384,7 @@ def _report_migrated_extend(  # noqa: PLR0913
             c.print(f"  wrote: {rendered}")
     if not ok:
         err = FlowApiError(
-            f"extend of {media_id} ended with Flow status {record.status}; it may have been billed",
+            f"extend of {media_id} failed: {record.failure_message}; it may have been billed",
             route="batchexecute:fZytfe",
         )
         if as_json or output_format == OutputFormat.JSON.value:

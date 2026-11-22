@@ -26,8 +26,18 @@ POSTER_URL = (
 )
 
 
-def _record(status: int, *, done_urls: bool = False, size: int | None = None) -> list[Any]:
-    """The record shared by YhhmEf / jwpduf / as29s, exactly as captured."""
+def _record(
+    status: int,
+    *,
+    done_urls: bool = False,
+    size: int | None = None,
+    error: tuple[int, str] | None = None,
+) -> list[Any]:
+    """The record shared by YhhmEf / jwpduf / as29s, exactly as captured.
+
+    ``error`` is the failed record's status-cell tail from #1111:
+    ``[status, [code, text], [text]]``.
+    """
     details: list[Any] = [
         [1788563121, 855319000],
         PROMPT,
@@ -37,7 +47,7 @@ def _record(status: int, *, done_urls: bool = False, size: int | None = None) ->
         None,
         [None, [["abra_t2v_8s", 1, None, None, 2, 1]], [[None, None, [[[PROMPT]]]]], None, 1],
         None,
-        [status],
+        [status] if error is None else [status, [error[0], error[1]], [error[1]]],
         1,
     ]
     if done_urls:
@@ -168,6 +178,55 @@ def test_unknown_status_is_failed_and_keeps_the_raw_value() -> None:
     rec = generation_record("jwpduf", poll_payload(7))
     assert rec.is_failed and not rec.is_done and not rec.is_running
     assert rec.status == 7
+
+
+def test_failed_record_carries_flows_error_code_and_text() -> None:
+    """#1111: the terminal record's status cell carries Flow's own error."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    rec = generation_record(
+        "jwpduf",
+        poll_payload(4, error=(13, "Generation job finished with state: FAILED")),
+    )
+    assert rec.is_failed and rec.status == 4
+    assert rec.error_code == 13
+    assert rec.error_message == "Generation job finished with state: FAILED"
+    assert rec.failure_message == (
+        "Flow failed the generation (code 13): Generation job finished with state: FAILED"
+    )
+
+
+def test_records_without_a_flow_error_have_no_error_fields() -> None:
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    running = generation_record("jwpduf", poll_payload(2))
+    assert (running.error_code, running.error_message) == (None, None)
+    assert running.failure_message == "migrated host reported status 2"
+    unknown = generation_record("jwpduf", poll_payload(7))
+    assert (unknown.error_code, unknown.error_message) == (None, None)
+    assert unknown.failure_message == "migrated host reported status 7"
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [None],  # no pair
+        ["Generation job finished with state: FAILED"],  # text where the pair belongs
+        [[13]],  # pair without text
+        [["13", "Generation job finished with state: FAILED"]],  # code not an int
+        [[13, None]],  # text not a string
+        [[13, ""]],  # empty text: nothing to name
+    ],
+)
+def test_a_malformed_error_tail_keeps_the_bare_status(tail: list[Any]) -> None:
+    """#1111: only ``[code, text]`` names Flow's error; any other tail falls back."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    payload = poll_payload(4)
+    payload[2][0][0][5][8] = [4, *tail]
+    rec = generation_record("jwpduf", payload)
+    assert rec.is_failed and rec.status == 4
+    assert rec.failure_message == "migrated host reported status 4"
 
 
 def test_drift_raises_wire_format_error_with_redacted_discovery_head() -> None:

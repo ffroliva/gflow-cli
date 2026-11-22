@@ -55,6 +55,11 @@ class GenerationRecord:
     video_url: str | None = None
     poster_url: str | None = None
     size_bytes: int | None = None
+    # Flow's own failure, carried on the status cell's tail (#1111):
+    # ``[status, [code, text], [text, ...]]``. Only a failed record carries it;
+    # a running or done record has neither.
+    error_code: int | None = None
+    error_message: str | None = None
 
     @property
     def is_done(self) -> bool:
@@ -69,6 +74,14 @@ class GenerationRecord:
         """Any status the spike never observed on the happy path is a failure —
         the failure enum itself has not been captured yet, so it is surfaced raw."""
         return self.status is not None and not self.is_done and not self.is_running
+
+    @property
+    def failure_message(self) -> str:
+        """What the failure path reports (#1111): Flow's code and text when the
+        record carries them, else the bare status it used to report alone."""
+        if self.error_code is not None and self.error_message:
+            return f"Flow failed the generation (code {self.error_code}): {self.error_message}"
+        return f"migrated host reported status {self.status}"
 
 
 @dataclass(frozen=True)
@@ -303,6 +316,7 @@ def generation_record(
     status_cell = _as_list(_at(rec, 5, 8))
     status: Any = status_cell[0] if status_cell else None
     size: Any = _at(rec, 5, 13)
+    error_code, error_message = _flow_error(status_cell)
     return GenerationRecord(
         workflow_id=rec[0],
         project_id=rec[1],
@@ -311,7 +325,27 @@ def generation_record(
         video_url=_clip_url(_at(rec, 7, 0, 8)),
         poster_url=_url(_at(rec, 5, 10)),
         size_bytes=size if isinstance(size, int) else None,
+        error_code=error_code,
+        error_message=error_message,
     )
+
+
+def _flow_error(status_cell: list[Any] | None) -> tuple[int | None, str | None]:
+    """Flow's ``(code, text)`` from a failed record's status-cell tail (#1111).
+
+    The terminal record carries ``[status, [code, text], [text, ...]]``; a
+    running or done record carries ``[status]`` only. Anything else is not a
+    Flow error, so the caller falls back to the bare status.
+    """
+    if not status_cell or len(status_cell) < 2:
+        return None, None
+    pair = _as_list(status_cell[1])
+    if pair is None or len(pair) < 2:
+        return None, None
+    code, text = pair[0], pair[1]
+    if not isinstance(code, int) or not isinstance(text, str):
+        return None, None
+    return code, text
 
 
 def generation_records_carrying(
