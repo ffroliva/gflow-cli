@@ -10,7 +10,7 @@ import pytest
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, ImageRef
+from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports._mc_common import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.direct_http import DirectHttpTransport, direct_can_serve
@@ -653,3 +653,31 @@ async def test_direct_http_setup_stores_profile_dir(tmp_path: Path) -> None:
     await t.setup(tmp_path, page=fake_page)
     assert t._profile_dir == tmp_path
     assert t._page is fake_page
+
+
+@pytest.mark.asyncio
+async def test_direct_http_sends_the_migrated_wire_model(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NARWHAL is sent as BELUGA on flow.google.com; Flow no longer lists NARWHAL (#958)."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
+    assert builder.call_args.kwargs["model"] == "BELUGA"
+
+
+@pytest.mark.parametrize("model", [m for m in Model if m is not Model.NARWHAL])
+def test_a_model_with_no_measured_migrated_wire_name_is_not_served(model: Model) -> None:
+    assert not direct_can_serve(GenerateImageRequest(prompt="x", model=model))

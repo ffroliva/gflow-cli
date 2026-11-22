@@ -16,7 +16,7 @@ import structlog
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api._engine import mint_evaluate_kwargs
-from gflow_cli.api.image import Aspect
+from gflow_cli.api.image import Aspect, Model
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+# The model name an ogiZ0b body carries on flow.google.com. Only BELUGA is measured (the
+# page sends it for "Nano Banana 2.1", which replaced NARWHAL in Flow's catalogue, #958);
+# every other model routes to the UI transport until its wire name is captured.
+_WIRE_MODEL: dict[Model, str] = {Model.NARWHAL: "BELUGA"}
+
 
 def direct_can_serve(request: GenerateImageRequest) -> bool:
     """Return True only for plain T2I requests supported by direct HTTP.
@@ -43,7 +48,7 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
     non-portrait aspect ratios, multi-image counts, Agent instructions,
     and character mentions (@).
     """
-    if request.aspect is not Aspect.PORTRAIT:
+    if request.aspect is not Aspect.PORTRAIT or request.model not in _WIRE_MODEL:
         return False
     if request.count != 1:
         return False
@@ -149,7 +154,7 @@ class DirectImageHttpRunner:
             session_counter = 1 + secrets.randbelow(2**31 - 1)
             body = build_ogiz0b_body(
                 prompt=request.prompt,
-                model=request.model.value,
+                model=_WIRE_MODEL[request.model],
                 project_id=project_id,
                 recaptcha_token=token,
                 at_token=tokens.at,
@@ -248,7 +253,6 @@ class DirectHttpTransport(UiAutomationTransport):
     ) -> None:
         super().__init__()
         self._http_transport = http_transport
-        self._runner = DirectImageHttpRunner(http_transport=http_transport)
 
     async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
         self._profile_dir = profile_dir
