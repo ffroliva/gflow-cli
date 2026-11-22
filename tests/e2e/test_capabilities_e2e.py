@@ -15,6 +15,8 @@ import sys
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
 
@@ -23,7 +25,7 @@ pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 async def test_e2e_capabilities_json_matches_the_mcp_resource(
     host: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    env = {**os.environ, "GFLOW_CLI_FLOW_HOST": host}
+    env = RedactedEnv({**os.environ, "GFLOW_CLI_FLOW_HOST": host})
     env.pop("GFLOW_MCP_NO_SPEND", None)
     proc = subprocess.run(
         [sys.executable, "-m", "gflow_cli", "capabilities", "--json"],

@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -65,16 +67,13 @@ def _served(events: list[str]) -> dict[str, str]:
     return _HOST_EVENTS["migrated" if any(e.startswith("migrated.") for e in events) else "labs"]
 
 
-def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_gflow(args: list[str], env: RedactedEnv) -> subprocess.CompletedProcess[str]:
     """Run `gflow <args>` with JSON structlog on stderr so events are assertable.
 
-    ``GFLOW_CLI_HOME`` is dropped so the child resolves the REAL platformdirs
-    home where `gflow auth login` planted the live session (the autouse
-    ``_isolate_settings`` fixture points it at a temp dir, which has no
-    profiles). ``e2e_env``'s isolated ``GFLOW_CLI_DB_PATH`` is kept: the
-    catalog these tests read is the one they populate themselves.
+    ``e2e_env`` already restores the REAL platformdirs home where `gflow auth login`
+    planted the live session; ``e2e_env``'s isolated ``GFLOW_CLI_DB_PATH`` is kept:
+    the catalog these tests read is the one they populate themselves.
     """
-    child_env = {k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"}
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
@@ -82,7 +81,7 @@ def _run_gflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
         check=False,
         # INFO: the events asserted below are info-level, and a command logs WARNING and
         # above by default since #1041.
-        env={**child_env, "GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
+        env=env | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
     )
 
 
@@ -115,7 +114,7 @@ def _json_payload(stdout: str) -> dict[str, Any]:
 
 
 @pytest.mark.e2e_image
-def test_e2e_unresolvable_uuid_ref_fails_loud(e2e_env: dict[str, str], tmp_path: Path) -> None:
+def test_e2e_unresolvable_uuid_ref_fails_loud(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     """A UUID ref that cannot be bound must abort, not generate without it (#393).
 
     This is the anti-silence guard: the reporter's pipeline lost a set plate
@@ -169,9 +168,7 @@ def test_e2e_unresolvable_uuid_ref_fails_loud(e2e_env: dict[str, str], tmp_path:
 
 
 @pytest.mark.e2e_image
-def test_e2e_same_project_uuid_ref_selected_in_picker(
-    e2e_env: dict[str, str], tmp_path: Path
-) -> None:
+def test_e2e_same_project_uuid_ref_selected_in_picker(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     """#529 happy path: a same-project UUID ref is selected in the picker.
 
     The catalog resolves the UUID to Flow's ``displayName``, the picker is
@@ -246,7 +243,7 @@ def test_e2e_same_project_uuid_ref_selected_in_picker(
 
 @pytest.mark.e2e_image
 def test_e2e_cross_project_uuid_ref_falls_back_to_upload(
-    e2e_env: dict[str, str], tmp_path: Path
+    e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
     """A cataloged ref whose tile the picker cannot reach is uploaded, not failed.
 

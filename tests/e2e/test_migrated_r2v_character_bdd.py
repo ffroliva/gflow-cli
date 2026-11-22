@@ -32,6 +32,7 @@ import structlog
 from pytest_bdd import given, scenarios, then, when
 
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 scenarios("../features/migrated_r2v_character.feature")
 
@@ -71,7 +72,7 @@ def _ref(tmp_path: Path) -> Path:
     return ref
 
 
-def _run_cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path, *extra: str) -> None:
+def _run_cli(world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path, *extra: str) -> None:
     out = tmp_path / "cli"
     world["out"] = out
     world["proc"] = subprocess.run(  # noqa: S603 - fixed argv, our own CLI
@@ -92,7 +93,7 @@ def _run_cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path, *ex
             "--out-dir",
             str(out),
         ],
-        env={**e2e_env, "GFLOW_CLI_LOG_LEVEL": "INFO"},
+        env=e2e_env | {"GFLOW_CLI_LOG_LEVEL": "INFO"},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -102,7 +103,7 @@ def _run_cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path, *ex
 
 
 @when("the CLI generates an r2v clip of the character with a local reference image")
-def _cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli(world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path) -> None:
     _require_paid()
     _run_cli(
         world,
@@ -116,7 +117,7 @@ def _cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path) -> None
 
 
 @when("the CLI generates an r2v clip with an entity id and no name")
-def _cli_id_only(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli_id_only(world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path) -> None:
     _run_cli(world, e2e_env, tmp_path, "--reference-entity", world["entity"])
 
 
