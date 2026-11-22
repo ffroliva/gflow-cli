@@ -197,8 +197,9 @@ async def test_an_ambiguous_match_refuses_rather_than_guessing() -> None:
 @pytest.mark.asyncio
 async def test_a_missing_trigger_raises() -> None:
     page = _picker_page(current="", options=["Nano Banana 2"], trigger_found=False)
-    with pytest.raises(UiSelectorDriftError, match="model picker"):
+    with pytest.raises(UiSelectorDriftError, match="model picker") as info:
         await _transport(page)._select_character_model(page, "nano2")  # noqa: SLF001
+    assert info.value.charged == "no"  # #1336: character model selection precedes submit
 
 
 @pytest.mark.asyncio

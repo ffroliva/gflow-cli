@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pre-submit selector drift on the labs composer reports `charged: no` ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** The labs UI guards use the same charge certainty as the flow.google.com composer; offline tests cover the labs arm because no available account is served the labs frontend.
+
 ## [0.104.0] — 2026-11-22
 
 ### Added

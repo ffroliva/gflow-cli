@@ -295,8 +295,9 @@ class TestSwitchToVideoMode:
         from gflow_cli.api.transports import ui_automation_video as mod
 
         page = _cascade_page({mod.MODE_SWITCH_TRIGGER_SELECTORS[0]})
-        with pytest.raises(UiSelectorDriftError, match="Video tab"):
+        with pytest.raises(UiSelectorDriftError, match="Video tab") as info:
             await VideoGenerationMixin._switch_to_video_mode(page, out_dir=None)
+        assert info.value.charged == "no"  # #1336: editor mode selection is pre-submit
 
     @pytest.mark.asyncio
     async def test_submode_miss_raises_drift_error(self) -> None:
@@ -350,6 +351,7 @@ class TestSetOutputCountOne:
         page = _cascade_page(set())
         with pytest.raises(UiSelectorDriftError) as exc_info:
             await VideoGenerationMixin._set_output_count(page, 1)
+        assert exc_info.value.charged == "no"  # #1336: settings precede submit
         msg = str(exc_info.value)
         assert "count=1" in msg
         assert "bills" in msg  # the refusal explains the billing consequence

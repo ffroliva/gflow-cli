@@ -1859,6 +1859,20 @@ class TestDismissBlockingOverlays:
         page.keyboard.press.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_persistent_overlay_drift_is_pre_submit(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+
+        transport = UiAutomationTransport()
+        transport._overlay_blocks_page = AsyncMock(side_effect=[True, True, True])  # type: ignore[attr-defined]
+        transport._dismiss_blocking_overlays = AsyncMock(return_value=True)  # type: ignore[attr-defined]
+        page = MagicMock(url="https://labs.google/fx/tools/flow/project/p1")
+        with pytest.raises(UiSelectorDriftError) as info:
+            await transport._require_unblocked(page, None, epoch="before-submit")  # type: ignore[attr-defined]
+        assert info.value.charged == "no"  # #1336: overlay guard precedes generation submit
+
+    @pytest.mark.asyncio
     async def test_iframe_with_close_button_clicks_and_returns_true(self) -> None:
         """A changelog iframe + visible close button → close button clicked
         (force=True) and True returned."""
@@ -2759,8 +2773,9 @@ class TestSelectImageModel:
     async def test_no_match_raises_instead_of_warning(self) -> None:
         """WAS: logged a warning and generated on Flow's default, billing the user."""
         page = self._page({})
-        with pytest.raises(UiSelectorDriftError):
+        with pytest.raises(UiSelectorDriftError) as info:
             await UiAutomationTransport._select_image_model(page, Model.GEM_PIX_2)
+        assert info.value.charged == "no"  # #1336: settings run before submit
         # TWO Escapes: the model menu AND the generation-settings panel beneath
         # it. Raising skips the panel-close at the end of
         # _configure_generation_settings, and a single Escape would leave the
