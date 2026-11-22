@@ -253,6 +253,7 @@ class LocalFilesRepo(RepositoryBase):
               AND mode = 'character'
               AND status = 'started'
               AND json_extract(metadata_json, '$.name') = ?
+              AND COALESCE(json_extract(metadata_json, '$.source'), '') != 'files'
             ORDER BY started_at DESC
             LIMIT 1
             """,

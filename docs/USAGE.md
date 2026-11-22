@@ -1601,7 +1601,12 @@ gflow character create [OPTIONS]
 Options:
   --project PROJECT_ID      Flow project id.                           [required]
   --name NAME               Display name for the new character.        [required]
-  --face-prompt TEXT        Prompt for the face reference image.       [required]
+  --face-prompt TEXT        Prompt for the face reference image. Required
+                            unless --image is given.
+  --image FILE              Build the character from this local image as its
+                            portrait instead of generating one
+                            (flow.google.com). Nothing is generated.
+  --body-image FILE         Local image for the body slot; only with --image.
   --body-prompt TEXT        Body/outfit DESCRIPTION (not a full prompt). gflow
                             wraps it in a self-contained front/side/back triptych
                             instruction seeded by the generated face, so one
@@ -1615,6 +1620,24 @@ Options:
   --profile NAME            Profile name (overrides default).
   --locale TEXT             BCP-47 locale.                       [default: en-US]
   --json                    Emit a machine-readable JSON result.
+```
+
+**From your own images (`--image`, flow.google.com).** `--image FILE` (and
+optionally `--body-image FILE`) builds the character from local files instead
+of generating them: gflow uploads the portrait through Flow's character editor,
+which creates the character, then sets the name and personality, uploads the
+body image into slot 1, and sets the voice. **Nothing is generated: no credits,
+no image quota.** Each file is checked before anything is uploaded (it exists,
+is at most the upload size limit, and has an image header). `--face-prompt` and
+`--image` are mutually exclusive; `--body-prompt`, `--model`, `--format-prompt`
+and `--locale` apply to generated images only and are refused with `--image`
+(exit 2). If a step after the portrait upload fails, the error names the
+character's entity id when it is known and otherwise says a character may exist;
+it is marked not retryable, so check `gflow character list` before re-running.
+gflow deletes nothing. The MCP twin is `gflow_character_create`.
+
+```bash
+gflow character create --project <id> --name "Nora"   --image ./nora-face.png --body-image ./nora-body.png --voice Aoede
 ```
 
 There is **no aspect-ratio control** for characters. Generated images are

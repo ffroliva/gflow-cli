@@ -114,6 +114,11 @@ VOICE_NAMES: tuple[str, ...] = tuple(v.name for v in VOICES)
 _VOICE_BY_WIRE: dict[str, str] = {v.name.lower(): v.name for v in VOICES}
 
 
+def canonical_voice(name: str) -> str | None:
+    """The catalog's spelling of ``name`` (case-insensitive, trimmed), or ``None`` if unknown."""
+    return _VOICE_BY_WIRE.get(name.strip().lower())
+
+
 def voice_from_wire(wire_id: str) -> str:
     """Wire ``aoede`` -> canonical ``Aoede``; an unknown id is kept verbatim, never renamed."""
     cleaned = wire_id.strip()

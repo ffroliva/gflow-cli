@@ -55,6 +55,7 @@ CLI_TO_MCP: dict[str, str] = {
     "character list": "gflow_character_list",
     "character voices": "gflow_character_voices",
     "character show": "gflow_character_show",
+    "character create": "gflow_character_create",  # the file-built (--image) path
     "credits user": "gflow_get_credits",
     "credits list": "gflow_get_credits",
     "image t2i": "gflow_generate_image",
@@ -144,13 +145,6 @@ _MCP_EXEMPT: dict[str, str] = {
         "would be harmless and is the upgrade path if agents ever need it"
     ),
     "run": "image-batch config runner (rows, batch:N and local-file refs) — not yet ported",
-    "character create": (
-        "GAP #691 — unported, not principled. 'Mutation' was never a reason: "
-        "gflow_generate_image spends the same per-model image quota over MCP. "
-        "The port is an adapter over services/character_create.py; what needs "
-        "deciding is worker-enqueue vs inline (#481) and whether it should honour "
-        "GFLOW_MCP_NO_SPEND"
-    ),
     "character rm": (
         "irreversible deletion of a user-owned Flow entity — deliberately CLI-only, "
         "same rule as `data prune`/`data errors prune`. The CLI gates it behind a "
@@ -209,12 +203,23 @@ def _command(path: str) -> click.Command:
     return cmd
 
 
+#: Leaves whose MCP twin carries only the leaf's credit-free path, so the leaf spends
+#: and the tool does not. The --no-spend gate must keep the tool.
+_FREE_TWIN_OF_A_SPENDING_LEAF: dict[str, str] = {
+    "character create": (
+        "the tool mirrors only --image, which generates nothing; --face-prompt generation "
+        "stays CLI-only (GAP #691)"
+    ),
+}
+
+
 def test_paid_commands_agree_between_cli_and_mcp() -> None:
     # A CLI command marked as spending must map to a tool the MCP --no-spend gate removes.
     disagree = {
         leaf: (spends_credits_decision(_command(leaf)), tool)
         for leaf, tool in CLI_TO_MCP.items()
-        if spends_credits_decision(_command(leaf)) != (tool in mcp_server._SPEND_TOOLS)
+        if leaf not in _FREE_TWIN_OF_A_SPENDING_LEAF
+        and spends_credits_decision(_command(leaf)) != (tool in mcp_server._SPEND_TOOLS)
     }
     assert not disagree, f"spends_credits disagrees with mcp.server._SPEND_TOOLS: {disagree}"
 
@@ -227,6 +232,12 @@ def test_every_cli_leaf_has_an_mcp_decision() -> None:
         "Add each to CLI_TO_MCP (and register the tool) or to _MCP_EXEMPT "
         "with a reason — see AGENTS.md 'MCP & CLI Schema Symmetry'."
     )
+
+
+def test_a_free_twin_of_a_spending_leaf_is_a_spending_leaf_and_a_free_tool() -> None:
+    for leaf in _FREE_TWIN_OF_A_SPENDING_LEAF:
+        assert spends_credits_decision(_command(leaf)) is True, leaf
+        assert CLI_TO_MCP[leaf] not in mcp_server._SPEND_TOOLS, leaf
 
 
 def test_no_leaf_is_both_mapped_and_exempt() -> None:
@@ -304,6 +315,11 @@ _OPTION_EXEMPT: dict[str, str] = {
     "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "character create:face_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:body_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:model": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:format_prompt": "GAP #691 — prompt-generated create not ported over MCP",
+    "character create:locale": "GAP #691 — prompt-generated create not ported over MCP",
 }
 
 
