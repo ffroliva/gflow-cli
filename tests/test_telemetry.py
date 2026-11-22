@@ -354,11 +354,11 @@ def test_a_transport_outside_the_enum_is_other(tmp_home: Path) -> None:
     assert report["transports"] == {"other": 1}
 
 
-def test_a_transport_unknown_counts_unknown(tmp_home: Path) -> None:
-    telemetry.note_transport("unknown")
+def test_an_unlisted_transport_counts_other(tmp_home: Path) -> None:
+    telemetry.note_transport("direct_http")  # a raw transport name never reaches the totals
     telemetry.record("cli", "image t2i", [], "0", 3.0)
     report = _report()
-    assert report["transports"] == {"unknown": 1}
+    assert report["transports"] == {"other": 1}
 
 
 def test_the_worker_flushes_a_queued_job_s_facts(tmp_home: Path) -> None:

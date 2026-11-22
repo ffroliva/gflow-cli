@@ -450,7 +450,7 @@ _PROCESS_FACTS: dict[str, str] = {}
 _RUN_FACTS: ContextVar[dict[str, str] | None] = ContextVar("gflow_run_facts", default=None)
 _ENGINES = frozenset({"playwright", "patchright"})
 _HOSTS = {"labs": "labs", "migrated": "flow"}
-_TRANSPORTS = frozenset({"direct", "ui", "unknown"})
+_TRANSPORTS = frozenset({"direct", "ui"})
 
 
 def _facts() -> dict[str, str]:
