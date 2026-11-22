@@ -6,6 +6,23 @@
 
 ## Current release
 
+**v0.104.0 — beta.** Local post-production commands, Flow media trash and restore, and hard video credit caps.
+
+**Added.**
+- **`gflow media trash` / `gflow media restore` (#1363).** Moves generated items to Flow's Trash and back over batchexecute `pGCYOe`, at 0 credits, with MCP twins.
+- **`gflow audio narrate` (#1357).** Local narration audio through the keyless Edge provider (`tts` extra) or Gemini TTS; no Flow credits.
+- **`gflow video assemble` (#1359).** Joins clips with a music bed and a voiceover, with ducking, on PyAV from the `chain` extra; no Flow contact, no credits.
+- **`gflow video transcribe` / `gflow video captions` (#1358).** `.srt` export through a configured OpenAI-compatible transcription endpoint, and burned-in captions on a local MP4.
+- **`--max-credits` / `GFLOW_CLI_MAX_CREDITS` (#1355).** Billed video commands read Flow's pre-submit quote and refuse an unreadable or over-limit quote with exit 45.
+
+**Fixed.**
+- **The agent-only composer on Flow's 2026-11-20 build (#1387).** The driver handles the two-level Agent-settings pane, waits for every queued save, and opens a closed agent panel before submitting; the verdict stays fail-closed.
+- **macOS: no Keychain prompt on every command (#1396), and local cookie-read failures are named instead of reported as network problems (#1400).**
+
+Full ledger: [LIVE_VERIFICATION_v0.104.0](LIVE_VERIFICATION_v0.104.0.md).
+
+<details><summary>v0.103.1 — agent panel and Agent switch recovery</summary>
+
 **v0.103.1 — beta.** A patch release for Google Flow's 2026-11-20 build on flow.google.com (#1384, #1374).
 
 **Fixed.**
@@ -13,6 +30,8 @@
 - **#1369 is closed as stale**: on the new build the agent-only driver stops before sending anything; the check moves to #1387.
 
 Full ledger: [LIVE_VERIFICATION_v0.103.1](LIVE_VERIFICATION_v0.103.1.md).
+
+</details>
 
 <details><summary>v0.103.0 — model retirement, first beta</summary>
 
@@ -1027,6 +1046,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Local post-production (`audio narrate`, `video assemble`, `video transcribe`/`captions`), `media trash`/`restore`, `--max-credits` caps; the agent-only driver on Flow's 2026-11-20 build (#1357 #1359 #1358 #1363 #1355 #1387) | ✅ done (v0.104.0) |
 | Agent panel and Agent switch recovery on Flow's 2026-11-20 build; agent mode moves to its own mixin (#1384 #1374; #1369 closed as stale → #1387) | ✅ done (v0.103.1) |
 | Model retirement, slice 1: `retires_on`, a `model.retiring` warning on every video route (CLI and MCP), the exit-11 refusal naming the date, and defaults/docs/e2e moved off the leaving models (#1375) | ✅ done (v0.103.0) |
 | Agent-only video named from the project listing when the page shows only `/asb/` media (#1354) | ✅ done (v0.102.1) |
