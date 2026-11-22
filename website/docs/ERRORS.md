@@ -45,8 +45,14 @@ exactly what these runs can leave behind
 ([#1159](https://github.com/ffroliva/gflow-cli/issues/1159),
 [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): a failed generation reads
 `maybe` / `reconcile`, and an extend or chain that completed at least one segment or
-link reads `yes` / `reconcile`. An extend that spent credits reads `yes` even when no
-segment finished, with the submitted segment's media id as `operation_id`.
+link reads `yes` / `reconcile`. A `labs.google` extend result carries the typed error's
+`charged` and `next_action`
+([#1416](https://github.com/ffroliva/gflow-cli/issues/1416)): extend input refused
+before the submit reads `no` / `fix_input`, and a submitted segment that did not finish
+reads `maybe` / `reconcile`, with that segment's media id as `operation_id`. When that
+segment's poll fails with `reauth` or `fix_input` advice, the advice is kept, `charged`
+stays `maybe` (`yes` once a segment finished) and `retryable` is `false`. A failed
+flow.google.com extend reads `maybe` / `reconcile`.
 
 ### `charged`
 
@@ -102,6 +108,15 @@ place today:
   reads `charged: yes`, `next_action: reconcile`, with the clip's media id as
   `operation_id`. The same class raised by the free recovery (`gflow data download`,
   MCP `gflow_download_media`) keeps the default `no` / `retry`.
+- On flow.google.com, a finished clip whose signed URLs serve no MP4, or point outside
+  the allowed Google hosts, raises `WireFormatError` with `charged: yes` and a
+  remediation naming `gflow data download <media_id>`
+  ([#1159](https://github.com/ffroliva/gflow-cli/issues/1159)); the exit code is
+  unchanged.
+- A `video extend` poll failure on a submitted segment whose action is `reauth` or
+  `fix_input` keeps that action but reads `charged: maybe` (or `yes` when already
+  billed) with `retryable: false`; any other poll failure reads `maybe` / `reconcile`
+  ([#1416](https://github.com/ffroliva/gflow-cli/issues/1416)).
 - A labs video poll timing out after the submit reads `maybe` / `reconcile`, with the
   media id as `operation_id`. That covers both the `t2v`/`i2v`/`r2v` poll (which used to
   surface as an unclassified `UnexpectedError`) and the `video extend` poll.

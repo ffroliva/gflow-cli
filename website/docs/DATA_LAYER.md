@@ -36,7 +36,7 @@ The schema is adapter-shaped so a future Postgres backend can slot in without ch
 | `assets` | One row per Flow media ID (image OR video) — model, aspect, dimensions, seed, generation ID, status | Upload response, image generation response, video start, video completion |
 | `operations` | One row per CLI command invocation — mode (`upload_image`/`t2i`/`i2i`/`t2v`/`i2v`/`r2v`), prompt, model, aspect, started/completed timestamps, error type/detail, Flow operation/batch IDs, plus [`metadata_json` provenance](#operation-metadata_json-provenance) | Each command run |
 | `operation_assets` | Many-to-many between operations and assets, with role (`input`/`output`/`seed_start`/`seed_end`/`reference`) and ordered position | When the operation links its inputs/outputs |
-| `local_files` | One row per downloaded asset location — local path or cloud URI, sha256/byte count when local, media type | After each download/upload completes |
+| `local_files` | One row per downloaded asset location — local path or cloud URI, sha256/byte count when local, media type, `superseded_at` once a later copy replaced it | After each download/upload completes |
 
 Schema lives in [`src/gflow_cli/data/migrations/0001_initial.sql`](../src/gflow_cli/data/migrations/0001_initial.sql).
 
@@ -116,6 +116,15 @@ configured bucket instead of local disk. The row stores:
 Hydrated `LocalFileRecord` objects expose `path=None` for cloud-only rows and
 use `cloud_uri` as the authoritative location. See
 [EXTERNAL_STORAGE.md](EXTERNAL_STORAGE.md) for setup and verification.
+
+### Superseded copies
+
+`local_files.superseded_at` (migration 0011) is set on a copy that a later file
+replaced, for example the earlier copies of a clip that `video extend` extended in
+place on `flow.google.com` (#1299). The row and its `sha256` stay, so
+`gflow doctor` checks remain clean, but asset lookups, `verified_local_path` and the
+`gflow data` readers skip it and return only the current copy. A NULL value means the
+copy is current.
 
 ---
 
@@ -339,11 +348,13 @@ The `images` and `videos` subcommands support an additional flag:
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--all-copies` | off | Show one row per local file instead of one row per asset. |
+| `--all-copies` | off | Show one row per local file instead of one row per asset; superseded copies are excluded. |
 
 By default, `images` and `videos` aggregate rows by Flow media ID. If an asset
 has multiple local copies (e.g. re-downloaded to different paths), they appear
-as a single row with a `COPIES` count and the path of the latest copy.
+as a single row with a `COPIES` count and the path of the latest copy. Superseded copies
+(see [Superseded copies](#superseded-copies)) are not listed or counted, with or without
+`--all-copies`.
 
 `videos` also shows the asset `STATUS` (`status` in `--json`): `pending` until Flow
 reports the clip done, then `MEDIA_GENERATION_STATUS_SUCCESSFUL` — including when only

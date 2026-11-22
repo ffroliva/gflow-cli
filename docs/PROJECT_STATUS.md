@@ -6,6 +6,20 @@
 
 ## Current release
 
+**v0.105.1 — beta.** A patch release: complete catalog rows after `video extend` on flow.google.com, Flow's own error text on a failed generation, the free recovery for a billed clip whose download fails, and charge guidance for extend and image-batch failures.
+
+**Fixed.**
+- **`video extend` catalog rows on flow.google.com (#1299).** An extend that returns a new media id completes its `pending` row with the final status, aspect ratio and model key and records the downloaded file; an in-place extend marks the earlier local copies as superseded (catalog migration 0011, `local_files.superseded_at`), so the readers return only the latest file.
+- **Flow's error on a failed generation (#1111).** A video generation or extend that Flow fails names Flow's error code and text instead of a bare status, in the CLI, `--json` and the MCP task error. Contributed by @aryankalantri (#1423).
+- **Free recovery for a billed clip (#1159).** A finished clip whose signed URL serves no MP4, or points outside the allowed Google hosts, names `gflow data download <media_id>` and reports `charged: yes`. Contributed by @aryankalantri (#1424).
+- **Charge guidance (#1416).** Extend input failures report no charge and ask for corrected input, malformed or failed extend replies keep reconciliation guidance, and image batch integrity errors point at the download instead of a re-run.
+
+**Documentation and tests.** `lhm.plugin.json` lists all 27 registered MCP tools (#1407, @aryankalantri, #1418); two e2e expectations follow what Flow returns (#1383, #1408, @aryankalantri, #1414 and #1417).
+
+Full ledger: [LIVE_VERIFICATION_v0.105.1](LIVE_VERIFICATION_v0.105.1.md).
+
+<details><summary>v0.105.0 — characters from local images, no-replace publishing</summary>
+
 **v0.105.0 — beta.** Characters built from local images on flow.google.com, no-replace output publishing, and accurate charge reporting for pre-submit drift and multi-step video failures.
 
 **Added.**
@@ -17,6 +31,8 @@
 - **Secrets in pytest reports (#1382).** Allowlisted secret environment values are masked in test failure, skip and collection reports.
 
 Full ledger: [LIVE_VERIFICATION_v0.105.0](LIVE_VERIFICATION_v0.105.0.md).
+
+</details>
 
 <details><summary>v0.104.0 — local post-production, media trash, credit caps</summary>
 
@@ -1062,6 +1078,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Complete catalog rows and superseded local copies after `video extend` on flow.google.com; Flow's error text on a failed generation; the free recovery for a billed clip download; extend and image-batch charge guidance (#1299 #1111 #1159 #1416) | ✅ done (v0.105.1) |
 | `character create --image` / `--body-image` on flow.google.com with its MCP twin; no-replace output publishing; `charged: no` for labs pre-submit drift and accurate multi-step video charge reporting; secrets masked in pytest reports (#639 #1406 #1336 #1382) | ✅ done (v0.105.0) |
 | Local post-production (`audio narrate`, `video assemble`, `video transcribe`/`captions`), `media trash`/`restore`, `--max-credits` caps; the agent-only driver on Flow's 2026-11-20 build (#1357 #1359 #1358 #1363 #1355 #1387) | ✅ done (v0.104.0) |
 | Agent panel and Agent switch recovery on Flow's 2026-11-20 build; agent mode moves to its own mixin (#1384 #1374; #1369 closed as stale → #1387) | ✅ done (v0.103.1) |
