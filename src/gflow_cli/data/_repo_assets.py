@@ -398,6 +398,7 @@ class AssetsRepo(RepositoryBase):
                    storage_provider, cloud_uri, superseded_at
             FROM local_files
             WHERE profile_name = ? AND asset_id = ?
+              AND superseded_at IS NULL  -- a pre-extend copy is never a live file (#1299)
             ORDER BY created_at ASC, id ASC
             """,
             (row["profile_name"], row["id"]),

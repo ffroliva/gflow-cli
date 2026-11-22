@@ -1303,9 +1303,15 @@ def test_an_in_place_extend_marks_stale_local_copy_and_records_new_download(tmp_
         asset_after = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
         assert asset_after is not None
 
-        old_copy = next(f for f in asset_after.local_files if f.path == pre_file.resolve())
-        assert old_copy.sha256 == real_old_sha
-        assert verified_local_path(old_copy) is None
+        # The pre-extend copy is kept in the catalog, sha256 intact, but superseded...
+        stale = store.conn.execute(
+            "SELECT sha256, superseded_at FROM local_files WHERE path = ?",
+            (str(pre_file.resolve()),),
+        ).fetchone()
+        assert stale["sha256"] == real_old_sha
+        assert stale["superseded_at"] is not None
+        # ...so the lookup no longer lists it as a live file.
+        assert pre_file.resolve() not in [f.path for f in asset_after.local_files]
 
         new_copy = next(f for f in asset_after.local_files if f.path == new_file.resolve())
         assert new_copy.sha256 is not None
@@ -1455,11 +1461,16 @@ def test_in_place_extend_keeps_doctor_clean_and_supersedes_stale_copy(tmp_path: 
         findings = _check_sha256_null(store.conn)
         assert findings == [], f"doctor flagged: {findings}"
 
+        # The stale row stays in the catalog, sha256 intact, marked superseded...
+        stale = store.conn.execute(
+            "SELECT sha256, superseded_at FROM local_files WHERE id = 'lf-old'"
+        ).fetchone()
+        assert stale["sha256"] == pre_sha
+        assert stale["superseded_at"] is not None
+
+        # ...but no lookup reader sees it: `gflow data media`, MCP task results and the
+        # resolvers all read AssetLookup.local_files, so the current file is the only copy.
         asset = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
         assert asset is not None
-        old_copy = next(f for f in asset.local_files if f.id == "lf-old")
-        assert old_copy.sha256 == pre_sha
-        assert verified_local_path(old_copy) is None
-
-        new_copy = next(f for f in asset.local_files if f.path == new_file.resolve())
-        assert verified_local_path(new_copy) == new_file.resolve()
+        assert [f.path for f in asset.local_files] == [new_file.resolve()]
+        assert verified_local_path(asset.local_files[0]) == new_file.resolve()

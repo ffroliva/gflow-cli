@@ -1343,9 +1343,15 @@ async def test_migrated_session_in_place_drives_write_and_read_paths(
         asset = repo.get_asset_by_flow_media_id("p", MEDIA)
         assert asset is not None
 
-        old_lf = next(f for f in asset.local_files if f.path == pre_file.resolve())
-        assert old_lf.sha256 == pre_sha
-        assert verified_local_path(old_lf) is None
+        # The pre-extend copy stays in the catalog, sha256 intact, but superseded, and no
+        # lookup reader (data media, MCP task results, resolvers) lists it as live.
+        stale = store.conn.execute(
+            "SELECT sha256, superseded_at FROM local_files WHERE path = ?",
+            (str(pre_file.resolve()),),
+        ).fetchone()
+        assert stale["sha256"] == pre_sha
+        assert stale["superseded_at"] is not None
+        assert pre_file.resolve() not in [f.path for f in asset.local_files]
 
         new_lf = next(f for f in asset.local_files if f.path == new_file.resolve())
         assert new_lf.sha256 is not None
