@@ -83,8 +83,31 @@ Arms run sequentially; stop after the first generation.
 - I2I with media references, character entity references, aspect ratio control.
 - On-disk cookies vs live browser headers.
 
+## Bonus: from-scratch builder fixed
+
+After finding that slots 12–14 are optional, the from-scratch builder
+(`_build_ogiz0b_payload` in `spike_programmatic_ogiz0b_frame.py`) was tested again.
+It still failed with gRPC code 3. A byte-level comparison against the working Arm A
+template revealed a single difference: `inner[4]` must be `["UUID"]` (a single-element
+list), not `"UUID"` (a bare string). After wrapping the batch UUID in a list, the
+from-scratch builder succeeded:
+
+| Measure | Value |
+|---|---|
+| **HTTP status** | 200 |
+| **Elapsed** | 16.52 s |
+| **Image records** | 1 |
+| **Prompt match** | yes |
+| **Body length** | 5,574 bytes |
+| **Verdict** | **VIABLE — fully programmatic, no capture needed** |
+
+The `_build_ogiz0b_payload` function now generates images with **zero captured state**:
+no template, no route-abort, no replay. Everything is built from the prompt, model,
+project ID and reCAPTCHA token.
+
 ## Next
 
-The from-scratch builder can now be corrected: use the 11-element project context
-instead of the 6-element one from the test fixture. This eliminates the need for
-the template capture step entirely.
+The from-scratch builder is proven. The feature needs:
+1. On-disk cookies spike (can the httpx call use cookies from the profile's SQLite DB)
+2. `/gflow:predict` on the full architecture
+3. Build the transport

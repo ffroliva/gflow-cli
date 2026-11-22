@@ -110,7 +110,7 @@ def _build_ogiz0b_payload(
         None,  # 10: entity refs
         None,  # 11
     ]
-    return [None, [entry], 1, project_ctx, batch_uuid]
+    return [None, [entry], 1, project_ctx, [batch_uuid]]
 
 
 def _build_batchexecute_body(rpcid: str, payload: list[Any], at_token: str) -> str:
