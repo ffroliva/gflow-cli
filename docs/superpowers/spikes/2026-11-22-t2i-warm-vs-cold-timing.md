@@ -43,8 +43,12 @@ The thresholds were written in the script's docstring before the first run.
 - **Project creation costs 2.8 s,** under the 5 s threshold. A page-free `jHPbke` create is
   not worth building for speed. Its case is reliability, which the typed click-timeout
   handling (#1434) already addresses on the page path.
-- The warm arm is an upper bound on the benefit: a worker's queued path adds a queue round
-  trip the in-process client does not pay.
+- **The warm arm has no production counterpart today.** The worker opens a new
+  `FlowApiClient`, and so a new Chrome, for every task (`worker/daemon.py:220`), by design:
+  the daemon holds no browser or profile lease while idle (D3, `ui/app.py:47-51`). Routing a
+  CLI command to today's worker would pay the same cold start plus a queue round trip. The
+  one path that already keeps one browser across many generations is `gflow run`
+  (`cli_run.py:326-331`).
 
 ## Not measured
 
