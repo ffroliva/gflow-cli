@@ -809,8 +809,12 @@ class FakePage:
                 return dom.agent_panel_expanded
 
             return FakeLocator(self, "agent_panel", ["panel"], visible=_panel_visible)
-        if css == f"{migrated_composer.AGENT_MODE_CHIP_ANY}, {migrated_composer.AGENT_ONLY_ANCHOR}":
-            # The post-close wait: the toggle, or the agent-only composer's `tune`.
+        if (
+            css
+            == f"{migrated_composer.AGENT_MODE_CHIP_ANY}, {migrated_composer.AGENT_SETTINGS_TUNE}"
+        ):
+            # The post-close wait: the toggle, or the 2026-09-15 agent-only composer's `tune`
+            # (never the 2026-11-20 gear, which renders beside the toggle, #1387).
             seen = (dom.agent_chip_present and not under_panel) or dom.agent_mode
             return FakeLocator(self, "toggle_or_tune", ["it"] if seen else [])
         if css == migrated_composer.AGENT_PANEL_CLOSE:

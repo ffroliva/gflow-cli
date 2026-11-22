@@ -5,8 +5,8 @@ Each tool is registered on the shared MCPServer instance and delegates
 to FlowWorker / DataStore / data.queries for actual execution.
 
 Rate limiting: a token-bucket (capacity=8, refill=1/20s) prevents runaway
-agentic loops from burning credits. There is NO credit-budget accounting —
-rate limiting is the only spend brake (#495).
+agentic loops from burning credits. Per-call spend is capped by ``max_credits``
+on ``gflow_generate_video`` (#1355); there is no per-session or daily budget (#495).
 
 Task claiming: the direct-execution path enqueues a task then claims it via
 the atomic ``QueueRepository.claim_task`` (the same BEGIN IMMEDIATE claim the

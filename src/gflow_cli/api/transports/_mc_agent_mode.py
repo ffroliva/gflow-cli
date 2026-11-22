@@ -21,6 +21,7 @@ from gflow_cli.api.transports._mc_common import (
     AGENT_PANEL,
     AGENT_PANEL_CLOSE,
     AGENT_PANEL_SETTLE_S,
+    AGENT_SETTINGS_TUNE,
     AgentModeExit,
 )
 from gflow_cli.api.transports._mc_media import MediaMixin
@@ -126,11 +127,15 @@ class AgentModeMixin(MediaMixin):
         if close_error is not None:
             return "blocked", close_error
         if closed:
-            # The toggle, or the agent-only composer's own `tune`, whichever renders first:
-            # an account with no classic arm never shows a toggle, and waiting the whole
-            # settle for one would tax every such run.
+            # The toggle, or the 2026-09-15 agent-only composer's own `tune`, whichever renders
+            # first: an account with no classic arm never shows a toggle, and waiting the whole
+            # settle for one would tax every such run. Not the 2026-11-20 gear (#1387): it
+            # renders in the same compact prompt box as the toggle, on recoverable accounts
+            # too, so a gear mounting first would end this wait before the toggle could be
+            # read, and the page would fall through to the agent-only verdict. On that build
+            # an account with no classic arm waits the settle out instead.
             try:
-                await page.locator(f"{AGENT_MODE_CHIP_ANY}, {AGENT_ONLY_ANCHOR}").first.wait_for(
+                await page.locator(f"{AGENT_MODE_CHIP_ANY}, {AGENT_SETTINGS_TUNE}").first.wait_for(
                     state="visible", timeout=int(AGENT_PANEL_SETTLE_S * 1000)
                 )
             except Exception as e:  # noqa: BLE001 - the read below decides, not the wait

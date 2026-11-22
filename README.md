@@ -75,6 +75,7 @@ Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x
 # 1 · Install (uv recommended; also: pip install gflow-cli)
 uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
+# optional extras: 'gflow-cli[tts]' for `audio narrate` (Edge), 'gflow-cli[chain]' for `video chain`/`assemble`/`captions`
 # later: `gflow update` upgrades in place (other commands show a banner when a newer release is out)
 # Windows pip install at 0.99.0 or older? Upgrade once by hand first (#1298):
 #   close every gflow process, then <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
