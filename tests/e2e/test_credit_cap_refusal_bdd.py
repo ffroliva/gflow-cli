@@ -101,32 +101,37 @@ def _install_route_backstop(monkeypatch: pytest.MonkeyPatch, world: dict[str, An
     world["submission_attempts"] = attempts
 
 
-@when(parsers.parse("the operator requests an omni-1.2 4-second x1 video with max_credits {cap:d}"))
-def _cli_video(world: dict[str, Any], cap: int) -> None:
+def _run_cli_video(world: dict[str, Any], cap: int, resolution: str | None = None) -> None:
     config.reset_settings()
-    world["cli"] = CliRunner().invoke(
-        main,
-        [
-            "video",
-            "t2v",
-            _PROMPT,
-            "--project",
-            world["project"],
-            "--model",
-            "omni-1.2",
-            "--duration",
-            "4",
-            "--count",
-            "1",
-            "--max-credits",
-            str(cap),
-            "--json",
-        ],
-        env=world["env"],
+    args: list[str] = [
+        "video",
+        "t2v",
+        _PROMPT,
+        "--project",
+        world["project"],
+        "--model",
+        "omni-1.2",
+        "--duration",
+        "4",
+        "--count",
+        "1",
+    ]
+    if resolution is not None:
+        args += ["--resolution", resolution]
+    args += ["--max-credits", str(cap), "--json"]
+    world["cli"] = CliRunner().invoke(main, args, env=world["env"])
+
+
+@when(
+    parsers.parse(
+        "the operator requests an omni-1.2 4-second x1 360p video with max_credits {cap:d}"
     )
+)
+def _cli_video(world: dict[str, Any], cap: int) -> None:
+    _run_cli_video(world, cap, resolution="360p")
 
 
-@when(parsers.parse("MCP requests an omni-1.2 4-second x1 video with max_credits {cap:d}"))
+@when(parsers.parse("MCP requests an omni-1.2 4-second x1 360p video with max_credits {cap:d}"))
 def _mcp_video(monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], cap: int) -> None:
     for key, value in world["env"].items():
         monkeypatch.setenv(key, value)
@@ -138,6 +143,7 @@ def _mcp_video(monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], cap: int)
             aspect="9:16",
             model="omni-1.2",
             duration=4,
+            resolution="360p",
             count=1,
             max_credits=cap,
             profile=world["profile"],
@@ -158,7 +164,7 @@ def _paid_video_enabled(
 
 @when("the operator requests an omni-1.2 4-second x1 video with max_credits 4")
 def _cli_video_at_quote(world: dict[str, Any]) -> None:
-    _cli_video(world, 4)
+    _run_cli_video(world, 4)
 
 
 @then("the CLI returns CreditCapExceededError with exit code 45 and charged no")
