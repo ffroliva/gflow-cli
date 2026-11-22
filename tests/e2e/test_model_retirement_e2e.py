@@ -44,7 +44,7 @@ def test_e2e_cli_warns_on_stderr_and_keeps_json_stdout_clean(
     e2e_env: dict[str, str], tmp_path: Path
 ) -> None:
     _require_video()
-    env = dict(e2e_env)
+    env = e2e_env.copy()
     env.pop("GFLOW_CLI_HOME", None)  # the real home holds the live Chrome session
 
     proc = subprocess.run(

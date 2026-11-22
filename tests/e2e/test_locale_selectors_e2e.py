@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e.conftest import RedactedEnv
+
 _LIVE_SMOKE_ENABLED = os.environ.get("GFLOW_CLI_E2E_RUN_LOCALE_SMOKE") == "1"
 
 pytestmark = [
@@ -51,7 +53,7 @@ def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> 
     (SUBMIT_BUTTON_SELECTORS). If any locale-text fallback is broken, the
     Playwright timeout will fail this test before any image is produced.
     """
-    env = os.environ.copy()
+    env = RedactedEnv(os.environ)
     env["GFLOW_CLI_LOCALE"] = locale
     out_dir = tmp_path / f"locale_{locale}"
     out_dir.mkdir()

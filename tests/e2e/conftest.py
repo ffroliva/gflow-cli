@@ -127,8 +127,27 @@ def e2e_nosession_profile() -> Iterator[Path]:
         shutil.rmtree(path, ignore_errors=True)
 
 
+class RedactedEnv(dict[str, str]):
+    """Environment mapping whose repr and str conceal variable values (#1382).
+
+    Retains the exact mapping behavior required by ``subprocess.run(env=...)``
+    while replacing all values with ``'***'`` in formatted output, ensuring
+    failing tests and pytest failure reports (including ``--showlocals``)
+    never leak environment secrets or API tokens.
+    """
+
+    def __repr__(self) -> str:
+        return repr({k: "***" for k in self})
+
+    def __str__(self) -> str:
+        return str({k: "***" for k in self})
+
+    def copy(self) -> RedactedEnv:
+        return RedactedEnv(self)
+
+
 @pytest.fixture
-def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
+def e2e_env(tmp_path: Path) -> Iterator[RedactedEnv]:
     """Build an isolated subprocess environment: temp DB + temp output dir + active profile.
 
     Use this for tests that drive ``gflow`` via subprocess and need a clean
@@ -151,7 +170,7 @@ def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     db = tmp_path / "gflow.db"
     out = tmp_path / "out"
     out.mkdir()
-    env = os.environ.copy()
+    env = RedactedEnv(os.environ)
     # `tests/conftest.py::_isolate_settings` is autouse and redirects GFLOW_CLI_HOME to
     # an empty per-test tmp dir. Inherited by the child, that redirect hides every real
     # profile and the subprocess exits 2 with "No session for profile '<name>'" while

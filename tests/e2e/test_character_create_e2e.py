@@ -120,7 +120,7 @@ def _character_env(e2e_env: dict[str, str]) -> dict[str, str]:
     isolated output dir, and the active profile. The DB is isolated so the
     idempotency assertion counts only THIS test's rows.
     """
-    env = dict(e2e_env)
+    env = e2e_env.copy()
     env["PYTHONUTF8"] = "1"  # explicit: accented names must round-trip byte-for-byte
     # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a temp
     # dir that holds no profiles, and `e2e_env` inherits it — a child process

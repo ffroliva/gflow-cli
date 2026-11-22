@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `e2e_env` fixture conceals environment values in test failure reports ([#1382](https://github.com/ffroliva/gflow-cli/issues/1382)).** When an e2e test taking `e2e_env` fails, pytest prints fixture values and locals, which previously printed every environment variable and API token in cleartext. `e2e_env` now yields a `RedactedEnv` mapping whose `__repr__` and `__str__` mask values as `'***'` while retaining exact mapping behavior for `subprocess.run(env=...)`.
+
+
 ## [0.104.0] — 2026-11-22
 
 ### Added
