@@ -11,6 +11,8 @@ wrangler d1 execute gflow-telemetry --remote --json \
   --command "SELECT week, field, key, n FROM totals ORDER BY week, field, n DESC"
 ```
 
+**Line references** are to `develop` at `4cf71cab`, the tree the spike read, before the fix.
+
 ## Finding 1: a report carries the version that uploaded it, not the one that ran
 
 `telemetry.py:1088` stamps `"version": __version__` when the report is built, and the endpoint
@@ -37,7 +39,11 @@ client change.
 
 The largest crash group is `TimeoutError <- <playwright> <- …rpc_reply <- …create_project`:
 457 crashes in `migrated_composer:_rpc_reply` (the module before the move) and 5 in
-`_mc_common:rpc_reply`, so the path exists at HEAD.
+`_mc_common:rpc_reply`, so the path existed on `4cf71cab`.
+
+**Resolved by #1434:** the click now runs in `_click_create` under a request watch for
+`jHPbke`. No request, even after a 1 s grace: exit 23, `charged: no`. A request left the page:
+the reply wait and the outcome-unknown recovery decide.
 
 `rpc_reply` (`_mc_common.py:1598-1609`) wraps only the `asyncio.wait_for` timeout into
 `TransportTimeoutError`. The action it awaits first is the Create click,
@@ -94,5 +100,4 @@ sees the notice.
 | Source of exit 7 on `image t2i` and `image upscale` | the error `route` recorded with the exit, or a reporter's incident capture |
 | Whether exit 23 is #1312 (English count label, fixed in v0.100.1) | country or locale crossed with exit; note that v0.96.1 carries the same selector and its 5 installs show no exit 23 |
 | Why the Create button is not clickable | `elementFromPoint` over the button and a dialog inventory at the moment the click times out |
-| Retry safety after a click timeout | a request watch showing no `jHPbke` left the page |
 | Per-release error rate | the version recorded with each counter, not the report |

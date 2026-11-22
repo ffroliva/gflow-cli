@@ -15,6 +15,9 @@ Pre-registered reading:
 * Playwright's class subclasses the builtin ``TimeoutError``: ``wait_for``'s handler could
   catch it; re-read the frame.
 
+This drives ``rpc_reply`` alone, so it reports the escape even after #1434: since then
+``create_project`` catches the click timeout in ``_click_create`` before ``rpc_reply`` sees it.
+
 What this does not show: why the button was not clickable, and whether a ``jHPbke`` request
 left the page before the timeout. Those need a live capture at the moment of the timeout.
 

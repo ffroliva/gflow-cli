@@ -716,9 +716,9 @@ async def _click_create(page: Page, button: Locator) -> None:
                 ),
                 charged="no",
                 remediation_hint=(
-                    "Nothing was created or charged. Something on Flow's projects page may "
-                    "be covering the button; re-run. To skip creating a project, generate "
-                    "in an existing one (CLI --project <id>, MCP project)."
+                    "No create request was sent and nothing was charged. Something on Flow's "
+                    "projects page may be covering the button; re-run. To skip creating a "
+                    "project, generate in an existing one (CLI --project <id>, MCP project)."
                 ),
             ) from e
 

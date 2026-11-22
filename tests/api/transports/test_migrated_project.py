@@ -56,6 +56,9 @@ class _Loc:
         if self.page.click_times_out:
             if self.page.click_sends_first:  # the click dispatched, then Playwright timed out
                 self.page.send_create_request()
+                if self.page.reply_after_timeout:  # ...and Flow's reply follows
+                    reply = self.page.fire(self.page.on_click.get(self.sel))
+                    self.page.pending.append(asyncio.ensure_future(reply))
             elif self.page.click_sends_late:  # the page's handler sends after the timeout
                 asyncio.get_running_loop().call_later(0.05, self.page.send_create_request)
             raise mc.PlaywrightTimeoutError("Locator.click: Timeout 15000ms exceeded")
@@ -98,6 +101,8 @@ class FakePage:
         self.click_times_out = False
         self.click_sends_first = False
         self.click_sends_late = False
+        self.reply_after_timeout = False
+        self.pending: list[Any] = []
         self.request_handlers: list[Any] = []
         self.action_timeouts: list[Any] = []
         self.url_waits: list[Any] = []
@@ -184,11 +189,14 @@ async def test_create_without_the_fab_is_drift_naming_the_anchor() -> None:
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
 
 
-async def test_create_click_timeout_is_typed_drift_charging_nothing() -> None:
+async def test_create_click_timeout_is_typed_drift_charging_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The largest crash group in the first telemetry week: the FAB rendered but the click
     # timed out, and Playwright's TimeoutError escaped create_project as an unhandled exit 1.
     from gflow_cli.json_output import exit_code_for
 
+    monkeypatch.setattr(mc, "CREATE_LATE_REQUEST_GRACE_S", 0.1)
     page = _page_creating()
     page.click_times_out = True
 
@@ -213,10 +221,26 @@ async def test_create_click_timeout_after_the_request_left_is_outcome_unknown() 
     assert page.request_handlers == []  # the watch is removed
 
 
-async def test_create_click_timeout_with_a_late_request_is_outcome_unknown() -> None:
+async def test_create_click_timeout_then_flows_reply_is_a_created_project() -> None:
+    # The common good case: the click dispatched, Playwright timed out, Flow answered.
+    page = _page_creating(title="x")
+    page.click_times_out = True
+    page.click_sends_first = True
+    page.reply_after_timeout = True
+
+    info = await mc.create_project(page, "x", timeout_s=1.0)  # type: ignore[arg-type]
+
+    assert info.project_id == PID
+    assert info.title == "x"
+
+
+async def test_create_click_timeout_with_a_late_request_is_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The page's click handler can send the create just after Playwright gave up.
     from gflow_cli.errors import RpcResponseUnavailableError
 
+    monkeypatch.setattr(mc, "CREATE_LATE_REQUEST_GRACE_S", 0.1)  # the request lands at 0.05 s
     page = FakePage()
     page.click_times_out = True
     page.click_sends_late = True
