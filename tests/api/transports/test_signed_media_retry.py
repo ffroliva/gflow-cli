@@ -257,6 +257,42 @@ class TestWhatRetryMustNotChange:
                 _record(poster_url=POSTER),
             )
 
+    async def test_a_poster_jpeg_names_the_free_recovery(self) -> None:
+        """#1159: both signed URLs returning non-MP4 bytes is a failed DOWNLOAD of a
+        finished, billed clip, not a bad prompt. The error must point at the free
+        recovery, not at retrying with a simpler prompt (which bills again)."""
+        page = FakePage(
+            _Response(body=b"\xff\xd8\xff\xe0JFIF"), _Response(body=b"\xff\xd8\xff\xe0")
+        )
+        with pytest.raises(WireFormatError) as caught:
+            await MigratedComposer.fetch_mp4(
+                page,  # pyright: ignore[reportArgumentType] - structural fake
+                _record(poster_url=POSTER),
+            )
+        rendered = _rendered(caught.value)  # pyright: ignore[reportArgumentType]
+        assert MEDIA_ID in rendered
+        assert "gflow data download" in rendered
+        assert "simpler prompt" not in rendered
+        # The record is done, so Flow has billed it; the envelope must agree with the hint.
+        assert caught.value.to_problem_details()["charged"] == "yes"
+
+    async def test_a_disallowed_host_names_the_free_recovery(self) -> None:
+        """#1159: a signed URL on a host outside the allow-list is the same billed-clip
+        case — refusing the download must not send the user to re-generate."""
+        page = FakePage()
+        with pytest.raises(WireFormatError, match="not an allowed Google host") as caught:
+            await MigratedComposer.fetch_mp4(
+                page,  # pyright: ignore[reportArgumentType] - structural fake
+                _record(video_url="https://evil.example.com/video/x", poster_url=None),
+            )
+        assert page.request.calls == []
+        rendered = _rendered(caught.value)  # pyright: ignore[reportArgumentType]
+        assert MEDIA_ID in rendered
+        assert "gflow data download" in rendered
+        assert "simpler prompt" not in rendered
+        # The record is done, so Flow has billed it; the envelope must agree with the hint.
+        assert caught.value.to_problem_details()["charged"] == "yes"
+
 
 class TestRetryIsObservable:
     async def test_no_log_event_carries_the_signed_url(
