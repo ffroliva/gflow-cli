@@ -273,6 +273,7 @@ Specific error causes move into the 40–63 range. Codes 10–39 remain unchange
 | `8` | `3` | `AuthMissingError` (missing credentials; merged with auth code 3) |
 | `9` | `44` | `TransportTimeoutError` (browser or network timeout) |
 | `10–39` | `10–39` | Specific causes (WAF, config, data store, credits, etc.; unchanged). `22` stays `22` for both `UpscaleUnavailableError` and `ServerCancelUnavailableError` (`gflow cancel` on a submitted job, #1198) |
+| `45` | `45` | `CreditCapExceededError` (Flow's pre-submit quote is unreadable or exceeds `--max-credits`, #1355; same code in both modes) |
 | `130` | `130` | Interrupted by user (unchanged) |
 
 In the shared `--json` error envelope (and MCP queued failures), `exit_code` reports the
