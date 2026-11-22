@@ -29,7 +29,9 @@ from gflow_cli.errors import DataIntegrityError
 class LocalFilesRepo(RepositoryBase):
     """Local files and seed-image resolution."""
 
-    def upsert_local_file(self, record: LocalFileRecord) -> LocalFileRecord:
+    def upsert_local_file(
+        self, record: LocalFileRecord, *, supersede_existing: bool = False
+    ) -> LocalFileRecord:
         now = _utc_now()
         created_at = record.created_at or now
         # For cloud-only rows path is None; store cloud_uri in the path column
@@ -47,9 +49,9 @@ class LocalFilesRepo(RepositoryBase):
                     INSERT INTO local_files(
                         id, profile_name, asset_id, path,
                         sha256, bytes, media_type, created_at,
-                        storage_provider, cloud_uri
+                        storage_provider, cloud_uri, superseded_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(asset_id, path) DO UPDATE SET
                         id = excluded.id,
                         profile_name = excluded.profile_name,
@@ -57,7 +59,8 @@ class LocalFilesRepo(RepositoryBase):
                         bytes = excluded.bytes,
                         media_type = excluded.media_type,
                         storage_provider = excluded.storage_provider,
-                        cloud_uri = excluded.cloud_uri
+                        cloud_uri = excluded.cloud_uri,
+                        superseded_at = excluded.superseded_at
                     """,
                     (
                         record.id,
@@ -70,8 +73,21 @@ class LocalFilesRepo(RepositoryBase):
                         created_at,
                         record.storage_provider,
                         record.cloud_uri,
+                        record.superseded_at,
                     ),
                 )
+                if supersede_existing:
+                    self._store.conn.execute(
+                        """
+                        UPDATE local_files
+                        SET superseded_at = ?
+                        WHERE profile_name = ?
+                          AND asset_id = ?
+                          AND id != ?
+                          AND superseded_at IS NULL
+                        """,
+                        (now, record.profile_name, record.asset_id, record.id),
+                    )
         except sqlite3.IntegrityError as exc:
             raise DataIntegrityError(detail=str(exc), route="data.upsert_local_file") from exc
         return cast("LocalFileRecord", dataclasses.replace(record, created_at=created_at))  # pyright: ignore[reportUnnecessaryCast]

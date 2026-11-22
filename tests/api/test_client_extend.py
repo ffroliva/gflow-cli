@@ -20,7 +20,12 @@ import pytest
 from structlog.testing import capture_logs
 
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.errors import CreditCapExceededError, ExtendUnavailableError
+from gflow_cli.errors import (
+    ConfigurationError,
+    CreditCapExceededError,
+    ExtendUnavailableError,
+    WireFormatError,
+)
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "project_initial_data_extend_models.json"
 
@@ -91,6 +96,30 @@ async def test_credit_cap_refuses_before_recaptcha_mint(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_whitespace_prompt_is_pre_submit_configuration_error(tmp_path: Path) -> None:
+    c = _client(tmp_path)
+    with pytest.raises(ConfigurationError) as caught:
+        await c.extend_video(
+            media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="  \t "
+        )
+    assert (caught.value.charged, caught.value.resolved_next_action()) == ("no", "fix_input")
+    assert "non-empty prompt" in (caught.value.remediation_hint or "")
+    c._mint_recaptcha_token.assert_not_awaited()  # type: ignore[attr-defined]
+    c._post_json.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_malformed_submit_reply_is_wire_error_with_parse_cause(tmp_path: Path) -> None:
+    c = _client(tmp_path, post_return={"workflows": []})
+    with pytest.raises(WireFormatError) as caught:
+        await c.extend_video(
+            media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, position=1, prompt="continue"
+        )
+    assert isinstance(caught.value.__cause__, ValueError)
+    c._post_json.assert_awaited_once()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
 async def test_migrated_extend_cap_refuses_before_page_checkout(tmp_path: Path) -> None:
     c = _client(tmp_path)
     c._checkout_page = AsyncMock()  # type: ignore[method-assign]
@@ -123,10 +152,11 @@ async def test_validates_before_minting(tmp_path: Path) -> None:
     """A malformed id must not cost a reCAPTCHA token — tokens are single-use,
     ~2 min TTL, and minting is itself a scored action."""
     c = _client(tmp_path)
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigurationError) as caught:
         await c.extend_video(
             media_id="not-a-uuid", project_id=PROJECT, scene_id=SCENE, position=1, prompt="p"
         )
+    assert (caught.value.charged, caught.value.resolved_next_action()) == ("no", "fix_input")
     c._mint_recaptcha_token.assert_not_awaited()  # type: ignore[attr-defined]
     c._post_json.assert_not_awaited()  # type: ignore[attr-defined]
 

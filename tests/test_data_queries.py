@@ -389,6 +389,75 @@ def test_list_videos_carries_asset_status(seeded: Path, all_copies: bool) -> Non
     assert rows[0].status == "ready"
 
 
+def test_two_in_place_extends_list_videos_shows_latest_and_copy_count_one(tmp_path: Path) -> None:
+    """#1299 Item 4: two in-place extends must show the latest non-stale file and copy_count 1,
+    excluding superseded stale copies."""
+    from gflow_cli.data.models import AssetKind, AssetRecord
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository
+
+    pre_file = tmp_path / "pre.mp4"
+    pre_file.write_bytes(b"pre")
+    seg1_file = tmp_path / "z_seg1.mp4"
+    seg1_file.write_bytes(b"seg1")
+    seg2_file = tmp_path / "a_seg2.mp4"
+    seg2_file.write_bytes(b"seg2")
+
+    db_path = tmp_path / "gflow.db"
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("p", tmp_path)
+        repo.upsert_asset(
+            AssetRecord(
+                id="asset-1",
+                profile_name="p",
+                flow_project_id=None,
+                flow_media_id="media-ext",
+                flow_workflow_id="wf-orig",
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                model="veo_orig",
+                aspect_ratio="16:9",
+                width=None,
+                height=None,
+                duration_seconds=5.0,
+                seed=None,
+                metadata_json={},
+            )
+        )
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        # Initial file
+        recorder._persist_completed_video_file(
+            repo=repo,
+            profile_name="p",
+            flow_media_id="media-ext",
+            local_path=pre_file,
+            cloud_storage_info=None,
+        )
+        # Extend 1
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id="media-ext",
+            workflow_id="wf-ext-1",
+            model_key="veo_ext_1",
+            local_path=seg1_file,
+        )
+        # Extend 2
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id="media-ext",
+            workflow_id="wf-ext-2",
+            model_key="veo_ext_2",
+            local_path=seg2_file,
+        )
+
+        rows = list_videos(db_path=db_path, profile="p", limit=10, offset=0)
+        assert len(rows) == 1
+        assert rows[0].copy_count == 1
+        assert rows[0].local_path == str(seg2_file.resolve())
+
+
 # ─── list_profiles ────────────────────────────────────────────────────────────
 
 

@@ -31,6 +31,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.errors import (
+    ConfigurationError,
     FlowHostMigratedError,
     UpscaleUnavailableError,
     WafRejectionError,
@@ -154,16 +155,25 @@ class MediaEditSurface(GenerationSurface):
             unit_cost=unit_cost,
             candidate_count=len(video_extend.extract_video_models(listing)),
         )
-        req = video_extend.ExtendVideoRequest(
-            media_id=media_id,
-            project_id=project_id,
-            scene_id=scene_id,
-            position=position,
-            prompt=prompt,
-            model_key=model_key,
-            aspect=aspect,
-            seed=seed,
-        )
+        try:
+            req = video_extend.ExtendVideoRequest(
+                media_id=media_id,
+                project_id=project_id,
+                scene_id=scene_id,
+                position=position,
+                prompt=prompt,
+                model_key=model_key,
+                aspect=aspect,
+                seed=seed,
+            )
+        except ValueError as exc:
+            error = ConfigurationError(
+                str(exc),
+                remediation_hint=(
+                    "Correct the extend request inputs, including non-empty prompt text."
+                ),
+            )
+            raise error from exc
         token = await self._mint_recaptcha_token(recaptcha_action)
         body = req.to_wire(
             session_id=f";{int(time.time() * 1000)}",
@@ -181,8 +191,19 @@ class MediaEditSurface(GenerationSurface):
         workflow_id = ""
         if isinstance(workflows, list) and workflows and isinstance(workflows[0], dict):
             workflow_id = str(cast("JsonObject", workflows[0]).get("name") or "")
+        try:
+            media_id = media_name_from_generate_response(data)
+        except ValueError as exc:
+            error = WireFormatError(
+                str(exc),
+                remediation_hint=(
+                    "The extend response was malformed. Check the scene on Flow for any accepted "
+                    "segment before continuing."
+                ),
+            )
+            raise error from exc
         return ExtendStarted(
-            media_id=media_name_from_generate_response(data),
+            media_id=media_id,
             workflow_id=workflow_id,
             model_key=model_key,
             unit_cost=unit_cost,
