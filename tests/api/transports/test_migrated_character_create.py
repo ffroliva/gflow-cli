@@ -1319,3 +1319,18 @@ class TestCodeRabbitSecondRound:
         with pytest.raises(MediaUploadRejectedError):
             await mc._upload_body(_Page(), PID, EID, tmp_path / "b.jpg")  # type: ignore[arg-type]  # pyright: ignore[reportPrivateUsage]
         assert reopened == [1]
+
+
+class TestGestureFailsAfterTheRequest:
+    async def test_a_browser_error_after_the_upload_left_the_page_is_not_pre_create(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        async def sent_then_failed(*_: Any, **kwargs: Any) -> dict[str, Any]:
+            kwargs["sent"].add("maseQ")
+            raise PlaywrightTimeoutError("Timeout 15000ms exceeded setting input files")
+
+        monkeypatch.setattr(mc, "_rpc_replies", sent_then_failed)
+        with pytest.raises(UiSelectorDriftError, match="after the portrait upload") as exc:
+            await _create(_Page(), tmp_path)
+        assert (exc.value.retryable, exc.value.next_action) == (False, "reconcile")
+        assert "may have created a character" in (exc.value.remediation_hint or "")

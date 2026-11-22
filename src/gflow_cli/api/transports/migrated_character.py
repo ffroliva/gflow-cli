@@ -922,7 +922,7 @@ async def _open_draft(page: Page, project_id: str) -> None:
 
 
 async def _create_attempt(
-    page: Page, project_id: str, portrait: Path
+    page: Page, project_id: str, portrait: Path, sent: set[str]
 ) -> tuple[dict[str, Any], set[str]]:
     """One portrait upload from a fresh draft: the replies that came, and which of the
     create and upload requests left the page.
@@ -935,7 +935,6 @@ async def _create_attempt(
     await clear_overlays(page)
     await page.locator(FOOTER_UPLOAD).first.wait_for(state="visible", timeout=30_000)
     dialogs_before = await _dialog_count(page)
-    sent: set[str] = set()
     upload = partial(_choose_file, page, FOOTER_UPLOAD, portrait)
     got = await _rpc_replies(page, (CREATE_RPC, UPLOAD_RPC), upload, timeout_s=90, sent=sent)
     dialogs_after = await _dialog_count(page) if not got and not sent else None
@@ -999,9 +998,17 @@ async def _create_entity(page: Page, project_id: str, portrait: Path) -> tuple[s
         await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
         raise _browser_error(exc, "before the character was created") from exc
     for attempt in (1, 2):
+        # Owned here, not by the attempt: a gesture can fail after its request left the
+        # page, and that request decides whether a character may already exist.
+        sent: set[str] = set()
         try:
-            outcome = await _create_attempt(page, project_id, portrait)
+            outcome = await _create_attempt(page, project_id, portrait, sent)
         except PlaywrightError as exc:
+            if sent:
+                hint = _maybe_created_hint(None, project_id)
+                raise _unsafe_to_retry(
+                    _browser_error(exc, "after the portrait upload"), hint
+                ) from exc
             await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
             raise _browser_error(exc, "before the character was created") from exc
         try:
