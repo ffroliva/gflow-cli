@@ -502,13 +502,13 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     and the failure is carried by the exit code alone."""
     from gflow_cli.api.extend_chain import ExtendChainResult
     from gflow_cli.cli_video import _extend_session
-    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.errors import GFlowError
 
     _chain_spy["_result"] = ExtendChainResult(
         scene_id="s",
         completed_media_ids=["m1"],
         credits_spent=10,
-        error=ConfigurationError("refused"),
+        error=GFlowError("refused", charged="yes", next_action="reconcile"),
     )
 
     with pytest.raises(SystemExit) as exit_info:
@@ -540,6 +540,55 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     assert payload["request"]["mode"] == "extend"
     # #1201: a billed segment exists, so the document says so (#1159 / #1178 class).
     assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
+
+
+@pytest.mark.parametrize("failure", ["credit_cap", "unavailable"])
+def test_extend_json_uses_error_charge_and_action(
+    failure: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.cli_video_reporting import _emit_extend_json_payload
+    from gflow_cli.errors import CreditCapExceededError, ExtendUnavailableError, GFlowError
+
+    error: GFlowError
+    if failure == "credit_cap":
+        error = CreditCapExceededError(quoted=10, max_credits=5)
+    else:
+        error = ExtendUnavailableError("not offered")
+    result = ExtendChainResult(scene_id="s", credits_spent=0, error=error)
+
+    _emit_extend_json_payload({}, result, None, "model", "16:9", 1, None)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["charged"] == error.charged
+    assert payload["next_action"] == error.resolved_next_action()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_poll_value_error_stays_maybe_in_extend_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from structlog.testing import capture_logs
+
+    from gflow_cli.api.extend_chain import run_extend_chain
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video_reporting import _emit_extend_json_payload
+
+    class _PollValueError:
+        async def extend_video(self, **_kwargs: Any) -> ExtendStarted:
+            return ExtendStarted("media-1", "wf-1", "model", 10)
+
+        async def poll_video_status(self, media_id: str, **_kwargs: Any) -> Any:
+            raise ValueError("unexpected status shape")
+
+    with capture_logs():
+        result = await run_extend_chain(
+            _PollValueError(), media_id=MEDIA, project_id=PROJECT, scene_id="s", prompts=["go"]
+        )
+        _emit_extend_json_payload({}, result, None, "model", "16:9", 1, None)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
 
 
 # --------------------------------------------------------------------------
@@ -1071,13 +1120,13 @@ async def test_a_render_failure_after_billed_segments_points_at_the_free_rerende
 
 
 @pytest.mark.asyncio
-async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
+async def test_an_in_flight_segment_whose_poll_failed_reads_maybe_with_its_id(
     _patched_client: _FakeClient,
     _chain_spy: dict[str, Any],
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """#1201 review: credits were spent, so `yes`, even with no completed segment."""
+    """#1201: submission leaves the in-flight segment uncertain until it finishes."""
     from gflow_cli.api.extend_chain import ExtendChainResult
     from gflow_cli.cli_video import _extend_session
     from gflow_cli.errors import TransportTimeoutError
@@ -1086,7 +1135,9 @@ async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
         scene_id="s",
         completed_media_ids=[],
         credits_spent=10,
-        error=TransportTimeoutError("poll", operation_id="seg-1"),
+        error=TransportTimeoutError(
+            "poll", operation_id="seg-1", charged="maybe", next_action="reconcile"
+        ),
     )
     with pytest.raises(SystemExit):
         await _extend_session(
@@ -1105,7 +1156,7 @@ async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
             recorder=None,
         )
     payload = json.loads(capsys.readouterr().out)
-    assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
+    assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
     assert payload["operation_id"] == "seg-1"
 
 
