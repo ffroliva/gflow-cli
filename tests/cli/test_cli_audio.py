@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main
+from gflow_cli.services import video_assembly
 from gflow_cli.services.audio_narration import NarrationResult
 
 
@@ -97,14 +99,10 @@ def test_audio_narrate_reports_stale_unlink_os_error(
     past = time.time() - 120.0
     os.utime(stale_out, (past, past))
 
-    real_unlink = Path.unlink
+    def denied_rename(src: Path, dst: Path) -> None:
+        raise OSError(errno.EPERM, "stale file locked by antivirus")
 
-    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
-        if self == stale_out or self.name.startswith(".gflow-stale-"):
-            raise PermissionError("stale file locked by antivirus")
-        real_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", denied_unlink)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", denied_rename)
 
     response = CliRunner().invoke(main, ["audio", "narrate", "hello", "--out-file", str(stale_out)])
     assert response.exit_code != 0

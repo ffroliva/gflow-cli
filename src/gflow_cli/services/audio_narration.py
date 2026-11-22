@@ -183,7 +183,12 @@ def _validate_output(path: Path) -> None:
             detail = "output " + detail[7:]
         elif detail.startswith("Could not "):
             detail = "could not " + detail[10:]
-        hint = _WRITABLE_OUT_FILE_HINT if "could not" in detail.lower() else _EXISTING_OUT_FILE_HINT
+        if exc.remediation_hint and ".gflow-stale-" in exc.remediation_hint:
+            hint = exc.remediation_hint
+        elif "could not" in detail.lower():
+            hint = _WRITABLE_OUT_FILE_HINT
+        else:
+            hint = _EXISTING_OUT_FILE_HINT
         raise ConfigurationError(
             f"Narration {detail}",
             charged="no",

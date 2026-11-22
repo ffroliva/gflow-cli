@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import os
 import stat
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.errors import ConfigurationError
+from gflow_cli.services import video_assembly
 from gflow_cli.services.audio_narration import narrate
 from gflow_cli.services.speech_ports import SynthesisRequest, SynthesisResult
 
@@ -343,14 +345,10 @@ def test_narrate_stale_unlink_os_error_maps_to_configuration_error(
     past = time.time() - 120.0
     os.utime(stale_out, (past, past))
 
-    real_unlink = Path.unlink
+    def denied_rename(src: Path, dst: Path) -> None:
+        raise OSError(errno.EPERM, "stale file locked by antivirus")
 
-    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
-        if self == stale_out or self.name.startswith(".gflow-stale-"):
-            raise PermissionError("stale file locked by antivirus")
-        real_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", denied_unlink)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", denied_rename)
 
     with pytest.raises(ConfigurationError) as exc_info:
         narrate(text="hello", out_file=stale_out, synthesizer=FakeSynthesizer())
@@ -360,3 +358,33 @@ def test_narrate_stale_unlink_os_error_maps_to_configuration_error(
         "leftover could not be removed" in str(exc_info.value)
         or "could not remove stale output reservation" in str(exc_info.value).lower()
     )
+
+
+def test_narrate_restore_failure_names_hidden_reservation_in_remediation_hint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "target.mp3"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    calls: list[tuple[Path, Path]] = []
+    real_rename = video_assembly._platform_no_replace_rename
+
+    def failing_restore(src: Path, dst: Path) -> None:
+        calls.append((src, dst))
+        if len(calls) == 1:
+            real_rename(src, dst)
+            dst.write_bytes(b"winner content")
+        else:
+            raise OSError(errno.EPERM, "restore permission denied")
+
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", failing_restore)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        narrate(text="hello", out_file=output, synthesizer=FakeSynthesizer())
+
+    assert exc_info.value.charged == "no"
+    stale_path = calls[0][1]
+    assert exc_info.value.remediation_hint is not None
+    assert str(stale_path) in exc_info.value.remediation_hint

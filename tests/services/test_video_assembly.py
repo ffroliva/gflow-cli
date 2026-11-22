@@ -871,13 +871,16 @@ def test_clear_stale_reservation_preserves_new_file_when_inode_changes(
 
     monkeypatch.setattr(video_assembly.os, "stat", replace_on_probe_stat)
 
-    video_assembly.clear_stale_reservation(output)
+    with pytest.raises(VideoAssemblyError) as exc_info:
+        video_assembly.clear_stale_reservation(output)
 
+    assert exc_info.value.charged == "no"
+    assert "delete it manually" in exc_info.value.detail
     assert output.exists()
     assert output.read_bytes() == b"winner completed output"
 
 
-def test_clear_stale_reservation_raises_video_assembly_error_on_unlink_os_error(
+def test_clear_stale_reservation_raises_video_assembly_error_on_rename_os_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "stale.mp4"
@@ -885,14 +888,10 @@ def test_clear_stale_reservation_raises_video_assembly_error_on_unlink_os_error(
     past = time.time() - 120.0
     os.utime(output, (past, past))
 
-    real_unlink = Path.unlink
+    def denied_rename(src: Path, dst: Path) -> None:
+        raise OSError(errno.EPERM, "stale file locked by antivirus")
 
-    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
-        if self == output or self.name.startswith(".gflow-stale-"):
-            raise PermissionError("stale file locked by antivirus")
-        real_unlink(self, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", denied_unlink)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", denied_rename)
 
     with pytest.raises(VideoAssemblyError) as exc_info:
         video_assembly.clear_stale_reservation(output)
@@ -1015,19 +1014,6 @@ def test_rename_aside_mismatch_restore_failure_raises_naming_both_paths(
     past = time.time() - 120.0
     os.utime(output, (past, past))
 
-    original_stat = os.stat
-
-    def replace_on_probe_stat(
-        fd_or_path: int | str | os.PathLike[str], *args: object, **kwargs: object
-    ) -> os.stat_result:
-        res = original_stat(fd_or_path, *args, **kwargs)
-        if isinstance(fd_or_path, int) and output.exists() and output.stat().st_size == 0:
-            output.unlink()
-            output.write_bytes(b"winner content")
-        return res
-
-    monkeypatch.setattr(video_assembly.os, "stat", replace_on_probe_stat)
-
     calls: list[tuple[Path, Path]] = []
     real_rename = video_assembly._platform_no_replace_rename
 
@@ -1035,6 +1021,7 @@ def test_rename_aside_mismatch_restore_failure_raises_naming_both_paths(
         calls.append((src, dst))
         if len(calls) == 1:
             real_rename(src, dst)
+            dst.write_bytes(b"winner content")
         else:
             raise OSError(errno.EPERM, "restore permission denied")
 
@@ -1048,6 +1035,8 @@ def test_rename_aside_mismatch_restore_failure_raises_naming_both_paths(
     stale_path = calls[0][1]
     assert str(stale_path) in exc_info.value.detail
     assert ".gflow-stale-" in str(stale_path)
+    assert exc_info.value.remediation_hint is not None
+    assert str(stale_path) in exc_info.value.remediation_hint
 
 
 def test_rename_dance_clear_import_error_treated_as_unsupported(
@@ -1110,38 +1099,152 @@ def test_reserved_replace_publish_refuses_when_reservation_modified(
         video_assembly._reserved_replace_publish(temp_output, output)
 
 
-def test_assemble_videos_tolerates_transient_file_not_found_on_stat(
+def test_clear_stale_reservation_fat_inode_change_clears_by_mtime_and_size(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    clip = tmp_path / "clip.mp4"
-    output = tmp_path / "joined.mp4"
-    _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
+    output = tmp_path / "stale.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
 
-    original_stat = Path.stat
-    real_publish = video_assembly.publish_output
-    published = False
-    stat_calls_after_publish = 0
+    original_lstat = os.lstat
 
-    def publish_wrapper(temp_out: Path, out: Path) -> None:
-        nonlocal published
-        real_publish(temp_out, out)
-        published = True
+    def lstat_shifted_inode(
+        path: int | str | os.PathLike[str], *args: object, **kwargs: object
+    ) -> os.stat_result:
+        st = original_lstat(path, *args, **kwargs)
+        path_str = str(path)
+        if ".gflow-stale-" in path_str:
+            return os.stat_result(
+                (
+                    st.st_mode,
+                    st.st_ino + 999999,
+                    st.st_dev,
+                    st.st_nlink,
+                    st.st_uid,
+                    st.st_gid,
+                    0,
+                    st.st_atime,
+                    st.st_mtime,
+                    st.st_ctime,
+                )
+            )
+        return st
 
-    monkeypatch.setattr(video_assembly, "publish_output", publish_wrapper)
+    monkeypatch.setattr(video_assembly.os, "lstat", lstat_shifted_inode)
 
-    def flaky_stat(self: Path, **kwargs: object) -> os.stat_result:
-        nonlocal stat_calls_after_publish
-        if published and self == output:
-            stat_calls_after_publish += 1
-            if stat_calls_after_publish == 1:
-                raise FileNotFoundError(f"[Errno 2] No such file or directory: '{output}'")
-        return original_stat(self, **kwargs)
+    video_assembly.clear_stale_reservation(output)
 
-    monkeypatch.setattr(Path, "stat", flaky_stat)
+    assert not output.exists()
+    assert not list(tmp_path.glob(".gflow-stale-*"))
 
-    result = assemble_videos([clip], output)
 
-    assert result.output_file == output
+def test_reserved_replace_publish_does_not_unlink_non_empty_reservation_on_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".temp.mp4"
+    temp_output.write_bytes(b"temp data")
+    output = tmp_path / "output.mp4"
+
+    original_stat = video_assembly.os.stat
+    written = False
+
+    def stat_and_write_concurrently(
+        path: int | str | os.PathLike[str], *args: object, **kwargs: object
+    ) -> os.stat_result:
+        nonlocal written
+        if not written and isinstance(path, (str, Path)) and str(path) == str(output):
+            written = True
+            output.write_bytes(b"winner writer content")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(video_assembly.os, "stat", stat_and_write_concurrently)
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly._reserved_replace_publish(temp_output, output)
+
     assert output.exists()
-    assert result.bytes > 0
-    assert stat_calls_after_publish >= 2
+    assert output.read_bytes() == b"winner writer content"
+
+
+def test_clear_stale_reservation_refuses_before_rename_if_identity_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "target.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    original_probe = video_assembly._probe_directory_mtime
+
+    def probe_and_modify(parent: Path) -> float:
+        res = original_probe(parent)
+        output.write_bytes(b"concurrent real output")
+        return res
+
+    monkeypatch.setattr(video_assembly, "_probe_directory_mtime", probe_and_modify)
+
+    rename_called = False
+    original_rename = video_assembly._platform_no_replace_rename
+
+    def track_rename(src: Path, dst: Path) -> None:
+        nonlocal rename_called
+        rename_called = True
+        original_rename(src, dst)
+
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", track_rename)
+
+    with pytest.raises(VideoAssemblyError) as exc_info:
+        video_assembly.clear_stale_reservation(output)
+
+    assert exc_info.value.charged == "no"
+    assert (
+        "the output is an empty leftover from an interrupted run, "
+        "this filesystem cannot clear it safely, delete it manually"
+    ) in exc_info.value.detail
+    assert rename_called is False
+    assert output.read_bytes() == b"concurrent real output"
+
+
+def test_clear_stale_reservation_unlink_failure_logs_warning_and_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "stale.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    real_unlink = Path.unlink
+
+    def failing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.startswith(".gflow-stale-"):
+            raise OSError(errno.EACCES, "unlink failed")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_unlink)
+
+    video_assembly.clear_stale_reservation(output)
+    assert not output.exists()
+    stale_files = list(tmp_path.glob(".gflow-stale-*"))
+    assert len(stale_files) == 1
+
+
+def test_clear_stale_reservation_eperm_on_rename_reported_as_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "stale.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    def rename_eperm(*_args: object) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", rename_eperm)
+
+    with pytest.raises(VideoAssemblyError) as exc_info:
+        video_assembly.clear_stale_reservation(output)
+
+    assert exc_info.value.charged == "no"
+    assert "Could not remove stale output reservation" in exc_info.value.detail
+    assert "filesystem cannot clear it safely" not in exc_info.value.detail
