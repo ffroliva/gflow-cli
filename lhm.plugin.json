@@ -969,6 +969,415 @@
         "title": "gflow_instructions_applyArguments",
         "type": "object"
       }
+    },
+    {
+      "name": "gflow_media_trash",
+      "description": "Move a generated media item (image or video) to Flow's Trash over the wire (RPC pGCYOe). Credit-free (0 credits). Trashed items are hidden from project views but can be recovered using gflow_media_restore. Requires explicit confirm=True to prevent accidental deletion.",
+      "inputSchema": {
+        "properties": {
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Id"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "gflow_media_trashArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_media_restore",
+      "description": "Restore a trashed media item back to its Flow project over the wire (RPC pGCYOe). Credit-free (0 credits). Returns the restored item status and ID.",
+      "inputSchema": {
+        "properties": {
+          "media_id": {
+            "title": "Media Id",
+            "type": "string"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Id"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "media_id"
+        ],
+        "title": "gflow_media_restoreArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_narrate",
+      "description": "Synthesize a local narration audio file. Narration text is sent to the selected provider (Microsoft Edge Read Aloud or Google Gemini); this uses no Flow credits. Gemini requires GFLOW_CLI_GEMINI_TTS_API_KEY. Output paths stay inside the configured output directory.",
+      "inputSchema": {
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "out_file": {
+            "title": "Out File",
+            "type": "string"
+          },
+          "provider": {
+            "default": "edge",
+            "enum": [
+              "edge",
+              "gemini"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "voice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Voice"
+          },
+          "rate": {
+            "default": "+0%",
+            "title": "Rate",
+            "type": "string"
+          },
+          "pitch": {
+            "default": "+0Hz",
+            "title": "Pitch",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "out_file"
+        ],
+        "title": "gflow_narrateArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_video_assemble",
+      "description": "Join local video files or locally available catalog video IDs with optional music and voiceover. Ducking lowers music and clip audio under voiceover by default. This is local, credit-free processing; out_file must be inside the configured output directory. Geometry and frame rate follow the first clip.",
+      "inputSchema": {
+        "properties": {
+          "clips": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Clips",
+            "type": "array"
+          },
+          "out_file": {
+            "title": "Out File",
+            "type": "string"
+          },
+          "music": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Music"
+          },
+          "voiceover": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Voiceover"
+          },
+          "clip_volume": {
+            "default": 1.0,
+            "title": "Clip Volume",
+            "type": "number"
+          },
+          "music_volume": {
+            "default": 0.3,
+            "title": "Music Volume",
+            "type": "number"
+          },
+          "voiceover_volume": {
+            "default": 1.0,
+            "title": "Voiceover Volume",
+            "type": "number"
+          },
+          "duck": {
+            "default": true,
+            "title": "Duck",
+            "type": "boolean"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "clips",
+          "out_file"
+        ],
+        "title": "gflow_video_assembleArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_video_transcribe",
+      "description": "Transcribe a local video or catalog video UUID to an .srt file using the configured OpenAI-compatible audio transcription endpoint. Credit-free; output stays inside the configured output directory. Google’s default endpoint is refused before audio is sent.",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "gflow_video_transcribeArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_video_captions",
+      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
+      "inputSchema": {
+        "properties": {
+          "file": {
+            "title": "File",
+            "type": "string"
+          },
+          "srt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Srt"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "gflow_video_captionsArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_character_create",
+      "description": "Create a Flow CHARACTER from local image files: `image` is the portrait, `body_image` an optional body image, both paths on the machine running this MCP server. Nothing is generated: spends no credits and no image quota. Drives the character editor on flow.google.com in a browser, then sets the name, personality and voice (see gflow_character_voices). A failure after the portrait upload names the character's entity_id in remediation_hint when known, otherwise says one may exist, and is not retryable: check gflow_character_list before calling again. gflow deletes nothing. Generating the face from a prompt is CLI-only (`gflow character create --face-prompt`).",
+      "inputSchema": {
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "image": {
+            "title": "Image",
+            "type": "string"
+          },
+          "body_image": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Body Image"
+          },
+          "voice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Voice"
+          },
+          "personality": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Personality"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "name",
+          "image"
+        ],
+        "title": "gflow_character_createArguments",
+        "type": "object"
+      }
     }
   ]
 }

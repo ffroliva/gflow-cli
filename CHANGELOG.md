@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`video extend` on `flow.google.com` records completed video rows and invalidates stale local copies ([#1299](https://github.com/ffroliva/gflow-cli/issues/1299)).** A Veo-key extend returning a new media id now transitions its catalog row from `pending` to `MEDIA_GENERATION_STATUS_SUCCESSFUL` (or terminal status on failure) with its real aspect ratio and model key, recording the downloaded or cloud file in `local_files`. An in-place extend (same media id) marks prior local file copies as superseded in a single transaction with the new file write so `verified_local_path` and `list_videos` return only the latest verified file while keeping `sha256` intact and `gflow doctor` checks clean.
 - **A finished clip whose signed URL serves no MP4, or sits outside the allowed Google hosts, points at the free recovery ([#1159](https://github.com/ffroliva/gflow-cli/issues/1159)).** On `flow.google.com` both errors suggested retrying with a simpler prompt, which bills the clip again. They now name `gflow data download <media_id>`, as the clip's other download failures already did, and report `charged: yes`, since Flow has billed a finished clip. The exit code is unchanged. Thanks to @aryankalantri ([#1424](https://github.com/ffroliva/gflow-cli/pull/1424)).
 
+### Documentation
+
+- **`lhm.plugin.json` lists all 27 registered MCP tools ([#1407](https://github.com/ffroliva/gflow-cli/issues/1407)).** The manifest omitted `gflow_media_trash`, `gflow_media_restore`, `gflow_narrate`, `gflow_video_assemble`, `gflow_video_transcribe`, `gflow_video_captions` and `gflow_character_create`; each is now listed with its registered description and input schema. A test keeps the manifest's tool names in step with the server's registrations. Thanks to @aryankalantri ([#1418](https://github.com/ffroliva/gflow-cli/pull/1418)).
+
 ## [0.105.0] — 2026-11-22
 
 ### Added
