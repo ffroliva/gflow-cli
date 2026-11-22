@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 pytestmark = pytest.mark.e2e
 
 _LLM_ENV_VARS = ("GFLOW_CLI_LLM_API_KEY", "GFLOW_CLI_LLM_BASE_URL")
@@ -51,15 +53,10 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def _run_gflow(
-    args: list[str], *, env: dict[str, str], timeout: int
+    args: list[str], *, env: RedactedEnv, timeout: int
 ) -> subprocess.CompletedProcess[str]:
     """Run `python -m gflow_cli <args>` as an isolated subprocess (real CLI path)."""
-    sub_env = dict(env)
-    # The autouse `_isolate_settings` fixture points GFLOW_CLI_HOME at a per-test
-    # tmp dir, which `e2e_env` copies — but the real authenticated profiles live
-    # under the DEFAULT home. Drop it so the subprocess resolves the real profile;
-    # the DB and output dir stay isolated via their own explicit env vars.
-    sub_env.pop("GFLOW_CLI_HOME", None)
+    sub_env = env.copy()
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
@@ -70,7 +67,7 @@ def _run_gflow(
     )
 
 
-def _open_db(env: dict[str, str]):  # noqa: ANN202 — sqlite3.Connection, imported lazily
+def _open_db(env: RedactedEnv):  # noqa: ANN202 — sqlite3.Connection, imported lazily
     import sqlite3
 
     db_path = Path(env["GFLOW_CLI_DB_PATH"])
@@ -125,7 +122,7 @@ def _assert_tool_metadata(meta_json: str | None, *, model: str | None = None) ->
 
 @pytest.mark.e2e_image
 @pytest.mark.e2e_data
-def test_t2i_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
+def test_t2i_with_tool_records_provenance(e2e_env: RedactedEnv) -> None:
     """`image t2i --tool creative-director` generates a real image AND records the
     original prompt, the expansion, and the tool snapshot."""
     _require_llm_endpoint()
@@ -168,7 +165,7 @@ def test_t2i_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
 
 @pytest.mark.e2e_video
 @pytest.mark.e2e_data
-def test_t2v_with_tool_records_provenance(e2e_env: dict[str, str]) -> None:
+def test_t2v_with_tool_records_provenance(e2e_env: RedactedEnv) -> None:
     """`video t2v --tool creative-director` generates a real video AND records the
     tool snapshot on the (started→succeeded) operation."""
     if os.environ.get(_E2E_RUN_VIDEO_ENV, "0").strip() != "1":

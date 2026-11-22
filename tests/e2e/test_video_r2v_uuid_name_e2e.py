@@ -37,6 +37,7 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
+from tests.e2e._redacted_env import RedactedEnv
 
 from .test_image_uuid_ref_e2e import _json_payload, _run_gflow
 
@@ -48,7 +49,7 @@ _R2V_POLL_TIMEOUT_S = 600.0
 @pytest.mark.asyncio
 @pytest.mark.e2e_video
 async def test_e2e_r2v_ref_resolved_from_catalog_uuid_display_name(
-    e2e_env: dict[str, str],
+    e2e_env: RedactedEnv,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     install_log_capture: structlog.testing.LogCapture,
@@ -72,7 +73,7 @@ async def test_e2e_r2v_ref_resolved_from_catalog_uuid_display_name(
     seed_media_id = ""
     # Classic UI for the seed: the natively-agentic e2e account's agent
     # sometimes answers a t2i with a video (WireFormatError).
-    seed_env = {**e2e_env, "GFLOW_CLI_PREFER_CLASSIC": "1"}
+    seed_env = e2e_env | {"GFLOW_CLI_PREFER_CLASSIC": "1"}
     for attempt in range(3):
         seed = _run_gflow(
             [

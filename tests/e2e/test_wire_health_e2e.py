@@ -24,6 +24,7 @@ import pytest
 
 from gflow_cli.api import flow_wire
 from gflow_cli.config import reset_settings
+from tests.e2e._redacted_env import RedactedEnv
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
@@ -46,7 +47,7 @@ async def test_doctor_and_mcp_auth_status_agree_on_an_accepted_wire(
         capture_output=True,
         text=True,
         timeout=120,
-        env=dict(os.environ),
+        env=RedactedEnv(os.environ),
         check=False,
     )
     assert proc.returncode in (0, 33), proc.stderr[-2000:]  # 33: unrelated local findings

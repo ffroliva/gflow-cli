@@ -31,6 +31,7 @@ from pytest_bdd import given, scenarios, then, when
 
 from gflow_cli.config import reset_settings
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 from .test_earlier_run_ref_in_place_bdd import _event_records
 from .test_image_i2i_ref_cap_e2e import _tiny_png
@@ -43,9 +44,9 @@ _REUSED = "reference_uploads.reused"
 _ATTACHED_IN_PLACE = "migrated.existing_references_attached"
 
 
-def _info(env: dict[str, str]) -> dict[str, str]:
+def _info(env: RedactedEnv) -> RedactedEnv:
     # The events asserted here are INFO; the default level hides them since #1041.
-    return {**env, "GFLOW_CLI_LOG_LEVEL": "INFO"}
+    return env | {"GFLOW_CLI_LOG_LEVEL": "INFO"}
 
 
 def _i2i_args(prompt: str, ref: Path, out: Path, project: list[str]) -> list[str]:
@@ -59,7 +60,7 @@ def _i2i_args(prompt: str, ref: Path, out: Path, project: list[str]) -> list[str
 @given(
     "a local reference image already used once by image i2i in a project", target_fixture="world"
 )
-def _first(e2e_env: dict[str, str], tmp_path: Path) -> dict[str, Any]:
+def _first(e2e_env: RedactedEnv, tmp_path: Path) -> dict[str, Any]:
     ref = _tiny_png(tmp_path / "character.png", color=(200, 120, 40))
     out = tmp_path / "out"
     first = _run_gflow(

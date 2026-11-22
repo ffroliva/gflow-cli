@@ -26,6 +26,7 @@ import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 scenarios("../features/migrated_missing_character_mention.feature")
 
@@ -44,7 +45,7 @@ def _project(world: dict[str, Any]) -> None:
 
 
 @when(parsers.parse('the CLI generates "{prompt}"'))
-def _cli(world: dict[str, Any], prompt: str, e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli(world: dict[str, Any], prompt: str, e2e_env: RedactedEnv, tmp_path: Path) -> None:
     out = tmp_path / "cli"
     world["out"] = out
     world["proc"] = subprocess.run(  # noqa: S603 - fixed argv, our own CLI
@@ -65,7 +66,7 @@ def _cli(world: dict[str, Any], prompt: str, e2e_env: dict[str, str], tmp_path: 
             str(out),
         ],
         # No colour codes, so the remediation text can be matched.
-        env={k: v for k, v in e2e_env.items() if k != "FORCE_COLOR"},
+        env=RedactedEnv({k: v for k, v in e2e_env.items() if k != "FORCE_COLOR"}),
         capture_output=True,
         text=True,
         encoding="utf-8",

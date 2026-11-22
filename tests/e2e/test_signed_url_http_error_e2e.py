@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 from .test_image_uuid_ref_e2e import _run_gflow
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video]
@@ -56,14 +58,14 @@ APIRequestContext.get = _get
 
 
 def test_an_expired_clip_link_exits_6_marks_the_clip_and_is_recovered(
-    e2e_env: dict[str, str], tmp_path: Path
+    e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO", "") != "1":
         pytest.skip("set GFLOW_CLI_E2E_RUN_VIDEO=1 to spend one Veo lite clip on this e2e")
     hook = tmp_path / "hook"
     hook.mkdir()
     (hook / "sitecustomize.py").write_text(_HOOK, encoding="utf-8")
-    hooked = {**e2e_env, "PYTHONPATH": os.pathsep.join([str(hook), e2e_env.get("PYTHONPATH", "")])}
+    hooked = e2e_env | {"PYTHONPATH": os.pathsep.join([str(hook), e2e_env.get("PYTHONPATH", "")])}
 
     run = _run_gflow(
         [
