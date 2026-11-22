@@ -132,8 +132,69 @@ def collect_secret_values(
     return secrets
 
 
+def _is_inside_quote(line: str, pos: int) -> bool:
+    """Return True if pos in line is inside a quoted string fragment."""
+    in_quote = None
+    escaped = False
+    quote_start = -1
+    for i, ch in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch in ("'", '"'):
+            if in_quote is None:
+                in_quote = ch
+                quote_start = i
+            elif in_quote == ch:
+                if quote_start < pos < i:
+                    return True
+                in_quote = None
+                quote_start = -1
+    return False
+
+
+def _has_truncated_secret(text: str, secrets: Iterable[str]) -> bool:
+    """Return True if text has a truncated secret fragment near '...' in a quoted repr."""
+    if "..." not in text or not secrets:
+        return False
+
+    valid_secrets = [s for s in secrets if len(s) >= _MIN_SECRET_LENGTH]
+    if not valid_secrets:
+        return False
+
+    max_sec_len = max(len(s) for s in valid_secrets)
+    prefixes = {s[:length] for s in valid_secrets for length in range(4, len(s) + 1)}
+    suffixes = {s[-length:] for s in valid_secrets for length in range(4, len(s) + 1)}
+
+    ellipses = [m.start() for m in re.finditer(r"\.\.\.", text)]
+    for p in ellipses:
+        line_start = text.rfind("\n", 0, p) + 1
+        line_end = text.find("\n", p)
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end]
+        pos_in_line = p - line_start
+
+        if not _is_inside_quote(line, pos_in_line):
+            continue
+
+        q = p + 3
+        for m in range(min(len(text) - q, max_sec_len), 3, -1):
+            if text[q : q + m] in suffixes:
+                return True
+
+        for k in range(min(p, max_sec_len), 3, -1):
+            if text[p - k : p] in prefixes:
+                return True
+
+    return False
+
+
 def _mask_truncated_secrets(text: str, secrets: Iterable[str]) -> str:
-    """Mask tails before '...' that are prefixes and heads after '...' that are suffixes."""
+    """Mask tails before '...' that are prefixes and heads after '...' in quoted reprs."""
     if "..." not in text or not secrets:
         return text
 
@@ -147,6 +208,16 @@ def _mask_truncated_secrets(text: str, secrets: Iterable[str]) -> str:
 
     ellipses = [m.start() for m in re.finditer(r"\.\.\.", text)]
     for p in reversed(ellipses):
+        line_start = text.rfind("\n", 0, p) + 1
+        line_end = text.find("\n", p)
+        if line_end == -1:
+            line_end = len(text)
+        line = text[line_start:line_end]
+        pos_in_line = p - line_start
+
+        if not _is_inside_quote(line, pos_in_line):
+            continue
+
         q = p + 3
         # Head after '...'
         for m in range(min(len(text) - q, max_sec_len), 3, -1):
@@ -163,7 +234,7 @@ def _mask_truncated_secrets(text: str, secrets: Iterable[str]) -> str:
     return text
 
 
-def scrub_text(text: str, secrets: Iterable[str]) -> str:
+def scrub_text(text: str, secrets: Iterable[str], *, mask_truncations: bool = False) -> str:
     """Replace all occurrences of secret values in text with '***'."""
     if not text or not secrets:
         return text
@@ -171,7 +242,7 @@ def scrub_text(text: str, secrets: Iterable[str]) -> str:
     for secret in sorted(secrets, key=len, reverse=True):
         if secret in text:
             text = text.replace(secret, "***")
-    if "..." in text:
+    if mask_truncations and "..." in text:
         text = _mask_truncated_secrets(text, secrets)
     return text
 
@@ -179,16 +250,20 @@ def scrub_text(text: str, secrets: Iterable[str]) -> str:
 def _scrub_entry(entry: Any, secrets: Iterable[str]) -> None:
     """Scrub a traceback entry in place."""
     if hasattr(entry, "lines") and isinstance(entry.lines, list):
-        entry.lines = [scrub_text(line, secrets) for line in entry.lines]
+        entry.lines = [scrub_text(line, secrets, mask_truncations=True) for line in entry.lines]
     if hasattr(entry, "reprlocals") and entry.reprlocals and hasattr(entry.reprlocals, "lines"):
         if isinstance(entry.reprlocals.lines, list):
-            entry.reprlocals.lines = [scrub_text(line, secrets) for line in entry.reprlocals.lines]
+            entry.reprlocals.lines = [
+                scrub_text(line, secrets, mask_truncations=True) for line in entry.reprlocals.lines
+            ]
     if (
         hasattr(entry, "reprfileloc")
         and entry.reprfileloc
         and hasattr(entry.reprfileloc, "message")
     ):
-        entry.reprfileloc.message = scrub_text(entry.reprfileloc.message, secrets)
+        entry.reprfileloc.message = scrub_text(
+            entry.reprfileloc.message, secrets, mask_truncations=True
+        )
     if (
         hasattr(entry, "reprfuncargs")
         and entry.reprfuncargs
@@ -196,7 +271,8 @@ def _scrub_entry(entry: Any, secrets: Iterable[str]) -> None:
     ):
         if isinstance(entry.reprfuncargs.args, (list, tuple)):
             entry.reprfuncargs.args = [
-                (str(name), scrub_text(str(val), secrets)) for name, val in entry.reprfuncargs.args
+                (str(name), scrub_text(str(val), secrets, mask_truncations=True))
+                for name, val in entry.reprfuncargs.args
             ]
 
 
@@ -205,7 +281,9 @@ def _scrub_longrepr_in_place(longrepr: Any, secrets: Iterable[str]) -> None:
     # 1. Update reprcrash message (drives summary lines in -ra)
     if hasattr(longrepr, "reprcrash") and longrepr.reprcrash:
         if hasattr(longrepr.reprcrash, "message"):
-            longrepr.reprcrash.message = scrub_text(longrepr.reprcrash.message, secrets)
+            longrepr.reprcrash.message = scrub_text(
+                longrepr.reprcrash.message, secrets, mask_truncations=True
+            )
 
     # 2. Update reprtraceback reprentries
     if hasattr(longrepr, "reprtraceback") and longrepr.reprtraceback:
@@ -219,7 +297,7 @@ def _scrub_longrepr_in_place(longrepr: Any, secrets: Iterable[str]) -> None:
             if isinstance(item, tuple) and len(item) >= 2:
                 tb, crash = item[0], item[1]
                 if crash and hasattr(crash, "message"):
-                    crash.message = scrub_text(crash.message, secrets)
+                    crash.message = scrub_text(crash.message, secrets, mask_truncations=True)
                 if tb and hasattr(tb, "reprentries"):
                     for entry in tb.reprentries:
                         _scrub_entry(entry, secrets)
@@ -227,12 +305,13 @@ def _scrub_longrepr_in_place(longrepr: Any, secrets: Iterable[str]) -> None:
     # 4. Update custom sections if present on ExceptionRepr
     if hasattr(longrepr, "sections") and isinstance(longrepr.sections, list):
         longrepr.sections = [
-            (title, scrub_text(content, secrets), sep) for title, content, sep in longrepr.sections
+            (title, scrub_text(content, secrets, mask_truncations=False), sep)
+            for title, content, sep in longrepr.sections
         ]
 
     # 5. Update CollectErrorRepr (holds collection failure message in longrepr attribute)
     if hasattr(longrepr, "longrepr") and isinstance(longrepr.longrepr, str):
-        longrepr.longrepr = scrub_text(longrepr.longrepr, secrets)
+        longrepr.longrepr = scrub_text(longrepr.longrepr, secrets, mask_truncations=True)
 
 
 def _scrub_longrepr(report: Any, secrets: Iterable[str]) -> None:
@@ -242,7 +321,9 @@ def _scrub_longrepr(report: Any, secrets: Iterable[str]) -> None:
 
     # Check if any secret is present in the longrepr representation
     longrepr_text = getattr(report, "longreprtext", None) or str(report.longrepr)
-    if not any(secret in longrepr_text for secret in secrets):
+    if not any(secret in longrepr_text for secret in secrets) and not _has_truncated_secret(
+        longrepr_text, secrets
+    ):
         # Report holds no secret: leave longrepr completely untouched
         return
 
@@ -251,7 +332,7 @@ def _scrub_longrepr(report: Any, secrets: Iterable[str]) -> None:
         report.longrepr = (
             report.longrepr[0],
             report.longrepr[1],
-            scrub_text(str(report.longrepr[2]), secrets),
+            scrub_text(str(report.longrepr[2]), secrets, mask_truncations=False),
         )
         return
 
@@ -265,8 +346,10 @@ def _scrub_longrepr(report: Any, secrets: Iterable[str]) -> None:
     # Verify and fall back: re-render and, if any secret is still present,
     # replace report.longrepr with the scrubbed string.
     rendered_text = getattr(report, "longreprtext", None) or str(report.longrepr)
-    if any(secret in rendered_text for secret in secrets):
-        report.longrepr = scrub_text(rendered_text, secrets)
+    if any(secret in rendered_text for secret in secrets) or _has_truncated_secret(
+        rendered_text, secrets
+    ):
+        report.longrepr = scrub_text(rendered_text, secrets, mask_truncations=True)
 
 
 def scrub_report(report: Any, secrets: Iterable[str]) -> None:
@@ -278,10 +361,15 @@ def scrub_report(report: Any, secrets: Iterable[str]) -> None:
     if getattr(report, "longrepr", None) is not None:
         _scrub_longrepr(report, secrets)
 
+    # Scrub wasxfail (string explanation for xfail)
+    if getattr(report, "wasxfail", None) is not None:
+        report.wasxfail = scrub_text(str(report.wasxfail), secrets, mask_truncations=False)
+
     # Scrub captured sections (stdout, stderr, log) for all reports (passed, failed, skipped)
     if getattr(report, "sections", None):
         report.sections = [
-            (name, scrub_text(str(content), secrets)) for name, content in report.sections
+            (name, scrub_text(str(content), secrets, mask_truncations=False))
+            for name, content in report.sections
         ]
 
 

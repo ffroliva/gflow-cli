@@ -413,3 +413,69 @@ def test_creds_path(monkeypatch):
     result = pytester.runpytest_subprocess()
     output = result.stdout.str()
     assert creds_path_str in output
+
+
+def test_truncated_short_secret_repr_masks_prefix_under_showlocals(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    key = "AIzaSyQ1w2e3r4t5y6u7"
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+import os
+KEY = os.environ["GEMINI_API_KEY"]
+
+def test_trunc():
+    out = "A" * 100 + "token=" + KEY + " " + "B" * 300
+    assert "zzz" in out
+""")
+    xml_path = pytester.path / "junit.xml"
+    result = pytester.runpytest_subprocess("-l", "-rA", f"--junitxml={xml_path}")
+    output = result.stdout.str()
+    xml_content = xml_path.read_text(encoding="utf-8")
+    for i in range(len(key) - 3):
+        frag = key[i : i + 4]
+        assert frag not in output
+        assert frag not in xml_content
+
+
+def test_wasxfail_masks_secrets_under_rx_and_junitxml(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    key = "AIzaSyQ1w2e3r4t5y6u7"
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+import os, pytest
+def test_xf():
+    KEY = os.environ["GEMINI_API_KEY"]
+    pytest.xfail(f"server said key {KEY}")
+""")
+    xml_path = pytester.path / "junit.xml"
+    result = pytester.runpytest_subprocess("-rx", f"--junitxml={xml_path}")
+    output = result.stdout.str()
+    xml_content = xml_path.read_text(encoding="utf-8")
+    assert key not in output
+    assert "server said key ***" in output
+    assert key not in xml_content
+    assert "server said key ***" in xml_content
+
+
+def test_passing_test_prints_ellipsis_without_false_positive_masking(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setenv("MINIO_ROOT_PASSWORD", "minioadmin")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+def test_pass_minio():
+    print("Connecting to minio...admin console ready")
+""")
+    result = pytester.runpytest_subprocess("-rA")
+    output = result.stdout.str()
+    assert "Connecting to minio...admin console ready" in output
