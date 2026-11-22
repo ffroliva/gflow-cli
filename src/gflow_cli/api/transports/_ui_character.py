@@ -27,7 +27,12 @@ from gflow_cli.api.transports.migrated_composer import MENU_ITEM, ModelMenuMatch
 from gflow_cli.api.transports.ui_automation_video import (
     screenshot_clause,
 )
-from gflow_cli.errors import ConfigurationError, FlowAppError, UiSelectorDriftError
+from gflow_cli.errors import (
+    ConfigurationError,
+    FlowAppError,
+    UiSelectorDriftError,
+    nothing_submitted,
+)
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -234,13 +239,15 @@ class CharacterGenerationMixin(BatchCaptureMixin):
         trigger, current = await self._find_character_model_chip(page)
         if trigger is None:
             await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
-            raise UiSelectorDriftError(
-                detail=(
-                    "character editor: the model picker (an arrow_drop_down control naming a "
-                    f"model tier) was not found, so --model {model_alias} could not be applied. "
-                    f"URL: {page.url}."
-                ),
-            )
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    detail=(
+                        "character editor: the model picker (an arrow_drop_down control naming a "
+                        f"model tier) was not found, so --model {model_alias} could not be "
+                        "applied. "
+                        f"URL: {page.url}."
+                    ),
+                )
 
         if matcher.matches(current):
             # Logged because the path is otherwise invisible: a run that
@@ -269,12 +276,13 @@ class CharacterGenerationMixin(BatchCaptureMixin):
                 await items.first.wait_for(state="visible", timeout=5000)
             except Exception as e:
                 await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
-                raise UiSelectorDriftError(
-                    detail=(
-                        "character editor: the model menu ([role='menuitem']) did not open, so "
-                        f"--model {model_alias} could not be applied. URL: {page.url}."
-                    ),
-                ) from e
+                with nothing_submitted():
+                    raise UiSelectorDriftError(
+                        detail=(
+                            "character editor: the model menu ([role='menuitem']) did not open, so "
+                            f"--model {model_alias} could not be applied. URL: {page.url}."
+                        ),
+                    ) from e
 
             # Matched in Python rather than through a `has_text` filter: an
             # *exclusion* is not expressible as has_text, the menu is read back for
@@ -327,13 +335,15 @@ class CharacterGenerationMixin(BatchCaptureMixin):
             )
 
         await _capture_debug_screenshot(page, out_dir, "debug_character_model_picker.png")
-        raise UiSelectorDriftError(
-            detail=(
-                f"character editor: --model {model_alias} did not apply — the model chip still "
-                f"reads {last_seen!r} after two attempts. Refusing to generate on a tier you did "
-                f"not ask for. URL: {page.url}."
-            ),
-        )
+        with nothing_submitted():
+            raise UiSelectorDriftError(
+                detail=(
+                    f"character editor: --model {model_alias} did not apply — the model chip still "
+                    f"reads {last_seen!r} after two attempts. Refusing to generate on a tier "
+                    "you did "
+                    f"not ask for. URL: {page.url}."
+                ),
+            )
 
     async def _dismiss_character_model_menu(self, page: Any) -> None:
         """Close an open model menu; never fatal."""

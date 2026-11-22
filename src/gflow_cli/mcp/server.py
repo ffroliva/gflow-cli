@@ -194,6 +194,7 @@ def _register_surfaces() -> None:
     must not be pruned as "unused".
     """
     from gflow_cli.mcp import audio_tools as _audio_tools
+    from gflow_cli.mcp import character_tools as _character_tools
     from gflow_cli.mcp import media_trash_tools as _media_trash_tools
     from gflow_cli.mcp import prompts as _prompts
     from gflow_cli.mcp import resources as _resources
@@ -203,6 +204,7 @@ def _register_surfaces() -> None:
     # Access them to satisfy pyright unused import check
     _ = (
         _audio_tools,
+        _character_tools,
         _media_trash_tools,
         _prompts,
         _resources,

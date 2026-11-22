@@ -371,3 +371,12 @@ class EditorGateMixin(AgentModeMixin):
             log.warning("migrated.cookie_bar_not_dismissed", error=str(e)[:120])
             return
         log.info("migrated.cookie_bar_dismissed")
+
+
+async def clear_overlays(page: Page) -> None:
+    """Dismiss the first-visit dialog and the cookie bar over a freshly loaded page.
+
+    The composer's own best-effort dismissals, for flow.google.com drivers that are not
+    the composer (the character editor)."""
+    await EditorGateMixin._dismiss_dialog(page)  # pyright: ignore[reportPrivateUsage]
+    await EditorGateMixin()._dismiss_cookie_bar(page)  # pyright: ignore[reportPrivateUsage]

@@ -91,6 +91,7 @@ async def test_missing_model_raises_instead_of_silently_downgrading() -> None:
     with pytest.raises(UiSelectorDriftError) as exc:
         await UiAutomationTransport._select_image_model(page, Model.IMAGEN_3_5)
 
+    assert exc.value.charged == "no"
     msg = str(exc.value)
     assert "imagen" in msg.lower(), msg
     # the message must name what Flow DID offer, or the operator cannot act on it
@@ -114,6 +115,7 @@ async def test_ambiguous_model_raises_rather_than_guessing_with_first() -> None:
     with pytest.raises(UiSelectorDriftError) as exc:
         await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
 
+    assert exc.value.charged == "no"
     assert "ambiguous" in str(exc.value).lower(), str(exc.value)
 
 

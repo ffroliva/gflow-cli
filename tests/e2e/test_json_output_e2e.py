@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 pytestmark = pytest.mark.e2e
 
 
@@ -114,7 +116,7 @@ def test_e2e_models_list_and_show_json() -> None:
 
 @pytest.mark.e2e_image
 @pytest.mark.parametrize("verb", ["t2i", "generate"])  # `generate` is the #1193 bridge to t2i
-def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb: str) -> None:
+def test_e2e_image_t2i_json_shape(e2e_env: RedactedEnv, tmp_path: Path, verb: str) -> None:
     """`gflow image t2i --json` produces a pure-JSON document with the
     ``image_result`` schema (status / command / project_id / model / count /
     images[]) when run against real Flow. Runs 1 image generation (zero credits).
@@ -124,10 +126,7 @@ def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb:
     """
     # ``e2e_env`` already creates ``tmp_path/out`` (see tests/e2e/conftest.py).
     out_dir = tmp_path / "out"
-    # Drop the autouse-isolated GFLOW_CLI_HOME so the subprocess resolves to
-    # the user's real platformdirs path (where the live Chrome session lives).
-    env = dict(e2e_env)
-    env.pop("GFLOW_CLI_HOME", None)
+    env = e2e_env.copy()
     proc = subprocess.run(
         [
             sys.executable,
@@ -181,7 +180,7 @@ def test_e2e_image_t2i_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb:
 
 @pytest.mark.e2e_image
 def test_e2e_image_gen_with_a_local_ref_resolves_to_i2i(
-    e2e_env: dict[str, str], tmp_path: Path
+    e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
     """`gflow image generate PROMPT --ref <local png> --json` runs `image i2i` against real Flow
     (#1193): the payload's `command` is the mode verb and `mode` the resolved one. One
@@ -189,8 +188,7 @@ def test_e2e_image_gen_with_a_local_ref_resolves_to_i2i(
     from .test_image_i2i_ref_cap_e2e import _tiny_png
 
     ref = _tiny_png(tmp_path / "ref.png", color=(40, 120, 200))
-    env = dict(e2e_env)
-    env.pop("GFLOW_CLI_HOME", None)  # the real profile, as in the t2i test above
+    env = e2e_env.copy()
     argv = ["image", "generate", "a small blue tile, studio light", "--ref", str(ref)]
     argv += ["--project-name", "e2e-1193-gen", "--model", "nano2"]
     argv += ["--out", str(tmp_path / "out"), "--json"]
@@ -213,7 +211,7 @@ def test_e2e_image_gen_with_a_local_ref_resolves_to_i2i(
 
 @pytest.mark.e2e_video
 @pytest.mark.parametrize("verb", ["t2v", "generate"])  # `generate` is the #1193 bridge to t2v
-def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb: str) -> None:
+def test_e2e_video_t2v_json_shape(e2e_env: RedactedEnv, tmp_path: Path, verb: str) -> None:
     """`gflow video t2v --json` produces a pure-JSON document with the
     ``video_result`` schema (status / command / media_id / generation_status /
     succeeded / local_path / request) when run against real Flow. Costs 1
@@ -228,10 +226,7 @@ def test_e2e_video_t2v_json_shape(e2e_env: dict[str, str], tmp_path: Path, verb:
             "set GFLOW_CLI_E2E_RUN_VIDEO=1 to include the video --json e2e (spends 1 Veo credit)"
         )
 
-    # Drop the autouse-isolated GFLOW_CLI_HOME so the subprocess resolves to
-    # the user's real platformdirs path (where the live Chrome session lives).
-    env = dict(e2e_env)
-    env.pop("GFLOW_CLI_HOME", None)
+    env = e2e_env.copy()
 
     proc = subprocess.run(
         [

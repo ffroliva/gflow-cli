@@ -166,8 +166,9 @@ async def test_a_click_that_does_not_change_the_chip_raises() -> None:
         options=["Nano Banana Pro", "Nano Banana 2"],
         click_applies=False,
     )
-    with pytest.raises(UiSelectorDriftError, match="did not apply"):
+    with pytest.raises(UiSelectorDriftError, match="did not apply") as info:
         await _transport(page)._select_character_model(page, "nano2")  # noqa: SLF001
+    assert info.value.charged == "no"
 
 
 @pytest.mark.asyncio
@@ -197,8 +198,9 @@ async def test_an_ambiguous_match_refuses_rather_than_guessing() -> None:
 @pytest.mark.asyncio
 async def test_a_missing_trigger_raises() -> None:
     page = _picker_page(current="", options=["Nano Banana 2"], trigger_found=False)
-    with pytest.raises(UiSelectorDriftError, match="model picker"):
+    with pytest.raises(UiSelectorDriftError, match="model picker") as info:
         await _transport(page)._select_character_model(page, "nano2")  # noqa: SLF001
+    assert info.value.charged == "no"  # #1336: character model selection precedes submit
 
 
 @pytest.mark.asyncio
@@ -208,8 +210,9 @@ async def test_a_menu_that_never_opens_raises() -> None:
         options=["Nano Banana 2"],
         menu_opens=False,
     )
-    with pytest.raises(UiSelectorDriftError, match="menu"):
+    with pytest.raises(UiSelectorDriftError, match="menu") as info:
         await _transport(page)._select_character_model(page, "nano2")  # noqa: SLF001
+    assert info.value.charged == "no"
 
 
 @pytest.mark.asyncio

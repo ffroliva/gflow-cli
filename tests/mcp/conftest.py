@@ -6,6 +6,9 @@ import pytest
 
 import gflow_cli.mcp.audio_tools  # noqa: F401
 
+# The parity suites run on their own in /gflow:check step 1b, so every tool module is imported here.
+import gflow_cli.mcp.character_tools  # noqa: F401
+
 # Register every prompt/resource/tool against the REAL server before any test runs.
 # `run_stdio()`/`run_http()` import these modules lazily, and three tests call them
 # with `gflow_cli.mcp.server.server` patched to a MagicMock. Whichever import comes

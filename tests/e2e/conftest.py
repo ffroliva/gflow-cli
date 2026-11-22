@@ -46,6 +46,7 @@ from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.video import VideoModel
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.errors import FlowHostMigratedError, WireFormatError
+from tests.e2e._redacted_env import RedactedEnv
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
 
@@ -128,7 +129,7 @@ def e2e_nosession_profile() -> Iterator[Path]:
 
 
 @pytest.fixture
-def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
+def e2e_env(tmp_path: Path) -> Iterator[RedactedEnv]:
     """Build an isolated subprocess environment: temp DB + temp output dir + active profile.
 
     Use this for tests that drive ``gflow`` via subprocess and need a clean
@@ -151,7 +152,7 @@ def e2e_env(tmp_path: Path) -> Iterator[dict[str, str]]:
     db = tmp_path / "gflow.db"
     out = tmp_path / "out"
     out.mkdir()
-    env = os.environ.copy()
+    env = RedactedEnv(os.environ)
     # `tests/conftest.py::_isolate_settings` is autouse and redirects GFLOW_CLI_HOME to
     # an empty per-test tmp dir. Inherited by the child, that redirect hides every real
     # profile and the subprocess exits 2 with "No session for profile '<name>'" while

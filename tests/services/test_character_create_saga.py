@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 from gflow_cli.api.character import CharacterCreateResult, CharacterImageRequest
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import UiSelectorDriftError, WireFormatError
 from gflow_cli.services.character_create import character_create
 
 # ---------------------------------------------------------------------------
@@ -351,6 +351,30 @@ async def test_recovery_skips_face_when_already_recorded() -> None:
     assert result.primary_media_ids == (M0, M1)
 
 
+@pytest.mark.asyncio
+async def test_resume_failure_without_new_generation_remains_unbilled() -> None:
+    from gflow_cli.errors import is_retryable
+
+    exc = UiSelectorDriftError(detail="entity patch drift", charged="no")
+    client = _make_client()
+    client.patch_entity = AsyncMock(side_effect=exc)
+    recorder = _make_recorder()
+    recorder.repository.find_incomplete_character = MagicMock(
+        return_value={
+            "row_id": ROW_ID,
+            "entity_id": ENTITY_ID,
+            "workflow_ids": [WF0],
+            "primary_media_ids": [M0],
+        }
+    )
+
+    with pytest.raises(UiSelectorDriftError) as caught:
+        await character_create(client, recorder, **_saga_kwargs())
+
+    assert caught.value.charged == "no"
+    assert is_retryable(caught.value) is False
+
+
 # ---------------------------------------------------------------------------
 # Scenario #5: WireFormatError → record partial state, patch NOT called
 # ---------------------------------------------------------------------------
@@ -416,6 +440,56 @@ async def test_wire_format_error_on_body_preserves_face_partial() -> None:
     last_partial = recorder.record_character_partial.call_args
     assert last_partial.kwargs["workflow_ids"] == [WF0]
     assert last_partial.kwargs["primary_media_ids"] == [M0]
+
+
+@pytest.mark.asyncio
+async def test_pre_submit_drift_on_body_keeps_image_run_uncharged() -> None:
+    """Character image generation is free, including a completed face slot."""
+
+    async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
+        if kwargs.get("image_reference_index") == 0:
+            return (WF0, M0, "/tmp/face_slot0.png")
+        raise UiSelectorDriftError(detail="body model selector drift", charged="no")
+
+    client = _make_client()
+    client.generate_character_image = AsyncMock(side_effect=_generate_side_effect)
+    with pytest.raises(UiSelectorDriftError) as info:
+        await character_create(client, _make_recorder(), **_saga_kwargs(body=BODY_REQ))
+
+    assert info.value.charged == "no"
+    assert info.value.next_action == "none"
+    client.delete_characters.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_body_timeout_after_face_remains_retryable() -> None:
+    from gflow_cli.errors import TransportTimeoutError, is_retryable
+
+    async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
+        if kwargs.get("image_reference_index") == 0:
+            return (WF0, M0, "/tmp/face_slot0.png")
+        raise TransportTimeoutError("body image request timed out")
+
+    client = _make_client()
+    client.generate_character_image = AsyncMock(side_effect=_generate_side_effect)
+    with pytest.raises(TransportTimeoutError) as info:
+        await character_create(client, _make_recorder(), **_saga_kwargs(body=BODY_REQ))
+
+    assert info.value.charged == "maybe"
+    assert is_retryable(info.value) is True
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_after_image_generation_stays_uncharged() -> None:
+    from gflow_cli.errors import GFlowError
+
+    client = _make_client()
+    client.commit_workflow = AsyncMock(side_effect=GFlowError("commit failed", charged="no"))
+
+    with pytest.raises(GFlowError) as info:
+        await character_create(client, _make_recorder(), **_saga_kwargs())
+
+    assert info.value.charged == "no"
 
 
 # ---------------------------------------------------------------------------

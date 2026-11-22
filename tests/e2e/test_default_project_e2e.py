@@ -15,6 +15,7 @@ import pytest
 
 from gflow_cli.config import reset_settings
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 from .test_image_uuid_ref_e2e import _run_gflow
 
@@ -31,9 +32,9 @@ def _pinned() -> str:
 
 
 @pytest.mark.e2e_image
-def test_e2e_cli_t2i_generates_into_the_pinned_project(e2e_env: dict[str, str]) -> None:
+def test_e2e_cli_t2i_generates_into_the_pinned_project(e2e_env: RedactedEnv) -> None:
     pinned = _pinned()
-    env = {**e2e_env, "GFLOW_CLI_PROJECT": pinned}
+    env = e2e_env | {"GFLOW_CLI_PROJECT": pinned}
     proc = _run_gflow(["image", "t2i", _PROMPT, "--aspect", "1:1", "--json"], env)
 
     assert proc.returncode == 0, proc.stderr[-800:]
@@ -46,7 +47,7 @@ def test_e2e_cli_t2i_generates_into_the_pinned_project(e2e_env: dict[str, str]) 
 
 @pytest.mark.e2e_image
 def test_e2e_mcp_image_generates_into_the_pinned_project(
-    e2e_env: dict[str, str], e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+    e2e_env: RedactedEnv, e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     del e2e_profile_dir  # selects the real authenticated gflow home
     pinned = _pinned()

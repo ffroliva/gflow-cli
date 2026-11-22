@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from gflow_cli.telemetry import NOTICE_VERSION
+from tests.e2e._redacted_env import RedactedEnv
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_telemetry]
 
@@ -229,7 +230,7 @@ def clean_home(tmp_path: Path) -> tuple[Path, dict[str, str]]:
 
 def run_d1_sql(sql: str) -> list[dict[str, Any]]:
     """Execute SQL query against remote D1 database via wrangler and return results."""
-    env = dict(os.environ)
+    env = RedactedEnv(os.environ)
     env["CLOUDFLARE_ACCOUNT_ID"] = CLOUDFLARE_ACCOUNT_ID
     cmd = [
         "npx",

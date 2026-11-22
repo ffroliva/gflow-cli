@@ -53,6 +53,7 @@ class CharacterRecordingMixin(RecorderCore):
         project_id: str,
         entity_id: str,
         name: str,
+        source: str | None = None,
     ) -> str:
         """Insert an OperationRecord(mode=CHARACTER, status=STARTED) BEFORE any
         credited generation.  Stores ``entity_id`` and ``name`` in the new
@@ -96,7 +97,12 @@ class CharacterRecordingMixin(RecorderCore):
         )
         # Write entity_id + name into metadata_json immediately so a crash
         # before record_character_completed still leaves a recoverable row.
-        repo.set_operation_metadata(op_id, {"entity_id": entity_id, "name": name})
+        # ``source="files"`` marks a create that generates nothing and never resumes: the
+        # prompt saga's resume lookup skips such a row even if it is left STARTED.
+        meta: dict[str, object] = {"entity_id": entity_id, "name": name}
+        if source is not None:
+            meta["source"] = source
+        repo.set_operation_metadata(op_id, meta)
         return op_id
 
     def record_character_partial(

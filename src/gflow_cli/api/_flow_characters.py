@@ -18,6 +18,7 @@ from gflow_cli.api._flow_session import _APPLICATION_JSON, JsonObject  # pyright
 from gflow_cli.api._flow_workspace import (
     _MIGRATED_FLOW_HOST,  # pyright: ignore[reportPrivateUsage]
     _unwrap_trpc,  # pyright: ignore[reportPrivateUsage]
+    validate_image_file,
 )
 from gflow_cli.api.character import (
     Character,
@@ -36,7 +37,9 @@ from gflow_cli.paths import character_output_path
 from gflow_cli.storage import AnyPath
 
 if TYPE_CHECKING:
-    from gflow_cli.api.transports.migrated_character import ProjectRead
+    from pathlib import Path
+
+    from gflow_cli.api.transports.migrated_character import CreatedCharacter, ProjectRead
 
 logger = structlog.get_logger(__name__)
 
@@ -207,6 +210,51 @@ class CharacterSurface(MediaEditSurface):
             entity_id=entity_id,
             workflow_count=len(workflow_ids),
         )
+
+    async def create_character_from_files(
+        self,
+        project_id: str,
+        *,
+        name: str,
+        portrait: Path,
+        body: Path | None = None,
+        voice: str | None = None,
+        personality: str | None = None,
+    ) -> CreatedCharacter:
+        """Build a character from local images on flow.google.com (#639).
+
+        Every file is checked first (exists, size, image header), so nothing leaves the
+        machine and no page is touched for a bad path. FREE: uploads and edits only.
+        """
+        from gflow_cli.api.transports import migrated_character  # noqa: PLC0415
+
+        if self.settings.flow_host == "labs.google":
+            raise ConfigurationError(
+                detail="building a character from local files is driven on flow.google.com; "
+                "GFLOW_CLI_FLOW_HOST pins labs.google, where it is not ported yet (#639)"
+            )
+        for path in (portrait, body):
+            if path is None:
+                continue
+            try:
+                await validate_image_file(path)
+            except (OSError, ValueError) as exc:
+                raise ConfigurationError(
+                    detail=f"cannot use {path.name} as a character image: {exc}"
+                ) from exc
+        page = await self._checkout_page()
+        try:
+            return await migrated_character.create_from_files(
+                page,
+                project_id,
+                name=name,
+                portrait=portrait,
+                body=body,
+                personality=personality,
+                voice=voice,
+            )
+        finally:
+            self._checkin_page(page)
 
     async def delete_characters(self, project_id: str, entity_ids: list[str]) -> None:
         """Delete one or more CHARACTER entities from *project_id*.

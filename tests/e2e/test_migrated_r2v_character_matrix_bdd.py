@@ -31,6 +31,7 @@ import structlog
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 scenarios("../features/migrated_r2v_character_matrix.feature")
 
@@ -77,7 +78,7 @@ def _ref(tmp_path: Path) -> Path:
 
 
 @when(parsers.parse('the CLI generates an r2v clip of cast "{cast}" with a local reference image'))
-def _cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path, cast: str) -> None:
+def _cli(world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path, cast: str) -> None:
     members = _members(world, cast)
     entity_args: list[str] = []
     for name, entity in members:
@@ -102,7 +103,7 @@ def _cli(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path, cast: s
             "--out-dir",
             str(out),
         ],
-        env={**e2e_env, "GFLOW_CLI_LOG_LEVEL": "INFO"},
+        env=e2e_env | {"GFLOW_CLI_LOG_LEVEL": "INFO"},
         capture_output=True,
         text=True,
         encoding="utf-8",

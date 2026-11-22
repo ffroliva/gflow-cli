@@ -28,12 +28,14 @@ Scenario coverage (mirrors the plan's test-scenario numbering):
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 from typing import TYPE_CHECKING, cast
 
 import structlog
 
 from gflow_cli.api.character import CharacterCreateResult, CharacterImageRequest
+from gflow_cli.errors import DataStoreError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -42,6 +44,15 @@ if TYPE_CHECKING:
     from gflow_cli.data.recorder import OperationRecorder
 
 log = structlog.get_logger(__name__)
+
+
+def _log_character_create_failure(exc: Exception, entity_id: str) -> None:
+    log.error(
+        "character_create.failed",
+        entity_id=entity_id,
+        error=str(exc),
+        exc_info=True,
+    )
 
 
 async def _entity_has_bound_work(client: FlowApiClient, project_id: str, entity_id: str) -> bool:
@@ -63,6 +74,37 @@ async def _entity_has_bound_work(client: FlowApiClient, project_id: str, entity_
     return bool(
         getattr(character, "workflow_ids", ()) or getattr(character, "thumbnail_media_id", None)
     )
+
+
+async def _rollback_if_unbilled(
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    *,
+    project_id: str,
+    entity_id: str,
+    row_id: str,
+    exc: Exception,
+    workflow_ids: list[str],
+    generated_new: bool,
+) -> None:
+    if generated_new or workflow_ids or await _entity_has_bound_work(client, project_id, entity_id):
+        return
+    try:
+        await client.delete_characters(project_id, [entity_id])  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — rollback is advisory, never fatal
+        log.warning(
+            "character_create.orphan_rollback_failed",
+            entity_id=entity_id,
+            project_id=project_id,
+            exc_info=True,
+        )
+    else:
+        log.info(
+            "character_create.orphan_rolled_back",
+            entity_id=entity_id,
+            project_id=project_id,
+        )
+    recorder.record_character_abandoned(row_id=row_id, exc=exc)
 
 
 async def character_create(
@@ -178,6 +220,7 @@ async def character_create(
     # Slots reused from a recovered run start as None (their image may already
     # be on disk from the prior run; we do NOT re-generate/re-download it).
     image_paths: list[str | None] = [None for _ in prior_wf_ids]
+    generated_new = False
 
     try:
         # ------------------------------------------------------------------
@@ -196,6 +239,7 @@ async def character_create(
                     format_prompt=format_prompt,
                 ),
             )
+            generated_new = True
             wf0: str = _face_result[0]
             m0: str = _face_result[1]
             p0 = _face_result[2]
@@ -244,6 +288,7 @@ async def character_create(
                         format_prompt=format_prompt,
                     ),
                 )
+                generated_new = True
                 wf1: str = _body_result[0]
                 m1: str = _body_result[1]
                 p1 = _body_result[2]
@@ -315,41 +360,17 @@ async def character_create(
             workflow_ids=list(workflow_ids),
             primary_media_ids=list(media_ids),
         )
-        if not workflow_ids and not await _entity_has_bound_work(client, project_id, entity_id):
-            # Zero progress: no credit spent, no workflow id, so the STARTED row
-            # offers no resume — and its key is (project_id, NAME), so a retry
-            # under any other name misses it and mints a second entity.  Roll the
-            # free entity back instead of stranding an "Untitled Character
-            # refs=0" in the project on every failed attempt.  Best-effort: a
-            # rollback fault must never mask the failure the user came to see.
-            #
-            # The backend check is not belt-and-braces.  An empty `workflow_ids`
-            # here means only that THIS process failed to read a result — on the
-            # migrated host a portrait generated fine while the client timed out
-            # on the labs wire (live 2026-09-06), and deleting on the local
-            # signal alone destroys finished work.
-            try:
-                await client.delete_characters(project_id, [entity_id])  # type: ignore[attr-defined]
-            except Exception:  # noqa: BLE001 — rollback is advisory, never fatal
-                log.warning(
-                    "character_create.orphan_rollback_failed",
-                    entity_id=entity_id,
-                    project_id=project_id,
-                    exc_info=True,
-                )
-            else:
-                log.info(
-                    "character_create.orphan_rolled_back",
-                    entity_id=entity_id,
-                    project_id=project_id,
-                )
-            recorder.record_character_abandoned(row_id=row_id, exc=exc)
-        log.error(
-            "character_create.failed",
+        await _rollback_if_unbilled(
+            client,
+            recorder,
+            project_id=project_id,
             entity_id=entity_id,
-            error=str(exc),
-            exc_info=True,
+            row_id=row_id,
+            exc=exc,
+            workflow_ids=workflow_ids,
+            generated_new=generated_new,
         )
+        _log_character_create_failure(exc, entity_id)
         raise
 
     return CharacterCreateResult(
@@ -360,4 +381,79 @@ async def character_create(
         name=name,
         voice=voice,
         image_paths=tuple(image_paths),
+        generated_new=generated_new,
+    )
+
+
+async def character_create_from_files(
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    project_id: str,
+    name: str,
+    portrait: Path,
+    body: Path | None = None,
+    voice: str | None = None,
+    personality: str | None = None,
+) -> CharacterCreateResult:
+    """Build a character from local images (flow.google.com, #639) and record it.
+
+    No resume saga: nothing is generated and nothing is billed, so a failed run is simply
+    re-run. The entity only exists once its first image does, so the operation is recorded
+    after the transport returns, with its id and name in one row. A failure after the
+    create names the leftover entity in the error's remediation hint."""
+    created = await client.create_character_from_files(
+        project_id,
+        name=name,
+        portrait=portrait,
+        body=body,
+        voice=voice,
+        personality=personality,
+    )
+    row_id: str | None = None
+    try:
+        row_id = recorder.record_character_started(
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            project_id=project_id,
+            entity_id=created.entity_id,
+            name=name,
+            source="files",
+        )
+        recorder.record_character_completed(
+            row_id=row_id,
+            workflow_ids=list(created.workflow_ids),
+            primary_media_ids=list(created.media_ids),
+            voice=voice,
+            personality=personality,
+        )
+    except DataStoreError as exc:
+        # The character exists in Flow by now. Failing here would hide its id and invite a
+        # re-run that creates a duplicate; the exit-16 contract is warn and continue.
+        log.warning(
+            "data.persistence_failed_after_success",
+            error_class=type(exc).__name__,
+            detail=exc.detail,
+            entity_id=created.entity_id,
+        )
+        # A row left STARTED would be resumed by the next prompt-generated create of the
+        # same name, which spends credits on an entity this run already finished.
+        if row_id is not None:
+            with contextlib.suppress(DataStoreError):
+                recorder.record_character_abandoned(row_id=row_id, exc=exc)
+    log.info(
+        "character_create.from_files_completed",
+        entity_id=created.entity_id,
+        workflow_count=len(created.workflow_ids),
+    )
+    return CharacterCreateResult(
+        entity_id=created.entity_id,
+        project_id=project_id,
+        workflow_ids=created.workflow_ids,
+        primary_media_ids=created.media_ids,
+        name=name,
+        voice=voice,
+        image_paths=(),
     )
