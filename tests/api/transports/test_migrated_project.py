@@ -52,6 +52,11 @@ class _Loc:
             raise mc.PlaywrightTimeoutError(f"waiting for {self.sel}")
 
     async def click(self, **_: Any) -> None:
+        if self.page.click_times_out:
+            if self.page.click_sends_first:  # the click dispatched, then Playwright timed out
+                for h in list(self.page.request_handlers):
+                    h(SimpleNamespace(url=_batch(mc.CREATE_PROJECT_RPC), post_data=None))
+            raise mc.PlaywrightTimeoutError("Locator.click: Timeout 15000ms exceeded")
         self.page.clicks.append(self.sel)
         await self.page.fire(self.page.on_click.get(self.sel))
 
@@ -88,6 +93,9 @@ class FakePage:
         self.on_enter: tuple[str, str] | None = None
         self.navigate_on_create: str | None = None
         self.fill_times_out = False
+        self.click_times_out = False
+        self.click_sends_first = False
+        self.request_handlers: list[Any] = []
         self.action_timeouts: list[Any] = []
         self.url_waits: list[Any] = []
         self._handlers: list[Any] = []
@@ -108,10 +116,14 @@ class FakePage:
     def on(self, event: str, handler: Any) -> None:
         if event == "response":
             self._handlers.append(handler)
+        elif event == "request":
+            self.request_handlers.append(handler)
 
     def remove_listener(self, event: str, handler: Any) -> None:
         if event == "response" and handler in self._handlers:
             self._handlers.remove(handler)
+        elif event == "request" and handler in self.request_handlers:
+            self.request_handlers.remove(handler)
 
     async def fire(self, reply: tuple[str, str] | None) -> None:
         if reply is None:
@@ -163,6 +175,35 @@ async def test_create_without_the_fab_is_drift_naming_the_anchor() -> None:
 
     with pytest.raises(UiSelectorDriftError, match="new-project"):
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
+
+
+async def test_create_click_timeout_is_typed_drift_charging_nothing() -> None:
+    # The largest crash group in the first telemetry week: the FAB rendered but the click
+    # timed out, and Playwright's TimeoutError escaped create_project as an unhandled exit 1.
+    from gflow_cli.json_output import exit_code_for
+
+    page = _page_creating()
+    page.click_times_out = True
+
+    with pytest.raises(UiSelectorDriftError, match="new-project button") as exc:
+        await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
+    assert exit_code_for(exc.value) == 23
+    assert exc.value.charged == "no"
+    assert "--project" in exc.value.remediation_hint
+
+
+async def test_create_click_timeout_after_the_request_left_is_outcome_unknown() -> None:
+    # Flow may have made the project, so this is never drift, and never retryable (#1037).
+    from gflow_cli.errors import RpcResponseUnavailableError, is_retryable
+
+    page = FakePage()
+    page.click_times_out = True
+    page.click_sends_first = True
+
+    with pytest.raises(RpcResponseUnavailableError, match=mc.CREATE_PROJECT_RPC) as exc:
+        await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
+    assert not is_retryable(exc.value)
+    assert page.request_handlers == []  # the watch is removed
 
 
 async def test_create_with_no_reply_and_no_navigation_is_outcome_unknown() -> None:

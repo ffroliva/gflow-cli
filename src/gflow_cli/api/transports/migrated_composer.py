@@ -712,11 +712,34 @@ async def create_project(
     )
     before = str(page.url)
     deadline = time.monotonic() + timeout_s
+
+    async def click_create() -> None:
+        # A click can time out after it dispatched, so the request decides, not the exception.
+        with SubmitWatch(page, frozenset({CREATE_PROJECT_RPC})) as sent:
+            try:
+                await button.click(timeout=15_000)
+            except PlaywrightTimeoutError as e:
+                if sent.seen():
+                    return  # Create reached Flow: wait for its reply, or recover it below
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: the new-project button ({NEW_PROJECT_BUTTON}) was "
+                        f"visible but did not take the click on {safe_page_url(page.url)}, "
+                        "and no create request was sent (host=migrated)"
+                    ),
+                    charged="no",
+                    remediation_hint=(
+                        "Nothing was created or charged. Something on Flow's projects page may "
+                        "be covering the button; re-run, or pass --project <id> to generate in "
+                        "an existing project and skip creating one."
+                    ),
+                ) from e
+
     try:
         payload = await rpc_reply(
             page,
             CREATE_PROJECT_RPC,
-            lambda: button.click(timeout=15_000),
+            click_create,
             timeout_s=timeout_s,
             write=True,
         )
