@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Charge guidance reflects pre-submit validation, in-flight extends, and finished video segments ([#1416](https://github.com/ffroliva/gflow-cli/issues/1416)).** Image batches remain free. Extend validation failures report no charge and request corrected input, malformed post-submit responses retain reconciliation guidance and identify completed segments as billed, and poll failures reconcile the in-flight segment without overriding reauthentication or input-fix guidance. JSON output preserves the typed error's charge and next action.
+- **`video extend` on `flow.google.com` records completed video rows and invalidates stale local copies ([#1299](https://github.com/ffroliva/gflow-cli/issues/1299)).** A Veo-key extend returning a new media id now transitions its catalog row from `pending` to `MEDIA_GENERATION_STATUS_SUCCESSFUL` (or terminal status on failure) with its real aspect ratio and model key, recording the downloaded or cloud file in `local_files`. An in-place extend (same media id) marks prior local file copies as superseded in a single transaction with the new file write so `verified_local_path` and `list_videos` return only the latest verified file while keeping `sha256` intact and `gflow doctor` checks clean.
 
 ## [0.105.0] — 2026-11-22
 

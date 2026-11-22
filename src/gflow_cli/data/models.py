@@ -161,6 +161,7 @@ class LocalFileRecord:
     storage_provider: str | None = None  # "gcs" | "s3" | None (= local)
     cloud_uri: str | None = None  # gs://bucket/key or s3://bucket/key
     created_at: str | None = None
+    superseded_at: str | None = None
 
 
 @dataclass(frozen=True)
