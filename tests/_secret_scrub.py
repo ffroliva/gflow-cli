@@ -45,7 +45,6 @@ _EXPLICIT_SECRETS: frozenset[str] = frozenset(
         "GH_TOKEN",
         "GITHUB_TOKEN",
         "GOOGLE_API_KEY",
-        "GOOGLE_APPLICATION_CREDENTIALS",
         "MINIO_ROOT_PASSWORD",
         "OPENAI_API_KEY",
         "PYPI_API_TOKEN",
@@ -73,11 +72,22 @@ _CREDENTIAL_URL_PATTERN: re.Pattern[str] = re.compile(
 # Snapshot of secret values collected at session start
 _SESSION_SECRETS: set[str] = set()
 
+# Stash key to persist secrets seen during setup and call for teardown reports (#1382)
+_ITEM_SECRETS_KEY: pytest.StashKey[set[str]] = pytest.StashKey()
+
 
 def is_secret_name(name: str) -> bool:
     """Return True if an environment variable name matches secret naming patterns."""
     upper = name.upper()
     return upper in _EXPLICIT_SECRETS or bool(_SECRET_NAME_PATTERN.search(upper))
+
+
+def _is_existing_path(val: str) -> bool:
+    """Return True if val is an existing absolute filesystem path."""
+    try:
+        return os.path.isabs(val) and os.path.exists(val)
+    except (ValueError, OSError):
+        return False
 
 
 def _add_chunks(secret: str, target: set[str]) -> None:
@@ -114,10 +124,43 @@ def collect_secret_values(
                 _add_chunks(pwd, secrets)
 
         if is_secret_name(k) and len(v) >= _MIN_SECRET_LENGTH:
+            if _is_existing_path(v):
+                continue
             secrets.add(v)
             _add_chunks(v, secrets)
 
     return secrets
+
+
+def _mask_truncated_secrets(text: str, secrets: Iterable[str]) -> str:
+    """Mask tails before '...' that are prefixes and heads after '...' that are suffixes."""
+    if "..." not in text or not secrets:
+        return text
+
+    valid_secrets = [s for s in secrets if len(s) >= _MIN_SECRET_LENGTH]
+    if not valid_secrets:
+        return text
+
+    max_sec_len = max(len(s) for s in valid_secrets)
+    prefixes = {s[:length] for s in valid_secrets for length in range(4, len(s) + 1)}
+    suffixes = {s[-length:] for s in valid_secrets for length in range(4, len(s) + 1)}
+
+    ellipses = [m.start() for m in re.finditer(r"\.\.\.", text)]
+    for p in reversed(ellipses):
+        q = p + 3
+        # Head after '...'
+        for m in range(min(len(text) - q, max_sec_len), 3, -1):
+            if text[q : q + m] in suffixes:
+                text = text[:q] + "***" + text[q + m :]
+                break
+
+        # Tail before '...'
+        for k in range(min(p, max_sec_len), 3, -1):
+            if text[p - k : p] in prefixes:
+                text = text[: p - k] + "***" + text[p:]
+                break
+
+    return text
 
 
 def scrub_text(text: str, secrets: Iterable[str]) -> str:
@@ -128,6 +171,8 @@ def scrub_text(text: str, secrets: Iterable[str]) -> str:
     for secret in sorted(secrets, key=len, reverse=True):
         if secret in text:
             text = text.replace(secret, "***")
+    if "..." in text:
+        text = _mask_truncated_secrets(text, secrets)
     return text
 
 
@@ -144,6 +189,15 @@ def _scrub_entry(entry: Any, secrets: Iterable[str]) -> None:
         and hasattr(entry.reprfileloc, "message")
     ):
         entry.reprfileloc.message = scrub_text(entry.reprfileloc.message, secrets)
+    if (
+        hasattr(entry, "reprfuncargs")
+        and entry.reprfuncargs
+        and hasattr(entry.reprfuncargs, "args")
+    ):
+        if isinstance(entry.reprfuncargs.args, (list, tuple)):
+            entry.reprfuncargs.args = [
+                (str(name), scrub_text(str(val), secrets)) for name, val in entry.reprfuncargs.args
+            ]
 
 
 def _scrub_longrepr_in_place(longrepr: Any, secrets: Iterable[str]) -> None:
@@ -176,6 +230,10 @@ def _scrub_longrepr_in_place(longrepr: Any, secrets: Iterable[str]) -> None:
             (title, scrub_text(content, secrets), sep) for title, content, sep in longrepr.sections
         ]
 
+    # 5. Update CollectErrorRepr (holds collection failure message in longrepr attribute)
+    if hasattr(longrepr, "longrepr") and isinstance(longrepr.longrepr, str):
+        longrepr.longrepr = scrub_text(longrepr.longrepr, secrets)
+
 
 def _scrub_longrepr(report: Any, secrets: Iterable[str]) -> None:
     """Scrub report.longrepr without degrading structured reports that hold no secret."""
@@ -188,16 +246,27 @@ def _scrub_longrepr(report: Any, secrets: Iterable[str]) -> None:
         # Report holds no secret: leave longrepr completely untouched
         return
 
+    # Handle skip/xfail tuples: (path, lineno, reason)
+    if isinstance(report.longrepr, tuple) and len(report.longrepr) == 3:
+        report.longrepr = (
+            report.longrepr[0],
+            report.longrepr[1],
+            scrub_text(str(report.longrepr[2]), secrets),
+        )
+        return
+
     # A secret is present: try in-place modification first to preserve reprcrash and structure
     if not isinstance(report.longrepr, str):
         try:
             _scrub_longrepr_in_place(report.longrepr, secrets)
-            return
         except Exception:
             pass
 
-    # Fall back to string replacement only if in-place modification is impossible
-    report.longrepr = scrub_text(longrepr_text, secrets)
+    # Verify and fall back: re-render and, if any secret is still present,
+    # replace report.longrepr with the scrubbed string.
+    rendered_text = getattr(report, "longreprtext", None) or str(report.longrepr)
+    if any(secret in rendered_text for secret in secrets):
+        report.longrepr = scrub_text(rendered_text, secrets)
 
 
 def scrub_report(report: Any, secrets: Iterable[str]) -> None:
@@ -227,8 +296,16 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]) -> Iterator[None
     """Scrub secrets from test reports (failure longrepr and all captured sections)."""
     outcome = yield
     report: TestReport = outcome.get_result()
-    secrets = collect_secret_values(os.environ, extra_secrets=_SESSION_SECRETS)
-    scrub_report(report, secrets)
+    accumulated: set[str] = (
+        item.stash.get(_ITEM_SECRETS_KEY, set()) if hasattr(item, "stash") else set()
+    )
+    current_secrets = collect_secret_values(
+        os.environ, extra_secrets=_SESSION_SECRETS | accumulated
+    )
+    accumulated |= current_secrets
+    if hasattr(item, "stash"):
+        item.stash[_ITEM_SECRETS_KEY] = accumulated
+    scrub_report(report, accumulated)
 
 
 @pytest.hookimpl(hookwrapper=True)

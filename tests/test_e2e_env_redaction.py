@@ -291,3 +291,125 @@ def test_subprocess_leak(monkeypatch):
     output = result.stdout.str()
     assert "sk-fake-1234567890abcd" not in output
     assert "***" in output
+
+
+def test_secret_scrub_plugin_is_active(request: pytest.FixtureRequest) -> None:
+    assert request.config.pluginmanager.has_plugin("tests._secret_scrub")
+
+
+def test_collection_import_error_masks_secrets(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setenv("MY_API_KEY", "super_secret_import_token_12345")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+import os
+raise ImportError("driver failed for " + os.environ["MY_API_KEY"])
+""")
+    result = pytester.runpytest_subprocess()
+    output = result.stdout.str()
+    assert "super_secret_import_token_12345" not in output
+    assert "***" in output
+
+
+def test_skip_reason_masks_secrets_under_rs(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setenv("MY_API_KEY", "secret_skip_token_12345678")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+import os, pytest
+def test_s():
+    pytest.skip("backend unreachable with key " + os.environ["MY_API_KEY"])
+""")
+    result = pytester.runpytest_subprocess("-rs")
+    output = result.stdout.str()
+    assert "secret_skip_token_12345678" not in output
+    assert "***" in output
+
+
+def test_funcargs_masks_secrets_without_showlocals(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    monkeypatch.setenv("MY_API_KEY", "super_secret_funcarg_token_12345")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+import os
+def helper(env):
+    raise RuntimeError("boom")
+def test_a():
+    helper({"PATH": "x", "MY_API_KEY": os.environ["MY_API_KEY"]})
+""")
+    result = pytester.runpytest_subprocess()
+    output = result.stdout.str()
+    assert "super_secret_funcarg_token_12345" not in output
+    assert "***" in output
+
+
+def test_truncated_gh_token_under_showlocals_shows_no_fragment(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    token = "ghp_" + "1234567890" * 3 + "abcdef"
+    assert len(token) == 40
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile(f"""
+def test_trunc(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", {token!r})
+    d = {{'a' * 88: '1', 'tok': {token!r}, 'b' * 112: '2'}}
+    assert False
+""")
+    result = pytester.runpytest_subprocess("-l")
+    output = result.stdout.str()
+    for i in range(len(token) - 3):
+        assert token[i : i + 4] not in output
+
+
+def test_late_secrets_at_teardown_masked_in_junitxml(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+def test_j(monkeypatch):
+    monkeypatch.setenv("MY_API_KEY", "late_secret_value_0987654321")
+    print("token=late_secret_value_0987654321")
+""")
+    xml_path = pytester.path / "junit.xml"
+    result = pytester.runpytest_subprocess(
+        f"--junitxml={xml_path}", "-o", "junit_logging=system-out"
+    )
+    assert result.ret == 0
+    xml_content = xml_path.read_text(encoding="utf-8")
+    assert "late_secret_value_0987654321" not in xml_content
+    assert "token=***" in xml_content
+
+
+def test_google_application_credentials_path_not_masked(
+    pytester: pytest.Pytester, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    creds_file = tmp_path / "creds.json"
+    creds_file.write_text('{"type": "service_account"}', encoding="utf-8")
+    creds_path_str = str(creds_file)
+
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile(f"""
+import os
+def test_creds_path(monkeypatch):
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", {creds_path_str!r})
+    p = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+    assert False, "missing file under " + p
+""")
+    result = pytester.runpytest_subprocess()
+    output = result.stdout.str()
+    assert creds_path_str in output
