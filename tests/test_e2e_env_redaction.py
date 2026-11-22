@@ -1,8 +1,7 @@
-"""Regression test for #1382: e2e environment mapping conceals secret values."""
+"""Regression test for #1382: e2e environment mapping and failure report redaction."""
 
 from __future__ import annotations
 
-import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -12,6 +11,8 @@ import pytest
 
 from tests.e2e import conftest as e2e_conftest
 from tests.e2e.conftest import RedactedEnv
+
+pytest_plugins = ["pytester"]
 
 _DUMMY_SECRET_NAME = "GFLOW_TEST_SECRET"
 _DUMMY_SECRET_VAL = "sk-fake-1234567890"
@@ -87,55 +88,20 @@ def test_redacted_env_union_preserves_redaction() -> None:
     assert extra_secret not in repr(mutable)
 
 
-def test_no_unredacted_e2e_env_rebuilds_in_e2e_tests() -> None:
-    e2e_dir = Path(__file__).parent / "e2e"
-    violations: list[str] = []
+def test_redacted_env_union_operands_and_values() -> None:
+    original = RedactedEnv({"KEY": "val"})
 
-    for py_path in sorted(e2e_dir.rglob("*.py")):
-        if py_path.name in ("conftest.py", "_redacted_env.py"):
-            continue
-        source = py_path.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(py_path))
+    # Non-mapping operands return NotImplemented / raise TypeError
+    with pytest.raises(TypeError):
+        _ = original | 123  # type: ignore[operator]
+    with pytest.raises(TypeError):
+        _ = 123 | original  # type: ignore[operator]
+    with pytest.raises(TypeError):
+        original |= 123  # type: ignore[operator]
 
-        lines = source.splitlines()
-        for idx, line in enumerate(lines, 1):
-            if "dict(e2e_env" in line:
-                violations.append(
-                    f"{py_path.name}:{idx}: dict(e2e_env) rebuilds a plain dict; use e2e_env.copy()"
-                )
-            if "{**e2e_env" in line:
-                violations.append(
-                    f"{py_path.name}:{idx}: {{**e2e_env}} rebuilds a plain dict; "
-                    "use e2e_env | {...}"
-                )
-
-        # Detect comprehensions over e2e_env.items() not wrapped in RedactedEnv(...)
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.DictComp):
-                    for gen in child.generators:
-                        if (
-                            isinstance(gen.iter, ast.Call)
-                            and isinstance(gen.iter.func, ast.Attribute)
-                            and gen.iter.func.attr == "items"
-                            and isinstance(gen.iter.func.value, ast.Name)
-                            and gen.iter.func.value.id == "e2e_env"
-                        ):
-                            is_wrapped = (
-                                isinstance(node, ast.Call)
-                                and isinstance(node.func, ast.Name)
-                                and node.func.id == "RedactedEnv"
-                            )
-                            if not is_wrapped:
-                                violations.append(
-                                    f"{py_path.name}:{child.lineno}: unredacted comprehension over "
-                                    "e2e_env.items(); wrap in RedactedEnv({...})"
-                                )
-
-    assert not violations, (
-        f"Found {len(violations)} site(s) rebuilding a plain dict from e2e_env, which leaks "
-        f"secrets in pytest locals:\n" + "\n".join(f"  - {v}" for v in violations)
-    )
+    # Does not coerce values to str
+    merged = original | {"INT_KEY": 12345}  # type: ignore[dict-item]
+    assert merged["INT_KEY"] == 12345
 
 
 def test_e2e_env_fixture_redacts_secrets_in_repr_and_str(
@@ -168,3 +134,40 @@ def test_e2e_env_works_as_subprocess_env(monkeypatch: pytest.MonkeyPatch, tmp_pa
         check=True,
     )
     assert proc.stdout.strip() == _DUMMY_SECRET_VAL
+
+
+def test_pytest_report_scrubber_masks_env_secrets_in_showlocals(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.syspathinsert()
+    pytester.makepyfile("""
+import os
+
+def test_leak():
+    os.environ["GFLOW_TEST_API_KEY"] = "sk-fake-1234567890abcd"
+    env = {**os.environ}
+    print("captured secret: sk-fake-1234567890abcd")
+    assert False
+""")
+    result = pytester.runpytest("-l", "-p", "tests._secret_scrub")
+    output = result.stdout.str()
+    assert "sk-fake-1234567890abcd" not in output
+    assert "***" in output
+
+
+def test_pytest_report_scrubber_masks_subprocess_env_list_in_showlocals(
+    pytester: pytest.Pytester,
+) -> None:
+    pytester.syspathinsert()
+    pytester.makepyfile("""
+import os
+import subprocess
+
+def test_subprocess_leak():
+    os.environ["GFLOW_TEST_API_KEY"] = "sk-fake-1234567890abcd"
+    subprocess.run(["definitely-not-a-program"], env=dict(os.environ))
+""")
+    result = pytester.runpytest("-l", "-p", "tests._secret_scrub")
+    output = result.stdout.str()
+    assert "sk-fake-1234567890abcd" not in output
+    assert "***" in output

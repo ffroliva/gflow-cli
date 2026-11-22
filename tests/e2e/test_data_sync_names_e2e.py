@@ -59,18 +59,16 @@ _SYNC_PROJECT_ENV = "GFLOW_CLI_E2E_SYNC_PROJECT"
 def _run_gflow(args: list[str], env: RedactedEnv) -> subprocess.CompletedProcess[str]:
     """Run `gflow <args>` with JSON structlog on stderr so events are assertable.
 
-    ``GFLOW_CLI_HOME`` is dropped so the child resolves the REAL platformdirs
-    home where `gflow auth login` planted the live session; ``e2e_env``'s
-    isolated ``GFLOW_CLI_DB_PATH`` is kept — the catalog under test is the one
-    this test seeds itself.
+    ``e2e_env`` already restores the REAL platformdirs home where `gflow auth login`
+    planted the live session; ``e2e_env``'s isolated ``GFLOW_CLI_DB_PATH`` is kept —
+    the catalog under test is the one this test seeds itself.
     """
-    child_env = RedactedEnv({k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"})
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
         text=True,
         check=False,
-        env=child_env | {"GFLOW_CLI_LOG_FORMAT": "json"},
+        env=env | {"GFLOW_CLI_LOG_FORMAT": "json"},
     )
 
 

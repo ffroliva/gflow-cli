@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The `e2e_env` fixture conceals environment values in test failure reports ([#1382](https://github.com/ffroliva/gflow-cli/issues/1382)).** When an e2e test taking `e2e_env` fails, pytest prints fixture values and locals, which previously printed every environment variable and API token in cleartext. `e2e_env` now yields a `RedactedEnv` mapping whose `__repr__`, `__str__`, `.copy()`, and `|` union operations mask values as `'***'` while retaining exact mapping behavior for `subprocess.run(env=...)`. Mapping views (`.items()`, `.values()`) and equality assertion diffs are not covered, so consumers must not rebuild a plain dict from `e2e_env` (enforced across `tests/e2e/` by an offline guard test).
+- **Environment secrets are masked in pytest test failure reports ([#1382](https://github.com/ffroliva/gflow-cli/issues/1382)).** When a test fails under `-l`/`--showlocals` or prints environment values, pytest failure reports previously printed environment variables, credentials, and API tokens in cleartext. A test report scrubber hook in `tests/conftest.py` now masks secret-looking environment variable values in failure reports (tracebacks, `-l` locals, captured stdout/stderr/log) with `'***'` across all test runs. As defense-in-depth, `e2e_env` yields a `RedactedEnv` mapping whose `__repr__`, `__str__`, `.copy()`, and `|` union operations conceal variable values.
 
 
 ## [0.104.0] — 2026-11-22

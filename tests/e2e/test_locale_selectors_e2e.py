@@ -12,7 +12,7 @@ broken — this file closes that loop.
 
 **How to run manually**::
 
-    GFLOW_CLI_LOCALE=de-DE GFLOW_CLI_E2E_RUN_LOCALE_SMOKE=1 \\
+    GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_LOCALE=de-DE GFLOW_CLI_E2E_RUN_LOCALE_SMOKE=1 \\
         .venv/Scripts/python.exe -m pytest -q \\
         tests/e2e/test_locale_selectors_e2e.py -s
 
@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.conftest import RedactedEnv
+from tests.e2e._redacted_env import RedactedEnv
 
 _LIVE_SMOKE_ENABLED = os.environ.get("GFLOW_CLI_E2E_RUN_LOCALE_SMOKE") == "1"
 

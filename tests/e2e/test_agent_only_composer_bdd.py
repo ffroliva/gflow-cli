@@ -43,15 +43,14 @@ def world() -> dict[str, Any]:
 
 
 def _gflow(args: list[str], env: RedactedEnv, timeout: int) -> subprocess.CompletedProcess[str]:
-    # Dropping GFLOW_CLI_HOME restores the real profile home (#745).
-    child = RedactedEnv({k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"})
+    # `e2e_env` fixture already restores the real profile home (#745).
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
         text=True,
         check=False,
         timeout=timeout,
-        env=child | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
+        env=env | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
     )
 
 

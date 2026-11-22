@@ -32,6 +32,9 @@ import structlog
 # both tests/services/test_doctor.py and tests/cli/test_cli_doctor.py.
 from tests.fixtures.doctor_env import healthy_doctor_env  # noqa: F401
 
+# Report scrubber plugin to mask environment secrets in failure reports (#1382).
+pytest_plugins = ["tests._secret_scrub"]
+
 
 @pytest.fixture(scope="session")
 def assembly_media(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:

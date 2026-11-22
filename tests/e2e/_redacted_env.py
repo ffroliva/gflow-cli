@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from collections.abc import Mapping
 
 
 class RedactedEnv(dict[str, str]):
@@ -24,9 +21,11 @@ class RedactedEnv(dict[str, str]):
 
     Non-guarantees:
       - Views (``.items()``, ``.values()``) and equality assertion diffs yield
-        unmasked values if converted to a plain ``dict``. Subprocess environments
-        and test helpers must not unpack or rebuild a plain ``dict`` from
-        ``e2e_env``. An offline guard test enforces this across ``tests/e2e/``.
+        unmasked values if converted to a plain ``dict``. Top-level pytest
+        failure reports (tracebacks, ``-l`` locals, captured output) mask
+        secret-looking environment values via the test report scrubber hook
+        in ``tests/conftest.py``; ``RedactedEnv`` provides defense-in-depth by
+        keeping the fixture's own repr and string formatting masked.
     """
 
     def __repr__(self) -> str:
@@ -35,16 +34,22 @@ class RedactedEnv(dict[str, str]):
     def copy(self) -> RedactedEnv:
         return RedactedEnv(self)
 
-    def __or__(self, other: Mapping[str, Any]) -> RedactedEnv:  # pyright: ignore[reportIncompatibleMethodOverride]
+    def __or__(self, other: object) -> RedactedEnv:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if not isinstance(other, Mapping):
+            return NotImplemented
         res = RedactedEnv(self)
-        res.update({k: str(v) for k, v in other.items()})
+        res.update(other)
         return res
 
-    def __ror__(self, other: Mapping[str, Any]) -> RedactedEnv:  # pyright: ignore[reportIncompatibleMethodOverride]
-        res = RedactedEnv({k: str(v) for k, v in other.items()})
+    def __ror__(self, other: object) -> RedactedEnv:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        res = RedactedEnv(other)
         res.update(self)
         return res
 
-    def __ior__(self, other: Mapping[str, Any]) -> RedactedEnv:  # pyright: ignore[reportIncompatibleMethodOverride]
-        self.update({k: str(v) for k, v in other.items()})
+    def __ior__(self, other: object) -> RedactedEnv:  # pyright: ignore[reportIncompatibleMethodOverride]
+        if not isinstance(other, Mapping):
+            return NotImplemented
+        self.update(other)
         return self

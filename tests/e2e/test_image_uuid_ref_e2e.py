@@ -70,13 +70,10 @@ def _served(events: list[str]) -> dict[str, str]:
 def _run_gflow(args: list[str], env: RedactedEnv) -> subprocess.CompletedProcess[str]:
     """Run `gflow <args>` with JSON structlog on stderr so events are assertable.
 
-    ``GFLOW_CLI_HOME`` is dropped so the child resolves the REAL platformdirs
-    home where `gflow auth login` planted the live session (the autouse
-    ``_isolate_settings`` fixture points it at a temp dir, which has no
-    profiles). ``e2e_env``'s isolated ``GFLOW_CLI_DB_PATH`` is kept: the
-    catalog these tests read is the one they populate themselves.
+    ``e2e_env`` already restores the REAL platformdirs home where `gflow auth login`
+    planted the live session; ``e2e_env``'s isolated ``GFLOW_CLI_DB_PATH`` is kept:
+    the catalog these tests read is the one they populate themselves.
     """
-    child_env = RedactedEnv({k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"})
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
@@ -84,7 +81,7 @@ def _run_gflow(args: list[str], env: RedactedEnv) -> subprocess.CompletedProcess
         check=False,
         # INFO: the events asserted below are info-level, and a command logs WARNING and
         # above by default since #1041.
-        env=child_env | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
+        env=env | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
     )
 
 
