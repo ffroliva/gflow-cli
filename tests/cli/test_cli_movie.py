@@ -382,7 +382,7 @@ class TestRunMovieOrchestrator:
         )
         error.quoted_credits = 5
 
-        _handle_scene_failure(error, scene, "prompt", (), context, [], [])
+        _handle_scene_failure(error, scene, "prompt", (), context, [])
 
         assert error.charged == "no"
         assert error.retryable is True

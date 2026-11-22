@@ -40,7 +40,7 @@ def test_movie_no_max_credits_clears_environment_default(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_movie_second_character_failure_reconciles_first_character_charge(
+async def test_movie_second_character_failure_stays_uncharged(
     tmp_path: Path,
 ) -> None:
     from gflow_cli import cli_movie
@@ -59,7 +59,7 @@ async def test_movie_second_character_failure_reconciles_first_character_charge(
         scenes=(),
     )
     state = MovieState(title="T", project="p")
-    drift = FlowAgentUiError("face selector drift")
+    drift = FlowAgentUiError("face selector drift", charged="no")
     client_cm = MagicMock()
     client_cm.__aenter__ = AsyncMock(return_value=client_cm)
     client_cm.__aexit__ = AsyncMock(return_value=False)
@@ -89,13 +89,13 @@ async def test_movie_second_character_failure_reconciles_first_character_charge(
                 continue_on_error=False,
             )
 
-    assert caught.value.charged == "yes"
-    assert caught.value.resolved_next_action() == "reconcile"
-    assert is_retryable(caught.value) is False
+    assert caught.value.charged == "no"
+    assert caught.value.resolved_next_action() == "retry"
+    assert is_retryable(caught.value) is True
 
 
 @pytest.mark.asyncio
-async def test_movie_scene_drift_reconciles_a_billed_character(tmp_path: Path) -> None:
+async def test_movie_scene_drift_after_character_keeps_unbilled_status(tmp_path: Path) -> None:
     from gflow_cli import cli_movie
     from gflow_cli.composition import Character, Scene, StyleSpec
     from gflow_cli.errors import UiSelectorDriftError
@@ -140,7 +140,7 @@ async def test_movie_scene_drift_reconciles_a_billed_character(tmp_path: Path) -
                 continue_on_error=False,
             )
 
-    assert caught.value.charged == "yes"
+    assert caught.value.charged == "no"
     assert caught.value.resolved_next_action() == "none"
 
 

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Multi-step failures report billing and retry guidance accurately ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** Prior billed work disables retries and requires reconciliation across character creation, movie runs, image batches, and chained video extensions; resumed character workflows count only generations from the current invocation.
+- **Multi-step video failures report billing and retry guidance accurately ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** Prior billed video work disables retries and requires reconciliation across movie scenes and chained video extensions; character creation and image batches remain uncharged.
 
 ## [0.104.0] — 2026-11-22
 

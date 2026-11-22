@@ -789,15 +789,14 @@ def test_nothing_submitted_withholds_the_claim_once_a_submit_left() -> None:
     assert info.value.charged == "maybe"
 
 
-def test_batch_partial_error_reports_billed_partial_results() -> None:
+def test_batch_partial_error_keeps_free_image_partials_uncharged() -> None:
     from gflow_cli.errors import BatchPartialError, GFlowError
 
     error = BatchPartialError(
         partial_results=(object(),), cause=GFlowError("later prompt failed", charged="no")
     )
 
-    assert error.charged == "yes"
-    assert error.next_action == "reconcile"
+    assert error.charged == "no"
 
 
 def test_batch_partial_error_inherits_cause_charge_without_partial_results() -> None:
@@ -827,13 +826,13 @@ def test_marking_prior_work_billed_disables_retry_for_retryable_error() -> None:
     )
 
 
-def test_batch_partial_maybe_charged_retry_cause_reconciles() -> None:
+def test_batch_partial_maybe_charged_cause_keeps_its_retry_advice() -> None:
     from gflow_cli.errors import BatchPartialError, TransportTimeoutError, is_retryable
 
     cause = TransportTimeoutError("prompt 0 timed out", charged="maybe")
     error = BatchPartialError(cause=cause)
-    assert error.resolved_next_action() == "reconcile"
-    assert is_retryable(error) is False
+    assert error.resolved_next_action() == cause.resolved_next_action()
+    assert is_retryable(error) is is_retryable(cause)
 
 
 def test_mark_prior_work_preserves_non_retry_advice_and_cap_hint() -> None:

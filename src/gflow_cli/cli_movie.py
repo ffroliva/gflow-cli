@@ -548,14 +548,11 @@ def _handle_scene_failure(
     reference_entities: tuple[str, ...],
     context: MovieRunContext,
     run_media_ids: list[str] | None,
-    run_character_ids: list[str] | None,
 ) -> None:
     scene_media_ids = getattr(exc, "completed_media_ids", [])
     billed_quote = getattr(exc, "quoted_credits", None)
-    prior_work_billed = (
-        bool(set(run_media_ids or []) - set(scene_media_ids))
-        or bool(run_character_ids)
-        or (bool(scene_media_ids) and not isinstance(exc, CreditCapExceededError))
+    prior_work_billed = bool(set(run_media_ids or []) - set(scene_media_ids)) or (
+        bool(scene_media_ids) and not isinstance(exc, CreditCapExceededError)
     )
     if run_media_ids is not None:
         run_media_ids.extend(
@@ -598,7 +595,6 @@ async def _run_one_scene(
     context: MovieRunContext,
     generated_any: bool,
     run_media_ids: list[str] | None = None,
-    run_character_ids: list[str] | None = None,
     continue_on_error: bool,
 ) -> Path | None:
     """Generate one scene clip and persist its state.
@@ -651,7 +647,6 @@ async def _run_one_scene(
             reference_entities,
             context,
             run_media_ids,
-            run_character_ids or [],
         )
         if continue_on_error and not isinstance(exc, CreditCapExceededError):
             console.print(f"    [red]Scene failed:[/red] {escape(str(exc))}")
@@ -705,7 +700,7 @@ async def _run_movie(
             # CHARACTER entity (face + optional body + optional embedded voice)
             # whose id is later attached as a reference to R2V scenes.
             # ------------------------------------------------------------------
-            run_character_ids = await _create_movie_characters(
+            await _create_movie_characters(
                 client=client,
                 recorder=recorder,
                 manifest=manifest,
@@ -760,7 +755,6 @@ async def _run_movie(
                     context=context,
                     generated_any=generated_any,
                     run_media_ids=run_media_ids,
-                    run_character_ids=run_character_ids,
                     continue_on_error=continue_on_error,
                 )
                 if local_path is not None:
@@ -803,7 +797,7 @@ async def _create_movie_characters(
     state_path: Path,
     profile_name: str,
     profile_dir: Path,
-) -> list[str]:
+) -> None:
     entity_chars = [
         char
         for char in manifest.characters.values()
@@ -811,26 +805,18 @@ async def _create_movie_characters(
     ]
     if entity_chars:
         console.print("\n[bold]Characters[/bold]")
-    billed_character_names: list[str] = []
     for char in entity_chars:
         console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
-        try:
-            generated_new = await _create_character(
-                client=client,
-                recorder=recorder,
-                char=char,
-                project_id=manifest.project,
-                profile_name=profile_name,
-                profile_dir=profile_dir,
-                state=state,
-                state_path=state_path,
-            )
-        except Exception as exc:
-            mark_prior_work_billed(exc, bool(billed_character_names))
-            raise
-        if generated_new:
-            billed_character_names.append(char.name)
-    return billed_character_names
+        await _create_character(
+            client=client,
+            recorder=recorder,
+            char=char,
+            project_id=manifest.project,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            state=state,
+            state_path=state_path,
+        )
 
 
 async def _create_character(
@@ -843,7 +829,7 @@ async def _create_character(
     profile_dir: Path,
     state: MovieState,
     state_path: Path,
-) -> bool:
+) -> None:
     """Create one native (entity-identity) character and persist its state.
 
     Builds the face (slot 0) and optional body (slot 1) image requests, runs
@@ -904,7 +890,6 @@ async def _create_character(
             label = f"slot{slot}"
         path_display = p or "(unavailable)"
         console.print(f"    {label}: {path_display}")
-    return result.generated_new
 
 
 def _resolve_entities(

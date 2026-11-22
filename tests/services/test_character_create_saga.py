@@ -443,8 +443,8 @@ async def test_wire_format_error_on_body_preserves_face_partial() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pre_submit_drift_on_body_reconciles_face_charge() -> None:
-    """A body-slot pre-submit failure follows a billed face generation."""
+async def test_pre_submit_drift_on_body_keeps_image_run_uncharged() -> None:
+    """Character image generation is free, including a completed face slot."""
 
     async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
         if kwargs.get("image_reference_index") == 0:
@@ -456,13 +456,31 @@ async def test_pre_submit_drift_on_body_reconciles_face_charge() -> None:
     with pytest.raises(UiSelectorDriftError) as info:
         await character_create(client, _make_recorder(), **_saga_kwargs(body=BODY_REQ))
 
-    assert info.value.charged == "yes"
+    assert info.value.charged == "no"
     assert info.value.next_action == "none"
     client.delete_characters.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_commit_failure_after_generation_is_marked_billed() -> None:
+async def test_body_timeout_after_face_remains_retryable() -> None:
+    from gflow_cli.errors import TransportTimeoutError, is_retryable
+
+    async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
+        if kwargs.get("image_reference_index") == 0:
+            return (WF0, M0, "/tmp/face_slot0.png")
+        raise TransportTimeoutError("body image request timed out")
+
+    client = _make_client()
+    client.generate_character_image = AsyncMock(side_effect=_generate_side_effect)
+    with pytest.raises(TransportTimeoutError) as info:
+        await character_create(client, _make_recorder(), **_saga_kwargs(body=BODY_REQ))
+
+    assert info.value.charged == "maybe"
+    assert is_retryable(info.value) is True
+
+
+@pytest.mark.asyncio
+async def test_commit_failure_after_image_generation_stays_uncharged() -> None:
     from gflow_cli.errors import GFlowError
 
     client = _make_client()
@@ -471,11 +489,7 @@ async def test_commit_failure_after_generation_is_marked_billed() -> None:
     with pytest.raises(GFlowError) as info:
         await character_create(client, _make_recorder(), **_saga_kwargs())
 
-    assert (info.value.charged, info.value.next_action, info.value.retryable) == (
-        "yes",
-        "none",
-        None,
-    )
+    assert info.value.charged == "no"
 
 
 # ---------------------------------------------------------------------------
