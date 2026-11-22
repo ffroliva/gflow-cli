@@ -1304,7 +1304,7 @@ def test_an_in_place_extend_marks_stale_local_copy_and_records_new_download(tmp_
         assert asset_after is not None
 
         old_copy = next(f for f in asset_after.local_files if f.path == pre_file.resolve())
-        assert old_copy.sha256 is None
+        assert old_copy.sha256 == real_old_sha
         assert verified_local_path(old_copy) is None
 
         new_copy = next(f for f in asset_after.local_files if f.path == new_file.resolve())
@@ -1379,3 +1379,87 @@ def test_record_completed_video_leaves_started_extend_completed_with_local_file(
         assert asset_done.metadata_json == {"unit_cost": 10}
         assert len(asset_done.local_files) == 1
         assert verified_local_path(asset_done.local_files[0]) == out_file.resolve()
+
+
+def test_record_extended_in_place_with_cloud_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1299 Item 1: an in-place extend saved to cloud storage must record its cloud provider
+    and cloud URI in local_files rather than treating it as a local file with path 'gs://...'."""
+    from gflow_cli.storage import CloudStorageInfo
+
+    cloud_target = tmp_path / "gs_bucket_clip.mp4"
+    cloud_info = CloudStorageInfo(provider="gcs", uri="gs://my-bucket/extended.mp4")
+
+    monkeypatch.setattr(
+        "gflow_cli.storage.cloud_info_from_path",
+        lambda p: cloud_info if p == cloud_target else None,
+    )
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+            local_path=cloud_target,
+        )
+        row = store.conn.execute(
+            "SELECT storage_provider, cloud_uri, path FROM local_files WHERE asset_id='src'"
+        ).fetchone()
+        assert row is not None
+        assert row["storage_provider"] == "gcs"
+        assert row["cloud_uri"] == "gs://my-bucket/extended.mp4"
+
+
+def test_in_place_extend_keeps_doctor_clean_and_supersedes_stale_copy(tmp_path: Path) -> None:
+    """#1299 Item 2 & 7: in-place extend must mark stale copies without NULLing sha256 so doctor
+    reports no sha256_null finding, and verified_local_path returns only the new file."""
+    import hashlib
+
+    from gflow_cli.data.models import LocalFileRecord
+    from gflow_cli.data.repository import verified_local_path
+    from gflow_cli.services.doctor import _check_sha256_null
+
+    pre_file = tmp_path / "pre.mp4"
+    pre_file.write_bytes(b"initial-segment")
+    pre_sha = hashlib.sha256(b"initial-segment").hexdigest()
+
+    new_file = tmp_path / "grown.mp4"
+    new_file.write_bytes(b"grown-segment-data")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-old",
+                profile_name="p",
+                asset_id="src",
+                path=pre_file,
+                media_type="video/mp4",
+                bytes=len(b"initial-segment"),
+                sha256=pre_sha,
+            )
+        )
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+            local_path=new_file,
+        )
+
+        findings = _check_sha256_null(store.conn)
+        assert findings == [], f"doctor flagged: {findings}"
+
+        asset = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
+        assert asset is not None
+        old_copy = next(f for f in asset.local_files if f.id == "lf-old")
+        assert old_copy.sha256 == pre_sha
+        assert verified_local_path(old_copy) is None
+
+        new_copy = next(f for f in asset.local_files if f.path == new_file.resolve())
+        assert verified_local_path(new_copy) == new_file.resolve()

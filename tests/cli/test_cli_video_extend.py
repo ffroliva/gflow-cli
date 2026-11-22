@@ -692,6 +692,9 @@ async def test_the_migrated_session_reports_one_video_result(
         def record_started_extend(self, *, started: Any, aspect: str, **_kw: Any) -> None:
             rows.append((started.media_id, aspect))
 
+        def record_completed_video(self, *args: Any, **_kw: Any) -> None:
+            pass
+
     async def _go() -> None:
         await _extend_migrated_session(
             profile_name="p",
@@ -740,7 +743,9 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
         def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
             sources.append(source_media_id)
 
-        def record_extended_in_place(self, *args: Any) -> None:
+        def record_extended_in_place(
+            self, *args: Any, local_path: Path | None = None, **_kw: Any
+        ) -> None:
             notes.append(args)
 
     with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
@@ -1339,7 +1344,7 @@ async def test_migrated_session_in_place_drives_write_and_read_paths(
         assert asset is not None
 
         old_lf = next(f for f in asset.local_files if f.path == pre_file.resolve())
-        assert old_lf.sha256 is None
+        assert old_lf.sha256 == pre_sha
         assert verified_local_path(old_lf) is None
 
         new_lf = next(f for f in asset.local_files if f.path == new_file.resolve())
@@ -1356,3 +1361,111 @@ async def test_migrated_session_in_place_drives_write_and_read_paths(
         videos = list_videos(db_path=db_path, profile="p", limit=10, offset=0)
         row = next(v for v in videos if v.media_id == MEDIA)
         assert row.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+
+
+def test_new_id_extend_fallback_preserves_aspect_and_model(tmp_path: Path) -> None:
+    """#1299 Item 3: new-id fallback when no submit row exists must record the extend's real
+    outcome.aspect (e.g. 9:16) and outcome.model_key rather than defaulting to 16:9 and None."""
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video_reporting import _record_migrated_extend
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    out_file = tmp_path / "extended_9_16.mp4"
+    out_file.write_bytes(b"extended-9-16-bytes")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("p", tmp_path)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        outcome = ExtendOutcome(
+            record=GenerationRecord(
+                workflow_id="wf-916",
+                project_id=PROJECT,
+                media_id="media-916",
+                status=1,
+            ),
+            video=b"extended-9-16-bytes",
+            model_key="veo_cookie_extend_portrait",
+            aspect="9:16",
+            scene_id=None,
+        )
+        _record_migrated_extend(
+            recorder,
+            out_file,
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            project_id=PROJECT,
+            outcome=outcome,
+        )
+        row = store.conn.execute(
+            "SELECT aspect_ratio, model FROM assets WHERE flow_media_id='media-916'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "9:16"
+        assert row[1] == "veo_cookie_extend_portrait"
+
+
+def test_new_id_extend_failure_or_timeout_transitions_pending_to_terminal(tmp_path: Path) -> None:
+    """#1299 Item 5: a new-id extend that fails or times out after billing (target is None)
+    must move its submit-time 'pending' row to a terminal status."""
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video_reporting import _record_migrated_extend
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id=PROJECT,
+            aspect="16:9",
+            started=ExtendStarted(
+                media_id="failed-ext-media",
+                workflow_id="wf-fail-1",
+                model_key="veo_extend_lite",
+                unit_cost=10,
+            ),
+        )
+        row_pending = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id='failed-ext-media'"
+        ).fetchone()
+        assert row_pending is not None
+        assert row_pending[0] == "pending"
+
+        failed_outcome = ExtendOutcome(
+            record=GenerationRecord(
+                workflow_id="wf-fail-1",
+                project_id=PROJECT,
+                media_id="failed-ext-media",
+                status=4,  # failed / non-done status
+            ),
+            video=None,
+            model_key="veo_extend_lite",
+            aspect="16:9",
+            scene_id=None,
+        )
+        _record_migrated_extend(
+            recorder,
+            target=None,
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            project_id=PROJECT,
+            outcome=failed_outcome,
+        )
+
+        row_updated = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id='failed-ext-media'"
+        ).fetchone()
+        assert row_updated is not None
+        assert row_updated[0] != "pending"
+        assert row_updated[0] == "MEDIA_GENERATION_STATUS_FAILED"

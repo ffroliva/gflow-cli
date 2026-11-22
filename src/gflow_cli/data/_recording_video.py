@@ -211,19 +211,25 @@ class VideoRecordingMixin(RecorderCore):
         workflow_id: str,
         model_key: str | None,
         local_path: Path | None = None,
+        cloud_storage_info: CloudStorageInfo | None = None,
     ) -> None:
         """Note a finished extend that grew ``media_id`` in place (#1184). A clip the
         catalog does not hold (made in Flow's UI, or elsewhere) is left unrecorded."""
         self.repository.note_asset_extended(
             profile_name, media_id, model_key=model_key, workflow_id=workflow_id
         )
-        if local_path is not None:
+        if local_path is not None or cloud_storage_info is not None:
+            if cloud_storage_info is None and local_path is not None:
+                from gflow_cli.storage import cloud_info_from_path
+
+                cloud_storage_info = cloud_info_from_path(local_path)
             self._persist_completed_video_file(
                 repo=self.repository,
                 profile_name=profile_name,
                 flow_media_id=media_id,
                 local_path=local_path,
-                cloud_storage_info=None,
+                cloud_storage_info=cloud_storage_info,
+                supersede_existing=True,
             )
 
     def record_started_video(
@@ -361,6 +367,7 @@ class VideoRecordingMixin(RecorderCore):
         flow_media_id: str,
         local_path: Path | None,
         cloud_storage_info: CloudStorageInfo | None,
+        supersede_existing: bool = False,
     ) -> None:
         """Upsert the local-file row for a downloaded (or cloud-stored) video."""
         asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
@@ -387,6 +394,7 @@ class VideoRecordingMixin(RecorderCore):
                 storage_provider=cloud_storage_info.provider if cloud_storage_info else None,
                 cloud_uri=cloud_storage_info.uri if cloud_storage_info else None,
             ),
+            supersede_existing=supersede_existing,
         )
 
     def record_completed_video(
@@ -397,6 +405,8 @@ class VideoRecordingMixin(RecorderCore):
         request: GenerateVideoRequest | None = None,
         result: VideoResult,
         cloud_storage_info: CloudStorageInfo | None = None,
+        model: str | None = None,
+        aspect_ratio: str | None = None,
     ) -> None:
         # VideoResult carries status.media_id (the flow_media_id) and local_path
 
@@ -427,10 +437,14 @@ class VideoRecordingMixin(RecorderCore):
                     flow_media_generation_id=None,
                     kind=AssetKind.VIDEO,
                     status=result.status.status,
-                    model=request.model.value
-                    if request is not None and request.model is not None
-                    else None,
-                    aspect_ratio=request.aspect.value if request is not None else "16:9",
+                    model=(
+                        request.model.value
+                        if request is not None and request.model is not None
+                        else model
+                    ),
+                    aspect_ratio=(
+                        request.aspect.value if request is not None else (aspect_ratio or "16:9")
+                    ),
                     width=None,
                     height=None,
                     duration_seconds=float(request.duration)

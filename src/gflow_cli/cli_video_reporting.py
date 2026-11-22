@@ -20,6 +20,7 @@ from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 
 if TYPE_CHECKING:
     from gflow_cli.api.video import VideoResult
+    from gflow_cli.data.recorder import OperationRecorder
 
 _logger = structlog.get_logger(__name__)
 
@@ -278,7 +279,7 @@ def _migrated_extend_payload(
 
 
 def _record_migrated_extend(  # noqa: PLR0913
-    recorder: Any,
+    recorder: OperationRecorder | None,
     target: Path | None,
     *,
     profile_name: str,
@@ -288,42 +289,48 @@ def _record_migrated_extend(  # noqa: PLR0913
     outcome: migrated_extend.ExtendOutcome,
 ) -> None:
     """Record completed migrated extend (in-place or new-id) to catalog (#1184, #1299)."""
-    if recorder is None or target is None:
+    if recorder is None:
         return
     try:
+        from gflow_cli.storage import cloud_info_from_path
+
+        cloud_info = cloud_info_from_path(target) if target is not None else None
         if outcome.record.media_id == media_id:
-            try:
+            if target is not None:
                 recorder.record_extended_in_place(
                     profile_name,
                     media_id,
                     outcome.record.workflow_id,
                     outcome.model_key,
                     local_path=target,
+                    cloud_storage_info=cloud_info,
                 )
-            except TypeError:
-                recorder.record_extended_in_place(
-                    profile_name,
-                    media_id,
-                    outcome.record.workflow_id,
-                    outcome.model_key,
-                )
-        elif hasattr(recorder, "record_completed_video"):
+        else:
             from gflow_cli.api.video import VideoResult, VideoStatus
-            from gflow_cli.storage import cloud_info_from_path
 
+            if target is not None:
+                status = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+            else:
+                status = (
+                    "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                    if outcome.record.is_done
+                    else "MEDIA_GENERATION_STATUS_FAILED"
+                )
             recorder.record_completed_video(
                 profile_name=profile_name,
-                _profile_dir=profile_dir,
+                _profile_dir=profile_dir or Path(),
                 result=VideoResult(
                     status=VideoStatus(
                         media_id=outcome.record.media_id,
-                        status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                        status=status,
                     ),
                     local_path=target,
                     project_id=project_id,
                     workflow_id=outcome.record.workflow_id,
                 ),
-                cloud_storage_info=cloud_info_from_path(target),
+                cloud_storage_info=cloud_info,
+                model=outcome.model_key,
+                aspect_ratio=outcome.aspect,
             )
     except DataStoreError as exc:
         _logger.warning("extend_record_failed", error_class=type(exc).__name__)

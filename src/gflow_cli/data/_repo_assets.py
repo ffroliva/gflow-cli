@@ -142,17 +142,6 @@ class AssetsRepo(RepositoryBase):
                 """,
                 (model_key, workflow_id, _utc_now(), profile_name, flow_media_id),
             )
-            self._store.conn.execute(
-                """
-                UPDATE local_files
-                SET sha256 = NULL
-                WHERE profile_name = ?
-                  AND asset_id IN (
-                      SELECT id FROM assets WHERE profile_name = ? AND flow_media_id = ?
-                  )
-                """,
-                (profile_name, profile_name, flow_media_id),
-            )
 
     def set_asset_display_name(
         self,
@@ -406,7 +395,7 @@ class AssetsRepo(RepositoryBase):
         file_rows = self._store.conn.execute(
             """
             SELECT id, profile_name, asset_id, path, media_type, bytes, sha256, created_at,
-                   storage_provider, cloud_uri
+                   storage_provider, cloud_uri, superseded_at
             FROM local_files
             WHERE profile_name = ? AND asset_id = ?
             ORDER BY created_at ASC, id ASC
