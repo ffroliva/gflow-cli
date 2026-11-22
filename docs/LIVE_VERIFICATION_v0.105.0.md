@@ -100,4 +100,7 @@ duration 4, count 1. The file is MP4 (`ftyp mp42`), 1,456,088 bytes, h264 640x36
 
 ## Post-tag evidence
 
-_Filled after the signed tag is published._
+- **Signed tag** `v0.105.0` (tag object `9bb9634e`) on `309ac34c` (SSH signature present).
+- **`Release` workflow** run 44987844098: `build-and-publish` success, `mcp-registry / publish` success.
+- **PyPI:** `gflow-cli 0.105.0`, with `gflow_cli-0.105.0-py3-none-any.whl` (05:05:37Z) and `gflow_cli-0.105.0.tar.gz` (05:05:38Z).
+- **GitHub Release:** https://github.com/ffroliva/gflow-cli/releases/tag/v0.105.0, not a prerelease.
