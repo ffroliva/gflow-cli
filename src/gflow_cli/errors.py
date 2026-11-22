@@ -1562,6 +1562,7 @@ class BatchPartialError(GFlowError):
         remediation_hint: str | None = None,
         partial_results: tuple[Any, ...] = (),
         cause: Exception | None = None,
+        charged: Charged | None = None,
     ) -> None:
         super().__init__(
             detail,
@@ -1572,6 +1573,10 @@ class BatchPartialError(GFlowError):
         )
         self.partial_results = partial_results
         self.cause = cause
+        self.charged = charged or getattr(cause, "charged", "no")
+        if isinstance(cause, GFlowError):
+            self.next_action = cause.resolved_next_action()
+            self.retryable = is_retryable(cause)
 
 
 class BatchIntegrityError(GFlowError):

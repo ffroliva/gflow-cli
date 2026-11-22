@@ -26,7 +26,7 @@ from gflow_cli.api.transports._video_common import (
 from gflow_cli.api.transports._video_editor_mode import EditorModeMixin
 from gflow_cli.api.transports.migrated_composer import _duration
 from gflow_cli.api.video import Aspect, VideoModel
-from gflow_cli.errors import UiSelectorDriftError, VideoModelSelectionError
+from gflow_cli.errors import UiSelectorDriftError, VideoModelSelectionError, nothing_submitted
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -67,16 +67,17 @@ class VideoSettingsMixin(EditorModeMixin):
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_count_tab.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "count_tab",
-                    f"the output-count tab for count={n} (label 'x{n}' or '{n}x') was "
-                    f"not found on the Flow editor; refusing to proceed — Flow's "
-                    f"sticky default (typically x2) would silently change how many "
-                    f"clips this run generates and bills for. No credits were spent.",
-                    shot,
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "count_tab",
+                        f"the output-count tab for count={n} (label 'x{n}' or '{n}x') was "
+                        f"not found on the Flow editor; refusing to proceed — Flow's "
+                        f"sticky default (typically x2) would silently change how many "
+                        f"clips this run generates and bills for. No credits were spent.",
+                        shot,
+                    )
                 )
-            )
         await tab.click()
         await page.wait_for_timeout(400)
         log.info("ui_automation_video.output_count_set", count=n)
@@ -235,16 +236,17 @@ class VideoSettingsMixin(EditorModeMixin):
 
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_duration_tab.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "duration_tab",
-                    f"the {seconds}s duration tab was not found on the Flow editor; "
-                    f"refusing to proceed — Flow's default duration (typically 8s) "
-                    f"would silently replace the requested value (issue #288). Omit "
-                    f"--duration to accept Flow's default.",
-                    shot,
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "duration_tab",
+                        f"the {seconds}s duration tab was not found on the Flow editor; "
+                        f"refusing to proceed — Flow's default duration (typically 8s) "
+                        f"would silently replace the requested value (issue #288). Omit "
+                        f"--duration to accept Flow's default.",
+                        shot,
+                    )
                 )
-            )
         await tab.click()
         await page.wait_for_timeout(400)
         log.info("ui_automation_video.duration_set", seconds=seconds)
@@ -260,13 +262,14 @@ class VideoSettingsMixin(EditorModeMixin):
         )
         if tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, f"debug_no_submode_{sub}.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    f"video_submode_{sub}",
-                    f"video sub-mode tab {sub!r} not found on the Flow editor.",
-                    shot,
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        f"video_submode_{sub}",
+                        f"video sub-mode tab {sub!r} not found on the Flow editor.",
+                        shot,
+                    )
                 )
-            )
         await tab.click()
         await page.wait_for_timeout(900)
         log.info("ui_automation_video.video_submode_entered", sub=sub)

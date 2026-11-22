@@ -752,7 +752,7 @@ class ImageGenerationMixin(CharacterGenerationMixin):
                 await asyncio.sleep(random.uniform(*jitter_range))  # noqa: S311 - human-pacing jitter, not cryptography
 
         # Fail-fast: surface partial-results salvage so orchestrator can download
-        # already-paid-for images before re-raising.
+        # already-completed images before re-raising.
         if submit_error is not None and not continue_on_error:
             raise BatchPartialError(
                 detail=f"batch failed at prompt index {len(results)}: {submit_error!s}",

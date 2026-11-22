@@ -34,7 +34,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     screenshot_clause,
     selector_drift_detail,
 )
-from gflow_cli.errors import UiSelectorDriftError
+from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,7 +95,8 @@ class PromptInputMixin(PageNavigationMixin):
             await raise_if_known_landing(
                 page, requested="the Flow editor", at="labs.switch_to_image_mode"
             )
-            raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
+            with nothing_submitted():
+                raise await VideoGenerationMixin._mode_switch_error(page, out_dir, media="image")
         await trigger.click()
         await page.wait_for_timeout(_jitter_ms(800))
         image_tab = await VideoGenerationMixin._probe_selector_cascade(
@@ -105,13 +106,14 @@ class PromptInputMixin(PageNavigationMixin):
         )
         if image_tab is None:
             shot = await _capture_debug_screenshot(page, out_dir, "debug_no_image_tab.png")
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "image_mode_tab",
-                    "Image tab not found in the mode dropdown.",
-                    shot,
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "image_mode_tab",
+                        "Image tab not found in the mode dropdown.",
+                        shot,
+                    )
                 )
-            )
         await image_tab.click()
         await page.wait_for_timeout(_jitter_ms(1200))
         await page.keyboard.press("Escape")

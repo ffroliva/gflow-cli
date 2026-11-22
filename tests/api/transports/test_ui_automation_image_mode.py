@@ -61,14 +61,16 @@ class TestSwitchToImageMode:
     @pytest.mark.asyncio
     async def test_raises_when_trigger_missing(self) -> None:
         page = _cascade_page(set())
-        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger"):
+        with pytest.raises(UiSelectorDriftError, match="mode_switch_trigger") as info:
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
+        assert info.value.charged == "no"
 
     @pytest.mark.asyncio
     async def test_raises_when_image_tab_missing(self) -> None:
         page = _cascade_page({MODE_SWITCH_TRIGGER_SELECTORS[0]})
-        with pytest.raises(UiSelectorDriftError, match="Image tab"):
+        with pytest.raises(UiSelectorDriftError, match="Image tab") as info:
             await UiAutomationTransport._switch_to_image_mode(page, out_dir=None)
+        assert info.value.charged == "no"  # #1336: mode selection precedes submit
 
     @pytest.mark.asyncio
     async def test_trigger_miss_detail_carries_diagnostics_path(self, tmp_path: Path) -> None:

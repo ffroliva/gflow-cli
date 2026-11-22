@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import structlog
 
-from gflow_cli.api.credit_cap import preserve_credit_cap_partials
+from gflow_cli.api.credit_cap import mark_prior_work_billed, preserve_credit_cap_partials
 from gflow_cli.errors import RETRY_ACTIONS, GFlowError
 
 if TYPE_CHECKING:
@@ -156,6 +156,7 @@ async def run_extend_chain(  # noqa: PLR0913
             # outcome this module's docstring says it prevents.
             # No retry, by design. Hand back everything already paid for.
             preserve_credit_cap_partials(exc, completed)
+            mark_prior_work_billed(exc, bool(completed))
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,
@@ -198,6 +199,9 @@ async def run_extend_chain(  # noqa: PLR0913
                     f"Flow took segment {index + 1} ({started.media_id}), so it may have "
                     "charged for it. Check the scene on Flow before running it again."
                 )
+            # The in-flight segment's outcome is unknown (docs/ERRORS.md: maybe / reconcile);
+            # only a segment that already finished proves billed work.
+            mark_prior_work_billed(exc, bool(completed))
             logger.warning(
                 "extend_chain_aborted",
                 segment=index + 1,

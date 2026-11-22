@@ -432,7 +432,7 @@ async def test_generate_images_batch_fail_fast_partial_salvage(
     that already completed."""
     import gflow_cli.api.transports._ui_image as uia_mod
     from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
-    from gflow_cli.errors import BatchPartialError, GFlowError
+    from gflow_cli.errors import BatchPartialError, UiSelectorDriftError
 
     transport = UiAutomationTransport.__new__(UiAutomationTransport)
     transport._setup_done = True  # type: ignore[attr-defined]
@@ -447,14 +447,14 @@ async def test_generate_images_batch_fail_fast_partial_salvage(
     send_call = [0]
 
     async def send_raises_on_idx1(page, prompt, out_dir):  # type: ignore[no-untyped-def]
-        if send_call[0] == 1:
-            raise GFlowError(detail="upstream fail", route="test")
+        if send_call[0] == 2:
+            raise UiSelectorDriftError(detail="upstream fail", charged="no")
         send_call[0] += 1
 
     transport._send_prompt = send_raises_on_idx1  # type: ignore[attr-defined]
 
-    captures: list[list] = [[], []]
-    detaches = [MagicMock(), MagicMock()]
+    captures: list[list] = [[], [], []]
+    detaches = [MagicMock(), MagicMock(), MagicMock()]
     l_idx = [0]
 
     def fake_listener(page, *, project_id=None):  # type: ignore[no-untyped-def]
@@ -494,11 +494,13 @@ async def test_generate_images_batch_fail_fast_partial_salvage(
         )
 
     err = exc_info.value
-    # partial_results carries only the already-completed ok result (prompt 0)
-    assert len(err.partial_results) == 1
+    # Prompts 0 and 1 completed before prompt 2 failed.
+    assert len(err.partial_results) == 2
     assert err.partial_results[0].status == "ok"
     assert err.partial_results[0].prompt_idx == 0
+    assert err.partial_results[1].prompt_idx == 1
     assert err.cause is not None
+    assert err.charged == "no"
 
 
 @pytest.mark.asyncio

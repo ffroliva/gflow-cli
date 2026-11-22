@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
@@ -785,3 +787,127 @@ def test_nothing_submitted_withholds_the_claim_once_a_submit_left() -> None:
     with pytest.raises(UiSelectorDriftError) as info, nothing_submitted(sent=lambda: True):
         raise UiSelectorDriftError(detail="chip vanished after the key press")
     assert info.value.charged == "maybe"
+
+
+def test_batch_partial_error_keeps_free_image_partials_uncharged() -> None:
+    from gflow_cli.errors import BatchPartialError, GFlowError
+
+    error = BatchPartialError(
+        partial_results=(object(),), cause=GFlowError("later prompt failed", charged="no")
+    )
+
+    assert error.charged == "no"
+
+
+def test_batch_partial_error_inherits_cause_charge_without_partial_results() -> None:
+    from gflow_cli.errors import BatchPartialError, GFlowError
+
+    error = BatchPartialError(cause=GFlowError("first prompt failed", charged="maybe"))
+
+    assert error.charged == "maybe"
+
+
+def test_marking_prior_work_billed_disables_retry_for_retryable_error() -> None:
+    from gflow_cli.api.credit_cap import mark_prior_work_billed
+    from gflow_cli.errors import FlowAppError, is_retryable
+
+    error = FlowAppError("selector drift", remediation_hint="retry in a moment")
+    mark_prior_work_billed(error, True)
+
+    assert error.resolved_next_action() == "reconcile"
+    assert is_retryable(error) is False
+    problem = error.to_problem_details()
+    assert problem["charged"] == "yes"
+    assert problem["next_action"] == "reconcile"
+    assert "check Flow" in error.remediation_hint
+    assert (
+        error.remediation_hint
+        == "This command already billed Flow for earlier work; check Flow before re-running."
+    )
+
+
+def test_batch_partial_maybe_charged_cause_keeps_its_retry_advice() -> None:
+    from gflow_cli.errors import BatchPartialError, TransportTimeoutError, is_retryable
+
+    cause = TransportTimeoutError("prompt 0 timed out", charged="maybe")
+    error = BatchPartialError(cause=cause)
+    assert error.resolved_next_action() == cause.resolved_next_action()
+    assert is_retryable(error) is is_retryable(cause)
+
+
+def test_mark_prior_work_preserves_non_retry_advice_and_cap_hint() -> None:
+    from gflow_cli.api.credit_cap import mark_prior_work_billed
+    from gflow_cli.errors import AuthExpiredError, CreditCapExceededError, InsufficientCreditsError
+
+    auth = AuthExpiredError("login required", charged="no")
+    auth_hint = auth.remediation_hint
+    mark_prior_work_billed(auth, True)
+    assert (auth.charged, auth.next_action, auth.remediation_hint) == ("yes", "reauth", auth_hint)
+
+    cap = CreditCapExceededError(quoted=10, max_credits=5)
+    cap_hint = cap.remediation_hint
+    mark_prior_work_billed(cap, True)
+    assert cap.charged == "yes"
+    assert cap.remediation_hint == cap_hint
+
+    funds = InsufficientCreditsError("insufficient", charged="no")
+    mark_prior_work_billed(funds, True)
+    assert funds.resolved_next_action() == "wait"
+
+
+def test_batch_partial_without_results_inherits_cause_recovery_metadata() -> None:
+    from gflow_cli.errors import BatchPartialError, FlowAgentUiError, is_retryable
+
+    cause = FlowAgentUiError("selector drift", charged="no")
+    error = BatchPartialError(cause=cause)
+
+    assert error.charged == "no"
+    assert error.resolved_next_action() == cause.resolved_next_action()
+    assert is_retryable(error) is is_retryable(cause)
+
+
+@pytest.mark.parametrize(
+    ("source", "function_name", "expected_guards"),
+    [
+        ("_ui_character.py", "_select_character_model", 3),
+        ("_ui_navigation.py", "_require_unblocked", 1),
+        ("_ui_prompt.py", "_switch_to_image_mode", 1),
+        ("_ui_settings.py", "_select_image_model", 3),
+        ("_ui_settings.py", "_set_count", 1),
+        ("_video_editor_mode.py", "_switch_to_video_mode", 1),
+        ("_video_settings.py", "_set_output_count", 1),
+        ("_video_settings.py", "_select_video_duration", 1),
+        ("_video_settings.py", "_switch_video_sub_mode", 1),
+    ],
+)
+def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
+    source: str, function_name: str, expected_guards: int
+) -> None:
+    """Pin #1336 guards to their owning function so each missing guard is caught."""
+    transport_dir = Path(__file__).parents[1] / "src" / "gflow_cli" / "api" / "transports"
+    tree = ast.parse((transport_dir / source).read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name
+    ]
+    assert len(functions) == 1
+    guarded = [
+        node
+        for node in ast.walk(functions[0])
+        if isinstance(node, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Name)
+            and item.context_expr.func.id == "nothing_submitted"
+            for item in node.items
+        )
+        and any(
+            isinstance(item, ast.Raise)
+            and isinstance(item.exc, ast.Call)
+            and isinstance(item.exc.func, ast.Name)
+            and item.exc.func.id == "UiSelectorDriftError"
+            for item in ast.walk(node)
+        )
+    ]
+    assert len(guarded) == expected_guards
