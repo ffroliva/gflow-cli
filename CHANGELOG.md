@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Charge guidance reflects pre-submit validation, in-flight extends, and finished video segments ([#1416](https://github.com/ffroliva/gflow-cli/issues/1416)).** Image batches remain free. Extend validation failures report no charge and request corrected input, malformed post-submit responses retain reconciliation guidance and identify completed segments as billed, and poll failures reconcile the in-flight segment without overriding reauthentication or input-fix guidance. JSON output preserves the typed error's charge and next action.
+
 ## [0.105.0] — 2026-11-22
 
 ### Added
