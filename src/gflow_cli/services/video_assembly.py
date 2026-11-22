@@ -562,20 +562,7 @@ def _rename_noreplace(source: Path, destination: Path) -> bool:
     return False
 
 
-def _publish_with_lock_fallback(temp_output: Path, output: Path) -> None:
-    """Serialize publication with a sidecar lock so ``output`` never exists as 0 bytes."""
-    lock_path = output.with_name(f".{output.name}.publish.lock")
-    try:
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-    except FileExistsError as exc:
-        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), os.fspath(output)) from exc
-    os.close(descriptor)
-    try:
-        if os.path.lexists(output):
-            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), os.fspath(output))
-        os.replace(temp_output, output)
-    finally:
-        lock_path.unlink(missing_ok=True)
+_UNSUPPORTED_PUBLISH_ERRNO = getattr(errno, "ENOTSUP", errno.ENOSYS)
 
 
 def publish_output(temp_output: Path, output: Path) -> None:
@@ -589,7 +576,11 @@ def publish_output(temp_output: Path, output: Path) -> None:
     except OSError:
         try:
             if not _rename_noreplace(temp_output, output):
-                _publish_with_lock_fallback(temp_output, output)
+                raise OSError(
+                    _UNSUPPORTED_PUBLISH_ERRNO,
+                    "Filesystem does not support atomic non-overwriting publish",
+                    os.fspath(output),
+                )
         except FileExistsError as exc:
             raise VideoAssemblyError(
                 detail=f"Output already exists: {output}", route="video.assemble"

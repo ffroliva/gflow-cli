@@ -254,28 +254,6 @@ def _no_hard_links(*_args: object) -> None:
     raise OSError("hard links unsupported")
 
 
-def test_fallback_publish_removes_its_reservation_when_replace_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    temp_output = tmp_path / ".joined.tmp.mp4"
-    temp_output.write_bytes(b"rendered")
-    output = tmp_path / "joined.mp4"
-
-    def replace_denied(*_args: object) -> None:
-        raise PermissionError("replace denied")
-
-    monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
-    monkeypatch.setattr(video_assembly, "_rename_noreplace", lambda *_args: False)
-    monkeypatch.setattr(video_assembly.os, "replace", replace_denied)
-
-    with pytest.raises(PermissionError):
-        video_assembly.publish_output(temp_output, output)
-
-    assert not output.exists()
-    assert not output.with_name(f".{output.name}.publish.lock").exists()
-    assert temp_output.read_bytes() == b"rendered"
-
-
 def test_fallback_publish_uses_platform_noreplace_without_zero_byte_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -321,40 +299,38 @@ def test_fallback_publish_refuses_to_overwrite_existing_output(
     assert temp_output.read_bytes() == b"new-video"
 
 
-def test_lock_fallback_never_creates_zero_byte_output_and_keeps_existing(
+def test_fallback_publish_fails_closed_when_noreplace_unsupported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     temp_output = tmp_path / ".joined.tmp.mp4"
     temp_output.write_bytes(b"new-video")
     output = tmp_path / "joined.mp4"
-    output.touch()
-    opened_paths: list[Path] = []
-    real_open = video_assembly.os.open
+    output.write_bytes(b"existing-video")
 
-    def spy_open(
-        path: str | bytes | video_assembly.os.PathLike[str],
-        flags: int,
-        mode: int = 0o777,
-    ) -> int:
-        opened_paths.append(Path(video_assembly.os.fsdecode(path)))
-        return real_open(path, flags, mode)
+    def forbid_open(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("os.open should not be called")
+
+    def forbid_replace(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("os.replace should not be called")
 
     monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
     monkeypatch.setattr(video_assembly, "_rename_noreplace", lambda *_args: False)
-    monkeypatch.setattr(video_assembly.os, "open", spy_open)
+    monkeypatch.setattr(video_assembly.os, "open", forbid_open)
+    monkeypatch.setattr(video_assembly.os, "replace", forbid_replace)
 
-    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+    with pytest.raises(OSError, match="atomic non-overwriting publish"):
         video_assembly.publish_output(temp_output, output)
 
-    assert output not in opened_paths
-    assert output.read_bytes() == b""
-    assert not output.with_name(f".{output.name}.publish.lock").exists()
+    assert output.read_bytes() == b"existing-video"
+    assert temp_output.read_bytes() == b"new-video"
 
     output.unlink()
-    video_assembly.publish_output(temp_output, output)
-    assert output not in opened_paths
-    assert output.read_bytes() == b"new-video"
-    assert not temp_output.exists()
+    with pytest.raises(OSError, match="atomic non-overwriting publish"):
+        video_assembly.publish_output(temp_output, output)
+
+    assert not output.exists()
+    assert not output.with_name(f".{output.name}.publish.lock").exists()
+    assert temp_output.read_bytes() == b"new-video"
 
 
 def test_fallback_publish_propagates_noreplace_permission_error(
