@@ -293,5 +293,3 @@ async def test_poll_failure_after_submit_is_charged_even_without_prior_completio
         "none",
         None,
     )
-
-
