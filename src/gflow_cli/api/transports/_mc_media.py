@@ -53,6 +53,9 @@ class MediaMixin:
                         f"{urlsplit(url).hostname!r} (not an allowed Google host)"
                     ),
                     route="batchexecute:as29s",
+                    # #1159: the clip is finished and billed; the class default
+                    # ("retry with a simpler prompt") would bill it again.
+                    remediation_hint=recoverable_clip_hint(record.media_id),
                 )
             # No redirects: an open redirect on the CDN must not rebound the
             # request elsewhere (same posture as the labs image download).
@@ -93,6 +96,9 @@ class MediaMixin:
                 f"(ftyp magic); saw {'; '.join(seen) or 'no URLs'}"
             ),
             route="batchexecute:as29s",
+            # #1159: the clip is finished and billed; the class default
+            # ("retry with a simpler prompt") would bill it again.
+            remediation_hint=recoverable_clip_hint(record.media_id),
         )
 
     @staticmethod
