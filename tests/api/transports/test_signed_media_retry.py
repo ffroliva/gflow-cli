@@ -273,6 +273,8 @@ class TestWhatRetryMustNotChange:
         assert MEDIA_ID in rendered
         assert "gflow data download" in rendered
         assert "simpler prompt" not in rendered
+        # The record is done, so Flow has billed it; the envelope must agree with the hint.
+        assert caught.value.to_problem_details()["charged"] == "yes"
 
     async def test_a_disallowed_host_names_the_free_recovery(self) -> None:
         """#1159: a signed URL on a host outside the allow-list is the same billed-clip
@@ -288,6 +290,8 @@ class TestWhatRetryMustNotChange:
         assert MEDIA_ID in rendered
         assert "gflow data download" in rendered
         assert "simpler prompt" not in rendered
+        # The record is done, so Flow has billed it; the envelope must agree with the hint.
+        assert caught.value.to_problem_details()["charged"] == "yes"
 
 
 class TestRetryIsObservable:

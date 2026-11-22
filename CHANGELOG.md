@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A finished clip whose signed URL serves no MP4, or sits outside the allowed Google hosts, points at the free recovery ([#1159](https://github.com/ffroliva/gflow-cli/issues/1159)).** On `flow.google.com` both errors suggested retrying with a simpler prompt, which bills the clip again. They now name `gflow data download <media_id>`, as the clip's other download failures already did, and report `charged: yes`, since Flow has billed a finished clip. The exit code is unchanged. Thanks to @aryankalantri ([#1424](https://github.com/ffroliva/gflow-cli/pull/1424)).
+
 ## [0.105.0] — 2026-11-22
 
 ### Added

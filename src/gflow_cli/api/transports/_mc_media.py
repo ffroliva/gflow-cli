@@ -56,6 +56,7 @@ class MediaMixin:
                     # #1159: the clip is finished and billed; the class default
                     # ("retry with a simpler prompt") would bill it again.
                     remediation_hint=recoverable_clip_hint(record.media_id),
+                    charged="yes",
                 )
             # No redirects: an open redirect on the CDN must not rebound the
             # request elsewhere (same posture as the labs image download).
@@ -99,6 +100,7 @@ class MediaMixin:
             # #1159: the clip is finished and billed; the class default
             # ("retry with a simpler prompt") would bill it again.
             remediation_hint=recoverable_clip_hint(record.media_id),
+            charged="yes",
         )
 
     @staticmethod
