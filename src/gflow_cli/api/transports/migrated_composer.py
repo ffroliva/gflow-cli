@@ -31,12 +31,14 @@ matched with a Python-side ``filter(has_text=re.compile(...))`` instead.
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 from playwright.async_api import (
+    Locator,
     Page,
 )
 from playwright.async_api import (
@@ -691,6 +693,36 @@ async def run_images(
     )
 
 
+#: How long a timed-out Create click waits for a late ``jHPbke`` before calling it unsent.
+CREATE_LATE_REQUEST_GRACE_S = 1.0
+
+
+async def _click_create(page: Page, button: Locator) -> None:
+    """Click Create. A click can time out after it dispatched, so the request decides."""
+    with SubmitWatch(page, frozenset({CREATE_PROJECT_RPC})) as sent:
+        try:
+            await button.click(timeout=15_000)
+        except PlaywrightTimeoutError as e:
+            if not sent.seen():
+                # The page's handler can send the create just after Playwright gave up.
+                await asyncio.sleep(CREATE_LATE_REQUEST_GRACE_S)
+            if sent.seen():
+                return  # Create reached Flow: wait for its reply, or recover it
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: the new-project button ({NEW_PROJECT_BUTTON}) was "
+                    f"visible but did not take the click on {safe_page_url(page.url)}, "
+                    "and no create request was sent (host=migrated)"
+                ),
+                charged="no",
+                remediation_hint=(
+                    "No create request was sent and nothing was charged. Something on Flow's "
+                    "projects page may be covering the button; re-run. To skip creating a "
+                    "project, generate in an existing one (CLI --project <id>, MCP project)."
+                ),
+            ) from e
+
+
 async def create_project(
     page: Page, title: str, *, timeout_s: float = PAGE_RPC_TIMEOUT_S
 ) -> ProjectInfo:
@@ -716,7 +748,7 @@ async def create_project(
         payload = await rpc_reply(
             page,
             CREATE_PROJECT_RPC,
-            lambda: button.click(timeout=15_000),
+            lambda: _click_create(page, button),
             timeout_s=timeout_s,
             write=True,
         )

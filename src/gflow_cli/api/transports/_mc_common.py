@@ -1619,15 +1619,16 @@ class SubmitWatch:
 
     _RPCS = frozenset((*SUBMIT_RPCS, IMAGE_SUBMIT_RPC))
 
-    def __init__(self, page: Any) -> None:
+    def __init__(self, page: Any, rpcs: frozenset[str] = _RPCS) -> None:
         self._page = page
+        self._rpcs = rpcs
         self._seen = False
 
     def _on_request(self, request: Any) -> None:
         url = str(getattr(request, "url", ""))
         if (
             "batchexecute" in url
-            and (url_rpcid(url) or body_rpcid(request_body(request))) in self._RPCS
+            and (url_rpcid(url) or body_rpcid(request_body(request))) in self._rpcs
         ):
             self._seen = True
 

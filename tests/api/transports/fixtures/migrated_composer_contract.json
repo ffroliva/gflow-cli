@@ -132,7 +132,7 @@
     "_unported_image_form": "function (request: 'GenerateImageRequest') -> 'str | None' sha=083066d4a70eb7d0",
     "_wait_anchor": "function (page: 'Page', selector: 'str', *, named: 'str', requested: 'str', at: 'str', timeout_s: 'float') -> 'Any' sha=f60a4cf05096f7db",
     "body_rpcid": "function (body: 'str') -> 'str | None' sha=2742321c5304b2a9",
-    "create_project": "function (page: 'Page', title: 'str', *, timeout_s: 'float' = 120.0) -> 'ProjectInfo' sha=f6e83b1570fb4b06",
+    "create_project": "function (page: 'Page', title: 'str', *, timeout_s: 'float' = 120.0) -> 'ProjectInfo' sha=1653b77cf258b899",
     "is_at": "function (url: 'object', target: 'str') -> 'bool' sha=d918ccf22f0049f8",
     "migrated_can_serve": "function (request: 'GenerateVideoRequest', project_id: 'str | None') -> 'bool' sha=6fff5b8bfd0295b6",
     "migrated_images_prefer": "function (request: 'GenerateImageRequest', *, page_url: 'str | None' = None, project_id: 'str | None' = None) -> 'bool' sha=3402dae1831304be",
@@ -146,7 +146,7 @@
   },
   "public_functions": {
     "body_rpcid": "function (body: 'str') -> 'str | None' sha=2742321c5304b2a9",
-    "create_project": "function (page: 'Page', title: 'str', *, timeout_s: 'float' = 120.0) -> 'ProjectInfo' sha=f6e83b1570fb4b06",
+    "create_project": "function (page: 'Page', title: 'str', *, timeout_s: 'float' = 120.0) -> 'ProjectInfo' sha=1653b77cf258b899",
     "is_at": "function (url: 'object', target: 'str') -> 'bool' sha=d918ccf22f0049f8",
     "migrated_can_serve": "function (request: 'GenerateVideoRequest', project_id: 'str | None') -> 'bool' sha=6fff5b8bfd0295b6",
     "migrated_images_prefer": "function (request: 'GenerateImageRequest', *, page_url: 'str | None' = None, project_id: 'str | None' = None) -> 'bool' sha=3402dae1831304be",
