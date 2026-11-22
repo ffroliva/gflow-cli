@@ -1630,8 +1630,10 @@ no image quota.** Each file is checked before anything is uploaded (it exists,
 is at most the upload size limit, and has an image header). `--face-prompt` and
 `--image` are mutually exclusive; `--body-prompt`, `--model`, `--format-prompt`
 and `--locale` apply to generated images only and are refused with `--image`
-(exit 2). If a step after the create fails, the error names the character's
-entity id; gflow does not delete it. The MCP twin is `gflow_character_create`.
+(exit 2). If a step after the portrait upload fails, the error names the
+character's entity id when it is known and otherwise says a character may exist;
+it is marked not retryable, so check `gflow character list` before re-running.
+gflow deletes nothing. The MCP twin is `gflow_character_create`.
 
 ```bash
 gflow character create --project <id> --name "Nora"   --image ./nora-face.png --body-image ./nora-body.png --voice Aoede

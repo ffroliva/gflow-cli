@@ -128,3 +128,35 @@ async def test_a_catalog_that_cannot_start_the_row_leaves_nothing_to_mark(
 
     assert result.entity_id == "entity-1"
     recorder.record_character_abandoned.assert_not_called()
+
+
+async def test_a_file_built_row_left_started_is_never_resumed(tmp_path: Path) -> None:
+    """Even if both the completion and the abandonment writes fail, the STARTED row of a
+    file-built character is not offered to the prompt saga's resume, which would spend
+    credits on a character this run already finished."""
+    from gflow_cli.errors import DataStoreError
+
+    client = MagicMock()
+    client.create_character_from_files = AsyncMock(return_value=_CREATED)
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        failure = DataStoreError(detail="database is locked")
+        recorder.record_character_completed = MagicMock(side_effect=failure)  # type: ignore[method-assign]
+        recorder.record_character_abandoned = MagicMock(side_effect=failure)  # type: ignore[method-assign]
+
+        await character_create_from_files(
+            client,
+            recorder,
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project_id="proj-1",
+            name="Nora",
+            portrait=tmp_path / "face.jpg",
+        )
+
+        (status,) = store.conn.execute(
+            "SELECT status FROM operations WHERE mode = 'character'"
+        ).fetchone()
+        assert status == "started"
+        assert repo.find_incomplete_character("proj-1", "Nora") is None

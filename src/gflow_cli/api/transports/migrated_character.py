@@ -486,7 +486,8 @@ def _maybe_created_hint(entity_id: str | None, project_id: str) -> str:
 async def _dialog_count(page: Page) -> int | None:
     try:
         return await page.locator(DIALOG).count()
-    except Exception:  # noqa: BLE001 - a probe is never the failure it reports
+    except Exception as exc:  # noqa: BLE001 - a probe is never the failure it reports
+        log.info("migrated.character_dialog_probe_failed", error=type(exc).__name__)
         return None
 
 
@@ -549,6 +550,7 @@ async def _rpc_replies(
     *,
     timeout_s: float,
     grace_s: float = 15.0,
+    sent: set[str] | None = None,
 ) -> dict[str, Any]:
     """Run ``action`` and collect the first reply of each rpcid, for up to ``timeout_s``.
 
@@ -557,7 +559,9 @@ async def _rpc_replies(
     wait at once. Every caller watches the upload, and only its reply (``maseQ``) starts
     the ``grace_s`` wait for the rest: it says what was created, so a ``C4BZMd`` that
     never follows it is not waited out. A ``C4BZMd`` that arrives first does not shorten
-    the upload's own budget: navigating away mid-upload would abort it."""
+    the upload's own budget: navigating away mid-upload would abort it. ``sent``, when
+    given, collects the watched rpcids whose request left the page, so a lost reply can
+    be told from a request that was never made."""
     got: dict[str, Any] = {}
     first, done = asyncio.Event(), asyncio.Event()
 
@@ -569,7 +573,13 @@ async def _rpc_replies(
         if refused or all(r in got for r in rpcids):
             done.set()
 
+    def on_request(request: Any) -> None:
+        url = str(getattr(request, "url", ""))
+        if sent is not None and "batchexecute" in url:
+            sent.update(r for r in rpcids if r in url)
+
     page.on("response", on_response)
+    page.on("request", on_request)
     try:
         await action()
         with contextlib.suppress(TimeoutError):
@@ -580,6 +590,7 @@ async def _rpc_replies(
             )
     finally:
         page.remove_listener("response", on_response)
+        page.remove_listener("request", on_request)
     return got
 
 
@@ -684,10 +695,15 @@ async def _voice_hits(dialog: Any, voice: str, *, timeout_s: float = 10.0) -> tu
 
 
 async def _voice_shown(page: Page, voice: str) -> bool:
-    """Whether the editor's voice button names ``voice`` within a few seconds."""
-    for _ in range(int(VOICE_SHOWN_WAIT_S / _POLL_S)):
+    """Whether the editor's voice button names ``voice`` before ``VOICE_SHOWN_WAIT_S``
+    runs out. Each read is bounded by the time left, so one slow read cannot outlast it."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + VOICE_SHOWN_WAIT_S
+    while (left := deadline - loop.time()) > 0:
         try:
-            text = await page.locator(VOICE_BUTTON).first.inner_text()
+            text = await page.locator(VOICE_BUTTON).first.inner_text(
+                timeout=max(1, int(left * 1000))
+            )
         except PlaywrightError:
             text = ""
         if _names(text, voice):
@@ -744,6 +760,20 @@ async def _confirm_voice(
     log.info("migrated.character_patched", field="voice", entity_id=entity_id)
 
 
+async def _click_option(option: Any, voice: str) -> None:
+    """Click ``option`` only if it still names ``voice``: the list can re-render between the
+    settled read and the click, and a different voice must never reach the confirm."""
+    text = await option.inner_text(timeout=5_000)
+    if not _names(text, voice):
+        raise UiSelectorDriftError(
+            detail=(
+                f"the voice picker's option changed before it was clicked: it no longer names "
+                f"{voice!r}; nothing was changed (host=migrated)"
+            ),
+        )
+    await option.click()
+
+
 async def _pick_voice(page: Page, entity_id: str, voice: str, *, timeout_s: float) -> None:
     """Search the voice picker for ``voice``, pick its one option, confirm it.
 
@@ -754,7 +784,7 @@ async def _pick_voice(page: Page, entity_id: str, voice: str, *, timeout_s: floa
         return
     for attempt in (1, 2):
         dialog, option = await _voice_option(page, voice)
-        await option.click()
+        await _click_option(option, voice)
         button = dialog.locator(VOICE_CONFIRM).first
         if await _confirm_enabled(button):
             await _confirm_voice(page, entity_id, voice, button, timeout_s=timeout_s)
@@ -847,7 +877,7 @@ async def _settled_refs(page: Page, project_id: str, entity_id: str, want: int) 
 async def _created_since(page: Page, project_id: str, known: set[str]) -> str | None:
     """The one character the project gained since ``known``, read until the settle window
     ends (reads lag writes); ``None`` when none appeared. Two new ones are refused: which
-    is this run's cannot be told, and creating a third would not help."""
+    is this run's cannot be told."""
     deadline = asyncio.get_running_loop().time() + READ_SETTLE_S
     while True:
         new = sorted((await _character_ids(page, project_id)) - known)
@@ -859,7 +889,6 @@ async def _created_since(page: Page, project_id: str, known: set[str]) -> str | 
                 CREATE_RPC,
             )
         if new:
-            log.warning(_CREATE_REPLY_LOST, source="project_read")
             return new[0]
         if asyncio.get_running_loop().time() >= deadline:
             return None
@@ -881,38 +910,48 @@ async def _open_draft(page: Page, project_id: str) -> None:
         )
 
 
-async def _create_attempt(page: Page, project_id: str, portrait: Path) -> dict[str, Any]:
-    """One portrait upload from a fresh draft; the create and upload replies that came.
+async def _create_attempt(
+    page: Page, project_id: str, portrait: Path
+) -> tuple[dict[str, Any], set[str]]:
+    """One portrait upload from a fresh draft: the replies that came, and which of the
+    create and upload requests left the page.
 
     An account's first upload is held behind Flow's one-time "rights to use this image"
     dialog, and Flow sends nothing until a person accepts it (#719). A dialog that opened
-    after the file was chosen, with no reply at all, is reported as that, not retried: the
-    dialogs are counted, never matched, as ``_mc_upload_frame`` does."""
+    after the file was chosen while no request left the page is reported as that, not
+    retried: the dialogs are counted, never matched, as ``_mc_upload_frame`` does."""
     await _open_draft(page, project_id)
     await clear_overlays(page)
     await page.locator(FOOTER_UPLOAD).first.wait_for(state="visible", timeout=30_000)
     dialogs_before = await _dialog_count(page)
+    sent: set[str] = set()
     upload = partial(_choose_file, page, FOOTER_UPLOAD, portrait)
-    got = await _rpc_replies(page, (CREATE_RPC, UPLOAD_RPC), upload, timeout_s=90)
-    dialogs_after = await _dialog_count(page) if not got else None
+    got = await _rpc_replies(page, (CREATE_RPC, UPLOAD_RPC), upload, timeout_s=90, sent=sent)
+    dialogs_after = await _dialog_count(page) if not got and not sent else None
     if dialogs_before is not None and dialogs_after is not None and dialogs_after > dialogs_before:
         raise MediaUploadRejectedError(
             detail=(
-                f"a dialog opened after the portrait was chosen and no {UPLOAD_RPC} reply "
-                f"came: most likely Flow's one-time upload-terms confirmation (host=migrated)"
+                f"a dialog opened after the portrait was chosen and no {UPLOAD_RPC} request "
+                f"left the page: most likely Flow's one-time upload-terms confirmation "
+                f"(host=migrated)"
             ),
             route=f"batchexecute:{UPLOAD_RPC}",
             remediation_hint=UPLOAD_TERMS_REMEDIATION,
         )
-    return got
+    return got, sent
 
 
 async def _created_id(
-    page: Page, project_id: str, got: dict[str, Any], known: set[str]
+    page: Page, project_id: str, attempt: tuple[dict[str, Any], set[str]], known: set[str]
 ) -> str | None:
-    """The entity an attempt created: from its reply, else the upload reply or the page,
-    else the one character the project gained. A refused create or upload is raised with
-    Flow's reason instead of being waited out."""
+    """The entity an attempt created, proven by its own reply, the upload reply or the
+    page; ``None`` only when no create or upload request left the page.
+
+    A refused create or upload is raised with Flow's reason. A request that left the page
+    with no reply that proves the outcome is not retried: a character may exist, and one
+    the project gained since the run began cannot be tied to this upload, so it is named
+    and left unedited."""
+    got, sent = attempt
     if (refusal := _refused(got, CREATE_RPC)) is not None:
         raise _refusal_error(CREATE_RPC, refusal)
     if CREATE_RPC in got:
@@ -923,11 +962,17 @@ async def _created_id(
         raise _unsafe_to_retry(
             _refusal_error(UPLOAD_RPC, refusal), _maybe_created_hint(entity_id, project_id)
         )
-    if entity_id is None:
-        # Nothing proves the create, yet the upload may have made one: re-read before a
-        # retry uploads the portrait again.
-        entity_id = await _created_since(page, project_id, known)
-    return entity_id
+    if entity_id is not None or not sent:
+        return entity_id
+    candidate = await _created_since(page, project_id, known)
+    raise _unsafe_to_retry(
+        _drift(
+            None,
+            "the portrait upload left the page but no reply proved what it created",
+            CREATE_RPC,
+        ),
+        _maybe_created_hint(candidate, project_id),
+    )
 
 
 async def _create_entity(page: Page, project_id: str, portrait: Path) -> tuple[str, Any]:
@@ -936,20 +981,20 @@ async def _create_entity(page: Page, project_id: str, portrait: Path) -> tuple[s
     draft = DRAFT_URL.format(project_id=project_id)
     try:
         await _open_draft(page, project_id)
-        # The characters already here, so a create whose replies are lost is found by a
-        # re-read rather than repeated: a blind retry would make a second character.
+        # The characters already here, so one a lost-reply create made can be named
+        # rather than created again.
         known = await _character_ids(page, project_id)
     except PlaywrightError as exc:
         await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
         raise _browser_error(exc, "before the character was created") from exc
     for attempt in (1, 2):
         try:
-            got = await _create_attempt(page, project_id, portrait)
+            outcome = await _create_attempt(page, project_id, portrait)
         except PlaywrightError as exc:
             await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
             raise _browser_error(exc, "before the character was created") from exc
         try:
-            entity_id = await _created_id(page, project_id, got, known)
+            entity_id = await _created_id(page, project_id, outcome, known)
         except PlaywrightError as exc:
             hint = _maybe_created_hint(None, project_id)
             raise _unsafe_to_retry(_browser_error(exc, "after the portrait upload"), hint) from exc
@@ -958,7 +1003,7 @@ async def _create_entity(page: Page, project_id: str, portrait: Path) -> tuple[s
                 _unsafe_to_retry(exc, _maybe_created_hint(None, project_id))
             raise
         if entity_id is not None:
-            return entity_id, _upload_into(got.get(UPLOAD_RPC), entity_id)
+            return entity_id, _upload_into(outcome[0].get(UPLOAD_RPC), entity_id)
         log.warning("migrated.character_create_retry", attempt=attempt, project_id=project_id)
     raise _unsafe_to_retry(
         _drift(None, "uploading the portrait created no character (2 attempts)", CREATE_RPC),
@@ -970,12 +1015,15 @@ async def _upload_body(
     page: Page, project_id: str, entity_id: str, body: Path
 ) -> tuple[str, str | None]:
     """Upload ``body`` into slot 1. A lost reply is settled by a re-read: bound means done
-    (a blind retry would bind a second copy); unbound earns exactly one retry."""
+    (a blind retry would bind a second copy); unbound earns exactly one retry. A refusal
+    is raised with Flow's reason."""
     for attempt in (1, 2):
         await page.locator(SLOT_CHIP).nth(1).click()
         await page.locator(SLOT_UPLOAD).first.wait_for(state="visible", timeout=15_000)
         upload = partial(_choose_file, page, SLOT_UPLOAD, body)
         got = await _rpc_replies(page, (UPLOAD_RPC,), upload, timeout_s=90)
+        if (refusal := _refused(got, UPLOAD_RPC)) is not None:
+            raise _refusal_error(UPLOAD_RPC, refusal)
         if UPLOAD_RPC in got:
             return bound_upload(got[UPLOAD_RPC], entity_id=entity_id)
         refs = await _settled_refs(page, project_id, entity_id, want=2)

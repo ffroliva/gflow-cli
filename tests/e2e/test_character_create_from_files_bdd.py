@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -155,8 +156,15 @@ def _tool_succeeds(world: dict[str, Any]) -> None:
 def _listed(
     world: dict[str, Any], e2e_env: dict[str, str], name: str, voice: str, n: int, pers: str
 ) -> None:
-    payload = _ok(_gflow(e2e_env, "character", "list", "--project", world["project"]))
-    matches = [c for c in payload["characters"] if c["display_name"] == name]
+    # Reads lag writes, so the listing is polled (never the create) for a bounded window.
+    want = (voice, n, pers)
+    deadline = time.monotonic() + 90
+    while True:
+        payload = _ok(_gflow(e2e_env, "character", "list", "--project", world["project"]))
+        matches = [c for c in payload["characters"] if c["display_name"] == name]
+        got = [(c["voice"], len(c["workflow_ids"]), c["personality"]) for c in matches]
+        if got == [want] or time.monotonic() >= deadline:
+            break
+        time.sleep(10)
     assert len(matches) == 1, payload["characters"]
-    char = matches[0]
-    assert (char["voice"], len(char["workflow_ids"]), char["personality"]) == (voice, n, pers)
+    assert got == [want], payload["characters"]

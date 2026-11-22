@@ -54,8 +54,10 @@ def _check_inputs(
         "`body_image` an optional body image, both paths on the machine running this MCP "
         "server. Nothing is generated: spends no credits and no image quota. Drives the "
         "character editor on flow.google.com in a browser, then sets the name, personality "
-        "and voice (see gflow_character_voices). A failure after Flow created the character "
-        "names its entity_id in remediation_hint; gflow does not delete it. Generating the "
+        "and voice (see gflow_character_voices). A failure after the portrait upload names "
+        "the character's entity_id in remediation_hint when known, otherwise says one may "
+        "exist, and is not retryable: check gflow_character_list before calling again. "
+        "gflow deletes nothing. Generating the "
         "face from a prompt is CLI-only (`gflow character create --face-prompt`)."
     ),
 )

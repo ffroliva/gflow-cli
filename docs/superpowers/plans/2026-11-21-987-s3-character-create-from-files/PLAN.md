@@ -19,7 +19,7 @@
 | S6 | Both replies lost | Neither reply arrives | The project is re-read; one new character is adopted, two are refused (exit 7), none within the settle window earns one retry | Same |
 | S7 | Lost body reply | `maseQ` lost on the body upload | A re-read that shows the image bound returns it; an unbound one is retried once, then `MediaUploadRejectedError` | Same |
 | S8 | Cold profile | An edit goes unanswered; a voice confirm never enables; a confirm click times out while the voice is set | The edit is redone once after a reload; the pick is redone once; a voice the editor shows is accepted | Same |
-| S9 | Orphan | Any failure after the create | The error's remediation hint names the entity id; nothing is deleted | Same |
+| S9 | Orphan | Any failure after the create | The remediation hint names the entity id when it is known, otherwise says a character may exist; the error is not retryable; nothing is deleted | Same |
 | S10 | Drift before the create | A browser timeout before the entity exists | `UiSelectorDriftError` (exit 23), no orphan hint | Same |
 
 ## Tasks

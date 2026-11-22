@@ -82,6 +82,11 @@ The live catalog lists **30** voices; `src/gflow_cli/api/character.py::VOICES` h
 
 ## Consequence for #639 / export-import
 
+> **Early hypothesis, superseded below.** The page-free port this section describes was not
+> verified: Addendum 3 measured the REST character writes answering 401 and left the delete
+> confirmation unanchored, and the file-built create that shipped drives the character
+> editor (the first addendum).
+
 `character create|list|show|rm` can be ported to the migrated host with **no DOM driving** for
 the entity itself — only the portrait/body *generation* still needs the editor. And a portable
 character bundle (name, voice, personality, images) can be re-created in any project on any

@@ -400,6 +400,7 @@ async def character_create_from_files(
             project_id=project_id,
             entity_id=created.entity_id,
             name=name,
+            source="files",
         )
         recorder.record_character_completed(
             row_id=row_id,
