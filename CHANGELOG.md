@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gflow uploads the portrait through Flow's character editor, which creates the character, then sets the name and personality, uploads the body image and sets the voice. Nothing is generated, so it spends no credits and no image quota. Each file is checked before anything is uploaded. A failure after the portrait upload names the character's entity id when it is known, and otherwise says a character may exist; either way it is marked not retryable, so list the project's characters (`character list`) before re-running. gflow deletes nothing. The MCP twin `gflow_character_create` takes the same inputs and stays available under `GFLOW_MCP_NO_SPEND`; the prompt-generated create (`--face-prompt`) is not ported to `flow.google.com` yet.
   Thanks to @ziyedbe ([#987](https://github.com/ffroliva/gflow-cli/pull/987)).
 
+### Fixed
+
+- **`publish_output` never overwrites existing outputs and clears stale reservations before retrying on filesystems without hard links ([#1406](https://github.com/ffroliva/gflow-cli/issues/1406)).** When hard links are unavailable (such as FAT/exFAT volumes and network shares), publishing falls back to platform-native atomic no-replace renames (`os.rename` on Windows, `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS), reserving destination paths via `O_CREAT | O_EXCL` and replacing only as a last resort where native no-replace renames are unavailable (this path is best-effort: it assumes the reserving run is not suspended for longer than the 60 s stale threshold). Publishing never replaces an existing file. A zero-byte regular file left behind by an earlier interrupted run is cleared during validation once older than 60 s against the local filesystem clock, allowing retry runs in `gflow video assemble` and `gflow audio narrate` to proceed while refusing fresh empty reservations and active files.
+
 ## [0.104.0] — 2026-11-22
 
 ### Added
