@@ -197,6 +197,9 @@ class GeneratedImage:
     # is the searchable label the media picker shows — recorded so a generated
     # image can be referenced by name later. Original find by @C1ph3r404 (#253).
     display_name: str | None = None
+    # The transport that produced this image ("direct_http"); None = the default UI path.
+    # Recorded into the asset's metadata_json and the weekly telemetry, never sent.
+    transport: str | None = None
 
     @property
     def is_signed_url(self) -> bool:
