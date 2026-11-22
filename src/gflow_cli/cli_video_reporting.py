@@ -248,7 +248,7 @@ def _migrated_extend_payload(
         "local_path": rendered,
         "output": rendered,
         "failure_reasons": [],
-        "error_message": None if ok else f"Flow reported status {record.status}",
+        "error_message": None if ok else record.failure_message,
         "scene_id": outcome.scene_id,
         "project_id": project_id,
         "model": outcome.model_key,
@@ -313,7 +313,7 @@ def _report_migrated_extend(  # noqa: PLR0913
             c.print(f"  wrote: {rendered}")
     if not ok:
         err = FlowApiError(
-            f"extend of {media_id} ended with Flow status {record.status}; it may have been billed",
+            f"extend of {media_id} failed: {record.failure_message}; it may have been billed",
             route="batchexecute:fZytfe",
         )
         if as_json or output_format == OutputFormat.JSON.value:

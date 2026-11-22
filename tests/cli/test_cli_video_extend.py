@@ -839,6 +839,43 @@ def test_the_migrated_payload_reports_the_length_by_identity(
     assert payload["request"]["duration"] == added
 
 
+def test_a_failed_migrated_extend_names_flows_error() -> None:
+    """#1111: the extend reads the same failed record, so both its ``--json`` result and
+    its raised error name Flow's code and text instead of the bare status."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video_reporting import _migrated_extend_payload, _report_migrated_extend
+    from gflow_cli.errors import FlowApiError
+
+    flow_error = "Flow failed the generation (code 13): Generation job finished with state: FAILED"
+    record = GenerationRecord(
+        workflow_id="wf",
+        project_id=PROJECT,
+        media_id="new-media",
+        status=4,
+        error_code=13,
+        error_message="Generation job finished with state: FAILED",
+    )
+    outcome = ExtendOutcome(record=record, video=None, model_key="k", aspect="16:9", scene_id=None)
+    common: dict[str, Any] = {
+        "profile_name": "p",
+        "media_id": MEDIA,
+        "project_id": PROJECT,
+        "aspect": None,
+    }
+    assert _migrated_extend_payload(outcome, None, **common)["error_message"] == flow_error
+    with pytest.raises(FlowApiError) as info:
+        _report_migrated_extend(
+            outcome, None, as_json=False, console=Console(file=StringIO()), **common
+        )
+    assert flow_error in str(info.value)
+    assert "may have been billed" in str(info.value)
+
+
 @pytest.mark.parametrize(
     ("key", "expected"),
     [

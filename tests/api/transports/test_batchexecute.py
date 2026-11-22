@@ -207,6 +207,28 @@ def test_records_without_a_flow_error_have_no_error_fields() -> None:
     assert unknown.failure_message == "migrated host reported status 7"
 
 
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [None],  # no pair
+        ["Generation job finished with state: FAILED"],  # text where the pair belongs
+        [[13]],  # pair without text
+        [["13", "Generation job finished with state: FAILED"]],  # code not an int
+        [[13, None]],  # text not a string
+        [[13, ""]],  # empty text: nothing to name
+    ],
+)
+def test_a_malformed_error_tail_keeps_the_bare_status(tail: list[Any]) -> None:
+    """#1111: only ``[code, text]`` names Flow's error; any other tail falls back."""
+    from gflow_cli.api.transports.batchexecute import generation_record
+
+    payload = poll_payload(4)
+    payload[2][0][0][5][8] = [4, *tail]
+    rec = generation_record("jwpduf", payload)
+    assert rec.is_failed and rec.status == 4
+    assert rec.failure_message == "migrated host reported status 4"
+
+
 def test_drift_raises_wire_format_error_with_redacted_discovery_head() -> None:
     from gflow_cli.api.transports.batchexecute import generation_record
 

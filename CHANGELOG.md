@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A video generation or extend that Flow fails on `flow.google.com` names Flow's error instead of a bare status ([#1111](https://github.com/ffroliva/gflow-cli/issues/1111)).** Flow's failed status record carries its own error code and text next to the status, for example code 13 with "Generation job finished with state: FAILED"; gflow dropped it and reported only `migrated host reported status 4`. The failure now reads `Flow failed the generation (code 13): Generation job finished with state: FAILED` in the CLI and `--json` results of `video t2v`, `i2v`, `r2v` and `video extend`, and in the error of the MCP `gflow_generate_video` task. A record without that error keeps the status-only message. Exit codes are unchanged. Thanks to @aryankalantri ([#1423](https://github.com/ffroliva/gflow-cli/pull/1423)).
+
 ## [0.105.0] — 2026-11-22
 
 ### Added
