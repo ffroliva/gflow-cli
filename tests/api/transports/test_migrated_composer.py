@@ -4074,6 +4074,23 @@ async def test_a_settings_drift_before_submit_reports_nothing_charged() -> None:
     assert info.value.to_problem_details()["charged"] == "no"
 
 
+async def test_missing_image_model_reports_nothing_charged() -> None:
+    """A model absent from the settings menu is rejected before the submit click."""
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    page.dom.models = ["🍌 Nano Banana 2", "🍌 Nano Banana Pro"]
+    with pytest.raises(ConfigurationError, match="offered") as info:
+        await run_images(
+            page,
+            GenerateImageRequest(prompt="a blue cup", model=ImageModel.HARBOR_SEAL),
+            project_id="p1",
+        )
+
+    assert page.dom.submit_clicked == 0
+    assert info.value.to_problem_details()["charged"] == "no"
+
+
 async def test_a_drift_after_the_submit_click_still_reports_maybe_charged() -> None:
     """#1320's boundary: once the submit is clicked, Flow may have billed the run."""
     from gflow_cli.api.image import GenerateImageRequest

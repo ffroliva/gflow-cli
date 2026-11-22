@@ -58,6 +58,7 @@ from gflow_cli.cli_video_reporting import (
     _free_rerender_hint,
     _print_chain_plan,
     _print_extend_plan,
+    _record_migrated_extend,
     _report_migrated_extend,
 )
 from gflow_cli.config import UiMode, get_settings
@@ -2119,13 +2120,15 @@ async def _extend_migrated_session(  # noqa: PLR0913
                 recorder=recorder,
             ),
         )
-    if recorder is not None and target is not None and outcome.record.media_id == media_id:
-        try:  # #1184: grown in place — noted only now that Flow reports it done
-            recorder.record_extended_in_place(
-                profile_name, media_id, outcome.record.workflow_id, outcome.model_key
-            )
-        except DataStoreError as exc:
-            logger.warning("extend_record_failed", error_class=type(exc).__name__)
+    _record_migrated_extend(
+        recorder,
+        target,
+        profile_name=profile_name,
+        profile_dir=profile_dir,
+        media_id=media_id,
+        project_id=project_id,
+        outcome=outcome,
+    )
     _report_migrated_extend(
         outcome,
         target,
