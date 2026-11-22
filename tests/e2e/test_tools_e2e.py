@@ -50,6 +50,18 @@ _IMAGE_TIMEOUT_S = 240
 _VIDEO_TIMEOUT_S = 600
 
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+def _is_image(path: Path) -> bool:
+    """Accept the image formats Flow returns (PNG or JPEG).
+
+    Mirrors ``tests/e2e/test_out_file_cli_e2e.py``: Flow serves JPEG for this
+    path now, so a PNG-only assertion fails before the test reaches its
+    subject, the tool provenance assertions (#1383).
+    """
+    data = path.read_bytes()
+    return data.startswith(_PNG_MAGIC) or data.startswith(_JPEG_MAGIC)
 
 
 def _run_gflow(
@@ -143,7 +155,7 @@ def test_t2i_with_tool_records_provenance(e2e_env: RedactedEnv) -> None:
     ]
     assert images, "no image written"
     assert images[0].stat().st_size > 1024
-    assert images[0].read_bytes()[:8] == _PNG_MAGIC
+    assert _is_image(images[0]), f"{images[0]} is neither PNG nor JPEG"
 
     conn = _open_db(e2e_env)
     try:
