@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **`lhm.plugin.json` lists all 27 registered MCP tools ([#1407](https://github.com/ffroliva/gflow-cli/issues/1407)).** The manifest omitted `gflow_media_trash`, `gflow_media_restore`, `gflow_narrate`, `gflow_video_assemble`, `gflow_video_transcribe`, `gflow_video_captions` and `gflow_character_create`; each is now listed with its registered description and input schema. A test keeps the manifest's tool names in step with the server's registrations. Thanks to @aryankalantri ([#1418](https://github.com/ffroliva/gflow-cli/pull/1418)).
+
 ## [0.105.0] — 2026-11-22
 
 ### Added
