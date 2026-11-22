@@ -30,7 +30,7 @@ from gflow_cli.api.transports._ui_prompt import PromptInputMixin
 from gflow_cli.api.transports.ui_automation_video import (
     selector_drift_detail,
 )
-from gflow_cli.errors import UiSelectorDriftError
+from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -128,13 +128,14 @@ class GenerationSettingsMixin(PromptInputMixin):
         """
         option_sels = IMAGE_MODEL_OPTION_SELECTORS.get(model)
         if not option_sels:
-            raise UiSelectorDriftError(
-                selector_drift_detail(
-                    "image_model",
-                    f"no picker selector registered for model {model.value!r}.",
-                    None,
+            with nothing_submitted():
+                raise UiSelectorDriftError(
+                    selector_drift_detail(
+                        "image_model",
+                        f"no picker selector registered for model {model.value!r}.",
+                        None,
+                    )
                 )
-            )
 
         trigger = page.locator(IMAGE_MODEL_PICKER_TRIGGER).first
         await trigger.wait_for(state="visible", timeout=4000)
@@ -152,18 +153,19 @@ class GenerationSettingsMixin(PromptInputMixin):
                 continue
             if matches > 1:
                 await close_menu(page)
-                raise UiSelectorDriftError(
-                    selector_drift_detail(
-                        "image_model",
-                        (
-                            f"selector for {model.value!r} is AMBIGUOUS — {matches} entries "
-                            f"match {sel!r}. Selecting .first would pick by DOM order and "
-                            f"could bill a different model than requested. "
-                            f"Flow offered: {offered}."
-                        ),
-                        None,
+                with nothing_submitted():
+                    raise UiSelectorDriftError(
+                        selector_drift_detail(
+                            "image_model",
+                            (
+                                f"selector for {model.value!r} is AMBIGUOUS — {matches} entries "
+                                f"match {sel!r}. Selecting .first would pick by DOM order and "
+                                f"could bill a different model than requested. "
+                                f"Flow offered: {offered}."
+                            ),
+                            None,
+                        )
                     )
-                )
             assert first_visible is not None  # matches > 0 implies one was found
             await first_visible.click()
             await page.wait_for_timeout(500)
@@ -171,17 +173,18 @@ class GenerationSettingsMixin(PromptInputMixin):
             return
 
         await close_menu(page)
-        raise UiSelectorDriftError(
-            selector_drift_detail(
-                "image_model",
-                (
-                    f"model {model.value!r} is not selectable — no picker entry matched. "
-                    f"Flow offered: {offered}. Refusing to generate on a different model "
-                    f"than requested."
-                ),
-                None,
+        with nothing_submitted():
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "image_model",
+                    (
+                        f"model {model.value!r} is not selectable — no picker entry matched. "
+                        f"Flow offered: {offered}. Refusing to generate on a different model "
+                        f"than requested."
+                    ),
+                    None,
+                )
             )
-        )
 
     @staticmethod
     async def _configure_generation_settings(
@@ -466,13 +469,14 @@ class GenerationSettingsMixin(PromptInputMixin):
             attempts=_max_attempts,
         )
         shot = await _capture_debug_screenshot(page, out_dir, "debug_count_setter_drift.png")
-        raise UiSelectorDriftError(
-            selector_drift_detail(
-                "count_tab",
-                f"count setter failed to converge: desired={count}, "
-                f"displayed={displayed} after {_max_attempts} attempts. "
-                f"Flow's count control may have changed again "
-                f"(labels are matched as {count}x/x{count}).",
-                shot,
+        with nothing_submitted():
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "count_tab",
+                    f"count setter failed to converge: desired={count}, "
+                    f"displayed={displayed} after {_max_attempts} attempts. "
+                    f"Flow's count control may have changed again "
+                    f"(labels are matched as {count}x/x{count}).",
+                    shot,
+                )
             )
-        )

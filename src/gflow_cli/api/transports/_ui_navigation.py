@@ -36,7 +36,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     screenshot_clause,
     selector_drift_detail,
 )
-from gflow_cli.errors import UiSelectorDriftError
+from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -165,18 +165,19 @@ class PageNavigationMixin(UiSessionMixin):
         if not await self._overlay_blocks_page(page):
             return
         shot = await _capture_debug_screenshot(page, out_dir, "debug_overlay_still_blocking.png")
-        raise UiSelectorDriftError(
-            selector_drift_detail(
-                "overlay_close_button",
-                (
-                    f"A Flow overlay is still covering the app after dismissal ({epoch}). "
-                    "Controls below it read visible and enabled but cannot receive a "
-                    "click. Open the project once in Chrome, dismiss the announcement, "
-                    "then re-run — the dismissal persists on your account."
-                ),
-                shot,
+        with nothing_submitted():
+            raise UiSelectorDriftError(
+                selector_drift_detail(
+                    "overlay_close_button",
+                    (
+                        f"A Flow overlay is still covering the app after dismissal ({epoch}). "
+                        "Controls below it read visible and enabled but cannot receive a "
+                        "click. Open the project once in Chrome, dismiss the announcement, "
+                        "then re-run — the dismissal persists on your account."
+                    ),
+                    shot,
+                )
             )
-        )
 
     @classmethod
     async def _verify_overlay_cleared(cls, page: Page, *, method: str) -> bool:

@@ -200,6 +200,7 @@ class CharacterCreateResult:
     name: str
     voice: str | None = None
     image_paths: tuple[str | None, ...] = ()
+    generated_new: bool = False
 
 
 # ---------------------------------------------------------------------------
