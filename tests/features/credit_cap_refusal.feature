@@ -25,5 +25,5 @@ Feature: Pre-submit credit cap enforcement against Flow's live quote
   @e2e_video
   Scenario: Migrated composer completes when the quote equals max_credits
     Given a live classic Flow project served by flow.google.com with paid video E2E enabled
-    When the operator requests an omni-1.2 4-second x1 video with max_credits 4
+    When the operator requests an omni-1.2 4-second x1 360p video with max_credits 4
     Then the CLI completes and downloads a non-empty MP4

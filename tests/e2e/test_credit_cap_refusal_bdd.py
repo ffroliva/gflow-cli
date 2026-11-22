@@ -162,9 +162,10 @@ def _paid_video_enabled(
     _live_classic_project(world, e2e_profile_dir, e2e_env)
 
 
-@when("the operator requests an omni-1.2 4-second x1 video with max_credits 4")
+@when("the operator requests an omni-1.2 4-second x1 360p video with max_credits 4")
 def _cli_video_at_quote(world: dict[str, Any]) -> None:
-    _run_cli_video(world, 4)
+    # The run must be quoted exactly 4 to complete at the cap: pin 360p like the refusals.
+    _run_cli_video(world, 4, resolution="360p")
 
 
 @then("the CLI returns CreditCapExceededError with exit code 45 and charged no")
