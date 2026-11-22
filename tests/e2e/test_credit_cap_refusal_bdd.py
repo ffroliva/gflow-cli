@@ -101,7 +101,11 @@ def _install_route_backstop(monkeypatch: pytest.MonkeyPatch, world: dict[str, An
     world["submission_attempts"] = attempts
 
 
-@when(parsers.parse("the operator requests an omni-1.2 4-second x1 video with max_credits {cap:d}"))
+@when(
+    parsers.parse(
+        "the operator requests an omni-1.2 4-second 360p x1 video with max_credits {cap:d}"
+    )
+)
 def _cli_video(world: dict[str, Any], cap: int) -> None:
     config.reset_settings()
     world["cli"] = CliRunner().invoke(
@@ -116,6 +120,8 @@ def _cli_video(world: dict[str, Any], cap: int) -> None:
             "omni-1.2",
             "--duration",
             "4",
+            "--resolution",
+            "360p",
             "--count",
             "1",
             "--max-credits",
@@ -126,7 +132,7 @@ def _cli_video(world: dict[str, Any], cap: int) -> None:
     )
 
 
-@when(parsers.parse("MCP requests an omni-1.2 4-second x1 video with max_credits {cap:d}"))
+@when(parsers.parse("MCP requests an omni-1.2 4-second 360p x1 video with max_credits {cap:d}"))
 def _mcp_video(monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], cap: int) -> None:
     for key, value in world["env"].items():
         monkeypatch.setenv(key, value)
@@ -138,6 +144,7 @@ def _mcp_video(monkeypatch: pytest.MonkeyPatch, world: dict[str, Any], cap: int)
             aspect="9:16",
             model="omni-1.2",
             duration=4,
+            resolution="360p",
             count=1,
             max_credits=cap,
             profile=world["profile"],
@@ -156,7 +163,7 @@ def _paid_video_enabled(
     _live_classic_project(world, e2e_profile_dir, e2e_env)
 
 
-@when("the operator requests an omni-1.2 4-second x1 video with max_credits 4")
+@when("the operator requests an omni-1.2 4-second 360p x1 video with max_credits 4")
 def _cli_video_at_quote(world: dict[str, Any]) -> None:
     _cli_video(world, 4)
 
