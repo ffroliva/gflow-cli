@@ -76,9 +76,8 @@ def _decode_metadata_json(raw: object) -> dict[str, Any]:
 
 
 def _optional_column(row: sqlite3.Row, name: str) -> object | None:
-    if name not in row.keys():
-        return None
-    return row[name]
+    """The column's value, or None when the query did not select it."""
+    return dict(zip(row.keys(), tuple(row), strict=True)).get(name)
 
 
 def _row_to_local_file(row: sqlite3.Row) -> LocalFileRecord:
