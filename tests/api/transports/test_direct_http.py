@@ -2,16 +2,29 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
+from gflow_cli.api import flow_wire
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, ImageRef
 from gflow_cli.api.transports._mc_common import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
-from gflow_cli.api.transports.direct_http import direct_can_serve
-from gflow_cli.errors import WafRejectionError, WireFormatError
+from gflow_cli.api.transports.direct_http import DirectHttpTransport, direct_can_serve
+from gflow_cli.config import get_settings
+from gflow_cli.errors import NetworkError, WafRejectionError, WireFormatError
 from tests.api.transports.test_migrated_images import MEDIA, URL, WORKFLOW, image_payload
+
+
+@pytest.fixture(autouse=True)
+def _clean_flow_wire(monkeypatch: pytest.MonkeyPatch) -> Any:
+    flow_wire.reset_state()
+    monkeypatch.setattr(flow_wire, "getproxies", dict)
+    yield
+    flow_wire.reset_state()
 
 
 def test_direct_can_serve_plain_t2i() -> None:
@@ -73,3 +86,570 @@ def test_ogiz0b_reply_images_refusal() -> None:
     text = f")]}}'\n{err_body}"
     with pytest.raises(WafRejectionError):
         ogiz0b_reply_images(text, req)
+
+
+def _valid_ogiz0b_text() -> str:
+    payload = image_payload()
+    frame_json = json.dumps(
+        [["wrb.fr", "ogiZ0b", json.dumps(payload), None, None, None, "generic"]]
+    )
+    return f")]}}'\n{frame_json}"
+
+
+def _make_fake_page(url: str = "https://flow.google.com/project/proj-123") -> MagicMock:
+    page = MagicMock()
+    page.url = url
+    page.goto = AsyncMock()
+    page.context = MagicMock()
+    page.context.cookies = AsyncMock(return_value=[{"name": "SID", "value": "test_sid"}])
+    return page
+
+
+@pytest.fixture
+def mock_mint_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint",
+        AsyncMock(return_value="mock_token"),
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.frame_builder.build_ogiz0b_body",
+        MagicMock(return_value="f.req=mock_body&at=at-x&"),
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        MagicMock(return_value="f.req=mock_body&at=at-x&"),
+    )
+
+
+@pytest.fixture
+def transport(tmp_path: Path) -> DirectHttpTransport:
+    t = DirectHttpTransport()
+    t._setup_done = True
+    t._profile_dir = tmp_path
+    t._page = _make_fake_page()
+    t.park_deferred_page = AsyncMock()  # type: ignore[method-assign]
+    return t
+
+
+@pytest.mark.asyncio
+async def test_direct_http_happy_path(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        if request.method == "POST":
+            post_count += 1
+            return httpx.Response(200, text=_valid_ogiz0b_text())
+        return httpx.Response(404)
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    images = await transport.generate_images(project_id="proj-123", request=req)
+
+    assert len(images) == 1
+    assert images[0].transport == "direct_http"
+    assert transport.last_image_route == "migrated"
+    assert not ui_called
+    assert post_count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_http_unsupported_shape_falls_back_to_ui(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "POST":
+            post_count += 1
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup", count=2)
+    await transport.generate_images(project_id="proj-123", request=req)
+
+    assert ui_called
+    assert post_count == 0
+
+
+@pytest.mark.asyncio
+async def test_direct_http_pre_send_cookie_failure_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    transport._page.context.cookies = AsyncMock(side_effect=RuntimeError("cookie unreadable"))
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "POST":
+            post_count += 1
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+
+    assert ui_called
+    assert post_count == 0
+
+
+@pytest.mark.asyncio
+async def test_direct_http_pre_send_shell_tokens_failure_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(401, text="Unauthorized")
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_pre_send_mint_failure_falls_back(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint",
+        AsyncMock(side_effect=RuntimeError("minting failed")),
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.frame_builder.build_ogiz0b_body",
+        MagicMock(return_value="f.req=mock_body&at=at-x&"),
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        MagicMock(return_value="f.req=mock_body&at=at-x&"),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+        )
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_pre_send_connect_error_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        raise httpx.ConnectError("Connection refused")
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_post_403_falls_back_to_ui(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        if request.method == "POST":
+            post_count += 1
+            return httpx.Response(403, text="Forbidden")
+        return httpx.Response(404)
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+
+    assert ui_called
+    assert post_count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_http_post_500_raises_network_error(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        if request.method == "POST":
+            post_count += 1
+            return httpx.Response(500, text="Internal Server Error")
+        return httpx.Response(404)
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    with pytest.raises(NetworkError) as exc_info:
+        await transport.generate_images(project_id="proj-123", request=req)
+
+    assert exc_info.value.next_action == "reconcile"
+    assert "not resent" in exc_info.value.detail
+    assert not ui_called
+    assert post_count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_http_post_timeout_raises_network_error(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        if request.method == "POST":
+            post_count += 1
+            raise httpx.ReadTimeout("Request timed out")
+        return httpx.Response(404)
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    with pytest.raises(NetworkError) as exc_info:
+        await transport.generate_images(project_id="proj-123", request=req)
+
+    assert exc_info.value.next_action == "reconcile"
+    assert "not resent" in exc_info.value.detail
+    assert not ui_called
+    assert post_count == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_http_setup_not_done_raises(transport: DirectHttpTransport) -> None:
+    transport._setup_done = False
+    req = GenerateImageRequest(prompt="a blue cup")
+    with pytest.raises(RuntimeError, match="setup.*must be called"):
+        await transport.generate_images(project_id="proj-123", request=req)
+
+
+@pytest.mark.asyncio
+async def test_direct_http_no_project_id_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id=None, request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_no_profile_dir_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    transport._profile_dir = None
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_route_not_migrated_falls_back(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, mock_mint_and_body: None
+) -> None:
+    monkeypatch.setattr(get_settings(), "flow_host", "labs")
+    transport._page.url = "https://labs.google/fx/tools/flow"
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_proxy_configured_falls_back(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, mock_mint_and_body: None
+) -> None:
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"https": "http://127.0.0.1:8080"})
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_page_navigates_to_project_when_needed(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    transport._page.url = "https://flow.google.com/other"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    transport._page.goto.assert_awaited_once_with("https://flow.google.com/project/proj-123")
+
+
+@pytest.mark.asyncio
+async def test_direct_http_navigation_error_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    transport._page.url = "https://flow.google.com/other"
+    transport._page.goto = AsyncMock(side_effect=RuntimeError("nav failed"))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_post_transport_error_raises_network_error(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        if request.method == "POST":
+            raise httpx.ProtocolError("Protocol violation")
+        return httpx.Response(404)
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    req = GenerateImageRequest(prompt="a blue cup")
+    with pytest.raises(NetworkError) as exc_info:
+        await transport.generate_images(project_id="proj-123", request=req)
+
+    assert exc_info.value.next_action == "reconcile"
+    assert "not resent" in exc_info.value.detail
+    assert not ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_empty_cookies_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    transport._page.context.cookies = AsyncMock(return_value=[])
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_user_agent_included(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, mock_mint_and_body: None
+) -> None:
+    monkeypatch.setattr(flow_wire, "user_agent", lambda _p: "CustomUA/1.0")
+    recorded_ua = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal recorded_ua
+        if request.method == "GET":
+            recorded_ua = request.headers.get("user-agent")
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert recorded_ua == "CustomUA/1.0"
+
+
+@pytest.mark.asyncio
+async def test_direct_http_shell_tokens_unexpected_error_falls_back(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, mock_mint_and_body: None
+) -> None:
+    monkeypatch.setattr(
+        flow_wire,
+        "shell_tokens",
+        AsyncMock(side_effect=RuntimeError("unexpected shell error")),
+    )
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    req = GenerateImageRequest(prompt="a blue cup")
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui_called
+
+
+@pytest.mark.asyncio
+async def test_direct_http_setup_stores_profile_dir(tmp_path: Path) -> None:
+    t = DirectHttpTransport()
+    fake_page = _make_fake_page()
+    await t.setup(tmp_path, page=fake_page)
+    assert t._profile_dir == tmp_path
+    assert t._page is fake_page
