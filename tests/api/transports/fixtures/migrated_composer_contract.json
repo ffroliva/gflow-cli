@@ -25,7 +25,7 @@
     "_read_listing": "function (self, page: 'Page', project_id: 'str', *, budget_s: 'float') -> 'Any | None' sha=ca391547c0210a45",
     "_require_chips_kept": "function (self, page: 'Page', before: 'int', name: 'str') -> 'list[dict[str, str]]' sha=674a7d42f1ea4ec0",
     "_select": "function (self, page: 'Page', pane: 'Any', *, axis: 'str', lig: 'str | None' = None, text: 'str | None' = None) -> 'None' sha=95d9ffbc598b1403",
-    "_select_image_model": "function (self, page: 'Page', pane: 'Any', model: 'ImageModel') -> 'None' sha=6f21ac923d0f5560",
+    "_select_image_model": "function (self, page: 'Page', pane: 'Any', model: 'ImageModel') -> 'None' sha=bdfcca5b94903043",
     "_select_model": "function (self, page: 'Page', pane: 'Any', model: 'VideoModel') -> 'None' sha=8ff1ba1c0a568ac4",
     "_select_omni12_duration": "function (self, page: 'Page', pane: 'Any', seconds: 'int') -> 'None' sha=f1e2819ee341f2fa",
     "_ui_failure_detail": "function (self, page: 'Page', *, phase: 'str', selector: 'str', detail: 'str', error: 'BaseException | str') -> 'str' sha=56793bc6adb262a8",

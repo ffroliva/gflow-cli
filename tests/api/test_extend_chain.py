@@ -295,3 +295,41 @@ async def test_poll_failure_after_a_finished_segment_is_charged() -> None:
         "none",
         None,
     )
+
+
+@pytest.mark.asyncio
+async def test_value_error_after_a_finished_segment_reports_prior_charge() -> None:
+    class _SecondSubmitValueError(_FakeClient):
+        async def extend_video(self, **kwargs: Any) -> ExtendStarted:
+            if self._n == 0:
+                return await super().extend_video(**kwargs)
+            raise ValueError("unexpected response shape")
+
+    result = await run_extend_chain(
+        _SecondSubmitValueError(),
+        media_id=MEDIA,
+        project_id=PROJECT,
+        scene_id=SCENE,
+        prompts=["a", "b"],
+    )
+
+    assert result.completed_media_ids == ["media-1"]
+    assert result.error is not None
+    assert (result.error.charged, result.error.resolved_next_action()) == ("yes", "reconcile")
+    assert "retry" not in (result.error.remediation_hint or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_value_error_from_poll_keeps_in_flight_segment_uncertain() -> None:
+    class _PollValueError(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            raise ValueError("unexpected status shape")
+
+    result = await run_extend_chain(
+        _PollValueError(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
+    )
+
+    assert result.error is not None
+    assert (result.error.charged, result.error.resolved_next_action()) == ("maybe", "reconcile")
+    assert result.error.operation_id == "media-1"
+    assert "retry" not in (result.error.remediation_hint or "").lower()
