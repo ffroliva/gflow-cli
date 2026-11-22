@@ -5,6 +5,7 @@ from __future__ import annotations
 import builtins
 import errno
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -263,11 +264,14 @@ def test_fallback_publish_removes_its_reservation_when_replace_fails(
     def no_hard_links(*_args: object) -> None:
         raise OSError("hard links unsupported")
 
+    def broken_rename(*_args: object) -> None:
+        raise OSError(errno.ENOSYS, "rename unsupported")
+
     def replace_denied(*_args: object) -> None:
         raise PermissionError("replace denied")
 
     monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
-    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", no_hard_links)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", broken_rename)
     monkeypatch.setattr(video_assembly.os, "replace", replace_denied)
 
     with pytest.raises(PermissionError):
@@ -282,7 +286,12 @@ def test_platform_no_replace_rename_direct(tmp_path: Path) -> None:
     temp_output.write_bytes(b"rendered")
     output = tmp_path / "joined.mp4"
 
-    video_assembly._platform_no_replace_rename(temp_output, output)
+    try:
+        video_assembly._platform_no_replace_rename(temp_output, output)
+    except OSError as exc:
+        if exc.errno in (errno.ENOSYS, errno.EINVAL, errno.ENOTSUP):
+            pytest.skip(f"Platform rename not supported: {exc}")
+        raise
     assert output.read_bytes() == b"rendered"
     assert not temp_output.exists()
 
@@ -314,17 +323,12 @@ def test_fallback_publish_preserves_existing_non_empty_output_without_hard_links
     assert temp_output.read_bytes() == b"newly rendered"
 
 
-def test_windows_uses_os_rename_and_drops_custom_ctypes() -> None:
-    assert not hasattr(video_assembly, "_windows_no_replace_rename")
-
-
 @pytest.mark.parametrize(
     "error",
     [
-        AttributeError("missing symbol"),
-        TypeError("invalid ctypes arguments"),
         OSError(errno.ENOSYS, "Function not implemented"),
         OSError(errno.EINVAL, "Invalid argument"),
+        ImportError("No module named '_ctypes'"),
     ],
 )
 def test_fallback_publish_falls_back_to_reservation_on_platform_rename_error(
@@ -347,6 +351,38 @@ def test_fallback_publish_falls_back_to_reservation_on_platform_rename_error(
 
     assert output.read_bytes() == b"newly rendered"
     assert not temp_output.exists()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError(errno.EACCES, "Permission denied"),
+        OSError(errno.EROFS, "Read-only file system"),
+        OSError(errno.ENOSPC, "No space left on device"),
+        OSError(errno.ENOENT, "No such file or directory"),
+    ],
+)
+def test_fallback_publish_reraises_non_fallback_os_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: OSError
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    def broken_platform_rename(*_args: object) -> None:
+        raise error
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", broken_platform_rename)
+
+    with pytest.raises(OSError) as exc_info:
+        video_assembly.publish_output(temp_output, output)
+
+    assert exc_info.value.errno == error.errno
+    assert not output.exists()
 
 
 def test_fallback_publish_refuses_fresh_zero_byte_destination(
@@ -379,7 +415,7 @@ def test_validate_assembly_refuses_fresh_zero_byte_output(tmp_path: Path) -> Non
         video_assembly._validate_assembly([clip], output, None, None)
 
 
-def test_fallback_publish_overcomes_stale_zero_byte_reservation_without_hard_links(
+def test_fallback_publish_refuses_existing_destination_even_if_stale_without_hard_links(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     temp_output = tmp_path / ".joined.tmp.mp4"
@@ -394,10 +430,29 @@ def test_fallback_publish_overcomes_stale_zero_byte_reservation_without_hard_lin
 
     monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
 
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly.publish_output(temp_output, output)
+
+    assert output.stat().st_size == 0
+    assert temp_output.read_bytes() == b"newly rendered"
+
+
+def test_publish_output_succeeds_even_if_temp_cleanup_raises_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"rendered content")
+    output = tmp_path / "joined.mp4"
+
+    def broken_unlink(_path: Path) -> None:
+        raise OSError("unlink failed")
+
+    monkeypatch.setattr(Path, "unlink", broken_unlink)
+
     video_assembly.publish_output(temp_output, output)
 
-    assert output.read_bytes() == b"newly rendered"
-    assert not temp_output.exists()
+    assert output.exists()
+    assert output.read_bytes() == b"rendered content"
 
 
 def test_validate_assembly_permits_stale_zero_byte_output(tmp_path: Path) -> None:
@@ -675,3 +730,121 @@ def test_missing_pyav_error_is_uncharged_and_names_extra(
         assemble_videos([tmp_path / "unused.mp4"], tmp_path / "out.mp4")
     assert captured.value.charged == "no"
     assert "gflow-cli[chain]" in captured.value.detail
+
+
+def test_two_publishers_racing_over_stale_file_first_survives_second_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    output = tmp_path / "joined.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    # Both runners evaluate staleness
+    video_assembly.clear_stale_reservation(output)
+    tmp1 = tmp_path / ".tmp1.mp4"
+    tmp1.write_bytes(b"first completed output")
+    tmp2 = tmp_path / ".tmp2.mp4"
+    tmp2.write_bytes(b"second completed output")
+
+    # Winner publishes
+    video_assembly.publish_output(tmp1, output)
+    assert output.read_bytes() == b"first completed output"
+
+    # Loser must not overwrite the winner's output
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly.publish_output(tmp2, output)
+
+    assert output.read_bytes() == b"first completed output"
+    assert tmp2.read_bytes() == b"second completed output"
+
+
+def test_symlink_to_old_empty_file_not_treated_as_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_target = tmp_path / "empty_target.mp4"
+    real_target.touch()
+    past = time.time() - 120.0
+    os.utime(real_target, (past, past))
+    symlink_path = tmp_path / "symlink.mp4"
+    try:
+        symlink_path.symlink_to(real_target)
+    except OSError:
+        symlink_path.touch()
+        os.utime(symlink_path, (past, past))
+        st = os.stat(symlink_path)
+        fake_lstat = os.stat_result(
+            (
+                stat.S_IFLNK | 0o777,
+                st.st_ino,
+                st.st_dev,
+                st.st_nlink,
+                st.st_uid,
+                st.st_gid,
+                0,
+                past,
+                past,
+                past,
+            )
+        )
+        monkeypatch.setattr(video_assembly.os, "lstat", lambda _p: fake_lstat)
+
+    clip = tmp_path / "clip.mp4"
+    clip.touch()
+
+    with pytest.raises(VideoAssemblyError) as exc_info:
+        video_assembly._validate_assembly([clip], symlink_path)
+
+    assert "Output already exists" in str(exc_info.value)
+    assert "it is empty and may be another run's" not in str(exc_info.value)
+
+
+def test_reservation_owner_whose_reservation_was_replaced_does_not_overwrite_or_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".temp.mp4"
+    temp_output.write_bytes(b"runner B temp bytes")
+    output = tmp_path / "output.mp4"
+
+    real_close = os.close
+
+    def replace_during_reservation(fd: int) -> None:
+        real_close(fd)
+        runner_a_tmp = tmp_path / "runner_a.tmp"
+        runner_a_tmp.write_bytes(b"runner A completed output")
+        os.replace(runner_a_tmp, output)
+
+    monkeypatch.setattr(video_assembly.os, "close", replace_during_reservation)
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly._reserved_replace_publish(temp_output, output)
+
+    assert output.exists()
+    assert output.read_bytes() == b"runner A completed output"
+    assert temp_output.read_bytes() == b"runner B temp bytes"
+
+
+def test_keyboard_interrupt_right_after_replace_keeps_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".temp.mp4"
+    temp_output.write_bytes(b"published content")
+    output = tmp_path / "output.mp4"
+
+    real_replace = os.replace
+
+    def replace_then_interrupt(src: Path | str, dst: Path | str) -> None:
+        real_replace(src, dst)
+        raise KeyboardInterrupt("simulated interrupt right after replace")
+
+    monkeypatch.setattr(video_assembly.os, "replace", replace_then_interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        video_assembly._reserved_replace_publish(temp_output, output)
+
+    assert output.exists()
+    assert output.read_bytes() == b"published content"

@@ -34,7 +34,10 @@ def audio() -> None:
     "--out-file",
     required=True,
     type=click.Path(dir_okay=False, path_type=Path),
-    help="Write the synthesized audio here; existing files are never overwritten.",
+    help=(
+        "Write the synthesized audio here; existing files are never overwritten (a stale empty "
+        "leftover from an interrupted run is cleared; otherwise existing outputs are refused)."
+    ),
 )
 @click.option(
     "--provider",

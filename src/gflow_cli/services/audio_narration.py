@@ -15,7 +15,7 @@ from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import Charged, ConfigurationError, VideoAssemblyError
 from gflow_cli.services.speech_ports import SpeechSynthesizer, SynthesisRequest
 from gflow_cli.services.speech_synthesizers import EdgeTtsSynthesizer, GeminiTtsSynthesizer
-from gflow_cli.services.video_assembly import publish_output
+from gflow_cli.services.video_assembly import clear_stale_reservation, publish_output
 
 Provider = Literal["edge", "gemini"]
 
@@ -156,6 +156,14 @@ def _validate_output(path: Path) -> None:
                 "Create the parent directory or choose a path in an existing directory."
             ),
         )
+    try:
+        clear_stale_reservation(path)
+    except VideoAssemblyError as exc:
+        raise ConfigurationError(
+            f"Narration {exc.detail}",
+            charged="no",
+            remediation_hint=_EXISTING_OUT_FILE_HINT,
+        ) from exc
     if path.exists():
         raise ConfigurationError(
             f"Narration output already exists: {path}",

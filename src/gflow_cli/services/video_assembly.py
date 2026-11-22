@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-import ctypes
 import errno
 import os
+import stat
 import sys
 import tempfile
-import time
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 from typing import Any
+
+import structlog
 
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.data.models import AssetKind
 from gflow_cli.data.repository import verified_local_path
 from gflow_cli.errors import DataStoreError, VideoAssemblyError
 from gflow_cli.services.media_recovery import resolve_asset
+
+_log = structlog.get_logger(__name__)
 
 _SAMPLE_RATE = 44100
 _CHANNELS = 2
@@ -187,12 +190,13 @@ def _validate_assembly(
         raise VideoAssemblyError(
             detail="Output path must differ from every input.", route="video.assemble"
         )
-    if output.is_dir() or (output.exists() and not _is_leftover_reservation(output)):
-        raise VideoAssemblyError(detail=f"Output already exists: {output}", route="video.assemble")
     if not output.parent.is_dir():
         raise VideoAssemblyError(
             detail=f"Output directory does not exist: {output.parent}", route="video.assemble"
         )
+    clear_stale_reservation(output)
+    if output.exists():
+        raise VideoAssemblyError(detail=f"Output already exists: {output}", route="video.assemble")
     if any(not path.is_file() for path in sources):
         raise VideoAssemblyError(
             detail="Every input must be an existing local file.", route="video.assemble"
@@ -489,20 +493,48 @@ def _write_output(
         )
 
 
-def _is_leftover_reservation(output: Path) -> bool:
-    """True if output exists as an abandoned empty reservation file from an interrupted publish."""
+def clear_stale_reservation(output: Path) -> None:
+    """Clear an abandoned zero-byte reservation left by an interrupted publish."""
     try:
-        st = output.stat()
-        return (
-            output.is_file()
-            and st.st_size == 0
-            and (time.time() - st.st_mtime) >= _STALE_RESERVATION_S
-        )
+        st = os.lstat(output)
     except OSError:
-        return False
+        return
+    if not stat.S_ISREG(st.st_mode) or st.st_size != 0:
+        return
+
+    probe_mtime: float | None = None
+    try:
+        descriptor, probe_name = tempfile.mkstemp(dir=output.parent)
+        try:
+            probe_mtime = os.stat(descriptor).st_mtime
+        finally:
+            os.close(descriptor)
+            try:
+                os.unlink(probe_name)
+            except OSError:
+                pass
+    except OSError:
+        probe_mtime = None
+
+    if probe_mtime is None or (probe_mtime - st.st_mtime) < _STALE_RESERVATION_S:
+        raise VideoAssemblyError(
+            detail=(
+                f"Output already exists: {output} (it is empty and may be another run's "
+                "in-progress publish or an interrupted one; retry after 60 s or delete it)"
+            ),
+            route="video.assemble",
+        )
+
+    try:
+        output.unlink()
+        _log.info("cleared_stale_reservation", path=str(output))
+    except FileNotFoundError:
+        pass
 
 
 def _linux_no_replace_rename(temp_output: Path, output: Path) -> None:
+    import ctypes
+
     libc = ctypes.CDLL(None, use_errno=True)
     renameat2 = getattr(libc, "renameat2", None)
     if renameat2 is None:
@@ -528,6 +560,8 @@ def _linux_no_replace_rename(temp_output: Path, output: Path) -> None:
 
 
 def _darwin_no_replace_rename(temp_output: Path, output: Path) -> None:
+    import ctypes
+
     libc = ctypes.CDLL(None, use_errno=True)
     renamex_np = getattr(libc, "renamex_np", None)
     if renamex_np is None:
@@ -561,35 +595,63 @@ def _reserved_replace_publish(temp_output: Path, output: Path) -> None:
     try:
         descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
     except FileExistsError as exc:
-        if _is_leftover_reservation(output):
-            os.replace(temp_output, output)
-            return
         raise VideoAssemblyError(
             detail=f"Output already exists: {output}", route="video.assemble"
         ) from exc
-    os.close(descriptor)
     try:
+        st = os.fstat(descriptor)
+        target_id = (st.st_dev, st.st_ino)
+    finally:
+        os.close(descriptor)
+
+    published = False
+    try:
+        try:
+            current_st = os.stat(output)
+        except OSError as exc:
+            raise VideoAssemblyError(
+                detail=f"Output already exists: {output}", route="video.assemble"
+            ) from exc
+        if (current_st.st_dev, current_st.st_ino) != target_id:
+            raise VideoAssemblyError(
+                detail=f"Output already exists: {output}", route="video.assemble"
+            )
         os.replace(temp_output, output)
+        published = True
     except BaseException:
-        output.unlink(missing_ok=True)
+        if not published:
+            try:
+                if (os.stat(output).st_dev, os.stat(output).st_ino) == target_id:
+                    output.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise
+
+
+_FALLBACK_ERRNOS = {
+    errno.ENOSYS,
+    errno.EINVAL,
+    errno.ENOTSUP,
+    errno.EOPNOTSUPP,
+    errno.EPERM,
+    errno.EXDEV,
+}
 
 
 def _publish_fallback(temp_output: Path, output: Path) -> None:
     """Publish when hard links are unsupported, using platform rename or reservation."""
-    if _is_leftover_reservation(output):
-        os.replace(temp_output, output)
-        return
     try:
         _platform_no_replace_rename(temp_output, output)
     except FileExistsError as exc:
-        if _is_leftover_reservation(output):
-            os.replace(temp_output, output)
-            return
         raise VideoAssemblyError(
             detail=f"Output already exists: {output}", route="video.assemble"
         ) from exc
-    except (OSError, AttributeError, TypeError):
+    except OSError as exc:
+        if exc.errno in _FALLBACK_ERRNOS:
+            _reserved_replace_publish(temp_output, output)
+        else:
+            raise
+    except ImportError:
         _reserved_replace_publish(temp_output, output)
 
 
@@ -598,16 +660,16 @@ def publish_output(temp_output: Path, output: Path) -> None:
     try:
         os.link(temp_output, output)
     except FileExistsError as exc:
-        if _is_leftover_reservation(output):
-            os.replace(temp_output, output)
-            return
         raise VideoAssemblyError(
             detail=f"Output already exists: {output}", route="video.assemble"
         ) from exc
     except OSError:
         _publish_fallback(temp_output, output)
     else:
-        temp_output.unlink()
+        try:
+            temp_output.unlink()
+        except OSError:
+            pass
 
 
 def assemble_videos(

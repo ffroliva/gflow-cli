@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -261,3 +262,27 @@ def test_output_failure_after_synthesis_reports_the_provider_charge(
         )
 
     assert raised.value.charged == charged
+
+
+def test_narrate_over_stale_zero_byte_file_proceeds_over_fresh_refuses_with_message(
+    tmp_path: Path,
+) -> None:
+    stale_out = tmp_path / "stale.mp3"
+    stale_out.touch()
+    past = time.time() - 120.0
+    os.utime(stale_out, (past, past))
+
+    result = narrate(text="hello", out_file=stale_out, synthesizer=FakeSynthesizer())
+    assert result.out_file == stale_out
+    assert stale_out.read_bytes() == b"audio"
+
+    fresh_out = tmp_path / "fresh.mp3"
+    fresh_out.touch()
+    with pytest.raises(
+        ConfigurationError,
+        match=(
+            "it is empty and may be another run's in-progress publish or an "
+            "interrupted one; retry after 60 s or delete it"
+        ),
+    ):
+        narrate(text="hello", out_file=fresh_out, synthesizer=FakeSynthesizer())
