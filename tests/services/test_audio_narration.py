@@ -286,3 +286,77 @@ def test_narrate_over_stale_zero_byte_file_proceeds_over_fresh_refuses_with_mess
         ),
     ):
         narrate(text="hello", out_file=fresh_out, synthesizer=FakeSynthesizer())
+
+
+def test_narrate_fresh_zero_byte_message_has_lowercase_output(tmp_path: Path) -> None:
+    fresh_out = tmp_path / "fresh.mp3"
+    fresh_out.touch()
+    with pytest.raises(ConfigurationError) as exc_info:
+        narrate(text="hello", out_file=fresh_out, synthesizer=FakeSynthesizer())
+    assert "Narration output already exists: " in str(exc_info.value)
+    assert "Narration Output already exists: " not in str(exc_info.value)
+
+
+def test_narrate_provider_setup_failure_keeps_stale_leftover_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale_out = tmp_path / "stale.mp3"
+    stale_out.touch()
+    past = time.time() - 120.0
+    os.utime(stale_out, (past, past))
+
+    def broken_synthesizer(*_args: object, **_kwargs: object) -> object:
+        raise ConfigurationError("provider setup failed", charged="no")
+
+    monkeypatch.setattr("gflow_cli.services.audio_narration._make_synthesizer", broken_synthesizer)
+
+    with pytest.raises(ConfigurationError, match="provider setup failed"):
+        narrate(text="hello", out_file=stale_out)
+
+    assert stale_out.exists()
+
+
+def test_narrate_succeeds_even_if_staging_cleanup_raises_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out_file = tmp_path / "narration.mp3"
+    real_unlink = Path.unlink
+
+    def failing_staging_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.startswith(f".{out_file.name}."):
+            raise PermissionError("file locked by scanner")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_staging_unlink)
+
+    result = narrate(text="hello", out_file=out_file, synthesizer=FakeSynthesizer())
+
+    assert result.out_file == out_file
+    assert out_file.read_bytes() == b"audio"
+
+
+def test_narrate_stale_unlink_os_error_maps_to_configuration_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale_out = tmp_path / "stale.mp3"
+    stale_out.touch()
+    past = time.time() - 120.0
+    os.utime(stale_out, (past, past))
+
+    real_unlink = Path.unlink
+
+    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == stale_out or self.name.startswith(".gflow-stale-"):
+            raise PermissionError("stale file locked by antivirus")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", denied_unlink)
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        narrate(text="hello", out_file=stale_out, synthesizer=FakeSynthesizer())
+
+    assert exc_info.value.charged == "no"
+    assert (
+        "leftover could not be removed" in str(exc_info.value)
+        or "could not remove stale output reservation" in str(exc_info.value).lower()
+    )

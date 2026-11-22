@@ -848,3 +848,136 @@ def test_keyboard_interrupt_right_after_replace_keeps_output(
 
     assert output.exists()
     assert output.read_bytes() == b"published content"
+
+
+def test_clear_stale_reservation_preserves_new_file_when_inode_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "target.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    original_stat = os.stat
+
+    def replace_on_probe_stat(
+        fd_or_path: int | str | os.PathLike[str], *args: object, **kwargs: object
+    ) -> os.stat_result:
+        res = original_stat(fd_or_path, *args, **kwargs)
+        if isinstance(fd_or_path, int) and output.exists() and output.stat().st_size == 0:
+            output.unlink()
+            output.write_bytes(b"winner completed output")
+        return res
+
+    monkeypatch.setattr(video_assembly.os, "stat", replace_on_probe_stat)
+
+    video_assembly.clear_stale_reservation(output)
+
+    assert output.exists()
+    assert output.read_bytes() == b"winner completed output"
+
+
+def test_clear_stale_reservation_raises_video_assembly_error_on_unlink_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "stale.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    real_unlink = Path.unlink
+
+    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == output or self.name.startswith(".gflow-stale-"):
+            raise PermissionError("stale file locked by antivirus")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", denied_unlink)
+
+    with pytest.raises(VideoAssemblyError) as exc_info:
+        video_assembly.clear_stale_reservation(output)
+
+    assert exc_info.value.charged == "no"
+    assert (
+        "leftover could not be removed" in exc_info.value.detail
+        or "Could not remove stale output reservation" in exc_info.value.detail
+    )
+    assert "stale file locked by antivirus" in exc_info.value.detail
+
+
+def test_validate_assembly_missing_input_keeps_stale_leftover_intact(tmp_path: Path) -> None:
+    missing_clip = tmp_path / "missing.mp4"
+    output = tmp_path / "output.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    with pytest.raises(VideoAssemblyError, match="Every input must be an existing local file"):
+        video_assembly._validate_assembly([missing_clip], output)
+
+    assert output.exists()
+
+
+def test_clear_stale_reservation_probe_failure_raises_specific_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "stale.mp4"
+    output.touch()
+
+    def probe_failed(*args: object, **kwargs: object) -> tuple[int, str]:
+        assert kwargs.get("prefix") == ".gflow-probe-"
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr(video_assembly.tempfile, "mkstemp", probe_failed)
+
+    with pytest.raises(VideoAssemblyError) as exc_info:
+        video_assembly.clear_stale_reservation(output)
+
+    assert "Could not probe output directory" in exc_info.value.detail
+    assert "read-only filesystem" in exc_info.value.detail
+    assert "retry after 60 s" not in exc_info.value.detail
+    assert exc_info.value.charged == "no"
+
+
+def test_fallback_publish_falls_back_when_os_error_errno_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    def cdll_load_failed(*_args: object) -> None:
+        raise OSError(None, "dlsym libc failed")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", cdll_load_failed)
+
+    video_assembly.publish_output(temp_output, output)
+
+    assert output.read_bytes() == b"newly rendered"
+    assert not temp_output.exists()
+
+
+def test_assemble_videos_succeeds_even_if_temp_cleanup_raises_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
+
+    real_unlink = Path.unlink
+
+    def failing_temp_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.startswith(f".{output.stem}."):
+            raise PermissionError("file locked by background process")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failing_temp_unlink)
+
+    result = assemble_videos([clip], output)
+
+    assert result.output_file == output
+    assert output.exists()

@@ -56,3 +56,35 @@ def test_video_assemble_preserves_non_mp4_suffix(
 
     assert invocation.exit_code == 0, invocation.output
     assert called == [target]
+
+
+def test_video_assemble_reports_stale_unlink_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import time
+
+    clip = tmp_path / "clip.mp4"
+    clip.touch()
+    stale_out = tmp_path / "stale.mp4"
+    stale_out.touch()
+    past = time.time() - 120.0
+    os.utime(stale_out, (past, past))
+
+    real_unlink = Path.unlink
+
+    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == stale_out or self.name.startswith(".gflow-stale-"):
+            raise PermissionError("stale file locked by antivirus")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", denied_unlink)
+
+    response = CliRunner().invoke(
+        main, ["video", "assemble", str(clip), "--out-file", str(stale_out)]
+    )
+    assert response.exit_code != 0
+    assert (
+        "leftover could not be removed" in response.output
+        or "could not remove stale output reservation" in response.output.lower()
+    )

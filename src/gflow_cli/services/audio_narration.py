@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
 
+import structlog
+
 from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import Charged, ConfigurationError, VideoAssemblyError
 from gflow_cli.services.speech_ports import SpeechSynthesizer, SynthesisRequest
@@ -18,6 +20,8 @@ from gflow_cli.services.speech_synthesizers import EdgeTtsSynthesizer, GeminiTts
 from gflow_cli.services.video_assembly import clear_stale_reservation, publish_output
 
 Provider = Literal["edge", "gemini"]
+
+_log = structlog.get_logger(__name__)
 
 _WRITABLE_OUT_FILE_HINT = "Choose an output file path inside a writable directory."
 _EXISTING_OUT_FILE_HINT = (
@@ -55,9 +59,17 @@ def narrate(
 ) -> NarrationResult:
     script = _read_script(text, text_file)
     validate_narration(script, provider, rate, pitch)
-    _validate_output(out_file)
+    if not out_file.parent.is_dir():
+        raise ConfigurationError(
+            f"Narration output parent does not exist: {out_file.parent}",
+            charged="no",
+            remediation_hint=(
+                "Create the parent directory or choose a path in an existing directory."
+            ),
+        )
 
     adapter = synthesizer or _make_synthesizer(provider, settings or get_settings())
+    _validate_output(out_file)
     temporary, staging = _open_staging(out_file)
     try:
         with staging:
@@ -77,7 +89,14 @@ def narrate(
             publish_output(temporary, out_file)
         return NarrationResult(out_file, provider, result.media_type)
     finally:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError as exc:
+            _log.warning(
+                "could_not_remove_staging_file",
+                path=str(temporary),
+                error=str(exc),
+            )
 
 
 def validate_narration(text: str, provider: str, rate: str, pitch: str) -> None:
@@ -159,10 +178,16 @@ def _validate_output(path: Path) -> None:
     try:
         clear_stale_reservation(path)
     except VideoAssemblyError as exc:
+        detail = exc.detail
+        if detail.startswith("Output "):
+            detail = "output " + detail[7:]
+        elif detail.startswith("Could not "):
+            detail = "could not " + detail[10:]
+        hint = _WRITABLE_OUT_FILE_HINT if "could not" in detail.lower() else _EXISTING_OUT_FILE_HINT
         raise ConfigurationError(
-            f"Narration {exc.detail}",
+            f"Narration {detail}",
             charged="no",
-            remediation_hint=_EXISTING_OUT_FILE_HINT,
+            remediation_hint=hint,
         ) from exc
     if path.exists():
         raise ConfigurationError(

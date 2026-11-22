@@ -305,10 +305,10 @@ Notes:
 
 Create a local narration track from text with the keyless Edge provider or Gemini TTS. The
 narration text is sent to the selected provider; this opens no browser and uses no Flow credits.
-Provide exactly one of positional `TEXT` or `--text-file FILE` (UTF-8). The output file must not
-exist (a stale empty leftover from an interrupted run is cleared; otherwise existing outputs are
-refused) and its parent directory must already exist. Edge writes MP3; Gemini writes WAV. Then pass
-that file to `gflow video assemble --voiceover`.
+Provide exactly one of positional `TEXT` or `--text-file FILE` (UTF-8). Existing outputs are
+refused, except an empty leftover older than 60 s from an interrupted run, which is cleared.
+Parent directory must already exist. Edge writes MP3; Gemini writes WAV. Then pass that file to
+`gflow video assemble --voiceover`.
 
 ```text
 gflow audio narrate TEXT --out-file FILE [--text-file UTF8_FILE] [--provider edge|gemini]
@@ -1501,7 +1501,7 @@ Options:
   --voiceover-volume FLOAT    Voiceover gain, 0–1 (default 1).
   --duck / --no-duck          Duck music and clip audio under voiceover (default on).
   --profile NAME              Profile to resolve catalog IDs.
-  --out-file PATH             Required output path; existing files are refused (a stale empty leftover from an interrupted run is cleared; otherwise existing outputs are refused).
+  --out-file PATH             Required output path. Existing outputs are refused, except an empty leftover older than 60 s from an interrupted run, which is cleared.
   --json                      Emit the result as JSON.
 ```
 

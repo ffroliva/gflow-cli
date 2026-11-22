@@ -84,3 +84,31 @@ def test_audio_narrate_expands_home_in_paths(
     assert response.exit_code == 0, response.output
     assert handler.call_args.kwargs["out_file"] == tmp_path / "voice.mp3"
     assert handler.call_args.kwargs["text_file"] == tmp_path / "script.txt"
+
+
+def test_audio_narrate_reports_stale_unlink_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import time
+
+    stale_out = tmp_path / "stale.mp3"
+    stale_out.touch()
+    past = time.time() - 120.0
+    os.utime(stale_out, (past, past))
+
+    real_unlink = Path.unlink
+
+    def denied_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == stale_out or self.name.startswith(".gflow-stale-"):
+            raise PermissionError("stale file locked by antivirus")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", denied_unlink)
+
+    response = CliRunner().invoke(main, ["audio", "narrate", "hello", "--out-file", str(stale_out)])
+    assert response.exit_code != 0
+    assert (
+        "leftover could not be removed" in response.output
+        or "could not remove stale output reservation" in response.output.lower()
+    )

@@ -1163,9 +1163,8 @@ def video() -> None:
     help=(
         "Join local video files or catalog media IDs without contacting Flow. Output uses "
         "the first clip's dimensions and frame rate. Clips with aspect ratios differing by more "
-        "than 1% are refused; same-ratio clips can be resized. Existing output files are refused "
-        "(a stale empty leftover from an interrupted run is cleared; otherwise existing outputs "
-        "are refused)."
+        "than 1% are refused; same-ratio clips can be resized. Existing outputs are refused, "
+        "except an empty leftover older than 60 s from an interrupted run, which is cleared."
     ),
 )
 @click.argument("clips", nargs=-1, required=True)
@@ -1185,8 +1184,8 @@ def video() -> None:
     required=True,
     type=click.Path(dir_okay=False, path_type=Path),
     help=(
-        "Output MP4 path (must not already exist; a stale empty leftover from an interrupted run "
-        "is cleared; otherwise existing outputs are refused)."
+        "Output MP4 path. Existing outputs are refused, except an empty leftover older than "
+        "60 s from an interrupted run, which is cleared."
     ),
 )
 @click.option("--profile", default=None, help="Profile for catalog media ID resolution.")

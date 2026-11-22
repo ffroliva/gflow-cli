@@ -35,8 +35,8 @@ def audio() -> None:
     required=True,
     type=click.Path(dir_okay=False, path_type=Path),
     help=(
-        "Write the synthesized audio here; existing files are never overwritten (a stale empty "
-        "leftover from an interrupted run is cleared; otherwise existing outputs are refused)."
+        "Write the synthesized audio here. Existing outputs are refused, except an empty "
+        "leftover older than 60 s from an interrupted run, which is cleared."
     ),
 )
 @click.option(
