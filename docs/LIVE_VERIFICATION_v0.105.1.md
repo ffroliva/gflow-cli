@@ -104,4 +104,7 @@ Stderr was empty. The charge (4) equalled the quote (4). The catalog row reads
 
 ## Post-tag evidence
 
-_Filled after the signed tag is published._
+- **Signed tag** `v0.105.1` (tag object `4c8122a7`) on `001b5158` (SSH signature present).
+- **`Release` workflow** run 45010198314: `build-and-publish` success, `mcp-registry / publish` success.
+- **PyPI:** `gflow-cli 0.105.1`, with `gflow_cli-0.105.1-py3-none-any.whl` (10:00:05Z) and `gflow_cli-0.105.1.tar.gz` (10:00:07Z).
+- **GitHub Release:** https://github.com/ffroliva/gflow-cli/releases/tag/v0.105.1, not a prerelease.
