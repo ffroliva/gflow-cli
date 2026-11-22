@@ -100,4 +100,7 @@ existing library item was touched.
 
 ## Post-tag evidence
 
-_Recorded after the signed tag is published._
+- **Signed tag** `v0.104.0` (tag object `c6e37535`) on `f7c15da3` (SSH signature present).
+- **`Release` workflow** run 44967494090: `build-and-publish` success, `mcp-registry / publish` success.
+- **PyPI:** `gflow-cli 0.104.0`, with `gflow_cli-0.104.0-py3-none-any.whl` (00:37:37Z) and `gflow_cli-0.104.0.tar.gz` (00:37:38Z).
+- **GitHub Release:** https://github.com/ffroliva/gflow-cli/releases/tag/v0.104.0, not a prerelease.
