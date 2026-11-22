@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog
 
+from gflow_cli import telemetry
 from gflow_cli.api.client import FlowApiClient, FlowApiError
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect, GenerateImageRequest
@@ -1015,3 +1016,32 @@ class TestDownloadImageHosts:
                 _make_image(fife_url="https://flow.google.com/asb/opaque=s0"), out
             )
         assert not out.exists()
+
+
+class TestImageGenerationTransportTelemetry:
+    async def test_notes_direct_transport_when_image_has_direct_http(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        noted: list[str] = []
+        monkeypatch.setattr(telemetry, "note_transport", noted.append)
+        img = dataclasses.replace(_make_image(), transport="direct_http")
+        transport = _FakeTransport([img])
+        client = _client_with_transport(tmp_path, transport)
+
+        await client.generate_image(project_id="proj-1", req=_make_req())
+
+        assert noted == ["direct"]
+
+    async def test_notes_ui_transport_when_image_has_no_transport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        noted: list[str] = []
+        monkeypatch.setattr(telemetry, "note_transport", noted.append)
+        img = _make_image()
+        assert img.transport is None
+        transport = _FakeTransport([img])
+        client = _client_with_transport(tmp_path, transport)
+
+        await client.generate_image(project_id="proj-1", req=_make_req())
+
+        assert noted == ["ui"]

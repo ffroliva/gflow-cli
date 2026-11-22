@@ -450,6 +450,7 @@ _PROCESS_FACTS: dict[str, str] = {}
 _RUN_FACTS: ContextVar[dict[str, str] | None] = ContextVar("gflow_run_facts", default=None)
 _ENGINES = frozenset({"playwright", "patchright"})
 _HOSTS = {"labs": "labs", "migrated": "flow"}
+_TRANSPORTS = frozenset({"direct", "ui"})
 
 
 def _facts() -> dict[str, str]:
@@ -479,14 +480,26 @@ def note_host(kind: str | None) -> None:
         _facts()["host"] = _HOSTS[kind]
 
 
+def note_transport(kind: str) -> None:
+    """Note the image transport used (closed enum: direct, ui; anything else is ``other``)."""
+    _facts()["transport"] = kind if kind in _TRANSPORTS else "other"
+
+
 def _take_run_facts() -> list[tuple[str, str]]:
     """The noted facts as counter keys, cleared so the next run starts empty."""
     facts = _facts()
     noted = dict(facts)  # snapshot, then clear: a concurrent clear cannot raise here
     facts.clear()  # a host noted without a launch must not carry into a later run
-    if "engine" not in noted:
+    if "engine" not in noted and "transport" not in noted:
         return []
-    return [("engine", noted["engine"]), ("host", noted.get("host", "unknown"))]
+    out: list[tuple[str, str]] = []
+    if "engine" in noted:
+        out.append(("engine", noted["engine"]))
+        out.append(("host", noted.get("host", "unknown")))
+        out.append(("transport", noted.get("transport", "unknown")))
+    elif "transport" in noted:
+        out.append(("transport", noted["transport"]))
+    return out
 
 
 def flush_run_facts(surface: Literal["cli", "mcp"]) -> None:
@@ -933,6 +946,7 @@ def _report_counter_targets() -> dict[str, Any]:
         "mcp_clients": {},
         "engines": {},
         "hosts": {},
+        "transports": {},
         "tools": tools,
         "nested": {"flag": flags, "exit": exits, "duration": durations, "tool": tools},
     }
@@ -979,8 +993,15 @@ def _add_scalar_counter(
     elif kind == "crash":
         values = targets["crashes"].setdefault(surface, {})
         values[key] = values.get(key, 0) + count
-    elif kind in ("client", "engine", "host"):
-        values = targets[{"client": "mcp_clients", "engine": "engines", "host": "hosts"}[kind]]
+    elif kind in ("client", "engine", "host", "transport"):
+        values = targets[
+            {
+                "client": "mcp_clients",
+                "engine": "engines",
+                "host": "hosts",
+                "transport": "transports",
+            }[kind]
+        ]
         values[key] = values.get(key, 0) + count
 
 
@@ -1105,5 +1126,5 @@ def build_report(week: str) -> dict[str, object]:
         "crashes": counters["crashes"],
         "tools": counters["tools"],
         # Sent only when non-empty: an endpoint older than #1326 rejects the keys.
-        **{k: counters[k] for k in ("engines", "hosts") if counters[k]},
+        **{k: counters[k] for k in ("engines", "hosts", "transports") if counters[k]},
     }
