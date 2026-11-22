@@ -28,7 +28,7 @@ import structlog
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports import migrated_composer as mc
 from gflow_cli.config import reset_settings
-from gflow_cli.errors import RpcResponseUnavailableError, is_retryable
+from gflow_cli.errors import RpcResponseUnavailableError, UiSelectorDriftError, is_retryable
 from gflow_cli.json_output import exit_code_for
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
@@ -48,6 +48,18 @@ def _opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.skip(f"{_RUN_ENV} != 1 -- each run leaves an empty project in Flow")
     monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
     reset_settings()
+
+
+# A transparent layer above the whole page: the FAB stays visible, the click cannot land.
+_COVER_JS = """
+setInterval(() => {
+  if (!document.body || document.getElementById('e2e-cover')) return;
+  const d = document.createElement('div');
+  d.id = 'e2e-cover';
+  d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:transparent';
+  document.body.appendChild(d);
+}, 100);
+"""
 
 
 def _title() -> str:
@@ -150,5 +162,31 @@ async def test_no_reply_and_no_navigation_is_outcome_unknown_not_retryable(
         assert "--project" in exc.value.remediation_hint
         await page.context.unroute("**/batchexecute*")
         assert len(await _project_ids(page) - before) == 1  # made, though gflow never saw it
+    finally:
+        client._checkin_page(page)  # noqa: SLF001
+
+
+async def test_a_covered_new_project_button_is_drift_and_creates_nothing(
+    client: FlowApiClient,
+) -> None:
+    """The first telemetry week's top crash: the FAB renders but something covers it, so
+    the click times out. No create request left the page, so nothing was made: exit 23,
+    charged nothing. A fresh page carries the cover and is closed, so no pooled page does."""
+    assert client._context is not None  # noqa: SLF001
+    page = await client._context.new_page()  # noqa: SLF001
+    try:
+        before = await _project_ids(page)
+        await page.add_init_script(_COVER_JS)
+
+        with pytest.raises(UiSelectorDriftError, match="new-project button") as exc:
+            await mc.create_project(page, _title(), timeout_s=30.0)
+
+        assert exit_code_for(exc.value) == 23
+        assert exc.value.charged == "no"
+    finally:
+        await page.close()
+    page = await client._checkout_page()  # noqa: SLF001
+    try:
+        assert await _project_ids(page) == before  # the witness: no project was made
     finally:
         client._checkin_page(page)  # noqa: SLF001
