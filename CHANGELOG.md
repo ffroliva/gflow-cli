@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`publish_output` never leaves a zero-byte output or blocks retries on filesystems without hard links ([#1406](https://github.com/ffroliva/gflow-cli/issues/1406)).** When hard links are unavailable (such as FAT/exFAT volumes and network shares), publishing falls back to platform-native atomic no-replace renames (`MoveFileExW` on Windows, `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS) rather than creating an empty file reservation. A zero-byte file left behind by an earlier interrupted run is recognised as an abandoned reservation and replaced, preventing retry runs in `gflow video assemble` and `gflow audio narrate` from failing with "Output already exists".
+
 ## [0.104.0] — 2026-11-22
 
 ### Added

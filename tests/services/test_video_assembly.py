@@ -264,6 +264,7 @@ def test_fallback_publish_removes_its_reservation_when_replace_fails(
         raise PermissionError("replace denied")
 
     monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", no_hard_links)
     monkeypatch.setattr(video_assembly.os, "replace", replace_denied)
 
     with pytest.raises(PermissionError):
@@ -271,6 +272,95 @@ def test_fallback_publish_removes_its_reservation_when_replace_fails(
 
     assert not output.exists()
     assert temp_output.read_bytes() == b"rendered"
+
+
+def test_platform_no_replace_rename_direct(tmp_path: Path) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"rendered")
+    output = tmp_path / "joined.mp4"
+
+    video_assembly._platform_no_replace_rename(temp_output, output)
+    assert output.read_bytes() == b"rendered"
+    assert not temp_output.exists()
+
+    temp_output2 = tmp_path / ".joined.tmp2.mp4"
+    temp_output2.write_bytes(b"rendered 2")
+    with pytest.raises(FileExistsError):
+        video_assembly._platform_no_replace_rename(temp_output2, output)
+    assert output.read_bytes() == b"rendered"
+    assert temp_output2.exists()
+
+
+def test_fallback_publish_preserves_existing_non_empty_output_without_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+    output.write_bytes(b"existing completed output")
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly.publish_output(temp_output, output)
+
+    assert output.read_bytes() == b"existing completed output"
+    assert temp_output.read_bytes() == b"newly rendered"
+
+
+def test_fallback_publish_overcomes_leftover_zero_byte_reservation_without_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+    output.touch()
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+
+    video_assembly.publish_output(temp_output, output)
+
+    assert output.read_bytes() == b"newly rendered"
+    assert not temp_output.exists()
+
+
+def test_fallback_publish_completes_atomically_without_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+
+    video_assembly.publish_output(temp_output, output)
+
+    assert output.read_bytes() == b"newly rendered"
+    assert not temp_output.exists()
+
+
+def test_assemble_videos_retries_over_leftover_zero_byte_output(
+    tmp_path: Path,
+) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
+    output.touch()
+
+    result = assemble_videos([clip], output)
+
+    assert output.exists()
+    assert result.bytes > 0
+    assert output.stat().st_size == result.bytes
 
 
 def test_keyboard_interrupt_cleans_audio_spools(

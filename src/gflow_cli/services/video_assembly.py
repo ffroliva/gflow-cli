@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
+import sys
 import tempfile
+from ctypes import wintypes
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -181,7 +185,7 @@ def _validate_assembly(
         raise VideoAssemblyError(
             detail="Output path must differ from every input.", route="video.assemble"
         )
-    if output.exists():
+    if output.is_dir() or (output.exists() and not _is_leftover_reservation(output)):
         raise VideoAssemblyError(detail=f"Output already exists: {output}", route="video.assemble")
     if not output.parent.is_dir():
         raise VideoAssemblyError(
@@ -483,28 +487,128 @@ def _write_output(
         )
 
 
+def _is_leftover_reservation(output: Path) -> bool:
+    """True if output exists as an empty regular file from an interrupted publish."""
+    try:
+        return output.is_file() and output.stat().st_size == 0
+    except OSError:
+        return False
+
+
+def _windows_no_replace_rename(temp_output: Path, output: Path) -> None:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    move_file_ex_w = kernel32.MoveFileExW
+    move_file_ex_w.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+    move_file_ex_w.restype = wintypes.BOOL
+    if not move_file_ex_w(str(temp_output), str(output), 0):
+        code = ctypes.get_last_error()
+        raise ctypes.WinError(code)
+
+
+def _linux_no_replace_rename(temp_output: Path, output: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is None:
+        raise OSError(errno.ENOSYS, "renameat2 not found in libc")
+    renameat2.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    renameat2.restype = ctypes.c_int
+    ret = renameat2(
+        ctypes.c_int(-100),  # AT_FDCWD
+        os.fsencode(temp_output),
+        ctypes.c_int(-100),  # AT_FDCWD
+        os.fsencode(output),
+        ctypes.c_uint(1),  # RENAME_NOREPLACE
+    )
+    if ret != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def _darwin_no_replace_rename(temp_output: Path, output: Path) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renamex_np = getattr(libc, "renamex_np", None)
+    if renamex_np is None:
+        raise OSError(errno.ENOSYS, "renamex_np not found in libc")
+    renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+    renamex_np.restype = ctypes.c_int
+    ret = renamex_np(
+        os.fsencode(temp_output),
+        os.fsencode(output),
+        ctypes.c_uint(4),  # RENAME_EXCL
+    )
+    if ret != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
+def _platform_no_replace_rename(temp_output: Path, output: Path) -> None:
+    """Atomically rename temp_output to output without replacing an existing destination."""
+    if sys.platform == "win32":
+        _windows_no_replace_rename(temp_output, output)
+    elif sys.platform.startswith("linux"):
+        _linux_no_replace_rename(temp_output, output)
+    elif sys.platform == "darwin":
+        _darwin_no_replace_rename(temp_output, output)
+    else:
+        raise OSError(errno.ENOSYS, f"No platform atomic no-replace rename for {sys.platform}")
+
+
+def _reserved_replace_publish(temp_output: Path, output: Path) -> None:
+    """Publish via exclusive reservation and replace as a last resort on unassisted filesystems."""
+    try:
+        descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+    except FileExistsError as exc:
+        if _is_leftover_reservation(output):
+            os.replace(temp_output, output)
+            return
+        raise VideoAssemblyError(
+            detail=f"Output already exists: {output}", route="video.assemble"
+        ) from exc
+    os.close(descriptor)
+    try:
+        os.replace(temp_output, output)
+    except BaseException:
+        output.unlink(missing_ok=True)
+        raise
+
+
+def _publish_fallback(temp_output: Path, output: Path) -> None:
+    """Publish when hard links are unsupported, using platform rename or reservation."""
+    if _is_leftover_reservation(output):
+        os.replace(temp_output, output)
+        return
+    try:
+        _platform_no_replace_rename(temp_output, output)
+    except FileExistsError as exc:
+        if _is_leftover_reservation(output):
+            os.replace(temp_output, output)
+            return
+        raise VideoAssemblyError(
+            detail=f"Output already exists: {output}", route="video.assemble"
+        ) from exc
+    except OSError:
+        _reserved_replace_publish(temp_output, output)
+
+
 def publish_output(temp_output: Path, output: Path) -> None:
     """Atomically publish the completed file without replacing another writer's output."""
     try:
         os.link(temp_output, output)
     except FileExistsError as exc:
+        if _is_leftover_reservation(output):
+            os.replace(temp_output, output)
+            return
         raise VideoAssemblyError(
             detail=f"Output already exists: {output}", route="video.assemble"
         ) from exc
     except OSError:
-        try:
-            descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
-        except FileExistsError as exc:
-            raise VideoAssemblyError(
-                detail=f"Output already exists: {output}", route="video.assemble"
-            ) from exc
-        os.close(descriptor)
-        try:
-            os.replace(temp_output, output)
-        except BaseException:
-            # The empty reservation is ours; never leave it behind as a fake output.
-            output.unlink(missing_ok=True)
-            raise
+        _publish_fallback(temp_output, output)
     else:
         temp_output.unlink()
 
