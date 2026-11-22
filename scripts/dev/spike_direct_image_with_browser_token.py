@@ -127,26 +127,38 @@ _captured: dict[str, Any] = {}
 _recaptcha_action: str | None = None
 
 
+_SUBMIT_RPCS = frozenset({"YhhmEf", "eb1hJf", "MZZa6b", "nprQif", "ogiZ0b"})
+
+
 async def _capture_route(route: Any) -> None:
-    """Route handler: capture the first ogiZ0b POST then abort ($0)."""
+    """Route handler: capture the first ogiZ0b POST then abort ($0).
+
+    Safety: EVERY submit rpc is aborted (not just ogiZ0b) so a composer in
+    video mode cannot send a billed video submit through.
+    """
     request = route.request
     if request.method != "POST":
         await route.continue_()
         return
 
     body = request.post_data or ""
-    if "ogiZ0b" not in body:
-        await route.continue_()
-        return
 
-    # Capture everything
-    _captured["url"] = request.url
-    _captured["headers"] = dict(request.headers)
-    _captured["body"] = body  # URL-encoded form body
-    _captured["method"] = request.method
+    # Abort any submit rpc to prevent accidental billing
+    for rpc in _SUBMIT_RPCS:
+        if rpc in body:
+            if rpc == "ogiZ0b":
+                # This is what we want — capture it
+                _captured["url"] = request.url
+                _captured["headers"] = dict(request.headers)
+                _captured["body"] = body  # URL-encoded form body
+                _captured["method"] = request.method
+                step("CAPTURE", f"intercepted ogiZ0b POST to {_redact(request.url, keep=60)}")
+            else:
+                step("CAPTURE", f"ABORTED non-image submit rpc {rpc} to prevent billing")
+            await route.abort()
+            return
 
-    step("CAPTURE", f"intercepted ogiZ0b POST to {_redact(request.url, keep=60)}")
-    await route.abort()
+    await route.continue_()
 
 
 async def _run_capture(client: Any, project_id: str) -> bool:
@@ -286,10 +298,22 @@ def _replace_token(body: str, new_token: str) -> str:
         step("REPLACE", "no token-shaped string found in payload")
         return body
 
-    step("REPLACE", f"found token: {_redact(old_token, keep=20)} ({len(old_token)} chars)")
+    # Count occurrences — the ogiZ0b body carries the token in two places
+    # (clientContext at root and inside requests[0])
+    count = inner_json.count(old_token)
+    step("REPLACE", f"found token: {_redact(old_token, keep=20)} ({len(old_token)} chars, {count} occurrences)")
+
+    if count == 0:
+        step("REPLACE", "ERROR: token found in nested walk but not in raw JSON string")
+        return body
 
     # Replace every occurrence in the inner JSON string
     new_inner_json = inner_json.replace(old_token, new_token)
+    replaced = count - new_inner_json.count(old_token)
+    assert replaced == count, f"replaced {replaced}/{count}"
+    assert new_inner_json.count(new_token) >= count, "new token not present after replace"
+    assert old_token not in new_inner_json, "old token still present after replace"
+
     outer[0][0][1] = new_inner_json
     new_freq = json.dumps(outer, separators=(",", ":"))
 

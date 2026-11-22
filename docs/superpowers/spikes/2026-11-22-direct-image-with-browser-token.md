@@ -62,33 +62,33 @@ Arms B and C were not needed — Arm A succeeded.
 
 ### Key discovery: reCAPTCHA action is `IMAGE_GENERATION`
 
-The existing `recaptcha.py` mint uses `action="imageGeneration"` (the labs-path value,
-visible in `src/gflow_cli/api/recaptcha.py`). The migrated host's page calls
+The labs-era image path defaults to `action="imageGeneration"` (camelCase, in
+`src/gflow_cli/api/_flow_generation.py:633`). The migrated host's page calls
 `grecaptcha.enterprise.execute(siteKey, { action: "IMAGE_GENERATION" })` — uppercase,
-underscore-separated. Whether `imageGeneration` would also be accepted is **unmeasured**;
-the spike used only the page's own action.
+underscore-separated. The upscale path (`_flow_media_edit.py:229`) already uses the
+uppercase form. Whether the camelCase `imageGeneration` would also be accepted on the
+migrated host is **unmeasured**; the spike used only the page's own action.
 
-### Latency comparison (rough)
+### Latency
 
-The page-driven path (UI automation: type prompt → click Generate → observe reply → download)
-typically takes 26–40 s end-to-end (measured in the 2026-09-08 spike). The direct httpx
-POST took 19.65 s, which includes:
+The direct `httpx` POST (from send to response received) took **19.65 s**. This covers
+the server-side generation time and the HTTP round trip. Token minting and image download
+were measured outside this window and are not included.
 
-- Token mint via `page.evaluate` (~0.2 s)
-- httpx POST + server generation time + response (~19 s)
-- Image download (~0.5 s)
-
-The httpx path removes: settings verification, overlay dismissal, submit-button wait,
-the entire UI observation loop, and body-loss recovery. It is structurally faster because
-it removes I/O steps that do not contribute to generation time.
+The 2026-09-08 spike measured `ogiZ0b` reply time at 26–40 s on a different profile and
+model. A same-session same-model comparison (page-driven submit click to reply, versus
+direct POST to reply) was not performed in this run; it would be needed before claiming a
+latency advantage.
 
 ## Readings
 
 1. **The reCAPTCHA token is NOT bound to the page's HTTP client.** A token minted inside
    a Playwright-managed Chrome page was accepted by an `httpx` POST that shared no TLS
-   session, no TCP connection, and no browser fingerprint with the minting page. The only
-   shared material was the cookies (extracted from the browser's request headers) and the
-   token itself.
+   session and no TCP connection with the minting page. The httpx request did carry the
+   browser's own headers (user-agent, `sec-ch-ua*`, cookies) copied from the captured
+   request — the TLS/HTTP stack was different, but the application-layer fingerprint was
+   the same. The cookies and `at` token were from the browser's live request headers, not
+   from the on-disk cookie database.
 
 2. **Direct image generation via `batchexecute` is viable.** The `ogiZ0b` frame structure
    (a positional array inside `f.req`) is the same one the page sends. The response is
@@ -98,11 +98,13 @@ it removes I/O steps that do not contribute to generation time.
 3. **A lightweight browser is still needed** — but only to:
    - Mint reCAPTCHA tokens (the `grecaptcha.enterprise` API needs a real page)
    - Discover the site key (from the `<script>` tag)
-   - Provide the cookie jar and `at` token for direct calls
+   - Provide fresh cookies and headers for direct calls
 
-   The browser does NOT need to type prompts, click buttons, observe network traffic,
-   dismiss overlays, handle agent-mode panels, recover from lost bodies, or manage
-   settings panes. It can sit idle between mints.
+   Whether the browser can sit idle between mints (no prompt typing, no button clicks,
+   no settings management) depends on whether Flow accepts a direct POST with a
+   **caller-built** frame (not a UI-captured replay). This spike replayed the frame the
+   page built; whether a programmatically constructed frame (with a different prompt)
+   works is not measured.
 
 4. **The `ogiZ0b` frame is a positional array, not a REST JSON dict.**
    `_build_batch_generate_images_body()` builds the REST shape. The direct path must
@@ -115,6 +117,9 @@ it removes I/O steps that do not contribute to generation time.
 
 ## What was not measured
 
+- Whether a **programmatically built frame** (not a replay of the page's own frame)
+  with a different prompt is accepted. The spike replayed the exact positional array
+  the page sent, substituting only the token.
 - Whether the labs-path action `imageGeneration` (lowercase, camelCase) also works on
   the migrated host's reCAPTCHA Enterprise check.
 - Whether I2I (with image references) works direct — the frame would carry media ids
@@ -126,6 +131,7 @@ it removes I/O steps that do not contribute to generation time.
   the one from the page's own requests.
 - Whether the page's cookies read from the on-disk database work, or only the ones
   extracted from a live browser request.
+- A same-session same-model latency comparison between page-driven and direct submit.
 
 ## Next
 
