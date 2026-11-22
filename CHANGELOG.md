@@ -7,13 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.104.0] — 2026-11-22
-
 ### Added
 
 - **`gflow character create --image FILE [--body-image FILE]` builds a character from your own images on `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).**
   gflow uploads the portrait through Flow's character editor, which creates the character, then sets the name and personality, uploads the body image and sets the voice. Nothing is generated, so it spends no credits and no image quota. Each file is checked before anything is uploaded. A failure after Flow created the character names its entity id in the error; gflow does not delete it. The MCP twin `gflow_character_create` takes the same inputs and stays available under `GFLOW_MCP_NO_SPEND`; the prompt-generated create (`--face-prompt`) is not ported to `flow.google.com` yet.
   Thanks to @ziyedbe ([#987](https://github.com/ffroliva/gflow-cli/pull/987)).
+
+## [0.104.0] — 2026-11-22
+
+### Added
+
 - **`gflow media trash` and `gflow media restore` move generated items to Flow's Trash and back over the wire ([#1363](https://github.com/ffroliva/gflow-cli/issues/1363)).** Operates directly via batchexecute RPC `pGCYOe` at 0 credits, resolving Flow project IDs from the local catalog and accepting Flow media UUIDs or catalog asset IDs. The CLI prompts for confirmation unless `--yes` is supplied, and MCP twins `gflow_media_trash` (requiring `confirm=true`) and `gflow_media_restore` maintain full surface parity.
 - **`gflow audio narrate` creates local narration audio ([#1357](https://github.com/ffroliva/gflow-cli/issues/1357)).** The optional Edge provider is keyless and installs with `gflow-cli[tts]`; Gemini uses the dedicated `GFLOW_CLI_GEMINI_TTS_API_KEY`. Both send narration text to the selected provider, spend no Flow credits, and have a direct MCP twin available under `--no-spend`. Edge uses Microsoft's unofficial consumer Read Aloud endpoint and is best-effort.
 - **`gflow video assemble` joins clips with a music bed and a voiceover, locally and free ([#1359](https://github.com/ffroliva/gflow-cli/issues/1359)).** Clips are local files or catalogued media ids; `--music` and `--voiceover` mix in with per-track volume, and `--duck` lowers the music under the voiceover. Output takes the first clip's size and frame rate; a clip with a different aspect ratio is refused rather than stretched. It runs on PyAV from the `chain` extra, needs no system ffmpeg, contacts no Flow surface and spends no credits. The MCP twin `gflow_video_assemble` stays available under `--no-spend`.
