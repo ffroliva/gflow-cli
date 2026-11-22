@@ -436,8 +436,9 @@ class VideoRecordingMixin(RecorderCore):
             metadata = existing_asset.metadata_json or {}
         else:
             asset_id = _new_id()
-            project_id = result.project_id
-            workflow_id = result.workflow_id
+            # An empty id is stored as NULL, never as "" (IS NULL checks rely on it).
+            project_id = result.project_id or None
+            workflow_id = result.workflow_id or None
             metadata = {}
 
         if request is not None:

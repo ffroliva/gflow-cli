@@ -260,6 +260,39 @@ def test_record_started_video_persists_pending_media_and_operation(tmp_path: Pat
         assert row["flow_operation_id"] == "operation-video-1"
 
 
+def test_record_completed_video_stores_empty_ids_as_null_on_a_new_asset(tmp_path: Path) -> None:
+    """No row from submit time: an empty project / workflow id is stored as NULL, not ""."""
+    saved = tmp_path / "video.mp4"
+    saved.write_bytes(b"video-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.repository.upsert_profile("default", tmp_path / "profile_default")
+        request = GenerateVideoRequest(
+            prompt="video prompt", mode=Mode.T2V, aspect=VideoAspect.PORTRAIT
+        )
+        result = VideoResult(
+            status=VideoStatus(
+                media_id="media-video-empty-ids",
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            ),
+            local_path=saved,
+            project_id="",
+            workflow_id="",
+        )
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "profile_default",
+            request=request,
+            result=result,
+        )
+        row = store.conn.execute(
+            "SELECT flow_project_id, flow_workflow_id FROM assets WHERE flow_media_id = ?",
+            ("media-video-empty-ids",),
+        ).fetchone()
+        assert row["flow_project_id"] is None
+        assert row["flow_workflow_id"] is None
+
+
 def test_record_completed_video_updates_media_operation_and_file(tmp_path: Path) -> None:
     saved = tmp_path / "video.mp4"
     saved.write_bytes(b"video-bytes")
