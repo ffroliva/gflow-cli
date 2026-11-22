@@ -32,15 +32,22 @@ def test_direct_can_serve_plain_t2i() -> None:
     assert direct_can_serve(req) is True
 
 
+@pytest.mark.parametrize("aspect", list(Aspect))
+def test_direct_can_serve_every_measured_aspect(aspect: Aspect) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", aspect=aspect)) is True
+
+
+def test_direct_can_serve_two_images() -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", count=2)) is True
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
         {"refs": (ImageRef(name="00000000-0000-0000-0000-000000000001"),)},
         {"ref_paths": (Path("image.png"),)},
         {"reference_entities": ("entity-1",)},
-        {"aspect": Aspect.LANDSCAPE},
-        {"aspect": Aspect.SQUARE},
-        {"count": 2},
+        {"count": 3},  # only count <= 2 is measured on the direct path
         {"instructions": (AgentInstruction(text="keep lighting dark"),)},
         {"prompt": "A photo of @Alice in wonderland"},
     ],
@@ -681,3 +688,29 @@ async def test_direct_http_sends_the_migrated_wire_model(
 @pytest.mark.parametrize("model", [m for m in Model if m is not Model.NARWHAL])
 def test_a_model_with_no_measured_migrated_wire_name_is_not_served(model: Model) -> None:
     assert not direct_can_serve(GenerateImageRequest(prompt="x", model=model))
+
+
+@pytest.mark.asyncio
+async def test_direct_http_sends_one_seed_per_image_and_the_aspect(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    req = GenerateImageRequest(prompt="x", aspect=Aspect.LANDSCAPE, count=2)
+    await transport.generate_images(project_id="proj-123", request=req)
+    kwargs = builder.call_args.kwargs
+    assert len(kwargs["entry_seeds"]) == 2
+    assert len(set(kwargs["entry_seeds"])) == 2
+    assert kwargs["aspect"] is Aspect.LANDSCAPE

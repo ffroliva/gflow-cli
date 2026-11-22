@@ -1,14 +1,14 @@
 """The ``ogiZ0b`` (image generation) batchexecute body, built from domain values.
 
 A pure function: no I/O, no clock, no randomness. The caller supplies the per-request
-values (``batch_id``, ``session_counter``) so the output is deterministic under test.
+values (``batch_id``, ``entry_seeds``) so the output is deterministic under test.
 
-Wire shape (proven 2026-11-22, docs/superpowers/spikes/2026-11-22-ogiz0b-minimum-viable-frame.md):
+Wire shape (proven 2026-11-22, docs/superpowers/spikes/2026-11-22-direct-image-gate0.md):
 
     ctx   = [null, 22, null, null, null, project_id, null, null, null, null, [token, 1]]
-    entry = [null, null, null, session_counter, 2, model, null, copy(ctx), [[[prompt]]],
+    entry = [null, null, null, seed, aspect, model, null, copy(ctx), [[[prompt]]],
              null, null, null]
-    inner = [null, [entry], 1, ctx, [batch_id]]
+    inner = [null, [entry, ...], 1, ctx, [batch_id]]   # one entry per image, one POST
     body  = urlencode({"f.req": [[["ogiZ0b", json(inner), null, "generic"]]], "at": at})
 """
 
@@ -17,7 +17,17 @@ from __future__ import annotations
 import json
 from urllib.parse import urlencode
 
-_ASPECT_PORTRAIT = 2  # Flow's 2026-11-22 submit capture sends 2 for portrait 9:16.
+from gflow_cli.api.image import Aspect
+
+# entry[4], as Flow's own submit sends it (route-aborted captures, 2026-11-22). 9:16 and
+# 16:9 are also proven by direct POSTs (768x1376, 1376x768); the other three by capture.
+_ASPECT_WIRE: dict[Aspect, int] = {
+    Aspect.SQUARE: 1,
+    Aspect.PORTRAIT: 2,
+    Aspect.LANDSCAPE: 3,
+    Aspect.PORTRAIT_THREE_FOUR: 4,
+    Aspect.LANDSCAPE_FOUR_THREE: 5,
+}
 
 
 def build_ogiz0b_body(
@@ -28,36 +38,24 @@ def build_ogiz0b_body(
     recaptcha_token: str,
     at_token: str,
     batch_id: str,
-    session_counter: int,
+    entry_seeds: tuple[int, ...],
+    aspect: Aspect = Aspect.PORTRAIT,
 ) -> str:
-    """Return the form-encoded ``f.req`` + ``at`` body for one T2I ``ogiZ0b`` POST."""
-    ctx: list[object] = [
-        None,
-        22,
-        None,
-        None,
-        None,
-        project_id,
-        None,
-        None,
-        None,
-        None,
-        [recaptcha_token, 1],
+    """Return the form-encoded ``f.req`` + ``at`` body for one T2I ``ogiZ0b`` POST.
+
+    One entry per image: ``len(entry_seeds)`` is the image count (two entries returned two
+    images in one POST, measured 2026-11-22).
+    """
+    if not entry_seeds:
+        msg = "entry_seeds must name at least one image"
+        raise ValueError(msg)
+    ctx: list[object] = [None, 22, None, None, None, project_id, None, None, None, None]
+    ctx.append([recaptcha_token, 1])
+    entries = [
+        [None, None, None, seed, _ASPECT_WIRE[aspect], model, None, ctx.copy(), [[[prompt]]]]
+        + [None, None, None]
+        for seed in entry_seeds
     ]
-    entry: list[object] = [
-        None,
-        None,
-        None,
-        session_counter,
-        _ASPECT_PORTRAIT,
-        model,
-        None,
-        ctx.copy(),
-        [[[prompt]]],
-        None,
-        None,
-        None,
-    ]
-    inner = [None, [entry], 1, ctx, [batch_id]]
+    inner = [None, entries, 1, ctx, [batch_id]]
     f_req = json.dumps([[["ogiZ0b", json.dumps(inner, separators=(",", ":")), None, "generic"]]])
     return urlencode({"f.req": f_req, "at": at_token})
