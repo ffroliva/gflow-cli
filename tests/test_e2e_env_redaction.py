@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pytest
 
+from tests.conftest import pytest_plugins as repo_plugins
 from tests.e2e import conftest as e2e_conftest
 from tests.e2e.conftest import RedactedEnv
 
@@ -136,38 +137,157 @@ def test_e2e_env_works_as_subprocess_env(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert proc.stdout.strip() == _DUMMY_SECRET_VAL
 
 
-def test_pytest_report_scrubber_masks_env_secrets_in_showlocals(
-    pytester: pytest.Pytester,
+def test_repo_conftest_declares_secret_scrub_plugin() -> None:
+    assert "tests._secret_scrub" in repo_plugins
+
+
+def test_failing_report_without_secret_keeps_reprcrash_summary_line(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("CI", "1")
     pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+def test_clean():
+    assert False, "custom assertion failure message"
+""")
+    result = pytester.runpytest_subprocess("-ra")
+    output = result.stdout.str()
+    assert (
+        "FAILED test_failing_report_without_secret_keeps_reprcrash_summary_line.py::test_clean"
+        " - AssertionError: custom assertion failure message" in output
+    )
+
+
+def test_non_secret_env_vars_and_credentialed_urls(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+def test_secrets_and_non_secrets(monkeypatch):
+    monkeypatch.setenv("GIT_AUTHOR_NAME", "RealAuthorName")
+    monkeypatch.setenv("PIP_KEYRING_PROVIDER", "subprocess_provider")
+    monkeypatch.setenv("GFLOW_CLI_AUTH_BROWSER", "chromium_browser")
+    monkeypatch.setenv("MY_API_KEY", "secret_api_key_12345678")
+    monkeypatch.setenv("SMTP_PASS", "secret_smtp_password_12345678")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgres://dbuser:super_secret_url_pass_12345678@localhost:5432/testdb",
+    )
+    author = "RealAuthorName"
+    keyring = "subprocess_provider"
+    browser = "chromium_browser"
+    api_key = "secret_api_key_12345678"
+    smtp_pass = "secret_smtp_password_12345678"
+    url = "postgres://dbuser:super_secret_url_pass_12345678@localhost:5432/testdb"
+    assert False
+""")
+    result = pytester.runpytest_subprocess("-l")
+    output = result.stdout.str()
+    # Non-secrets must not be masked
+    assert "RealAuthorName" in output
+    assert "subprocess_provider" in output
+    assert "chromium_browser" in output
+    # Secrets must be masked
+    assert "secret_api_key_12345678" not in output
+    assert "secret_smtp_password_12345678" not in output
+    assert "super_secret_url_pass_12345678" not in output
+    assert "postgres://dbuser:***@localhost:5432/testdb" in output
+
+
+def test_truncated_secret_repr_masks_chunks_under_showlocals(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    token_404 = "".join(f"{i:04d}" for i in range(101))
+    assert len(token_404) == 404
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile(f"""
+def test_long_token(monkeypatch):
+    token = {token_404!r}
+    monkeypatch.setenv("MY_API_KEY", token)
+    val = token
+    assert False
+""")
+    result = pytester.runpytest_subprocess("-l")
+    output = result.stdout.str()
+    assert token_404[:16] not in output
+    assert token_404[-16:] not in output
+    assert "***" in output
+
+
+def test_passing_test_masks_secrets_in_captured_sections(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+def test_pass_print(monkeypatch):
+    monkeypatch.setenv("MY_API_KEY", "super_secret_passing_token_12345")
+    print("OUTPUT: super_secret_passing_token_12345")
+""")
+    result = pytester.runpytest_subprocess("-rA")
+    output = result.stdout.str()
+    assert "super_secret_passing_token_12345" not in output
+    assert "OUTPUT: ***" in output
+
+
+def test_collection_error_masks_secrets(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
     pytester.makepyfile("""
 import os
+os.environ["MY_API_KEY"] = "super_secret_import_token_12345"
+raise RuntimeError("failed to import module with super_secret_import_token_12345")
+""")
+    result = pytester.runpytest_subprocess()
+    output = result.stdout.str()
+    assert "super_secret_import_token_12345" not in output
+    assert "***" in output
 
-def test_leak():
-    os.environ["GFLOW_TEST_API_KEY"] = "sk-fake-1234567890abcd"
+
+def test_pytest_report_scrubber_masks_env_secrets_in_showlocals(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CI", "1")
+    pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
+    pytester.makepyfile("""
+def test_leak(monkeypatch):
+    monkeypatch.setenv("GFLOW_TEST_API_KEY", "sk-fake-1234567890abcd")
+    import os
     env = {**os.environ}
     print("captured secret: sk-fake-1234567890abcd")
     assert False
 """)
-    result = pytester.runpytest("-l", "-p", "tests._secret_scrub")
+    result = pytester.runpytest_subprocess("-l")
     output = result.stdout.str()
     assert "sk-fake-1234567890abcd" not in output
     assert "***" in output
 
 
 def test_pytest_report_scrubber_masks_subprocess_env_list_in_showlocals(
-    pytester: pytest.Pytester,
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("CI", "1")
     pytester.syspathinsert()
+    pytester.makeconftest(f"pytest_plugins = {repo_plugins!r}\n")
     pytester.makepyfile("""
-import os
 import subprocess
 
-def test_subprocess_leak():
-    os.environ["GFLOW_TEST_API_KEY"] = "sk-fake-1234567890abcd"
+def test_subprocess_leak(monkeypatch):
+    monkeypatch.setenv("GFLOW_TEST_API_KEY", "sk-fake-1234567890abcd")
+    import os
     subprocess.run(["definitely-not-a-program"], env=dict(os.environ))
 """)
-    result = pytester.runpytest("-l", "-p", "tests._secret_scrub")
+    result = pytester.runpytest_subprocess("-l")
     output = result.stdout.str()
     assert "sk-fake-1234567890abcd" not in output
     assert "***" in output
