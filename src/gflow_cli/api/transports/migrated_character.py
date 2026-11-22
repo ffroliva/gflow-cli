@@ -985,43 +985,53 @@ async def _created_id(
     )
 
 
+async def _attempt_once(
+    page: Page, project_id: str, portrait: Path, known: set[str]
+) -> tuple[str | None, dict[str, Any]]:
+    """One create attempt, with its failures classified: before any request left the page
+    nothing exists; after one did, a character may exist and the error is not retryable."""
+    draft = DRAFT_URL.format(project_id=project_id)
+    # Owned here, not by the attempt: a gesture can fail after its request left the page,
+    # and that request decides whether a character may already exist.
+    sent: set[str] = set()
+    after_upload = _maybe_created_hint(None, project_id)
+    try:
+        got, _ = await _create_attempt(page, project_id, portrait, sent)
+    except PlaywrightError as exc:
+        if sent:
+            raise _unsafe_to_retry(
+                _browser_error(exc, "after the portrait upload"), after_upload
+            ) from exc
+        await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
+        raise _browser_error(exc, "before the character was created") from exc
+    try:
+        return await _created_id(page, project_id, (got, sent), known), got
+    except PlaywrightError as exc:
+        raise _unsafe_to_retry(
+            _browser_error(exc, "after the portrait upload"), after_upload
+        ) from exc
+    except GFlowError as exc:
+        if exc.retryable is not False:  # not already marked, with the entity id
+            _unsafe_to_retry(exc, after_upload)
+        raise
+
+
 async def _create_entity(page: Page, project_id: str, portrait: Path) -> tuple[str, Any]:
     """Create the character by uploading its portrait; return its id and the upload reply
     (``None`` when that reply was lost)."""
-    draft = DRAFT_URL.format(project_id=project_id)
     try:
         await _open_draft(page, project_id)
         # The characters already here, so one a lost-reply create made can be named
         # rather than created again.
         known = await _character_ids(page, project_id)
     except PlaywrightError as exc:
+        draft = DRAFT_URL.format(project_id=project_id)
         await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
         raise _browser_error(exc, "before the character was created") from exc
     for attempt in (1, 2):
-        # Owned here, not by the attempt: a gesture can fail after its request left the
-        # page, and that request decides whether a character may already exist.
-        sent: set[str] = set()
-        try:
-            outcome = await _create_attempt(page, project_id, portrait, sent)
-        except PlaywrightError as exc:
-            if sent:
-                hint = _maybe_created_hint(None, project_id)
-                raise _unsafe_to_retry(
-                    _browser_error(exc, "after the portrait upload"), hint
-                ) from exc
-            await raise_if_known_landing(page, requested=draft, at=_CHARACTER_AT)
-            raise _browser_error(exc, "before the character was created") from exc
-        try:
-            entity_id = await _created_id(page, project_id, outcome, known)
-        except PlaywrightError as exc:
-            hint = _maybe_created_hint(None, project_id)
-            raise _unsafe_to_retry(_browser_error(exc, "after the portrait upload"), hint) from exc
-        except GFlowError as exc:
-            if exc.retryable is not False:  # not already marked, with the entity id
-                _unsafe_to_retry(exc, _maybe_created_hint(None, project_id))
-            raise
+        entity_id, got = await _attempt_once(page, project_id, portrait, known)
         if entity_id is not None:
-            return entity_id, _upload_into(outcome[0].get(UPLOAD_RPC), entity_id)
+            return entity_id, _upload_into(got.get(UPLOAD_RPC), entity_id)
         log.warning("migrated.character_create_retry", attempt=attempt, project_id=project_id)
     raise _unsafe_to_retry(
         _drift(None, "uploading the portrait created no character (2 attempts)", CREATE_RPC),
