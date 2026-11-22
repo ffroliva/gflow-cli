@@ -29,6 +29,7 @@ from pytest_bdd import given, scenarios, then, when
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 scenarios("../features/agent_only_composer_live.feature")
 
@@ -41,15 +42,15 @@ def world() -> dict[str, Any]:
     return {}
 
 
-def _gflow(args: list[str], env: dict[str, str], timeout: int) -> subprocess.CompletedProcess[str]:
-    child = {k: v for k, v in env.items() if k != "GFLOW_CLI_HOME"}  # the real profile home
+def _gflow(args: list[str], env: RedactedEnv, timeout: int) -> subprocess.CompletedProcess[str]:
+    # `e2e_env` fixture already restores the real profile home (#745).
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         capture_output=True,
         text=True,
         check=False,
         timeout=timeout,
-        env={**child, "GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
+        env=env | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"},
     )
 
 
@@ -107,7 +108,7 @@ def _agent_only_project(world: dict[str, Any], e2e_profile_dir: Path) -> None:
 
 
 @when("`gflow image t2i` runs with aspect 3:4 and count 2")
-def _cli_t2i(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli_t2i(world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path) -> None:
     out = tmp_path / "out"
     world["proc"] = _gflow(
         [
@@ -169,7 +170,7 @@ def _mcp_video_completed(world: dict[str, Any]) -> None:
 
 
 @when("`gflow video t2v` runs for 4 seconds at 9:16")
-def _cli_t2v(world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli_t2v(world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path) -> None:
     if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO", "") != "1":
         pytest.skip("set GFLOW_CLI_E2E_RUN_VIDEO=1 to spend credits on the agent-only t2v e2e")
     out = tmp_path / "out"

@@ -31,6 +31,7 @@ import structlog
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._redacted_env import RedactedEnv
 
 scenarios("../features/migrated_image_character_mention.feature")
 
@@ -62,7 +63,7 @@ def _prompt(world: dict[str, Any], template: str) -> str:
 
 
 def _run_cli(
-    world: dict[str, Any], e2e_env: dict[str, str], tmp_path: Path, mode: str, *extra: str
+    world: dict[str, Any], e2e_env: RedactedEnv, tmp_path: Path, mode: str, *extra: str
 ) -> None:
     out = tmp_path / "cli"
     world["out"] = out
@@ -82,7 +83,7 @@ def _run_cli(
             str(out),
         ],
         # The steps read INFO events from stderr; the CLI defaults to WARNING (#1041, #1332).
-        env={**e2e_env, "GFLOW_CLI_LOG_LEVEL": "INFO", "GFLOW_CLI_LOG_FORMAT": "json"},
+        env=e2e_env | {"GFLOW_CLI_LOG_LEVEL": "INFO", "GFLOW_CLI_LOG_FORMAT": "json"},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -92,12 +93,12 @@ def _run_cli(
 
 
 @when(parsers.parse('the CLI generates "{template}"'))
-def _cli(world: dict[str, Any], template: str, e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli(world: dict[str, Any], template: str, e2e_env: RedactedEnv, tmp_path: Path) -> None:
     _run_cli(world, e2e_env, tmp_path, "t2i", _prompt(world, template))
 
 
 @when(parsers.parse('the CLI generates "{template}" with a local reference image'))
-def _cli_i2i(world: dict[str, Any], template: str, e2e_env: dict[str, str], tmp_path: Path) -> None:
+def _cli_i2i(world: dict[str, Any], template: str, e2e_env: RedactedEnv, tmp_path: Path) -> None:
     from PIL import Image
 
     ref = tmp_path / "style.png"
@@ -107,7 +108,7 @@ def _cli_i2i(world: dict[str, Any], template: str, e2e_env: dict[str, str], tmp_
 
 @when(parsers.parse('the CLI generates "{template}" with an entity id and no name'))
 def _cli_id_only(
-    world: dict[str, Any], template: str, e2e_env: dict[str, str], tmp_path: Path
+    world: dict[str, Any], template: str, e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
     entity = "00000000-0000-4000-8000-000000000000"
     _run_cli(world, e2e_env, tmp_path, "t2i", template, "--reference-entity", entity)

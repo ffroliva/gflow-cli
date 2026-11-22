@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 # needs_network: gflow's dependencies come from the index; only gflow-cli itself is local.
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_update, pytest.mark.needs_network]
 
@@ -95,7 +97,7 @@ def update_wheels(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path,
         )
         init_py.write_text(init_content, encoding="utf-8", newline="\n")
 
-        env = {**os.environ, "UV_LINK_MODE": "copy", "PYTHONUTF8": "1"}
+        env = RedactedEnv({**os.environ, "UV_LINK_MODE": "copy", "PYTHONUTF8": "1"})
         build_res = subprocess.run(
             ["uv", "build", "--wheel", "--out-dir", str(wheels_dir), str(src_tmp)],
             capture_output=True,

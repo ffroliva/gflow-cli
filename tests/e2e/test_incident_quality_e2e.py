@@ -32,6 +32,7 @@ import pytest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.errors import FlowAppError
+from tests.e2e._redacted_env import RedactedEnv
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_auth]
 
@@ -92,7 +93,9 @@ async def test_incident_bundle_diagnostic_quality(e2e_profile_dir: Path) -> None
             capture_output=True,
             text=True,
             timeout=120,
-            env={**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)},
+            env=RedactedEnv(
+                {**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)}
+            ),
         )
         assert contender.returncode == 11, f"expected exit 11, got {contender.returncode}"
 
@@ -170,9 +173,9 @@ async def test_a_failed_generation_bundle_is_not_hollow(e2e_profile_dir: Path) -
     profile_name = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
     before = _bundles(incidents_root)
 
-    env = {**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)}
+    env = RedactedEnv({**os.environ, "PYTHONUTF8": "1", "GFLOW_CLI_HOME": str(settings.home)})
     # The real catalog (the autouse isolation points GFLOW_CLI_DB_PATH at a temp db).
-    catalog_env = {k: v for k, v in env.items() if k != "GFLOW_CLI_DB_PATH"}
+    catalog_env = RedactedEnv({k: v for k, v in env.items() if k != "GFLOW_CLI_DB_PATH"})
     listed = subprocess.run(  # noqa: S603
         [sys.executable, "-m", "gflow_cli.cli", "project", "list"]
         + ["--profile", profile_name, "--limit", "1", "--json"],

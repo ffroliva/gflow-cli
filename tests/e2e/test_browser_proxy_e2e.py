@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -123,7 +125,7 @@ def _dead_port() -> int:
         return int(s.getsockname()[1])
 
 
-def _gflow(env: dict[str, str], *args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def _gflow(env: RedactedEnv, *args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "gflow_cli", *args],
         env=env,
@@ -143,9 +145,9 @@ def _saw_flow(server: _ConnectProxy) -> bool:
 
 
 def test_t2i_generates_through_the_proxy(
-    e2e_env: dict[str, str], proxy: _ConnectProxy, tmp_path: Path
+    e2e_env: RedactedEnv, proxy: _ConnectProxy, tmp_path: Path
 ) -> None:
-    env = {**e2e_env, "GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{proxy.server_address[1]}"}
+    env = e2e_env | {"GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{proxy.server_address[1]}"}
     proc = _gflow(
         env, "image", "t2i", "a calm forest at dawn", "--out", str(tmp_path / "out"), "--json"
     )
@@ -153,10 +155,8 @@ def test_t2i_generates_through_the_proxy(
     assert _saw_flow(proxy), proxy.hosts
 
 
-def test_auth_status_verifies_through_the_proxy(
-    e2e_env: dict[str, str], proxy: _ConnectProxy
-) -> None:
-    env = {**e2e_env, "GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{proxy.server_address[1]}"}
+def test_auth_status_verifies_through_the_proxy(e2e_env: RedactedEnv, proxy: _ConnectProxy) -> None:
+    env = e2e_env | {"GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{proxy.server_address[1]}"}
     proc = _gflow(env, "auth", "status", "--profile", env["GFLOW_CLI_PROFILE"], timeout=180)
     assert proc.returncode == 0, proc.stdout[-800:] + proc.stderr[-800:]
     assert "verified" in proc.stdout
@@ -164,8 +164,8 @@ def test_auth_status_verifies_through_the_proxy(
     assert "CONNECT myaccount.google.com:443" in proxy.hosts, proxy.hosts
 
 
-def test_auth_renew_goes_through_the_proxy(e2e_env: dict[str, str], proxy: _ConnectProxy) -> None:
-    env = {**e2e_env, "GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{proxy.server_address[1]}"}
+def test_auth_renew_goes_through_the_proxy(e2e_env: RedactedEnv, proxy: _ConnectProxy) -> None:
+    env = e2e_env | {"GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{proxy.server_address[1]}"}
     proc = _gflow(env, "auth", "renew", "--profile", env["GFLOW_CLI_PROFILE"], "--json")
     assert proc.returncode == 0, proc.stderr[-800:]
     assert '"authenticated"' in proc.stdout
@@ -212,16 +212,16 @@ async def test_proxy_credentials_break_flow_so_v1_refuses_them(
     assert await _load_flow(proxy, tmp_path, with_credentials=False) == ""
 
 
-def test_credentialed_value_is_refused_at_startup(e2e_env: dict[str, str]) -> None:
-    env = {**e2e_env, "GFLOW_CLI_BROWSER_PROXY": f"http://{_CREDENTIALS}@127.0.0.1:7897"}
+def test_credentialed_value_is_refused_at_startup(e2e_env: RedactedEnv) -> None:
+    env = e2e_env | {"GFLOW_CLI_BROWSER_PROXY": f"http://{_CREDENTIALS}@127.0.0.1:7897"}
     proc = _gflow(env, "auth", "status", "--profile", env["GFLOW_CLI_PROFILE"], timeout=60)
     assert proc.returncode == 11, proc.stdout[-800:] + proc.stderr[-800:]
     assert "GFLOW_CLI_BROWSER_PROXY — invalid proxy" in proc.stdout + proc.stderr
     assert "pr0xy-pw" not in proc.stdout + proc.stderr
 
 
-def test_dead_proxy_fails_fast_naming_the_setting(e2e_env: dict[str, str], tmp_path: Path) -> None:
-    env = {**e2e_env, "GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{_dead_port()}"}
+def test_dead_proxy_fails_fast_naming_the_setting(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+    env = e2e_env | {"GFLOW_CLI_BROWSER_PROXY": f"http://127.0.0.1:{_dead_port()}"}
     started = time.monotonic()
     proc = _gflow(env, "image", "t2i", "a calm forest", "--out", str(tmp_path / "out"))
     elapsed = time.monotonic() - started

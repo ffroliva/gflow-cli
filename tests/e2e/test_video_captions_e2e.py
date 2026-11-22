@@ -15,6 +15,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_media]
 
 
@@ -156,7 +158,7 @@ def test_installed_cli_burns_authored_srt(
         capture_output=True,
         text=True,
         timeout=120,
-        env={**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")},
+        env=RedactedEnv({**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")}),
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -197,7 +199,7 @@ async def test_default_endpoint_error_reaches_cli_and_mcp(
     from gflow_cli.mcp.video_captions_tools import gflow_video_transcribe
 
     clip, _ = clip_files
-    env = {**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")}
+    env = RedactedEnv({**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")})
     env.pop("GFLOW_CLI_LLM_BASE_URL", None)
     cli_result = subprocess.run(
         [str(installed_cli.python), "-m", "gflow_cli", "video", "transcribe", str(clip), "--json"],

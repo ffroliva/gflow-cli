@@ -31,6 +31,8 @@ from typing import Any
 from PIL import Image
 from pytest_bdd import given, scenarios, then, when
 
+from tests.e2e._redacted_env import RedactedEnv
+
 scenarios("../features/manifest_refs_live.feature")
 
 _ROWS = [
@@ -46,7 +48,7 @@ _PARENT = {2: 1, 3: 2}
     "a run config whose referencing rows point at earlier rows, one sharing its caption",
     target_fixture="world",
 )
-def _config(tmp_path: Path, e2e_env: dict[str, str]) -> dict[str, Any]:
+def _config(tmp_path: Path, e2e_env: RedactedEnv) -> dict[str, Any]:
     cfg = tmp_path / "run.json"
     cfg.write_text(json.dumps({"prompts": _ROWS}), encoding="utf-8")
     return {"cfg": cfg, "env": e2e_env, "out": tmp_path / "run_out"}
@@ -59,7 +61,7 @@ def _run(world: dict[str, Any]) -> None:
 
 def _execute(world: dict[str, Any], *extra: str) -> None:
     # INFO: the asserted events are info-level; a command logs WARNING+ by default (#1041).
-    env = {**world["env"], "GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"}
+    env = world["env"] | {"GFLOW_CLI_LOG_FORMAT": "json", "GFLOW_CLI_LOG_LEVEL": "INFO"}
     proc = subprocess.run(
         [
             sys.executable,
@@ -152,7 +154,7 @@ def _lineage(world: dict[str, Any]) -> None:
 
 
 @given("a run config whose two rows name the same local image file", target_fixture="world")
-def _file_config(tmp_path: Path, e2e_env: dict[str, str]) -> dict[str, Any]:
+def _file_config(tmp_path: Path, e2e_env: RedactedEnv) -> dict[str, Any]:
     refs = tmp_path / "refs"
     refs.mkdir()
     img = Image.new("RGB", (768, 768))
@@ -213,7 +215,7 @@ def _uploaded_once(world: dict[str, Any]) -> None:
 
 
 @given("an existing project and a run config of two rows", target_fixture="world")
-def _project_config(tmp_path: Path, e2e_env: dict[str, str]) -> dict[str, Any]:
+def _project_config(tmp_path: Path, e2e_env: RedactedEnv) -> dict[str, Any]:
     title = f"gflow-e2e-run-project-{uuid.uuid4().hex[:6]}"
     proc = subprocess.run(  # noqa: S603 - fixed argv, our own CLI
         [sys.executable, "-m", "gflow_cli", "project", "create", "--title", title, "--json"],

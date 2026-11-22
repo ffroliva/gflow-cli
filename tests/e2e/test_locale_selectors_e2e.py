@@ -12,7 +12,7 @@ broken — this file closes that loop.
 
 **How to run manually**::
 
-    GFLOW_CLI_LOCALE=de-DE GFLOW_CLI_E2E_RUN_LOCALE_SMOKE=1 \\
+    GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_LOCALE=de-DE GFLOW_CLI_E2E_RUN_LOCALE_SMOKE=1 \\
         .venv/Scripts/python.exe -m pytest -q \\
         tests/e2e/test_locale_selectors_e2e.py -s
 
@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._redacted_env import RedactedEnv
+
 _LIVE_SMOKE_ENABLED = os.environ.get("GFLOW_CLI_E2E_RUN_LOCALE_SMOKE") == "1"
 
 pytestmark = [
@@ -43,7 +45,9 @@ pytestmark = [
 
 
 @pytest.mark.parametrize("locale", ["de-DE", "pt-BR"])
-def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> None:
+def test_image_t2i_succeeds_under_non_en_locale(
+    e2e_env: RedactedEnv, locale: str, tmp_path: Path
+) -> None:
     """Run ``gflow image t2i`` under a non-EN locale and assert mp4-or-png exists.
 
     The selector cascade is exercised end-to-end: onboarding bypass, "+ New
@@ -51,7 +55,7 @@ def test_image_t2i_succeeds_under_non_en_locale(locale: str, tmp_path: Path) -> 
     (SUBMIT_BUTTON_SELECTORS). If any locale-text fallback is broken, the
     Playwright timeout will fail this test before any image is produced.
     """
-    env = os.environ.copy()
+    env = e2e_env.copy()
     env["GFLOW_CLI_LOCALE"] = locale
     out_dir = tmp_path / f"locale_{locale}"
     out_dir.mkdir()
