@@ -25,6 +25,7 @@ EXPERIMENTAL_TRANSPORTS: tuple[str, ...] = (
     "evaluate_fetch",
     "bearer",
     "sapisidhash",
+    "direct_http",
 )
 
 # Experimental transports whose ``setup()`` discards a caller-supplied ``page=``
@@ -41,6 +42,7 @@ STANDALONE_ONLY_TRANSPORTS: frozenset[str] = frozenset({"bearer", "sapisidhash"}
 
 def _registry() -> dict[str, type[FlowTransportStrategy]]:
     """Lazy registry import — keeps the factory cheap to import."""
+    from gflow_cli.api.transports.direct_http import DirectHttpTransport
     from gflow_cli.api.transports.experimental.bearer import BearerTransport
     from gflow_cli.api.transports.experimental.evaluate_fetch import (
         EvaluateFetchTransport,
@@ -50,6 +52,7 @@ def _registry() -> dict[str, type[FlowTransportStrategy]]:
 
     return {
         "ui_automation": UiAutomationTransport,
+        "direct_http": DirectHttpTransport,
         "evaluate_fetch": EvaluateFetchTransport,
         "bearer": BearerTransport,
         "sapisidhash": SapisidhashTransport,
