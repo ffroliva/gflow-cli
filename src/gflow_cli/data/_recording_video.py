@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from gflow_cli.data.models import (
     AssetKind,
+    AssetLookup,
     AssetRecord,
     LocalFileRecord,
     OperationAssetRole,
@@ -36,7 +37,12 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.scene import Scene
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
+    from gflow_cli.api.video import (
+        GenerateVideoRequest,
+        VideoResult,
+        VideoStarted,
+        VideoStatus,
+    )
     from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.storage import CloudStorageInfo
 
@@ -397,6 +403,137 @@ class VideoRecordingMixin(RecorderCore):
             supersede_existing=supersede_existing,
         )
 
+    def _resolve_video_terminal_outcome(
+        self,
+        status: VideoStatus,
+    ) -> tuple[OperationStatus, str | None, str | None]:
+        """Map a VideoStatus to an operation terminal state and failure detail (#341)."""
+        if status.succeeded:
+            return (OperationStatus.SUCCEEDED, None, None)
+        reasons = ", ".join(status.failure_reasons) or status.error_message or "unknown reason"
+        return (
+            OperationStatus.FAILED,
+            "generation-failed",
+            redact_error_detail(reasons),
+        )
+
+    def _build_completed_video_asset(
+        self,
+        *,
+        profile_name: str,
+        flow_media_id: str,
+        result: VideoResult,
+        existing_asset: AssetLookup | None,
+        request: GenerateVideoRequest | None,
+        model: str | None,
+        aspect_ratio: str | None,
+    ) -> AssetRecord:
+        """Build the AssetRecord for a newly completed video generation."""
+        if existing_asset is not None:
+            asset_id = existing_asset.id
+            project_id = result.project_id or existing_asset.flow_project_id
+            workflow_id = result.workflow_id or existing_asset.flow_workflow_id
+            metadata = existing_asset.metadata_json or {}
+        else:
+            asset_id = _new_id()
+            project_id = result.project_id
+            workflow_id = result.workflow_id
+            metadata = {}
+
+        if request is not None:
+            model_value = request.model.value if request.model is not None else model
+            aspect = request.aspect.value
+            duration = float(request.duration) if request.duration is not None else None
+            seed = request.seed
+        else:
+            model_value = model
+            aspect = aspect_ratio or "16:9"
+            duration = None
+            seed = None
+
+        return AssetRecord(
+            id=asset_id,
+            profile_name=profile_name,
+            flow_project_id=project_id,
+            flow_media_id=flow_media_id,
+            # Never clobber the id the start recorded with None (#898).
+            flow_workflow_id=workflow_id,
+            flow_media_generation_id=None,
+            kind=AssetKind.VIDEO,
+            status=result.status.status,
+            model=model_value,
+            aspect_ratio=aspect,
+            width=None,
+            height=None,
+            duration_seconds=duration,
+            seed=seed,
+            metadata_json=metadata,
+        )
+
+    def _persist_completed_video_asset(
+        self,
+        *,
+        repo: DataRepository,
+        profile_name: str,
+        flow_media_id: str,
+        result: VideoResult,
+        request: GenerateVideoRequest | None,
+        model: str | None,
+        aspect_ratio: str | None,
+    ) -> None:
+        """Upsert the completed video asset or update status for extend in-place."""
+        existing_asset = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+        if request is None and existing_asset is not None:
+            repo.update_asset_status(
+                profile_name,
+                flow_media_id,
+                result.status.status,
+                workflow_id=result.workflow_id,
+            )
+            return
+
+        record = self._build_completed_video_asset(
+            profile_name=profile_name,
+            flow_media_id=flow_media_id,
+            result=result,
+            existing_asset=existing_asset,
+            request=request,
+            model=model,
+            aspect_ratio=aspect_ratio,
+        )
+        repo.upsert_asset(record)
+
+    def _persist_completed_video_operation(
+        self,
+        *,
+        repo: DataRepository,
+        profile_name: str,
+        flow_media_id: str,
+        request: GenerateVideoRequest,
+        result: VideoResult,
+    ) -> None:
+        """Update the STARTED operation to terminal SUCCEEDED/FAILED, or insert fallback."""
+        terminal = self._resolve_video_terminal_outcome(result.status)
+        completed_at = _now_utc_iso()
+        op = repo.get_operation_for_output_asset(
+            profile_name,
+            flow_media_id,
+            OperationKind(request.mode.value),
+        )
+        if op is not None:
+            repo.update_operation_status(op.id, terminal[0], completed_at, terminal[1], terminal[2])
+            return
+
+        # on_started may have failed — insert a fresh terminal operation
+        self._insert_fallback_video_operation(
+            repo=repo,
+            profile_name=profile_name,
+            flow_media_id=flow_media_id,
+            request=request,
+            result=result,
+            terminal=terminal,
+        )
+
     def record_completed_video(
         self,
         *,
@@ -409,93 +546,27 @@ class VideoRecordingMixin(RecorderCore):
         aspect_ratio: str | None = None,
     ) -> None:
         # VideoResult carries status.media_id (the flow_media_id) and local_path
-
         repo = self.repository
         flow_media_id = result.status.media_id
 
-        # Upsert the asset (idempotent) — reuse existing id if already inserted by on_started
-        existing_asset = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
-        if request is None and existing_asset is not None:
-            repo.update_asset_status(
-                profile_name,
-                flow_media_id,
-                result.status.status,
-                workflow_id=result.workflow_id,
-            )
-        else:
-            asset_id = existing_asset.id if existing_asset is not None else _new_id()
-            repo.upsert_asset(
-                AssetRecord(
-                    id=asset_id,
-                    profile_name=profile_name,
-                    flow_project_id=result.project_id
-                    or (existing_asset.flow_project_id if existing_asset is not None else None),
-                    flow_media_id=flow_media_id,
-                    # Never clobber the id the start recorded with None (#898).
-                    flow_workflow_id=result.workflow_id
-                    or (existing_asset.flow_workflow_id if existing_asset is not None else None),
-                    flow_media_generation_id=None,
-                    kind=AssetKind.VIDEO,
-                    status=result.status.status,
-                    model=(
-                        request.model.value
-                        if request is not None and request.model is not None
-                        else model
-                    ),
-                    aspect_ratio=(
-                        request.aspect.value if request is not None else (aspect_ratio or "16:9")
-                    ),
-                    width=None,
-                    height=None,
-                    duration_seconds=float(request.duration)
-                    if request is not None and request.duration is not None
-                    else None,
-                    seed=request.seed if request is not None else None,
-                    metadata_json=existing_asset.metadata_json
-                    if existing_asset is not None and existing_asset.metadata_json
-                    else {},
-                ),
-            )
+        self._persist_completed_video_asset(
+            repo=repo,
+            profile_name=profile_name,
+            flow_media_id=flow_media_id,
+            result=result,
+            request=request,
+            model=model,
+            aspect_ratio=aspect_ratio,
+        )
 
-        # Update the STARTED operation for this asset to its terminal state.
-        # #341 review finding: a poll that COMPLETES with succeeded=False (Flow
-        # rejected/failed the render — failure_reasons set) is a failed
-        # generation, not a success; recording it SUCCEEDED made the most
-        # common real-world failure class invisible to `data list errors`.
-        completed_at = _now_utc_iso()
-        if result.status.succeeded:
-            terminal = (OperationStatus.SUCCEEDED, None, None)
-        else:
-            reasons = (
-                ", ".join(result.status.failure_reasons)
-                or result.status.error_message
-                or "unknown reason"
-            )
-            terminal = (
-                OperationStatus.FAILED,
-                "generation-failed",
-                redact_error_detail(reasons),
-            )
         if request is not None:
-            op = repo.get_operation_for_output_asset(
-                profile_name,
-                flow_media_id,
-                OperationKind(request.mode.value),
+            self._persist_completed_video_operation(
+                repo=repo,
+                profile_name=profile_name,
+                flow_media_id=flow_media_id,
+                request=request,
+                result=result,
             )
-            if op is not None:
-                repo.update_operation_status(
-                    op.id, terminal[0], completed_at, terminal[1], terminal[2]
-                )
-            else:
-                # on_started may have failed — insert a fresh terminal operation
-                self._insert_fallback_video_operation(
-                    repo=repo,
-                    profile_name=profile_name,
-                    flow_media_id=flow_media_id,
-                    request=request,
-                    result=result,
-                    terminal=terminal,
-                )
 
         if result.local_path is not None or cloud_storage_info is not None:
             self._persist_completed_video_file(

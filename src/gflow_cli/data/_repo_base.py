@@ -75,11 +75,17 @@ def _decode_metadata_json(raw: object) -> dict[str, Any]:
     return cast("dict[str, Any]", parsed) if isinstance(parsed, dict) else {}
 
 
+def _optional_column(row: sqlite3.Row, name: str) -> object | None:
+    if name not in row.keys():
+        return None
+    return row[name]
+
+
 def _row_to_local_file(row: sqlite3.Row) -> LocalFileRecord:
     provider: str | None = row["storage_provider"]
     # Cloud-only rows: path column holds the cloud URI, not a filesystem path.
     local_path = None if provider is not None else Path(str(row["path"]))
-    superseded_at = row["superseded_at"] if "superseded_at" in row.keys() else None
+    superseded_at = cast("str | None", _optional_column(row, "superseded_at"))
     return LocalFileRecord(
         id=str(row["id"]),
         profile_name=str(row["profile_name"]),
