@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import errno
+import os
+import time
 from pathlib import Path
 
 import av
@@ -311,7 +314,42 @@ def test_fallback_publish_preserves_existing_non_empty_output_without_hard_links
     assert temp_output.read_bytes() == b"newly rendered"
 
 
-def test_fallback_publish_overcomes_leftover_zero_byte_reservation_without_hard_links(
+def test_windows_uses_os_rename_and_drops_custom_ctypes() -> None:
+    assert not hasattr(video_assembly, "_windows_no_replace_rename")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        AttributeError("missing symbol"),
+        TypeError("invalid ctypes arguments"),
+        OSError(errno.ENOSYS, "Function not implemented"),
+        OSError(errno.EINVAL, "Invalid argument"),
+    ],
+)
+def test_fallback_publish_falls_back_to_reservation_on_platform_rename_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    def broken_platform_rename(*_args: object) -> None:
+        raise error
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    monkeypatch.setattr(video_assembly, "_platform_no_replace_rename", broken_platform_rename)
+
+    video_assembly.publish_output(temp_output, output)
+
+    assert output.read_bytes() == b"newly rendered"
+    assert not temp_output.exists()
+
+
+def test_fallback_publish_refuses_fresh_zero_byte_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     temp_output = tmp_path / ".joined.tmp.mp4"
@@ -324,10 +362,53 @@ def test_fallback_publish_overcomes_leftover_zero_byte_reservation_without_hard_
 
     monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
 
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly.publish_output(temp_output, output)
+
+    assert output.stat().st_size == 0
+    assert temp_output.read_bytes() == b"newly rendered"
+
+
+def test_validate_assembly_refuses_fresh_zero_byte_output(tmp_path: Path) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    clip.touch()
+    output.touch()
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly._validate_assembly([clip], output, None, None)
+
+
+def test_fallback_publish_overcomes_stale_zero_byte_reservation_without_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"newly rendered")
+    output = tmp_path / "joined.mp4"
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    def no_hard_links(*_args: object) -> None:
+        raise OSError("hard links unsupported")
+
+    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+
     video_assembly.publish_output(temp_output, output)
 
     assert output.read_bytes() == b"newly rendered"
     assert not temp_output.exists()
+
+
+def test_validate_assembly_permits_stale_zero_byte_output(tmp_path: Path) -> None:
+    clip = tmp_path / "clip.mp4"
+    output = tmp_path / "joined.mp4"
+    clip.touch()
+    output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
+
+    video_assembly._validate_assembly([clip], output, None, None)
 
 
 def test_fallback_publish_completes_atomically_without_hard_links(
@@ -348,13 +429,15 @@ def test_fallback_publish_completes_atomically_without_hard_links(
     assert not temp_output.exists()
 
 
-def test_assemble_videos_retries_over_leftover_zero_byte_output(
+def test_assemble_videos_retries_over_stale_zero_byte_output(
     tmp_path: Path,
 ) -> None:
     clip = tmp_path / "clip.mp4"
     output = tmp_path / "joined.mp4"
     _clip(clip, size=(64, 48), rate=10, frames=2, audio=False)
     output.touch()
+    past = time.time() - 120.0
+    os.utime(output, (past, past))
 
     result = assemble_videos([clip], output)
 

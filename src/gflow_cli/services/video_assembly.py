@@ -7,7 +7,7 @@ import errno
 import os
 import sys
 import tempfile
-from ctypes import wintypes
+import time
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
@@ -23,6 +23,8 @@ _SAMPLE_RATE = 44100
 _CHANNELS = 2
 _CHUNK = 1024
 _DUCKING = "threshold=0.01:ratio=10:attack=5:release=400"
+# A live reservation lasts only for one os.replace; older empty files are abandoned.
+_STALE_RESERVATION_S = 60.0
 
 
 @dataclass(frozen=True)
@@ -488,21 +490,16 @@ def _write_output(
 
 
 def _is_leftover_reservation(output: Path) -> bool:
-    """True if output exists as an empty regular file from an interrupted publish."""
+    """True if output exists as an abandoned empty reservation file from an interrupted publish."""
     try:
-        return output.is_file() and output.stat().st_size == 0
+        st = output.stat()
+        return (
+            output.is_file()
+            and st.st_size == 0
+            and (time.time() - st.st_mtime) >= _STALE_RESERVATION_S
+        )
     except OSError:
         return False
-
-
-def _windows_no_replace_rename(temp_output: Path, output: Path) -> None:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    move_file_ex_w = kernel32.MoveFileExW
-    move_file_ex_w.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
-    move_file_ex_w.restype = wintypes.BOOL
-    if not move_file_ex_w(str(temp_output), str(output), 0):
-        code = ctypes.get_last_error()
-        raise ctypes.WinError(code)
 
 
 def _linux_no_replace_rename(temp_output: Path, output: Path) -> None:
@@ -550,7 +547,7 @@ def _darwin_no_replace_rename(temp_output: Path, output: Path) -> None:
 def _platform_no_replace_rename(temp_output: Path, output: Path) -> None:
     """Atomically rename temp_output to output without replacing an existing destination."""
     if sys.platform == "win32":
-        _windows_no_replace_rename(temp_output, output)
+        os.rename(temp_output, output)
     elif sys.platform.startswith("linux"):
         _linux_no_replace_rename(temp_output, output)
     elif sys.platform == "darwin":
@@ -592,7 +589,7 @@ def _publish_fallback(temp_output: Path, output: Path) -> None:
         raise VideoAssemblyError(
             detail=f"Output already exists: {output}", route="video.assemble"
         ) from exc
-    except OSError:
+    except (OSError, AttributeError, TypeError):
         _reserved_replace_publish(temp_output, output)
 
 
