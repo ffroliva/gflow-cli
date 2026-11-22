@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from fractions import Fraction
@@ -483,6 +486,98 @@ def _write_output(
         )
 
 
+_AT_FDCWD = -100
+_RENAME_NOREPLACE = 1
+_RENAME_EXCL_DARWIN = 0x00000004
+_WIN32_ERROR_INVALID_FUNCTION = 1
+_WIN32_ERROR_NOT_SUPPORTED = 50
+_WIN32_ERROR_FILE_EXISTS = 80
+_WIN32_ERROR_ALREADY_EXISTS = 183
+_UNSUPPORTED_NOREPLACE_ERRNOS = frozenset(
+    code
+    for name in ("ENOSYS", "ENOTSUP", "EOPNOTSUPP", "EINVAL", "EXDEV")
+    if (code := getattr(errno, name, None)) is not None
+)
+
+
+def _rename_noreplace_win32(source: Path, destination: Path) -> bool:
+    win_dll = getattr(ctypes, "WinDLL", None)
+    if win_dll is None:
+        return False
+    kernel32: ctypes.CDLL = win_dll("kernel32", use_last_error=True)
+    move_file_ex = kernel32.MoveFileExW
+    move_file_ex.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    move_file_ex.restype = ctypes.c_int
+    if move_file_ex(os.fspath(source), os.fspath(destination), 0):
+        return True
+    err = ctypes.get_last_error()
+    if err in (_WIN32_ERROR_FILE_EXISTS, _WIN32_ERROR_ALREADY_EXISTS):
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), os.fspath(destination))
+    if err in (_WIN32_ERROR_INVALID_FUNCTION, _WIN32_ERROR_NOT_SUPPORTED):
+        return False
+    win_error = getattr(ctypes, "WinError", None)
+    if win_error is not None:
+        raise win_error(err)
+    raise OSError(err, os.strerror(err), os.fspath(destination))
+
+
+def _rename_noreplace_posix(source: Path, destination: Path) -> bool:
+    libc = ctypes.CDLL(None, use_errno=True)
+    is_linux = sys.platform.startswith("linux")
+    syscall = getattr(libc, "renameat2" if is_linux else "renamex_np", None)
+    if syscall is None:
+        return False
+    src_bytes = os.fsencode(source)
+    dst_bytes = os.fsencode(destination)
+    if is_linux:
+        syscall.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        syscall.restype = ctypes.c_int
+        rc = syscall(_AT_FDCWD, src_bytes, _AT_FDCWD, dst_bytes, _RENAME_NOREPLACE)
+    else:
+        syscall.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        syscall.restype = ctypes.c_int
+        rc = syscall(src_bytes, dst_bytes, _RENAME_EXCL_DARWIN)
+    if rc == 0:
+        return True
+    err = ctypes.get_errno()
+    if err == errno.EEXIST:
+        raise FileExistsError(err, os.strerror(err), os.fspath(destination))
+    if err in _UNSUPPORTED_NOREPLACE_ERRNOS:
+        return False
+    raise OSError(err, os.strerror(err), os.fspath(destination))
+
+
+def _rename_noreplace(source: Path, destination: Path) -> bool:
+    """Move ``source`` to ``destination`` without overwriting if the OS supports it."""
+    if sys.platform == "win32":
+        return _rename_noreplace_win32(source, destination)
+    if sys.platform.startswith("linux") or sys.platform == "darwin":
+        return _rename_noreplace_posix(source, destination)
+    return False
+
+
+def _publish_with_lock_fallback(temp_output: Path, output: Path) -> None:
+    """Serialize publication with a sidecar lock so ``output`` never exists as 0 bytes."""
+    lock_path = output.with_name(f".{output.name}.publish.lock")
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+    except FileExistsError as exc:
+        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), os.fspath(output)) from exc
+    os.close(descriptor)
+    try:
+        if os.path.lexists(output):
+            raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), os.fspath(output))
+        os.replace(temp_output, output)
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
 def publish_output(temp_output: Path, output: Path) -> None:
     """Atomically publish the completed file without replacing another writer's output."""
     try:
@@ -493,18 +588,12 @@ def publish_output(temp_output: Path, output: Path) -> None:
         ) from exc
     except OSError:
         try:
-            descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
+            if not _rename_noreplace(temp_output, output):
+                _publish_with_lock_fallback(temp_output, output)
         except FileExistsError as exc:
             raise VideoAssemblyError(
                 detail=f"Output already exists: {output}", route="video.assemble"
             ) from exc
-        os.close(descriptor)
-        try:
-            os.replace(temp_output, output)
-        except BaseException:
-            # The empty reservation is ours; never leave it behind as a fake output.
-            output.unlink(missing_ok=True)
-            raise
     else:
         temp_output.unlink()
 

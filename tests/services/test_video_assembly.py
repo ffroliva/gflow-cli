@@ -250,6 +250,10 @@ def test_refuses_destination_created_during_render(
     assert output.read_bytes() == b"another assembly won"
 
 
+def _no_hard_links(*_args: object) -> None:
+    raise OSError("hard links unsupported")
+
+
 def test_fallback_publish_removes_its_reservation_when_replace_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -257,16 +261,117 @@ def test_fallback_publish_removes_its_reservation_when_replace_fails(
     temp_output.write_bytes(b"rendered")
     output = tmp_path / "joined.mp4"
 
-    def no_hard_links(*_args: object) -> None:
-        raise OSError("hard links unsupported")
-
     def replace_denied(*_args: object) -> None:
         raise PermissionError("replace denied")
 
-    monkeypatch.setattr(video_assembly.os, "link", no_hard_links)
+    monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
+    monkeypatch.setattr(video_assembly, "_rename_noreplace", lambda *_args: False)
     monkeypatch.setattr(video_assembly.os, "replace", replace_denied)
 
     with pytest.raises(PermissionError):
+        video_assembly.publish_output(temp_output, output)
+
+    assert not output.exists()
+    assert not output.with_name(f".{output.name}.publish.lock").exists()
+    assert temp_output.read_bytes() == b"rendered"
+
+
+def test_fallback_publish_uses_platform_noreplace_without_zero_byte_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"rendered-video")
+    output = tmp_path / "joined.mp4"
+    opened_paths: list[Path] = []
+    real_open = video_assembly.os.open
+
+    def spy_open(
+        path: str | bytes | video_assembly.os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+    ) -> int:
+        opened_paths.append(Path(video_assembly.os.fsdecode(path)))
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
+    monkeypatch.setattr(video_assembly.os, "open", spy_open)
+
+    video_assembly.publish_output(temp_output, output)
+
+    assert output not in opened_paths
+    assert output.read_bytes() == b"rendered-video"
+    assert not temp_output.exists()
+
+
+@pytest.mark.parametrize("existing_bytes", [b"existing-video", b""])
+def test_fallback_publish_refuses_to_overwrite_existing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing_bytes: bytes
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"new-video")
+    output = tmp_path / "joined.mp4"
+    output.write_bytes(existing_bytes)
+
+    monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly.publish_output(temp_output, output)
+
+    assert output.read_bytes() == existing_bytes
+    assert temp_output.read_bytes() == b"new-video"
+
+
+def test_lock_fallback_never_creates_zero_byte_output_and_keeps_existing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"new-video")
+    output = tmp_path / "joined.mp4"
+    output.touch()
+    opened_paths: list[Path] = []
+    real_open = video_assembly.os.open
+
+    def spy_open(
+        path: str | bytes | video_assembly.os.PathLike[str],
+        flags: int,
+        mode: int = 0o777,
+    ) -> int:
+        opened_paths.append(Path(video_assembly.os.fsdecode(path)))
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
+    monkeypatch.setattr(video_assembly, "_rename_noreplace", lambda *_args: False)
+    monkeypatch.setattr(video_assembly.os, "open", spy_open)
+
+    with pytest.raises(VideoAssemblyError, match="Output already exists"):
+        video_assembly.publish_output(temp_output, output)
+
+    assert output not in opened_paths
+    assert output.read_bytes() == b""
+    assert not output.with_name(f".{output.name}.publish.lock").exists()
+
+    output.unlink()
+    video_assembly.publish_output(temp_output, output)
+    assert output not in opened_paths
+    assert output.read_bytes() == b"new-video"
+    assert not temp_output.exists()
+
+
+def test_fallback_publish_propagates_noreplace_permission_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    temp_output = tmp_path / ".joined.tmp.mp4"
+    temp_output.write_bytes(b"rendered")
+    output = tmp_path / "joined.mp4"
+
+    monkeypatch.setattr(video_assembly.os, "link", _no_hard_links)
+
+    def denied(*_args: object) -> bool:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr(video_assembly, "_rename_noreplace", denied)
+
+    with pytest.raises(PermissionError, match="access denied"):
         video_assembly.publish_output(temp_output, output)
 
     assert not output.exists()
