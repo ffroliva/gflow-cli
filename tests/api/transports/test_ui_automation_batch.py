@@ -499,6 +499,7 @@ async def test_generate_images_batch_fail_fast_partial_salvage(
     assert err.partial_results[0].status == "ok"
     assert err.partial_results[0].prompt_idx == 0
     assert err.cause is not None
+    assert err.charged == "yes"
 
 
 @pytest.mark.asyncio

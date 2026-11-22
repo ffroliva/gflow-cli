@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from gflow_cli.api.character import CharacterCreateResult, CharacterImageRequest
+from gflow_cli.api.credit_cap import mark_prior_work_billed
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -347,7 +348,7 @@ async def character_create(
         log.error(
             "character_create.failed",
             entity_id=entity_id,
-            error=str(exc),
+            error=str(mark_prior_work_billed(exc, bool(workflow_ids))),
             exc_info=True,
         )
         raise

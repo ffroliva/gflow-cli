@@ -43,6 +43,7 @@ from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import (
     CreditBudget,
+    mark_prior_work_billed,
     preserve_credit_cap_partials,
     resolve_max_credits,
 )
@@ -559,7 +560,9 @@ def _handle_scene_failure(
     log.error(
         "movie.scene_failed",
         scene_id=scene.id,
-        error=str(exc),
+        error=str(
+            mark_prior_work_billed(exc, bool(set(run_media_ids or []) - set(scene_media_ids)))
+        ),
         exc_info=True,
     )
     if reference_entities and isinstance(exc, WireFormatError):

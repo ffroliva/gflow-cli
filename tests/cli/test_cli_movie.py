@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from gflow_cli.cli import main as cli_main
 from gflow_cli.composition import Character, ManifestCard, Scene, SceneInstructions, StyleSpec
+from gflow_cli.errors import UiSelectorDriftError
 from gflow_cli.movie_manifest import (
     CharacterState,
     MovieManifest,
@@ -358,6 +359,43 @@ def _mock_client_cm() -> MagicMock:
 
 
 class TestRunMovieOrchestrator:
+    async def test_later_scene_drift_reconciles_prior_scene_charge(self, tmp_path: Path) -> None:
+        from gflow_cli.api.credit_cap import CreditBudget
+        from gflow_cli.cli_movie import MovieRunContext, _BriefSyncCache, _run_one_scene
+
+        scene = Scene(id="s2", action="second scene")
+        manifest = _manifest(scenes=(scene,))
+        state = MovieState(title="T", project="p")
+        context = MovieRunContext(
+            manifest=manifest,
+            state=state,
+            state_path=tmp_path / "state.json",
+            profile_name="default",
+            profile_dir=tmp_path,
+            out_dir=tmp_path,
+            brief_cache=_BriefSyncCache(),
+            budget=CreditBudget(None),
+        )
+        error = UiSelectorDriftError(detail="scene model selector drift", charged="no")
+        with (
+            patch("gflow_cli.cli_movie._sync_scene_instructions", new=AsyncMock()),
+            patch("gflow_cli.cli_movie._generate_scene", new=AsyncMock(side_effect=error)),
+            patch("asyncio.sleep", new=AsyncMock()),
+            pytest.raises(UiSelectorDriftError) as info,
+        ):
+            await _run_one_scene(
+                client=MagicMock(),
+                recorder=MagicMock(),
+                scene=scene,
+                context=context,
+                generated_any=True,
+                run_media_ids=["scene-1-media"],
+                continue_on_error=False,
+            )
+
+        assert info.value.charged == "yes"
+        assert info.value.next_action == "reconcile"
+
     async def test_happy_path_no_characters(self, tmp_path: Path) -> None:
         from gflow_cli.cli_movie import _run_movie
 

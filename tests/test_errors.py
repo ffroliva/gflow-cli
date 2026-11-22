@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
@@ -785,3 +787,58 @@ def test_nothing_submitted_withholds_the_claim_once_a_submit_left() -> None:
     with pytest.raises(UiSelectorDriftError) as info, nothing_submitted(sent=lambda: True):
         raise UiSelectorDriftError(detail="chip vanished after the key press")
     assert info.value.charged == "maybe"
+
+
+def test_batch_partial_error_reports_billed_partial_results() -> None:
+    from gflow_cli.errors import BatchPartialError, GFlowError
+
+    error = BatchPartialError(
+        partial_results=(object(),), cause=GFlowError("later prompt failed", charged="no")
+    )
+
+    assert error.charged == "yes"
+    assert error.next_action == "reconcile"
+
+
+def test_batch_partial_error_inherits_cause_charge_without_partial_results() -> None:
+    from gflow_cli.errors import BatchPartialError, GFlowError
+
+    error = BatchPartialError(cause=GFlowError("first prompt failed", charged="maybe"))
+
+    assert error.charged == "maybe"
+
+
+@pytest.mark.parametrize(
+    ("source", "site_index"),
+    [("_ui_character.py", index) for index in range(3)]
+    + [("_ui_navigation.py", 0)]
+    + [("_ui_prompt.py", index) for index in range(2)]
+    + [("_ui_settings.py", index) for index in range(4)]
+    + [("_video_editor_mode.py", index) for index in range(2)]
+    + [("_video_settings.py", index) for index in range(3)],
+)
+def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
+    source: str, site_index: int
+) -> None:
+    """Pin each wrapped #1336 raise so removing any guard fails independently."""
+    transport_dir = Path(__file__).parents[1] / "src" / "gflow_cli" / "api" / "transports"
+    tree = ast.parse((transport_dir / source).read_text(encoding="utf-8"))
+    guarded = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and isinstance(item.context_expr.func, ast.Name)
+            and item.context_expr.func.id == "nothing_submitted"
+            for item in node.items
+        )
+    ]
+    assert site_index < len(guarded)
+    assert any(isinstance(node, ast.Raise) for node in ast.walk(guarded[site_index]))
+
+    from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
+
+    with pytest.raises(UiSelectorDriftError) as info, nothing_submitted():
+        raise UiSelectorDriftError(detail="pre-submit selector drift")
+    assert info.value.charged == "no"

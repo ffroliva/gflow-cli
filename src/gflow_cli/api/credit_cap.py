@@ -5,9 +5,17 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from gflow_cli.errors import CreditCapExceededError
+from gflow_cli.errors import CreditCapExceededError, GFlowError
 
 _INTEGER = re.compile(r"(?<!\d)\d+(?!\d)")
+
+
+def mark_prior_work_billed(exc: Exception, prior_work_billed: bool) -> Exception:
+    """Upgrade a multi-step command failure after an earlier step was billed."""
+    if prior_work_billed and isinstance(exc, GFlowError):
+        exc.charged = "yes"
+        exc.next_action = "reconcile"
+    return exc
 
 
 def parse_credit_quote(label: str) -> int | None:

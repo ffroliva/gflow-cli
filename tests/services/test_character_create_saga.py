@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 from gflow_cli.api.character import CharacterCreateResult, CharacterImageRequest
-from gflow_cli.errors import WireFormatError
+from gflow_cli.errors import UiSelectorDriftError, WireFormatError
 from gflow_cli.services.character_create import character_create
 
 # ---------------------------------------------------------------------------
@@ -416,6 +416,24 @@ async def test_wire_format_error_on_body_preserves_face_partial() -> None:
     last_partial = recorder.record_character_partial.call_args
     assert last_partial.kwargs["workflow_ids"] == [WF0]
     assert last_partial.kwargs["primary_media_ids"] == [M0]
+
+
+@pytest.mark.asyncio
+async def test_pre_submit_drift_on_body_reconciles_face_charge() -> None:
+    """A body-slot pre-submit failure follows a billed face generation."""
+
+    async def _generate_side_effect(**kwargs: object) -> tuple[str, str, str | None]:
+        if kwargs.get("image_reference_index") == 0:
+            return (WF0, M0, "/tmp/face_slot0.png")
+        raise UiSelectorDriftError(detail="body model selector drift", charged="no")
+
+    client = _make_client()
+    client.generate_character_image = AsyncMock(side_effect=_generate_side_effect)
+    with pytest.raises(UiSelectorDriftError) as info:
+        await character_create(client, _make_recorder(), **_saga_kwargs(body=BODY_REQ))
+
+    assert info.value.charged == "yes"
+    assert info.value.next_action == "reconcile"
 
 
 # ---------------------------------------------------------------------------

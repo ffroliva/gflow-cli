@@ -1860,10 +1860,6 @@ class TestDismissBlockingOverlays:
 
     @pytest.mark.asyncio
     async def test_persistent_overlay_drift_is_pre_submit(self) -> None:
-        from unittest.mock import AsyncMock
-
-        from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-
         transport = UiAutomationTransport()
         transport._overlay_blocks_page = AsyncMock(side_effect=[True, True, True])  # type: ignore[attr-defined]
         transport._dismiss_blocking_overlays = AsyncMock(return_value=True)  # type: ignore[attr-defined]
@@ -2790,9 +2786,10 @@ class TestSelectImageModel:
         page = self._page({})
         with (
             patch("gflow_cli.api.transports._ui_settings.IMAGE_MODEL_OPTION_SELECTORS", {}),
-            pytest.raises(UiSelectorDriftError),
+            pytest.raises(UiSelectorDriftError) as info,
         ):
             await UiAutomationTransport._select_image_model(page, Model.NARWHAL)
+        assert info.value.charged == "no"
 
 
 def _exit_agent_page(initial: dict) -> tuple[MagicMock, dict]:
