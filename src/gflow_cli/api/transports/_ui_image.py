@@ -759,7 +759,6 @@ class ImageGenerationMixin(CharacterGenerationMixin):
                 route="generate_images_batch",
                 partial_results=tuple(r for r in results if r.status == "ok"),
                 cause=submit_error,
-                charged=("yes" if any(r.status == "ok" for r in results) else submit_error.charged),
             )
 
         return results

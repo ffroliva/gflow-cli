@@ -15,6 +15,7 @@ def mark_prior_work_billed(exc: Exception, prior_work_billed: bool) -> Exception
     if prior_work_billed and isinstance(exc, GFlowError):
         exc.charged = "yes"
         exc.next_action = "reconcile"
+        exc.retryable = False
     return exc
 
 

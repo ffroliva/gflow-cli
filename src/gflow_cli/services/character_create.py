@@ -45,6 +45,18 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
+def _log_character_create_failure(
+    exc: Exception, entity_id: str, workflow_ids: list[str], prior_wf_ids: list[str]
+) -> None:
+    mark_prior_work_billed(exc, len(workflow_ids) > len(prior_wf_ids))
+    log.error(
+        "character_create.failed",
+        entity_id=entity_id,
+        error=str(exc),
+        exc_info=True,
+    )
+
+
 async def _entity_has_bound_work(client: FlowApiClient, project_id: str, entity_id: str) -> bool:
     """Does the BACKEND think this entity has a generated reference bound to it?
 
@@ -345,12 +357,7 @@ async def character_create(
                     project_id=project_id,
                 )
             recorder.record_character_abandoned(row_id=row_id, exc=exc)
-        log.error(
-            "character_create.failed",
-            entity_id=entity_id,
-            error=str(mark_prior_work_billed(exc, bool(workflow_ids))),
-            exc_info=True,
-        )
+        _log_character_create_failure(exc, entity_id, workflow_ids, prior_wf_ids)
         raise
 
     return CharacterCreateResult(

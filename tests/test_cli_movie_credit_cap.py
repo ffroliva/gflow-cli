@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -37,6 +37,110 @@ def test_movie_no_max_credits_clears_environment_default(tmp_path: Path) -> None
     )
     assert result.exit_code == 0, result.output
     assert "max credits:" not in result.output
+
+
+@pytest.mark.asyncio
+async def test_movie_second_character_failure_reconciles_first_character_charge(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli import cli_movie
+    from gflow_cli.composition import Character, StyleSpec
+    from gflow_cli.errors import FlowAgentUiError, is_retryable
+    from gflow_cli.movie_manifest import CharacterState, MovieManifest, MovieState
+
+    manifest = MovieManifest(
+        title="T",
+        project="p",
+        style=StyleSpec(),
+        characters={
+            "A": Character(name="A", identity="entity", face_prompt="face A"),
+            "B": Character(name="B", identity="entity", face_prompt="face B"),
+        },
+        scenes=(),
+    )
+    state = MovieState(title="T", project="p")
+    drift = FlowAgentUiError("face selector drift")
+    client_cm = MagicMock()
+    client_cm.__aenter__ = AsyncMock(return_value=client_cm)
+    client_cm.__aexit__ = AsyncMock(return_value=False)
+
+    async def create_character(**kwargs: object) -> None:
+        char = kwargs["char"]
+        if char.name == "A":
+            state.characters["A"] = CharacterState(entity_id="entity-A", image_paths=[])
+            return
+        raise drift
+
+    with (
+        patch("gflow_cli.cli_movie.get_settings"),
+        patch("gflow_cli.cli_movie.OperationRecorder") as recorder,
+        patch("gflow_cli.cli_movie.FlowApiClient", return_value=client_cm),
+        patch("gflow_cli.cli_movie._create_character", new=AsyncMock(side_effect=create_character)),
+    ):
+        recorder.open.return_value = MagicMock()
+        with pytest.raises(FlowAgentUiError) as caught:
+            await cli_movie._run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=tmp_path / "movie-state.json",
+                profile_name="default",
+                profile_dir=tmp_path / "profile",
+                out_dir=tmp_path / "out",
+                continue_on_error=False,
+            )
+
+    assert caught.value.charged == "yes"
+    assert caught.value.resolved_next_action() == "reconcile"
+    assert is_retryable(caught.value) is False
+
+
+@pytest.mark.asyncio
+async def test_movie_scene_drift_reconciles_a_billed_character(tmp_path: Path) -> None:
+    from gflow_cli import cli_movie
+    from gflow_cli.composition import Character, Scene, StyleSpec
+    from gflow_cli.errors import UiSelectorDriftError
+    from gflow_cli.movie_manifest import CharacterState, MovieManifest, MovieState
+
+    manifest = MovieManifest(
+        title="T",
+        project="p",
+        style=StyleSpec(),
+        characters={"A": Character(name="A", identity="entity", face_prompt="face A")},
+        scenes=(Scene(id="s", action="walks"),),
+    )
+    state = MovieState(title="T", project="p")
+    client_cm = MagicMock()
+    client_cm.__aenter__ = AsyncMock(return_value=client_cm)
+    client_cm.__aexit__ = AsyncMock(return_value=False)
+
+    async def create_character(**_: object) -> None:
+        state.characters["A"] = CharacterState(entity_id="entity-A", image_paths=[])
+
+    with (
+        patch("gflow_cli.cli_movie.get_settings"),
+        patch("gflow_cli.cli_movie.OperationRecorder") as recorder,
+        patch("gflow_cli.cli_movie.FlowApiClient", return_value=client_cm),
+        patch("gflow_cli.cli_movie._create_character", new=AsyncMock(side_effect=create_character)),
+        patch("gflow_cli.cli_movie._sync_scene_instructions", new=AsyncMock()),
+        patch(
+            "gflow_cli.cli_movie._generate_scene",
+            new=AsyncMock(side_effect=UiSelectorDriftError("scene selector drift", charged="no")),
+        ),
+    ):
+        recorder.open.return_value = MagicMock()
+        with pytest.raises(UiSelectorDriftError) as caught:
+            await cli_movie._run_movie(
+                manifest=manifest,
+                state=state,
+                state_path=tmp_path / "movie-state.json",
+                profile_name="default",
+                profile_dir=tmp_path / "profile",
+                out_dir=tmp_path / "out",
+                continue_on_error=False,
+            )
+
+    assert caught.value.charged == "yes"
+    assert caught.value.resolved_next_action() == "reconcile"
 
 
 @pytest.mark.asyncio

@@ -351,6 +351,30 @@ async def test_recovery_skips_face_when_already_recorded() -> None:
     assert result.primary_media_ids == (M0, M1)
 
 
+@pytest.mark.asyncio
+async def test_resume_failure_without_new_generation_remains_unbilled() -> None:
+    from gflow_cli.errors import is_retryable
+
+    exc = UiSelectorDriftError(detail="entity patch drift", charged="no")
+    client = _make_client()
+    client.patch_entity = AsyncMock(side_effect=exc)
+    recorder = _make_recorder()
+    recorder.repository.find_incomplete_character = MagicMock(
+        return_value={
+            "row_id": ROW_ID,
+            "entity_id": ENTITY_ID,
+            "workflow_ids": [WF0],
+            "primary_media_ids": [M0],
+        }
+    )
+
+    with pytest.raises(UiSelectorDriftError) as caught:
+        await character_create(client, recorder, **_saga_kwargs())
+
+    assert caught.value.charged == "no"
+    assert is_retryable(caught.value) is False
+
+
 # ---------------------------------------------------------------------------
 # Scenario #5: WireFormatError → record partial state, patch NOT called
 # ---------------------------------------------------------------------------

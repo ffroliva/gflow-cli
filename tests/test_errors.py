@@ -808,24 +808,60 @@ def test_batch_partial_error_inherits_cause_charge_without_partial_results() -> 
     assert error.charged == "maybe"
 
 
+def test_marking_prior_work_billed_disables_retry_for_retryable_error() -> None:
+    from gflow_cli.api.credit_cap import mark_prior_work_billed
+    from gflow_cli.errors import FlowAgentUiError, is_retryable
+
+    error = FlowAgentUiError("selector drift")
+    mark_prior_work_billed(error, True)
+
+    assert error.resolved_next_action() == "reconcile"
+    assert is_retryable(error) is False
+    problem = error.to_problem_details()
+    assert problem["charged"] == "yes"
+    assert problem["next_action"] == "reconcile"
+
+
+def test_batch_partial_without_results_inherits_cause_recovery_metadata() -> None:
+    from gflow_cli.errors import BatchPartialError, FlowAgentUiError, is_retryable
+
+    cause = FlowAgentUiError("selector drift", charged="no")
+    error = BatchPartialError(cause=cause)
+
+    assert error.charged == "no"
+    assert error.resolved_next_action() == cause.resolved_next_action()
+    assert is_retryable(error) is is_retryable(cause)
+
+
 @pytest.mark.parametrize(
-    ("source", "site_index"),
-    [("_ui_character.py", index) for index in range(3)]
-    + [("_ui_navigation.py", 0)]
-    + [("_ui_prompt.py", index) for index in range(2)]
-    + [("_ui_settings.py", index) for index in range(4)]
-    + [("_video_editor_mode.py", index) for index in range(2)]
-    + [("_video_settings.py", index) for index in range(3)],
+    ("source", "function_name", "expected_guards"),
+    [
+        ("_ui_character.py", "_select_character_model", 3),
+        ("_ui_navigation.py", "_require_unblocked", 1),
+        ("_ui_prompt.py", "_switch_to_image_mode", 1),
+        ("_ui_settings.py", "_select_image_model", 3),
+        ("_ui_settings.py", "_set_count", 1),
+        ("_video_editor_mode.py", "_switch_to_video_mode", 1),
+        ("_video_settings.py", "_set_output_count", 1),
+        ("_video_settings.py", "_select_video_duration", 1),
+        ("_video_settings.py", "_switch_video_sub_mode", 1),
+    ],
 )
 def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
-    source: str, site_index: int
+    source: str, function_name: str, expected_guards: int
 ) -> None:
-    """Pin each wrapped #1336 raise so removing any guard fails independently."""
+    """Pin #1336 guards to their owning function so each missing guard is caught."""
     transport_dir = Path(__file__).parents[1] / "src" / "gflow_cli" / "api" / "transports"
     tree = ast.parse((transport_dir / source).read_text(encoding="utf-8"))
-    guarded = [
+    functions = [
         node
         for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name
+    ]
+    assert len(functions) == 1
+    guarded = [
+        node
+        for node in ast.walk(functions[0])
         if isinstance(node, ast.With)
         and any(
             isinstance(item.context_expr, ast.Call)
@@ -833,12 +869,12 @@ def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
             and item.context_expr.func.id == "nothing_submitted"
             for item in node.items
         )
+        and any(
+            isinstance(item, ast.Raise)
+            and isinstance(item.exc, ast.Call)
+            and isinstance(item.exc.func, ast.Name)
+            and item.exc.func.id == "UiSelectorDriftError"
+            for item in ast.walk(node)
+        )
     ]
-    assert site_index < len(guarded)
-    assert any(isinstance(node, ast.Raise) for node in ast.walk(guarded[site_index]))
-
-    from gflow_cli.errors import UiSelectorDriftError, nothing_submitted
-
-    with pytest.raises(UiSelectorDriftError) as info, nothing_submitted():
-        raise UiSelectorDriftError(detail="pre-submit selector drift")
-    assert info.value.charged == "no"
+    assert len(guarded) == expected_guards

@@ -1574,6 +1574,9 @@ class BatchPartialError(GFlowError):
         self.partial_results = partial_results
         self.cause = cause
         self.charged = charged or ("yes" if partial_results else getattr(cause, "charged", "no"))
+        if not partial_results and isinstance(cause, GFlowError):
+            self.next_action = cause.resolved_next_action()
+            self.retryable = is_retryable(cause)
 
 
 class BatchIntegrityError(GFlowError):

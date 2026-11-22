@@ -548,6 +548,7 @@ def _handle_scene_failure(
     reference_entities: tuple[str, ...],
     context: MovieRunContext,
     run_media_ids: list[str] | None,
+    run_character_ids: list[str] | None,
 ) -> None:
     scene_media_ids = getattr(exc, "completed_media_ids", [])
     billed_quote = getattr(exc, "quoted_credits", None)
@@ -557,12 +558,14 @@ def _handle_scene_failure(
         else:
             context.budget.record_spend(billed_quote)
     _preserve_movie_cap_partials(exc, context.manifest, context.state, run_media_ids or [])
+    mark_prior_work_billed(
+        exc,
+        bool(set(run_media_ids or []) - set(scene_media_ids)) or bool(run_character_ids),
+    )
     log.error(
         "movie.scene_failed",
         scene_id=scene.id,
-        error=str(
-            mark_prior_work_billed(exc, bool(set(run_media_ids or []) - set(scene_media_ids)))
-        ),
+        error=str(exc),
         exc_info=True,
     )
     if reference_entities and isinstance(exc, WireFormatError):
@@ -589,6 +592,7 @@ async def _run_one_scene(
     context: MovieRunContext,
     generated_any: bool,
     run_media_ids: list[str] | None = None,
+    run_character_ids: list[str] | None = None,
     continue_on_error: bool,
 ) -> Path | None:
     """Generate one scene clip and persist its state.
@@ -634,7 +638,15 @@ async def _run_one_scene(
         return video_result.local_path
 
     except Exception as exc:
-        _handle_scene_failure(exc, scene, prompt, reference_entities, context, run_media_ids)
+        _handle_scene_failure(
+            exc,
+            scene,
+            prompt,
+            reference_entities,
+            context,
+            run_media_ids,
+            run_character_ids or [],
+        )
         if continue_on_error and not isinstance(exc, CreditCapExceededError):
             console.print(f"    [red]Scene failed:[/red] {escape(str(exc))}")
             return None
@@ -687,25 +699,15 @@ async def _run_movie(
             # CHARACTER entity (face + optional body + optional embedded voice)
             # whose id is later attached as a reference to R2V scenes.
             # ------------------------------------------------------------------
-            entity_chars = [
-                c
-                for c in manifest.characters.values()
-                if c.identity == "entity" and c.name not in state.characters
-            ]
-            if entity_chars:
-                console.print("\n[bold]Characters[/bold]")
-            for char in entity_chars:
-                console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
-                await _create_character(
-                    client=client,
-                    recorder=recorder,
-                    char=char,
-                    project_id=manifest.project,
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    state=state,
-                    state_path=state_path,
-                )
+            run_character_ids = await _create_movie_characters(
+                client=client,
+                recorder=recorder,
+                manifest=manifest,
+                state=state,
+                state_path=state_path,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+            )
 
             # ------------------------------------------------------------------
             # Scenes — one scene = one clip = one generation
@@ -752,6 +754,7 @@ async def _run_movie(
                     context=context,
                     generated_any=generated_any,
                     run_media_ids=run_media_ids,
+                    run_character_ids=run_character_ids,
                     continue_on_error=continue_on_error,
                 )
                 if local_path is not None:
@@ -783,6 +786,44 @@ async def _run_movie(
 # ---------------------------------------------------------------------------
 # Character creation helper (entity identity)
 # ---------------------------------------------------------------------------
+
+
+async def _create_movie_characters(
+    *,
+    client: FlowApiClient,
+    recorder: OperationRecorder,
+    manifest: MovieManifest,
+    state: MovieState,
+    state_path: Path,
+    profile_name: str,
+    profile_dir: Path,
+) -> list[str]:
+    entity_chars = [
+        char
+        for char in manifest.characters.values()
+        if char.identity == "entity" and char.name not in state.characters
+    ]
+    if entity_chars:
+        console.print("\n[bold]Characters[/bold]")
+    billed_character_names: list[str] = []
+    for char in entity_chars:
+        console.print(f"\n  Creating character [bold]{char.name}[/bold]…")
+        try:
+            await _create_character(
+                client=client,
+                recorder=recorder,
+                char=char,
+                project_id=manifest.project,
+                profile_name=profile_name,
+                profile_dir=profile_dir,
+                state=state,
+                state_path=state_path,
+            )
+        except Exception as exc:
+            mark_prior_work_billed(exc, bool(billed_character_names))
+            raise
+        billed_character_names.append(char.name)
+    return billed_character_names
 
 
 async def _create_character(

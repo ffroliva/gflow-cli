@@ -1459,6 +1459,7 @@ async def run_manifest_image_batch(
                 route=exc.route,
                 partial_results=tuple(partial_outcomes),
                 cause=exc.cause,
+                charged=exc.charged,
             ) from exc.cause
 
         # Emit per-prompt observability events now that the transport has

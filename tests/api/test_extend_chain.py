@@ -206,3 +206,35 @@ async def test_a_retryable_poll_failure_after_submit_says_reconcile() -> None:
     assert isinstance(err, RateLimitError)
     assert (err.charged, err.resolved_next_action(), err.retryable) == ("maybe", "reconcile", False)
     assert "retry" not in (err.remediation_hint or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_pre_submit_failure_after_a_completed_segment_is_not_retryable() -> None:
+    from gflow_cli.errors import UiSelectorDriftError, is_retryable
+
+    class _SecondSubmitDrifts(_FakeClient):
+        async def extend_video(self, **kwargs: Any) -> ExtendStarted:
+            self._n += 1
+            if self._n == 2:
+                raise UiSelectorDriftError(detail="segment settings drift", charged="no")
+            self.events.append(f"submit{self._n}")
+            return ExtendStarted(
+                media_id=f"media-{self._n}",
+                workflow_id=f"wf-{self._n}",
+                model_key="veo_3_1_extension_lite",
+                unit_cost=10,
+            )
+
+    result = await run_extend_chain(
+        _SecondSubmitDrifts(),
+        media_id=MEDIA,
+        project_id=PROJECT,
+        scene_id=SCENE,
+        prompts=["a", "b"],
+    )
+
+    assert result.error is not None
+    assert result.error.charged == "yes"
+    assert result.error.resolved_next_action() == "reconcile"
+    assert is_retryable(result.error) is False
+    assert result.error.to_problem_details()["charged"] == "yes"

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Pre-submit selector drift at wrapped labs UI raise sites reports `charged: no` ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** The command scope upgrades a later failure to `charged: yes` and `next_action: reconcile` after character creation, movie runs, and image batches have already billed an earlier step. Offline tests cover these raise sites because no available account is served the labs frontend.
+- **Multi-step failures report billing and retry guidance accurately ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** Prior billed work disables retries and requires reconciliation across character creation, movie runs, image batches, and chained video extensions; resumed character workflows count only generations from the current invocation.
 
 ## [0.104.0] — 2026-11-22
 
