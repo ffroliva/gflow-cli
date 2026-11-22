@@ -84,8 +84,8 @@ extend or upscale submit, a failed image submit on a transport that sends its ow
 reCAPTCHA token, the
 agent-only composer's refusals, and a failed
 download of a finished clip. So a `retry` that reaches you comes from a site gflow treats as before the
-submit. On flow.google.com, a site that is provably before the submit click now also
-reads `charged: no` (see the overrides below); where `maybe` remains, gflow cannot prove
+submit. On flow.google.com and on the labs (`labs.google`) composer, a site that is
+provably before the submit click now also reads `charged: no` (see the overrides below); where `maybe` remains, gflow cannot prove
 it: a scheduler that runs paid generations unattended should check the project before a
 second paid attempt.
 
@@ -142,7 +142,11 @@ place today:
   generation); `next_action` keeps the class default. A raw
   browser-driver timeout is not a gflow error and still reads `maybe`. A submit the route
   guard aborts in the browser reads `no` / `retry`. A failure at or after the click keeps
-  the class default. The labs (`labs.google`) arm is unchanged.
+  the class default. On the labs (`labs.google`) composer, a selector drift found while
+  configuring settings, the prompt, navigation, video settings, the video editor mode or
+  a character reads `no` as well
+  ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)); a drift after the labs
+  submit keeps `maybe`.
 
 `operation_id` is only set where an id already exists on the error.
 

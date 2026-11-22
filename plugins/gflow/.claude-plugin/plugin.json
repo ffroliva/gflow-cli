@@ -1,7 +1,7 @@
 {
   "name": "gflow",
   "displayName": "gflow-cli",
-  "version": "0.104.0",
+  "version": "0.105.0",
   "description": "Drive Google Flow from your agent: Veo 3.1 and Omni text-, image- and reference-to-video, clip extension, Nano Banana and Imagen images, reusable Characters and scene composition.",
   "author": {
     "name": "Flavio Oliva",

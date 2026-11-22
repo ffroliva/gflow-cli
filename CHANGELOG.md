@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.105.0] — 2026-11-22
+
 ### Added
 
 - **`gflow character create --image FILE [--body-image FILE]` builds a character from your own images on `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)).**
@@ -15,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`publish_output` never overwrites existing outputs and clears stale reservations before retrying on filesystems without hard links ([#1406](https://github.com/ffroliva/gflow-cli/issues/1406)).** When hard links are unavailable (such as FAT/exFAT volumes and network shares), publishing falls back to platform-native atomic no-replace renames (`os.rename` on Windows, `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS), reserving destination paths via `O_CREAT | O_EXCL` and replacing only as a last resort where native no-replace renames are unavailable (this path is best-effort: it assumes the reserving run is not suspended for longer than the 60 s stale threshold). Publishing never replaces an existing file. A zero-byte regular file left behind by an earlier interrupted run is cleared during validation once older than 60 s against the local filesystem clock, allowing retry runs in `gflow video assemble` and `gflow audio narrate` to proceed while refusing fresh empty reservations and active files.
-- **Multi-step video failures report billing and retry guidance accurately ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** Prior billed video work disables retries and requires reconciliation across movie scenes and chained video extensions; character creation and image batches remain uncharged.
+- **`publish_output` never overwrites existing outputs and clears stale reservations before retrying on filesystems without hard links ([#1406](https://github.com/ffroliva/gflow-cli/issues/1406)).** When hard links are unavailable (such as FAT/exFAT volumes and network shares), publishing falls back to platform-native atomic no-replace renames (`os.rename` on Windows, `renameat2(RENAME_NOREPLACE)` on Linux, `renamex_np(RENAME_EXCL)` on macOS), reserving destination paths via `O_CREAT | O_EXCL` and replacing only as a last resort where native no-replace renames are unavailable (this path is best-effort: it assumes the reserving run is not suspended for longer than the 60 s stale threshold). Publishing never replaces an existing file. A zero-byte regular file left behind by an earlier interrupted run is cleared during validation once older than 60 s, measured against the destination filesystem's clock (a probe file written in the output directory), allowing retry runs in `gflow video assemble` and `gflow audio narrate` to proceed while refusing fresh empty reservations and active files.
+- **Selector drift before the submit on `labs.google` reports `charged: no`, and multi-step video failures report billing and retry guidance accurately ([#1336](https://github.com/ffroliva/gflow-cli/issues/1336)).** On the `labs.google` composer, a selector drift found while configuring settings, the prompt, navigation, video settings, the video editor mode or a character now reports `charged: no`, as the `flow.google.com` arm already did; a drift after the submit still reports `charged: maybe`. Prior billed video work disables retries and requires reconciliation across movie scenes and chained video extensions; the error raised for an extension segment still in flight stays at `charged: maybe` (the `video extend --json` result reads `yes` once credits were spent, as before). Character creation and image batches remain uncharged.
 - **Environment secrets are masked in pytest test failure and collection reports ([#1382](https://github.com/ffroliva/gflow-cli/issues/1382)).** When a test fails under `-l`/`--showlocals`, encounters an import error, or prints environment values, pytest reports previously printed environment variables, credentials, and API tokens in cleartext. A test report scrubber hook in `tests/_secret_scrub.py` (registered from `tests/conftest.py`) now masks allowlisted secret variables, segment-anchored secret names, and passwords in credentialed URLs across failure reports (tracebacks, function arguments, `-l` locals), skip/xfail reasons, `wasxfail` reasons under `-rx` and JUnit XML, passed test captured sections (`-rP`/`-rA`), and collection errors with `'***'`, verifying the rendered representation and falling back to a scrubbed string if any secret is still present. Mid-value ellipsis truncations mask secret prefixes and suffixes down to 8-character secrets inside quoted reprs while preserving unquoted text in captured sections, early return checks verify truncated fragments before skipping scrubbing, teardown reports reuse secrets accumulated on `item.stash`, and existing filesystem paths are never masked. Structured failure reports holding no secrets leave `report.longrepr` untouched so `-ra` summary lines retain their crash messages. As defense-in-depth, `e2e_env` yields a `RedactedEnv` mapping whose `__repr__`, `__str__`, `.copy()`, and `|` union operations conceal variable values.
 
 ## [0.104.0] — 2026-11-22
@@ -7349,7 +7351,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.104.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.105.0...HEAD
+[0.105.0]: https://github.com/ffroliva/gflow-cli/compare/v0.104.0...v0.105.0
 [0.104.0]: https://github.com/ffroliva/gflow-cli/compare/v0.103.1...v0.104.0
 [0.103.1]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...v0.103.1
 [0.103.0]: https://github.com/ffroliva/gflow-cli/compare/v0.102.1...v0.103.0
