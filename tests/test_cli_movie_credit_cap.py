@@ -141,7 +141,7 @@ async def test_movie_scene_drift_reconciles_a_billed_character(tmp_path: Path) -
             )
 
     assert caught.value.charged == "yes"
-    assert caught.value.resolved_next_action() == "reconcile"
+    assert caught.value.resolved_next_action() == "none"
 
 
 @pytest.mark.asyncio

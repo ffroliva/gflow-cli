@@ -457,7 +457,7 @@ async def test_pre_submit_drift_on_body_reconciles_face_charge() -> None:
         await character_create(client, _make_recorder(), **_saga_kwargs(body=BODY_REQ))
 
     assert info.value.charged == "yes"
-    assert info.value.next_action == "reconcile"
+    assert info.value.next_action == "none"
     client.delete_characters.assert_not_called()
 
 
@@ -473,8 +473,8 @@ async def test_commit_failure_after_generation_is_marked_billed() -> None:
 
     assert (info.value.charged, info.value.next_action, info.value.retryable) == (
         "yes",
-        "reconcile",
-        False,
+        "none",
+        None,
     )
 
 

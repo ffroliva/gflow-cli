@@ -235,9 +235,37 @@ async def test_pre_submit_failure_after_a_completed_segment_is_not_retryable() -
 
     assert result.error is not None
     assert result.error.charged == "yes"
-    assert result.error.resolved_next_action() == "reconcile"
+    assert result.error.resolved_next_action() == "none"
     assert is_retryable(result.error) is False
     assert result.error.to_problem_details()["charged"] == "yes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type,action", [("content", "fix_input"), ("auth", "reauth")])
+async def test_poll_failure_preserves_non_retry_advice_and_segment_hint(
+    error_type: str, action: str
+) -> None:
+    from gflow_cli.errors import AuthExpiredError, ContentPolicyError
+
+    error = (
+        ContentPolicyError("unsafe prompt")
+        if error_type == "content"
+        else AuthExpiredError("expired")
+    )
+    original_hint = error.remediation_hint
+
+    class _PollFails(_FakeClient):
+        async def poll_video_status(self, media_id: str, **_k: Any) -> Any:
+            raise error
+
+    result = await run_extend_chain(
+        _PollFails(), media_id=MEDIA, project_id=PROJECT, scene_id=SCENE, prompts=["a"]
+    )
+    assert result.error is error
+    assert error.charged == "yes"
+    assert error.resolved_next_action() == action
+    assert error.remediation_hint == original_hint
+    assert error.operation_id == "media-1"
 
 
 @pytest.mark.asyncio
@@ -262,6 +290,8 @@ async def test_poll_failure_after_submit_is_charged_even_without_prior_completio
     assert result.error is not None
     assert (result.error.charged, result.error.next_action, result.error.retryable) == (
         "yes",
-        "reconcile",
-        False,
+        "none",
+        None,
     )
+
+

@@ -359,7 +359,9 @@ def _mock_client_cm() -> MagicMock:
 
 
 class TestRunMovieOrchestrator:
-    async def test_billed_quote_without_media_id_counts_as_prior_work(self, tmp_path: Path) -> None:
+    async def test_quote_without_media_id_does_not_count_as_prior_work(
+        self, tmp_path: Path
+    ) -> None:
         from gflow_cli.api.credit_cap import CreditBudget
         from gflow_cli.cli_movie import MovieRunContext, _BriefSyncCache, _handle_scene_failure
 
@@ -375,12 +377,15 @@ class TestRunMovieOrchestrator:
             _BriefSyncCache(),
             CreditBudget(None),
         )
-        error = UiSelectorDriftError(detail="scene failed after quote", charged="no")
+        error = UiSelectorDriftError(
+            detail="scene failed after quote", charged="no", retryable=True
+        )
         error.quoted_credits = 5
 
         _handle_scene_failure(error, scene, "prompt", (), context, [], [])
 
-        assert (error.charged, error.next_action, error.retryable) == ("yes", "reconcile", False)
+        assert error.charged == "no"
+        assert error.retryable is True
 
     async def test_failed_scene_media_counts_as_prior_work_for_later_drift(
         self, tmp_path: Path
@@ -434,7 +439,7 @@ class TestRunMovieOrchestrator:
             )
 
         assert run_media_ids == ["scene-1-paid"]
-        assert (drift.charged, drift.next_action, drift.retryable) == ("yes", "reconcile", False)
+        assert (drift.charged, drift.next_action, drift.retryable) == ("yes", "none", None)
 
     async def test_resumed_character_patch_does_not_count_as_billed_this_run(
         self, tmp_path: Path
@@ -504,7 +509,7 @@ class TestRunMovieOrchestrator:
             )
 
         assert info.value.charged == "yes"
-        assert info.value.next_action == "reconcile"
+        assert info.value.next_action == "none"
 
     async def test_happy_path_no_characters(self, tmp_path: Path) -> None:
         from gflow_cli.cli_movie import _run_movie

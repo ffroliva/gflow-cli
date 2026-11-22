@@ -5,20 +5,25 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from gflow_cli.errors import CreditCapExceededError, GFlowError
+from gflow_cli.errors import RETRY_ACTIONS, CreditCapExceededError, GFlowError
 
 _INTEGER = re.compile(r"(?<!\d)\d+(?!\d)")
 
 
 def mark_prior_work_billed(exc: Exception, prior_work_billed: bool) -> Exception:
-    """Upgrade a multi-step command failure after an earlier step was billed."""
+    """Preserve actionable failure advice while reporting confirmed earlier spend."""
     if prior_work_billed and isinstance(exc, GFlowError):
-        exc.charged = "yes"
-        exc.next_action = "reconcile"
-        exc.retryable = False
-        exc.remediation_hint = (
-            "Earlier steps of this command were billed; check Flow before re-running."
-        )
+        next_action = exc.resolved_next_action()
+        if exc.charged != "yes":
+            exc.charged = "yes"
+        if isinstance(exc, CreditCapExceededError):
+            return exc
+        if next_action in RETRY_ACTIONS:
+            exc.next_action = "reconcile"
+            exc.retryable = False
+            exc.remediation_hint = (
+                "This command already billed Flow for earlier work; check Flow before re-running."
+            )
     return exc
 
 

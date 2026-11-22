@@ -555,7 +555,6 @@ def _handle_scene_failure(
     prior_work_billed = (
         bool(set(run_media_ids or []) - set(scene_media_ids))
         or bool(run_character_ids)
-        or billed_quote is not None
         or (bool(scene_media_ids) and not isinstance(exc, CreditCapExceededError))
     )
     if run_media_ids is not None:

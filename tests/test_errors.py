@@ -821,7 +821,39 @@ def test_marking_prior_work_billed_disables_retry_for_retryable_error() -> None:
     assert problem["charged"] == "yes"
     assert problem["next_action"] == "reconcile"
     assert "check Flow" in error.remediation_hint
-    assert "retry in a moment" not in error.remediation_hint
+    assert (
+        error.remediation_hint
+        == "This command already billed Flow for earlier work; check Flow before re-running."
+    )
+
+
+def test_batch_partial_maybe_charged_retry_cause_reconciles() -> None:
+    from gflow_cli.errors import BatchPartialError, TransportTimeoutError, is_retryable
+
+    cause = TransportTimeoutError("prompt 0 timed out", charged="maybe")
+    error = BatchPartialError(cause=cause)
+    assert error.resolved_next_action() == "reconcile"
+    assert is_retryable(error) is False
+
+
+def test_mark_prior_work_preserves_non_retry_advice_and_cap_hint() -> None:
+    from gflow_cli.api.credit_cap import mark_prior_work_billed
+    from gflow_cli.errors import AuthExpiredError, CreditCapExceededError, InsufficientCreditsError
+
+    auth = AuthExpiredError("login required", charged="no")
+    auth_hint = auth.remediation_hint
+    mark_prior_work_billed(auth, True)
+    assert (auth.charged, auth.next_action, auth.remediation_hint) == ("yes", "reauth", auth_hint)
+
+    cap = CreditCapExceededError(quoted=10, max_credits=5)
+    cap_hint = cap.remediation_hint
+    mark_prior_work_billed(cap, True)
+    assert cap.charged == "yes"
+    assert cap.remediation_hint == cap_hint
+
+    funds = InsufficientCreditsError("insufficient", charged="no")
+    mark_prior_work_billed(funds, True)
+    assert funds.resolved_next_action() == "wait"
 
 
 def test_batch_partial_without_results_inherits_cause_recovery_metadata() -> None:
