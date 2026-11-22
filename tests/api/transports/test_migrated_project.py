@@ -7,6 +7,7 @@ project header's `flow-editable-text` input renames through `o8DA4`, answering `
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from types import SimpleNamespace
@@ -54,8 +55,9 @@ class _Loc:
     async def click(self, **_: Any) -> None:
         if self.page.click_times_out:
             if self.page.click_sends_first:  # the click dispatched, then Playwright timed out
-                for h in list(self.page.request_handlers):
-                    h(SimpleNamespace(url=_batch(mc.CREATE_PROJECT_RPC), post_data=None))
+                self.page.send_create_request()
+            elif self.page.click_sends_late:  # the page's handler sends after the timeout
+                asyncio.get_running_loop().call_later(0.05, self.page.send_create_request)
             raise mc.PlaywrightTimeoutError("Locator.click: Timeout 15000ms exceeded")
         self.page.clicks.append(self.sel)
         await self.page.fire(self.page.on_click.get(self.sel))
@@ -95,11 +97,16 @@ class FakePage:
         self.fill_times_out = False
         self.click_times_out = False
         self.click_sends_first = False
+        self.click_sends_late = False
         self.request_handlers: list[Any] = []
         self.action_timeouts: list[Any] = []
         self.url_waits: list[Any] = []
         self._handlers: list[Any] = []
         self.keyboard = self
+
+    def send_create_request(self) -> None:
+        for h in list(self.request_handlers):
+            h(SimpleNamespace(url=_batch(mc.CREATE_PROJECT_RPC), post_data=None))
 
     async def wait_for_url(self, predicate: Any, **kw: Any) -> None:
         self.url_waits.append(kw.get("timeout"))
@@ -204,6 +211,18 @@ async def test_create_click_timeout_after_the_request_left_is_outcome_unknown() 
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
     assert not is_retryable(exc.value)
     assert page.request_handlers == []  # the watch is removed
+
+
+async def test_create_click_timeout_with_a_late_request_is_outcome_unknown() -> None:
+    # The page's click handler can send the create just after Playwright gave up.
+    from gflow_cli.errors import RpcResponseUnavailableError
+
+    page = FakePage()
+    page.click_times_out = True
+    page.click_sends_late = True
+
+    with pytest.raises(RpcResponseUnavailableError, match=mc.CREATE_PROJECT_RPC):
+        await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
 
 
 async def test_create_with_no_reply_and_no_navigation_is_outcome_unknown() -> None:
