@@ -1960,6 +1960,49 @@ async def test_unknown_status_ends_the_wait_as_failed() -> None:
     assert rec.is_failed and rec.status == 7
 
 
+async def test_a_failed_video_result_names_flows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#1111: the VideoResult every surface renders carries Flow's code and text."""
+    from contextlib import nullcontext
+    from unittest.mock import MagicMock
+
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+
+    composer = MagicMock()
+    composer.apply_video_settings = AsyncMock(return_value=None)
+    composer.send_prompt = AsyncMock()
+    composer.submit_and_observe = AsyncMock(
+        return_value=GenerationRecord(
+            WF_OURS,
+            PROJ,
+            MEDIA,
+            4,
+            error_code=13,
+            error_message="Generation job finished with state: FAILED",
+        )
+    )
+    monkeypatch.setattr(
+        migrated_composer,
+        "_prepare_video_composer",
+        AsyncMock(return_value=(PROJ, composer, "classic")),
+    )
+    watch = MagicMock(seen=lambda: False)
+    monkeypatch.setattr(migrated_composer, "SubmitWatch", lambda _page: nullcontext(watch))
+    result = await migrated_composer.run_video(
+        MagicMock(),
+        GenerateVideoRequest(prompt="a crane"),
+        project_id=PROJ,
+        save=AsyncMock(),
+        poll_timeout_s=2.0,
+        download=True,
+        on_started=None,
+    )
+    assert result.status.status == "MEDIA_GENERATION_STATUS_FAILED"
+    assert result.status.error_message == (
+        "Flow failed the generation (code 13): Generation job finished with state: FAILED"
+    )
+    composer.download.assert_not_called()
+
+
 async def test_no_submit_frame_within_budget_is_a_timeout() -> None:
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
@@ -4027,6 +4070,23 @@ async def test_a_settings_drift_before_submit_reports_nothing_charged() -> None:
         await run_images(
             page, GenerateImageRequest(prompt="a blue cup", aspect=Aspect.PORTRAIT), project_id="p1"
         )
+    assert page.dom.submit_clicked == 0
+    assert info.value.to_problem_details()["charged"] == "no"
+
+
+async def test_missing_image_model_reports_nothing_charged() -> None:
+    """A model absent from the settings menu is rejected before the submit click."""
+    from gflow_cli.api.transports.migrated_composer import run_images
+
+    page = _image_page()
+    page.dom.models = ["🍌 Nano Banana 2", "🍌 Nano Banana Pro"]
+    with pytest.raises(ConfigurationError, match="offered") as info:
+        await run_images(
+            page,
+            GenerateImageRequest(prompt="a blue cup", model=ImageModel.HARBOR_SEAL),
+            project_id="p1",
+        )
+
     assert page.dom.submit_clicked == 0
     assert info.value.to_problem_details()["charged"] == "no"
 

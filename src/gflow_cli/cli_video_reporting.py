@@ -10,15 +10,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
+import structlog
 from rich.console import Console
+from rich.markup import escape
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import OutputFormat
 from gflow_cli.api.transports import migrated_extend
-from gflow_cli.errors import FlowApiError, GFlowError
+from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 
 if TYPE_CHECKING:
     from gflow_cli.api.video import VideoResult
+    from gflow_cli.data.recorder import OperationRecorder
+
+_logger = structlog.get_logger(__name__)
 
 __all__ = [
     "_chain_json",
@@ -30,6 +35,7 @@ __all__ = [
     "_migrated_extend_payload",
     "_print_chain_plan",
     "_print_extend_plan",
+    "_record_migrated_extend",
     "_report_migrated_extend",
 ]
 
@@ -54,7 +60,7 @@ def _emit_video_result(
                 or result.status.error_message
                 or "unknown reason"
             )
-            Console(stderr=True).print(f"[red]Video generation failed:[/red] {reasons}")
+            Console(stderr=True).print(f"[red]Video generation failed:[/red] {escape(reasons)}")
             raise SystemExit(1)
         if result.status.media_id:
             click.echo(result.status.media_id)
@@ -72,7 +78,7 @@ def _emit_video_result(
             or result.status.error_message
             or "unknown reason"
         )
-        console.print(f"[red]Video generation failed:[/red] {reasons}")
+        console.print(f"[red]Video generation failed:[/red] {escape(reasons)}")
         raise SystemExit(1)
 
     console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
@@ -121,8 +127,15 @@ def _emit_extend_json_payload(
     last_media = result.completed_media_ids[-1] if result.completed_media_ids else None
     outcome: dict[str, str] = {}
     if result.aborted or result.error is not None:
-        billed = bool(result.completed_media_ids) or result.credits_spent > 0
-        outcome = {"charged": "yes" if billed else "maybe", "next_action": "reconcile"}
+        error = result.error
+        if isinstance(error, GFlowError):
+            outcome = {
+                "charged": error.charged,
+                "next_action": error.resolved_next_action(),
+            }
+        elif error is None:
+            billed = bool(result.completed_media_ids) or result.credits_spent > 0
+            outcome = {"charged": "yes" if billed else "maybe", "next_action": "reconcile"}
         operation_id = getattr(result.error, "operation_id", "")
         if operation_id:
             outcome["operation_id"] = operation_id
@@ -248,7 +261,7 @@ def _migrated_extend_payload(
         "local_path": rendered,
         "output": rendered,
         "failure_reasons": [],
-        "error_message": None if ok else f"Flow reported status {record.status}",
+        "error_message": None if ok else record.failure_message,
         "scene_id": outcome.scene_id,
         "project_id": project_id,
         "model": outcome.model_key,
@@ -271,6 +284,64 @@ def _migrated_extend_payload(
             "seed": None,
         },
     }
+
+
+def _record_migrated_extend(  # noqa: PLR0913
+    recorder: OperationRecorder | None,
+    target: Path | None,
+    *,
+    profile_name: str,
+    profile_dir: Path | None,
+    media_id: str,
+    project_id: str | None,
+    outcome: migrated_extend.ExtendOutcome,
+) -> None:
+    """Record completed migrated extend (in-place or new-id) to catalog (#1184, #1299)."""
+    if recorder is None:
+        return
+    try:
+        from gflow_cli.storage import cloud_info_from_path
+
+        cloud_info = cloud_info_from_path(target) if target is not None else None
+        if outcome.record.media_id == media_id:
+            if target is not None:
+                recorder.record_extended_in_place(
+                    profile_name,
+                    media_id,
+                    outcome.record.workflow_id,
+                    outcome.model_key,
+                    local_path=target,
+                    cloud_storage_info=cloud_info,
+                )
+        else:
+            from gflow_cli.api.video import VideoResult, VideoStatus
+
+            if target is not None:
+                status = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+            else:
+                status = (
+                    "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                    if outcome.record.is_done
+                    else "MEDIA_GENERATION_STATUS_FAILED"
+                )
+            recorder.record_completed_video(
+                profile_name=profile_name,
+                _profile_dir=profile_dir or Path(),
+                result=VideoResult(
+                    status=VideoStatus(
+                        media_id=outcome.record.media_id,
+                        status=status,
+                    ),
+                    local_path=target,
+                    project_id=project_id,
+                    workflow_id=outcome.record.workflow_id,
+                ),
+                cloud_storage_info=cloud_info,
+                model=outcome.model_key,
+                aspect_ratio=outcome.aspect,
+            )
+    except DataStoreError as exc:
+        _logger.warning("extend_record_failed", error_class=type(exc).__name__)
 
 
 def _report_migrated_extend(  # noqa: PLR0913
@@ -313,7 +384,7 @@ def _report_migrated_extend(  # noqa: PLR0913
             c.print(f"  wrote: {rendered}")
     if not ok:
         err = FlowApiError(
-            f"extend of {media_id} ended with Flow status {record.status}; it may have been billed",
+            f"extend of {media_id} failed: {record.failure_message}; it may have been billed",
             route="batchexecute:fZytfe",
         )
         if as_json or output_format == OutputFormat.JSON.value:

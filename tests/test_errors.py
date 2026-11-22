@@ -411,6 +411,18 @@ def test_batch_integrity_error_carries_indices() -> None:
     assert isinstance(err, GFlowError)
 
 
+def test_batch_integrity_error_advises_repairing_download_without_rerunning() -> None:
+    from gflow_cli.errors import BatchIntegrityError
+
+    err = BatchIntegrityError(detail="expected 4 files, got 3")
+
+    assert err.charged == "no"
+    assert err.resolved_next_action() == "reconcile"
+    assert err.remediation_hint is not None
+    assert "retry" not in err.remediation_hint.lower()
+    assert "integrity" in err.remediation_hint.lower() or "download" in err.remediation_hint.lower()
+
+
 # ---------- gflow_cli.exceptions alias ----------
 
 
@@ -871,10 +883,10 @@ def test_batch_partial_without_results_inherits_cause_recovery_metadata() -> Non
     [
         ("_ui_character.py", "_select_character_model", 3),
         ("_ui_navigation.py", "_require_unblocked", 1),
-        ("_ui_prompt.py", "_switch_to_image_mode", 1),
+        ("_ui_prompt.py", "_switch_to_image_mode", 2),
         ("_ui_settings.py", "_select_image_model", 3),
         ("_ui_settings.py", "_set_count", 1),
-        ("_video_editor_mode.py", "_switch_to_video_mode", 1),
+        ("_video_editor_mode.py", "_switch_to_video_mode", 2),
         ("_video_settings.py", "_set_output_count", 1),
         ("_video_settings.py", "_select_video_duration", 1),
         ("_video_settings.py", "_switch_video_sub_mode", 1),
@@ -892,22 +904,39 @@ def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name
     ]
     assert len(functions) == 1
-    guarded = [
-        node
-        for node in ast.walk(functions[0])
-        if isinstance(node, ast.With)
+
+    def is_drift_raise(node: ast.Raise) -> bool:
+        value = node.exc
+        if isinstance(value, ast.Await):
+            value = value.value
+        return (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "UiSelectorDriftError"
+        ) or (
+            isinstance(node.exc, ast.Await)
+            and isinstance(node.exc.value, ast.Call)
+            and isinstance(node.exc.value.func, ast.Attribute)
+            and node.exc.value.func.attr == "_mode_switch_error"
+        )
+
+    guarded_raises = {
+        id(raise_node)
+        for with_node in ast.walk(functions[0])
+        if isinstance(with_node, ast.With)
         and any(
             isinstance(item.context_expr, ast.Call)
             and isinstance(item.context_expr.func, ast.Name)
             and item.context_expr.func.id == "nothing_submitted"
-            for item in node.items
+            for item in with_node.items
         )
-        and any(
-            isinstance(item, ast.Raise)
-            and isinstance(item.exc, ast.Call)
-            and isinstance(item.exc.func, ast.Name)
-            and item.exc.func.id == "UiSelectorDriftError"
-            for item in ast.walk(node)
-        )
+        for raise_node in ast.walk(with_node)
+        if isinstance(raise_node, ast.Raise) and is_drift_raise(raise_node)
+    }
+    drift_raises = [
+        node
+        for node in ast.walk(functions[0])
+        if isinstance(node, ast.Raise) and is_drift_raise(node)
     ]
-    assert len(guarded) == expected_guards
+    assert len(guarded_raises) == expected_guards
+    assert len(guarded_raises) == len(drift_raises)

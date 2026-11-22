@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.105.1] — 2026-11-22
+
+### Fixed
+
+- **Charge guidance reflects pre-submit validation, in-flight extends, and finished video segments ([#1416](https://github.com/ffroliva/gflow-cli/issues/1416)).** Image batches remain free. Extend validation failures report no charge and request corrected input, malformed post-submit responses retain reconciliation guidance and identify completed segments as billed, and poll failures reconcile the in-flight segment without overriding reauthentication or input-fix guidance. JSON output preserves the typed error's charge and next action, so a `video extend --json` result whose submitted segment did not finish now reads `charged: maybe` / `reconcile` where it read `yes`. A batch integrity failure points at the missing downloads instead of advising a re-run, which would create duplicate images.
+- **`video extend` on `flow.google.com` records completed video rows and invalidates stale local copies ([#1299](https://github.com/ffroliva/gflow-cli/issues/1299)).** A Veo-key extend returning a new media id now transitions its catalog row from `pending` to `MEDIA_GENERATION_STATUS_SUCCESSFUL` (or terminal status on failure) with its real aspect ratio and model key, recording the downloaded or cloud file in `local_files`. An in-place extend (same media id) marks prior local file copies as superseded in a single transaction with the new file write so `verified_local_path` and `list_videos` return only the latest verified file while keeping `sha256` intact and `gflow doctor` checks clean. The column comes from catalog migration 0011 (`local_files.superseded_at`), applied on the first command after the upgrade; an older gflow then refuses the migrated catalog with exit 16, as for any newer schema.
+- **A finished clip whose signed URL serves no MP4, or sits outside the allowed Google hosts, points at the free recovery ([#1159](https://github.com/ffroliva/gflow-cli/issues/1159)).** On `flow.google.com` both errors suggested retrying with a simpler prompt, which bills the clip again. They now name `gflow data download <media_id>`, as the clip's other download failures already did, and report `charged: yes`, since Flow has billed a finished clip. The exit code is unchanged. Thanks to @aryankalantri ([#1424](https://github.com/ffroliva/gflow-cli/pull/1424)).
+- **A video generation or extend that Flow fails on `flow.google.com` names Flow's error instead of a bare status ([#1111](https://github.com/ffroliva/gflow-cli/issues/1111)).** Flow's failed status record carries its own error code and text next to the status, for example code 13 with "Generation job finished with state: FAILED"; gflow dropped it and reported only `migrated host reported status 4`. The failure now reads `Flow failed the generation (code 13): Generation job finished with state: FAILED` in the CLI and `--json` results of `video t2v`, `i2v`, `r2v` and `video extend`, and in the error of the MCP `gflow_generate_video` task. A record without that error keeps the status-only message. Exit codes are unchanged. Thanks to @aryankalantri ([#1423](https://github.com/ffroliva/gflow-cli/pull/1423)).
+
+### Documentation
+
+- **`lhm.plugin.json` lists all 27 registered MCP tools ([#1407](https://github.com/ffroliva/gflow-cli/issues/1407)).** The manifest omitted `gflow_media_trash`, `gflow_media_restore`, `gflow_narrate`, `gflow_video_assemble`, `gflow_video_transcribe`, `gflow_video_captions` and `gflow_character_create`; each is now listed with its registered description and input schema. A test keeps the manifest's tool names in step with the server's registrations. Thanks to @aryankalantri ([#1418](https://github.com/ffroliva/gflow-cli/pull/1418)).
+
+### Tests
+
+- **Two e2e expectations follow what Flow returns ([#1383](https://github.com/ffroliva/gflow-cli/issues/1383), [#1408](https://github.com/ffroliva/gflow-cli/issues/1408)).** `test_t2i_with_tool_records_provenance` asserted a PNG signature, but Flow serves JPEG on that path; it now accepts PNG or JPEG before checking the recorded tool provenance. The credit-cap scenarios (CLI and MCP refusals, and the run that completes when the quote equals `max_credits`) expected a 4-credit quote for `omni-1.2` at 4 s x1 without passing a resolution, so the quote followed the account's default resolution (720p quotes 12); they now pin `360p`. No product behaviour changes. Thanks to @aryankalantri ([#1414](https://github.com/ffroliva/gflow-cli/pull/1414), [#1417](https://github.com/ffroliva/gflow-cli/pull/1417)).
+
 ## [0.105.0] — 2026-11-22
 
 ### Added
@@ -7351,7 +7368,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.105.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.105.1...HEAD
+[0.105.1]: https://github.com/ffroliva/gflow-cli/compare/v0.105.0...v0.105.1
 [0.105.0]: https://github.com/ffroliva/gflow-cli/compare/v0.104.0...v0.105.0
 [0.104.0]: https://github.com/ffroliva/gflow-cli/compare/v0.103.1...v0.104.0
 [0.103.1]: https://github.com/ffroliva/gflow-cli/compare/v0.103.0...v0.103.1

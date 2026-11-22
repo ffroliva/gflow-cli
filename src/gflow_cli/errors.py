@@ -1590,7 +1590,9 @@ class BatchIntegrityError(GFlowError):
     next_action = "reconcile"
     title = "Batch integrity check failed"
     _default_remediation = (
-        "The generated image count did not match expectations; retry the batch operation."
+        "The downloaded image count did not match expectations. Check the missing files and "
+        "resolve the download or integrity issue before taking further action; do not rerun "
+        "the batch, because image generation is free but a rerun may create duplicate images."
     )
 
     def __init__(

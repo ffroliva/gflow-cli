@@ -502,13 +502,13 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     and the failure is carried by the exit code alone."""
     from gflow_cli.api.extend_chain import ExtendChainResult
     from gflow_cli.cli_video import _extend_session
-    from gflow_cli.errors import ConfigurationError
+    from gflow_cli.errors import GFlowError
 
     _chain_spy["_result"] = ExtendChainResult(
         scene_id="s",
         completed_media_ids=["m1"],
         credits_spent=10,
-        error=ConfigurationError("refused"),
+        error=GFlowError("refused", charged="yes", next_action="reconcile"),
     )
 
     with pytest.raises(SystemExit) as exit_info:
@@ -540,6 +540,55 @@ async def test_json_mode_emits_exactly_one_document_when_the_chain_aborts(
     assert payload["request"]["mode"] == "extend"
     # #1201: a billed segment exists, so the document says so (#1159 / #1178 class).
     assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
+
+
+@pytest.mark.parametrize("failure", ["credit_cap", "unavailable"])
+def test_extend_json_uses_error_charge_and_action(
+    failure: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gflow_cli.api.extend_chain import ExtendChainResult
+    from gflow_cli.cli_video_reporting import _emit_extend_json_payload
+    from gflow_cli.errors import CreditCapExceededError, ExtendUnavailableError, GFlowError
+
+    error: GFlowError
+    if failure == "credit_cap":
+        error = CreditCapExceededError(quoted=10, max_credits=5)
+    else:
+        error = ExtendUnavailableError("not offered")
+    result = ExtendChainResult(scene_id="s", credits_spent=0, error=error)
+
+    _emit_extend_json_payload({}, result, None, "model", "16:9", 1, None)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["charged"] == error.charged
+    assert payload["next_action"] == error.resolved_next_action()
+
+
+@pytest.mark.asyncio
+async def test_in_flight_poll_value_error_stays_maybe_in_extend_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from structlog.testing import capture_logs
+
+    from gflow_cli.api.extend_chain import run_extend_chain
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video_reporting import _emit_extend_json_payload
+
+    class _PollValueError:
+        async def extend_video(self, **_kwargs: Any) -> ExtendStarted:
+            return ExtendStarted("media-1", "wf-1", "model", 10)
+
+        async def poll_video_status(self, media_id: str, **_kwargs: Any) -> Any:
+            raise ValueError("unexpected status shape")
+
+    with capture_logs():
+        result = await run_extend_chain(
+            _PollValueError(), media_id=MEDIA, project_id=PROJECT, scene_id="s", prompts=["go"]
+        )
+        _emit_extend_json_payload({}, result, None, "model", "16:9", 1, None)
+    payload = json.loads(capsys.readouterr().out)
+
+    assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
 
 
 # --------------------------------------------------------------------------
@@ -692,6 +741,9 @@ async def test_the_migrated_session_reports_one_video_result(
         def record_started_extend(self, *, started: Any, aspect: str, **_kw: Any) -> None:
             rows.append((started.media_id, aspect))
 
+        def record_completed_video(self, *args: Any, **_kw: Any) -> None:
+            pass
+
     async def _go() -> None:
         await _extend_migrated_session(
             profile_name="p",
@@ -740,7 +792,9 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
         def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
             sources.append(source_media_id)
 
-        def record_extended_in_place(self, *args: Any) -> None:
+        def record_extended_in_place(
+            self, *args: Any, local_path: Path | None = None, **_kw: Any
+        ) -> None:
             notes.append(args)
 
     with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
@@ -837,6 +891,70 @@ def test_the_migrated_payload_reports_the_length_by_identity(
     )
     assert (payload["seconds_added"], payload["seconds_billed"]) == (added, billed)
     assert payload["request"]["duration"] == added
+
+
+def test_a_failed_migrated_extend_names_flows_error() -> None:
+    """#1111: the extend reads the same failed record, so both its ``--json`` result and
+    its raised error name Flow's code and text instead of the bare status."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video_reporting import _migrated_extend_payload, _report_migrated_extend
+    from gflow_cli.errors import FlowApiError
+
+    flow_error = "Flow failed the generation (code 13): Generation job finished with state: FAILED"
+    record = GenerationRecord(
+        workflow_id="wf",
+        project_id=PROJECT,
+        media_id="new-media",
+        status=4,
+        error_code=13,
+        error_message="Generation job finished with state: FAILED",
+    )
+    outcome = ExtendOutcome(record=record, video=None, model_key="k", aspect="16:9", scene_id=None)
+    common: dict[str, Any] = {
+        "profile_name": "p",
+        "media_id": MEDIA,
+        "project_id": PROJECT,
+        "aspect": None,
+    }
+    assert _migrated_extend_payload(outcome, None, **common)["error_message"] == flow_error
+    with pytest.raises(FlowApiError) as info:
+        _report_migrated_extend(
+            outcome, None, as_json=False, console=Console(file=StringIO()), **common
+        )
+    assert flow_error in str(info.value)
+    assert "may have been billed" in str(info.value)
+
+
+@pytest.mark.parametrize("output_format", ["table", "id"])
+def test_a_failed_video_prints_flows_error_text_literally(
+    output_format: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1111: Flow's error text reaches Rich; a ``[/x]`` in it must print, not raise."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    from gflow_cli.api.video import VideoResult, VideoStatus
+    from gflow_cli.cli_video_reporting import _emit_video_result
+
+    text = "Flow failed the generation (code 13): bad [/x] tag"
+    result = VideoResult(
+        status=VideoStatus(
+            media_id="m", status="MEDIA_GENERATION_STATUS_FAILED", error_message=text
+        ),
+        local_path=None,
+    )
+    out = StringIO()
+    with pytest.raises(SystemExit):
+        _emit_video_result(
+            "video t2v", None, result, output_format, False, Console(file=out, width=200)
+        )
+    assert text in out.getvalue() + capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -1066,13 +1184,13 @@ async def test_a_render_failure_after_billed_segments_points_at_the_free_rerende
 
 
 @pytest.mark.asyncio
-async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
+async def test_an_in_flight_segment_whose_poll_failed_reads_maybe_with_its_id(
     _patched_client: _FakeClient,
     _chain_spy: dict[str, Any],
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """#1201 review: credits were spent, so `yes`, even with no completed segment."""
+    """#1201: submission leaves the in-flight segment uncertain until it finishes."""
     from gflow_cli.api.extend_chain import ExtendChainResult
     from gflow_cli.cli_video import _extend_session
     from gflow_cli.errors import TransportTimeoutError
@@ -1081,7 +1199,9 @@ async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
         scene_id="s",
         completed_media_ids=[],
         credits_spent=10,
-        error=TransportTimeoutError("poll", operation_id="seg-1"),
+        error=TransportTimeoutError(
+            "poll", operation_id="seg-1", charged="maybe", next_action="reconcile"
+        ),
     )
     with pytest.raises(SystemExit):
         await _extend_session(
@@ -1100,7 +1220,7 @@ async def test_a_billed_segment_whose_poll_failed_reads_billed_with_its_id(
             recorder=None,
         )
     payload = json.loads(capsys.readouterr().out)
-    assert (payload["charged"], payload["next_action"]) == ("yes", "reconcile")
+    assert (payload["charged"], payload["next_action"]) == ("maybe", "reconcile")
     assert payload["operation_id"] == "seg-1"
 
 
@@ -1197,3 +1317,276 @@ def test_a_resumed_rerender_keeps_the_instruction_out_of_the_command() -> None:
     assert command.startswith("gflow scene create --project proj --profile p wf-1")
     assert "(" not in command
     assert "earlier clips" in rest
+
+
+@pytest.mark.asyncio
+async def test_migrated_session_new_id_leaves_row_completed_and_drives_readers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1299 Item 1 & 4: on flow.google.com, a Veo-key extend returning a new media id
+    leaves the catalog row completed, records the local file, and drives list_videos,
+    data media, and MCP ref resolvers."""
+    from gflow_cli.cli_video import _extend_migrated_session
+    from gflow_cli.data.queries import list_videos
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository, verified_local_path
+    from gflow_cli.data.store import DataStore
+    from gflow_cli.mcp.tools import _ref_meta_entry
+
+    out_file = tmp_path / "out.mp4"
+    out_file.write_bytes(b"veo-segment-bytes")
+    fake = _MigratedClient(done=True, media="new-media-id")
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+
+    db_path = tmp_path / "gflow.db"
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="continue",
+            aspect=None,
+            output_file=out_file,
+            project_id=PROJECT,
+            as_json=True,
+            recorder=recorder,
+        )
+
+        row_status = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id = 'new-media-id'"
+        ).fetchone()
+        assert row_status is not None
+        assert row_status[0] == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        asset = repo.get_asset_by_flow_media_id("p", "new-media-id")
+        assert asset is not None
+        assert len(asset.local_files) == 1
+        assert verified_local_path(asset.local_files[0]) == out_file.resolve()
+
+        videos = list_videos(db_path=db_path, profile="p", limit=10, offset=0)
+        row = next(v for v in videos if v.media_id == "new-media-id")
+        assert row.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        assert row.copy_count == 1
+        assert row.local_path == str(out_file.resolve())
+
+        entry = _ref_meta_entry(asset)
+        assert entry["local_path"] == str(out_file.resolve())
+        assert entry["local_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_migrated_session_in_place_drives_write_and_read_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#1299 Item 2 & 4: an in-place extend must not leave the pre-extend download as
+    verified local copy; write path invalidates stale copy and records new download;
+    all readers (list_videos, MCP refs, verified_local_path) meet at the new file."""
+    import hashlib
+
+    from gflow_cli.cli_video import _extend_migrated_session
+    from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord, ProjectRecord
+    from gflow_cli.data.queries import list_videos
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository, verified_local_path
+    from gflow_cli.data.store import DataStore
+    from gflow_cli.mcp.tools import _ref_meta_entry, _resolve_ref_local_path
+
+    pre_file = tmp_path / "old.mp4"
+    pre_file.write_bytes(b"pre-extend-bytes")
+    pre_sha = hashlib.sha256(b"pre-extend-bytes").hexdigest()
+
+    new_file = tmp_path / "grown.mp4"
+    new_file.write_bytes(b"grown-in-place-bytes")
+
+    fake = _MigratedClient(done=True, media=MEDIA)
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
+
+    db_path = tmp_path / "gflow.db"
+    with DataStore.open(db_path) as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("p", tmp_path)
+        repo.upsert_project(
+            ProjectRecord(
+                id="pr", profile_name="p", flow_project_id=PROJECT, title="t", source="generated"
+            )
+        )
+        repo.upsert_asset(
+            AssetRecord(
+                id="src",
+                profile_name="p",
+                flow_project_id=PROJECT,
+                flow_media_id=MEDIA,
+                flow_workflow_id="src-wf",
+                flow_media_generation_id=None,
+                kind=AssetKind.VIDEO,
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                model="veo_3_1_lite",
+                aspect_ratio="portrait",
+                width=None,
+                height=None,
+                duration_seconds=8.0,
+                seed=None,
+                metadata_json={"display_name": "source_clip"},
+            )
+        )
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-old",
+                profile_name="p",
+                asset_id="src",
+                path=pre_file,
+                media_type="video/mp4",
+                bytes=len(b"pre-extend-bytes"),
+                sha256=pre_sha,
+            )
+        )
+
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        await _extend_migrated_session(
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            prompt="grow",
+            aspect=None,
+            output_file=new_file,
+            project_id=PROJECT,
+            as_json=True,
+            recorder=recorder,
+        )
+
+        asset = repo.get_asset_by_flow_media_id("p", MEDIA)
+        assert asset is not None
+
+        # The pre-extend copy stays in the catalog, sha256 intact, but superseded, and no
+        # lookup reader (data media, MCP task results, resolvers) lists it as live.
+        stale = store.conn.execute(
+            "SELECT sha256, superseded_at FROM local_files WHERE path = ?",
+            (str(pre_file.resolve()),),
+        ).fetchone()
+        assert stale["sha256"] == pre_sha
+        assert stale["superseded_at"] is not None
+        assert pre_file.resolve() not in [f.path for f in asset.local_files]
+
+        new_lf = next(f for f in asset.local_files if f.path == new_file.resolve())
+        assert new_lf.sha256 is not None
+        assert verified_local_path(new_lf) == new_file.resolve()
+
+        mcp_path, err = _resolve_ref_local_path(repo, "p", MEDIA)
+        assert err is None
+        assert mcp_path == str(new_file.resolve())
+
+        entry = _ref_meta_entry(asset)
+        assert entry["local_path"] == str(new_file.resolve())
+
+        videos = list_videos(db_path=db_path, profile="p", limit=10, offset=0)
+        row = next(v for v in videos if v.media_id == MEDIA)
+        assert row.status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+
+
+def test_new_id_extend_fallback_preserves_aspect_and_model(tmp_path: Path) -> None:
+    """#1299 Item 3: new-id fallback when no submit row exists must record the extend's real
+    outcome.aspect (e.g. 9:16) and outcome.model_key rather than defaulting to 16:9 and None."""
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video_reporting import _record_migrated_extend
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    out_file = tmp_path / "extended_9_16.mp4"
+    out_file.write_bytes(b"extended-9-16-bytes")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        repo.upsert_profile("p", tmp_path)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        outcome = ExtendOutcome(
+            record=GenerationRecord(
+                workflow_id="wf-916",
+                project_id=PROJECT,
+                media_id="media-916",
+                status=1,
+            ),
+            video=b"extended-9-16-bytes",
+            model_key="veo_cookie_extend_portrait",
+            aspect="9:16",
+            scene_id=None,
+        )
+        _record_migrated_extend(
+            recorder,
+            out_file,
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            project_id=PROJECT,
+            outcome=outcome,
+        )
+        row = store.conn.execute(
+            "SELECT aspect_ratio, model FROM assets WHERE flow_media_id='media-916'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "9:16"
+        assert row[1] == "veo_cookie_extend_portrait"
+
+
+def test_new_id_extend_failure_or_timeout_transitions_pending_to_terminal(tmp_path: Path) -> None:
+    """#1299 Item 5: a new-id extend that fails or times out after billing (target is None)
+    must move its submit-time 'pending' row to a terminal status."""
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.cli_video_reporting import _record_migrated_extend
+    from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id=PROJECT,
+            aspect="16:9",
+            started=ExtendStarted(
+                media_id="failed-ext-media",
+                workflow_id="wf-fail-1",
+                model_key="veo_extend_lite",
+                unit_cost=10,
+            ),
+        )
+        row_pending = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id='failed-ext-media'"
+        ).fetchone()
+        assert row_pending is not None
+        assert row_pending[0] == "pending"
+
+        failed_outcome = ExtendOutcome(
+            record=GenerationRecord(
+                workflow_id="wf-fail-1",
+                project_id=PROJECT,
+                media_id="failed-ext-media",
+                status=4,  # failed / non-done status
+            ),
+            video=None,
+            model_key="veo_extend_lite",
+            aspect="16:9",
+            scene_id=None,
+        )
+        _record_migrated_extend(
+            recorder,
+            target=None,
+            profile_name="p",
+            profile_dir=tmp_path,
+            media_id=MEDIA,
+            project_id=PROJECT,
+            outcome=failed_outcome,
+        )
+
+        row_updated = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id='failed-ext-media'"
+        ).fetchone()
+        assert row_updated is not None
+        assert row_updated[0] != "pending"
+        assert row_updated[0] == "MEDIA_GENERATION_STATUS_FAILED"

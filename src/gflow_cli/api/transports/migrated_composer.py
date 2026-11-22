@@ -580,7 +580,7 @@ async def run_video(
             if record.is_done
             else "MEDIA_GENERATION_STATUS_FAILED"
         ),
-        error_message=None if record.is_done else f"migrated host reported status {record.status}",
+        error_message=None if record.is_done else record.failure_message,
     )
     local_path: Path | None = None
     if download and record.is_done:

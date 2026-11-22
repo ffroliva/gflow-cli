@@ -260,6 +260,39 @@ def test_record_started_video_persists_pending_media_and_operation(tmp_path: Pat
         assert row["flow_operation_id"] == "operation-video-1"
 
 
+def test_record_completed_video_stores_empty_ids_as_null_on_a_new_asset(tmp_path: Path) -> None:
+    """No row from submit time: an empty project / workflow id is stored as NULL, not ""."""
+    saved = tmp_path / "video.mp4"
+    saved.write_bytes(b"video-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        recorder.repository.upsert_profile("default", tmp_path / "profile_default")
+        request = GenerateVideoRequest(
+            prompt="video prompt", mode=Mode.T2V, aspect=VideoAspect.PORTRAIT
+        )
+        result = VideoResult(
+            status=VideoStatus(
+                media_id="media-video-empty-ids",
+                status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+            ),
+            local_path=saved,
+            project_id="",
+            workflow_id="",
+        )
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "profile_default",
+            request=request,
+            result=result,
+        )
+        row = store.conn.execute(
+            "SELECT flow_project_id, flow_workflow_id FROM assets WHERE flow_media_id = ?",
+            ("media-video-empty-ids",),
+        ).fetchone()
+        assert row["flow_project_id"] is None
+        assert row["flow_workflow_id"] is None
+
+
 def test_record_completed_video_updates_media_operation_and_file(tmp_path: Path) -> None:
     saved = tmp_path / "video.mp4"
     saved.write_bytes(b"video-bytes")
@@ -1256,3 +1289,221 @@ def test_a_video_into_an_existing_project_keeps_its_title(tmp_path: Path) -> Non
         project = repo.get_project("default", "flow-project-1")
         assert project is not None
         assert (project.title, project.source) == ("my-project", "gflow-cli")
+
+
+def test_an_in_place_extend_marks_stale_local_copy_and_records_new_download(tmp_path: Path) -> None:
+    """#1299: an in-place extend must not leave the pre-extend download's local_files
+    row (old bytes and sha256) as the verified local copy; after the extend, the stale copy
+    must be marked (sha256 cleared) so verified_local_path does not return it, and the new
+    download must be recorded and returned."""
+    import hashlib
+
+    from gflow_cli.data.models import LocalFileRecord
+    from gflow_cli.data.repository import verified_local_path
+
+    pre_file = tmp_path / "pre_extend.mp4"
+    pre_file.write_bytes(b"original-7s-video")
+    new_file = tmp_path / "post_extend.mp4"
+    new_file.write_bytes(b"grown-11s-extended-video")
+    real_old_sha = hashlib.sha256(b"original-7s-video").hexdigest()
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-old",
+                profile_name="p",
+                asset_id="src",
+                path=pre_file,
+                media_type="video/mp4",
+                bytes=len(b"original-7s-video"),
+                sha256=real_old_sha,
+            )
+        )
+        asset_before = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
+        assert asset_before is not None
+        assert verified_local_path(asset_before.local_files[0]) == pre_file.resolve()
+
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+            local_path=new_file,
+        )
+
+        asset_after = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
+        assert asset_after is not None
+
+        # The pre-extend copy is kept in the catalog, sha256 intact, but superseded...
+        stale = store.conn.execute(
+            "SELECT sha256, superseded_at FROM local_files WHERE path = ?",
+            (str(pre_file.resolve()),),
+        ).fetchone()
+        assert stale["sha256"] == real_old_sha
+        assert stale["superseded_at"] is not None
+        # ...so the lookup no longer lists it as a live file.
+        assert pre_file.resolve() not in [f.path for f in asset_after.local_files]
+
+        new_copy = next(f for f in asset_after.local_files if f.path == new_file.resolve())
+        assert new_copy.sha256 is not None
+        assert verified_local_path(new_copy) == new_file.resolve()
+
+        verified_paths = [
+            p for f in asset_after.local_files if (p := verified_local_path(f)) is not None
+        ]
+        assert verified_paths == [new_file.resolve()]
+
+
+def test_record_completed_video_leaves_started_extend_completed_with_local_file(
+    tmp_path: Path,
+) -> None:
+    """#1299 Item 1: a successful Veo-key extend returning a new media id must leave its
+    catalog row completed (MEDIA_GENERATION_STATUS_SUCCESSFUL) rather than pending, and
+    record the downloaded file in local_files."""
+    from gflow_cli.api.video_extend import ExtendStarted
+    from gflow_cli.data.repository import verified_local_path
+
+    out_file = tmp_path / "extended_seg.mp4"
+    out_file.write_bytes(b"new-extension-segment")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = DataRepository(store)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_started_extend(
+            profile_name="p",
+            profile_dir=tmp_path,
+            project_id=_EXT_PROJECT,
+            aspect="16:9",
+            started=ExtendStarted(
+                media_id="new-ext-media-1",
+                workflow_id="wf-ext-1",
+                model_key="veo_3_1_extension_lite",
+                unit_cost=10,
+            ),
+        )
+
+        row_pending = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id='new-ext-media-1'"
+        ).fetchone()
+        assert row_pending is not None
+        assert row_pending[0] == "pending"
+        asset_pending = repo.get_asset_by_flow_media_id("p", "new-ext-media-1")
+        assert asset_pending is not None
+        assert len(asset_pending.local_files) == 0
+
+        recorder.record_completed_video(
+            profile_name="p",
+            _profile_dir=tmp_path,
+            result=VideoResult(
+                status=VideoStatus(
+                    media_id="new-ext-media-1",
+                    status="MEDIA_GENERATION_STATUS_SUCCESSFUL",
+                ),
+                local_path=out_file,
+                project_id=_EXT_PROJECT,
+                workflow_id="wf-ext-1",
+            ),
+        )
+
+        row_done = store.conn.execute(
+            "SELECT status, model FROM assets WHERE flow_media_id='new-ext-media-1'"
+        ).fetchone()
+        assert row_done is not None
+        assert row_done[0] == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+        assert row_done[1] == "veo_3_1_extension_lite"
+        asset_done = repo.get_asset_by_flow_media_id("p", "new-ext-media-1")
+        assert asset_done is not None
+        assert asset_done.metadata_json == {"unit_cost": 10}
+        assert len(asset_done.local_files) == 1
+        assert verified_local_path(asset_done.local_files[0]) == out_file.resolve()
+
+
+def test_record_extended_in_place_with_cloud_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1299 Item 1: an in-place extend saved to cloud storage must record its cloud provider
+    and cloud URI in local_files rather than treating it as a local file with path 'gs://...'."""
+    from gflow_cli.storage import CloudStorageInfo
+
+    cloud_target = tmp_path / "gs_bucket_clip.mp4"
+    cloud_info = CloudStorageInfo(provider="gcs", uri="gs://my-bucket/extended.mp4")
+
+    monkeypatch.setattr(
+        "gflow_cli.storage.cloud_info_from_path",
+        lambda p: cloud_info if p == cloud_target else None,
+    )
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+            local_path=cloud_target,
+        )
+        row = store.conn.execute(
+            "SELECT storage_provider, cloud_uri, path FROM local_files WHERE asset_id='src'"
+        ).fetchone()
+        assert row is not None
+        assert row["storage_provider"] == "gcs"
+        assert row["cloud_uri"] == "gs://my-bucket/extended.mp4"
+
+
+def test_in_place_extend_keeps_doctor_clean_and_supersedes_stale_copy(tmp_path: Path) -> None:
+    """#1299 Item 2 & 7: in-place extend must mark stale copies without NULLing sha256 so doctor
+    reports no sha256_null finding, and verified_local_path returns only the new file."""
+    import hashlib
+
+    from gflow_cli.data.models import LocalFileRecord
+    from gflow_cli.data.repository import verified_local_path
+    from gflow_cli.services.doctor import _check_sha256_null
+
+    pre_file = tmp_path / "pre.mp4"
+    pre_file.write_bytes(b"initial-segment")
+    pre_sha = hashlib.sha256(b"initial-segment").hexdigest()
+
+    new_file = tmp_path / "grown.mp4"
+    new_file.write_bytes(b"grown-segment-data")
+
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        repo = _catalog_with_source(store, tmp_path)
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-old",
+                profile_name="p",
+                asset_id="src",
+                path=pre_file,
+                media_type="video/mp4",
+                bytes=len(b"initial-segment"),
+                sha256=pre_sha,
+            )
+        )
+        recorder = OperationRecorder(repo, prompt_mode="store")
+        recorder.record_extended_in_place(
+            profile_name="p",
+            media_id=_EXT_MEDIA,
+            workflow_id="new-wf",
+            model_key="macaron_cookie_extend_4s",
+            local_path=new_file,
+        )
+
+        findings = _check_sha256_null(store.conn)
+        assert findings == [], f"doctor flagged: {findings}"
+
+        # The stale row stays in the catalog, sha256 intact, marked superseded...
+        stale = store.conn.execute(
+            "SELECT sha256, superseded_at FROM local_files WHERE id = 'lf-old'"
+        ).fetchone()
+        assert stale["sha256"] == pre_sha
+        assert stale["superseded_at"] is not None
+
+        # ...but no lookup reader sees it: `gflow data media`, MCP task results and the
+        # resolvers all read AssetLookup.local_files, so the current file is the only copy.
+        asset = repo.get_asset_by_flow_media_id("p", _EXT_MEDIA)
+        assert asset is not None
+        assert [f.path for f in asset.local_files] == [new_file.resolve()]
+        assert verified_local_path(asset.local_files[0]) == new_file.resolve()

@@ -78,6 +78,30 @@ class TestMcpToolListing:
         assert out_file_desc, f"{tool_name} out_file property description must not be empty"
         assert "inside the configured output directory" in (tool.description or "")
 
+    def test_plugin_manifest_lists_every_registered_tool(self) -> None:
+        """#1407: ``lhm.plugin.json`` lists exactly the tools the server registers.
+
+        Read from the decorators, not the live server: registration is an import side
+        effect and the no-spend policy removes tools, so the live set depends on test order.
+        """
+        import json
+        import re
+
+        root = Path(__file__).resolve().parents[2]
+        registered = {
+            name
+            for path in (root / "src" / "gflow_cli" / "mcp").glob("*.py")
+            for name in re.findall(
+                r'@server\.tool\(\s*name="(\w+)"', path.read_text(encoding="utf-8")
+            )
+        }
+        manifest = json.loads((root / "lhm.plugin.json").read_text(encoding="utf-8"))
+        listed = {tool["name"] for tool in manifest["tools"]}
+        assert len(registered) >= 27
+        assert listed == registered, (
+            f"missing: {sorted(registered - listed)}, extra: {sorted(listed - registered)}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # gflow_list_tools
