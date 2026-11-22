@@ -6,6 +6,20 @@
 
 ## Current release
 
+**v0.105.0 — beta.** Characters built from local images on flow.google.com, no-replace output publishing, and accurate charge reporting for pre-submit drift and multi-step video failures.
+
+**Added.**
+- **`gflow character create --image FILE [--body-image FILE]` (#639, PR #1405).** Builds a character from local portrait and body images through Flow's character editor on flow.google.com, with name, personality and voice; nothing is generated, so it spends no credits and no image quota. MCP twin `gflow_character_create`, available under `GFLOW_MCP_NO_SPEND`. Contributed by @ziyedbe (#987).
+
+**Fixed.**
+- **Output publishing never replaces an existing file (#1406).** On filesystems without hard links, `gflow video assemble` and `gflow audio narrate` publish through platform no-replace renames, and an empty file left by an interrupted run is cleared once older than 60 s.
+- **Charge reporting (#1336).** Selector drift before the submit on labs.google reports `charged: no`; multi-step video failures report prior billed work and disable retries; image work stays uncharged.
+- **Secrets in pytest reports (#1382).** Allowlisted secret environment values are masked in test failure, skip and collection reports.
+
+Full ledger: [LIVE_VERIFICATION_v0.105.0](LIVE_VERIFICATION_v0.105.0.md).
+
+<details><summary>v0.104.0 — local post-production, media trash, credit caps</summary>
+
 **v0.104.0 — beta.** Local post-production commands, Flow media trash and restore, and hard video credit caps.
 
 **Added.**
@@ -20,6 +34,8 @@
 - **macOS: no Keychain prompt on every command (#1396), and local cookie-read failures are named instead of reported as network problems (#1400).**
 
 Full ledger: [LIVE_VERIFICATION_v0.104.0](LIVE_VERIFICATION_v0.104.0.md).
+
+</details>
 
 <details><summary>v0.103.1 — agent panel and Agent switch recovery</summary>
 
@@ -1046,6 +1062,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| `character create --image` / `--body-image` on flow.google.com with its MCP twin; no-replace output publishing; `charged: no` for labs pre-submit drift and accurate multi-step video charge reporting; secrets masked in pytest reports (#639 #1406 #1336 #1382) | ✅ done (v0.105.0) |
 | Local post-production (`audio narrate`, `video assemble`, `video transcribe`/`captions`), `media trash`/`restore`, `--max-credits` caps; the agent-only driver on Flow's 2026-11-20 build (#1357 #1359 #1358 #1363 #1355 #1387) | ✅ done (v0.104.0) |
 | Agent panel and Agent switch recovery on Flow's 2026-11-20 build; agent mode moves to its own mixin (#1384 #1374; #1369 closed as stale → #1387) | ✅ done (v0.103.1) |
 | Model retirement, slice 1: `retires_on`, a `model.retiring` warning on every video route (CLI and MCP), the exit-11 refusal naming the date, and defaults/docs/e2e moved off the leaving models (#1375) | ✅ done (v0.103.0) |
