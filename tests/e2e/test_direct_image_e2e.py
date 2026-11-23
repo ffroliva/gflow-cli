@@ -13,6 +13,7 @@ Opt in with:
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -125,3 +126,52 @@ def test_an_in_project_reference_is_generated_by_the_direct_transport(
     assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
     _saved(tmp_path / "night.jpg")
     assert _image_transports(e2e_env) == ["direct_http", "direct_http"]
+
+
+@pytest.mark.skipif(
+    os.environ.get("GFLOW_CLI_E2E_RUN_CHARACTER") != "1",
+    reason="creates a Flow character (one image generation, zero credits); opt in with "
+    "GFLOW_CLI_E2E_RUN_CHARACTER=1",
+)
+def test_a_named_character_is_generated_by_the_direct_transport(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """T2.2: --reference-entity ID --reference-entity-name NAME goes direct."""
+    first = _t2i(e2e_env, tmp_path / "face.jpg")
+    assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
+        (project_id,) = db.execute("SELECT flow_project_id FROM assets").fetchone()
+    made = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            "Skipper",
+            "--image",
+            str(_saved(tmp_path / "face.jpg")),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env,
+    )
+    assert made.returncode == 0, f"gflow character create failed (exit {made.returncode})"
+    entity_id = made.stdout.split("Character created:", 1)[1].split()[0]
+    proc = _t2i(
+        e2e_env,
+        tmp_path / "pier.jpg",
+        "--project",
+        project_id,
+        "--reference-entity",
+        entity_id,
+        "--reference-entity-name",
+        "Skipper",
+    )
+    assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
+    _saved(tmp_path / "pier.jpg")
+    assert _image_transports(e2e_env)[-1] == "direct_http"
