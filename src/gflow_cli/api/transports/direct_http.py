@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import mimetypes
 import secrets
 import time
 import uuid
@@ -29,6 +28,7 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.auth.cookies import sent_to_flow_host
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import NetworkError, RecaptchaError, WireFormatError
+from gflow_cli.paths import extension_from_magic
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -59,6 +59,15 @@ _UPLOAD_RECONCILE_HINT = (
 _SUBMIT = ("ogiZ0b", "IMAGE_GENERATION", "image submit", _RECONCILE_HINT)
 _UPLOAD = ("maseQ", "UPLOAD_IMAGE", "image upload", _UPLOAD_RECONCILE_HINT)
 _RpcSpec = tuple[str, str, str, str]  # rpcid, reCAPTCHA action, noun, reconcile hint
+# The MIME type sent with an upload comes from the bytes, not the file name: a JPEG named
+# without an extension must not go out as image/png. The caller's validator already refused
+# anything that is not one of these.
+_UPLOAD_MIME = {
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
 
 
 def direct_can_serve(request: GenerateImageRequest) -> bool:
@@ -380,13 +389,14 @@ async def run_direct_upload(
     async with _client(http_transport) as client:
         tokens = await _shell(client, profile_dir, headers)
         token = await _mint(page, project_id, _UPLOAD[1])
+        image = await asyncio.to_thread(path.read_bytes)
         display_name = f"{path.stem}-{secrets.token_hex(4)}{path.suffix}"
         body = build_maseq_body(
             project_id=project_id,
             recaptcha_token=token,
             at_token=tokens.at,
-            image_bytes=await asyncio.to_thread(path.read_bytes),
-            mime=mimetypes.guess_type(path.name)[0] or "image/png",
+            image_bytes=image,
+            mime=_UPLOAD_MIME[extension_from_magic(image[:12]) or ".png"],
             display_name=display_name,
             request_ids=(str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()),
         )

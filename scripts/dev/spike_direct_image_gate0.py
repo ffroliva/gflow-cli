@@ -295,9 +295,15 @@ async def direct_upload(
         "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty",
     }
     t1 = time.perf_counter()
-    async with httpx.AsyncClient(follow_redirects=False, trust_env=False,
-                                 timeout=httpx.Timeout(60.0, connect=10.0)) as hx:
-        resp = await hx.post(url, content=body, headers=post_headers)
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, trust_env=False,
+                                     timeout=httpx.Timeout(60.0, connect=10.0)) as hx:
+            resp = await hx.post(url, content=body, headers=post_headers)
+    except httpx.HTTPError as exc:
+        # Flow may have stored the asset before the error: record it, never resend.
+        _log("direct_upload", status=None, outcome="indeterminate", error=type(exc).__name__,
+             display_name=name, mint_ms=mint_ms, post_ms=_ms(t1), body_len=len(body))
+        return
     errors = rpc_errors(resp.text) if resp.status_code == 200 else []
     media_id = _first_uuid(resp.text) if resp.status_code == 200 else None
     _log("direct_upload", status=resp.status_code, media_id=media_id, display_name=name,

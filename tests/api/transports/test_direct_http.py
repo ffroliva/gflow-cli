@@ -1291,3 +1291,20 @@ async def test_the_character_read_has_one_outer_deadline(
     req = GenerateImageRequest(prompt="x", reference_entity_names=("Skipper",))
     await asyncio.wait_for(transport.generate_images(project_id="proj-123", request=req), timeout=5)
     assert ui == [True]
+
+
+@pytest.mark.asyncio
+async def test_the_upload_mime_type_comes_from_the_bytes_not_the_name(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CodeRabbit: an extensionless JPEG was sent as image/png (name-based guess)."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=x&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_maseq_body", builder)
+    transport._http_transport = _shell_and(httpx.Response(200, text=_maseq_reply()))
+    portrait = tmp_path / "portrait"  # no extension
+    portrait.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 32)
+    await transport.upload_reference(project_id="proj-123", path=portrait)
+    assert builder.call_args.kwargs["mime"] == "image/jpeg"
