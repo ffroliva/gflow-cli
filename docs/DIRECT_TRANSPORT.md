@@ -17,6 +17,10 @@ GFLOW_CLI_TRANSPORT=direct_http gflow image t2i "a paper boat on a pond"
 The setting applies to `gflow image t2i` / `i2i` / `generate`, to the MCP image tool
 (in-process and as a queued job), and to each row of `gflow run` (from the environment, or
 `"transport": "direct_http"` in the config; a `"ref": "batch:N"` row is served too).
+The environment route needs nothing else. Naming the transport in a `gflow run` config, or
+with `--transport direct_http` on an image command, also needs
+`GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`, as for every experimental transport; without it the
+config is refused with exit 11 and the option does not list the value.
 `gflow image batch` resolves to the same transport, but its rows run the inherited UI batch
 method, which flow.google.com refuses on every transport.
 
@@ -53,7 +57,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Flow refuses the prompt | no | the same refusal error as the UI path |
 | A `--ref` found in the local catalog (a media id, or a file used before) | yes: the selector routes it before any request | the request runs on `ui_automation`; the catalog may be stale, and the UI path proves the image still exists before it submits, refusing at $0 |
 
-A sent request is never retried. Every rejected reply drops the cached session token, so a
+A sent request is never resent on the direct transport: only a redirect, HTTP 401 or HTTP 403, which Flow refused without making anything, is submitted again, once, through `ui_automation`. Every rejected reply drops the cached session token, so a
 stale one cannot stick in a long-running MCP server or worker. A reCAPTCHA mint is retried
 for up to 10 seconds while the page loads its reCAPTCHA script, because a mint spends
 nothing. The page is parked after every direct run, as after a UI run.
