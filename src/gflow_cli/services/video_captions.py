@@ -595,17 +595,38 @@ def _blend_caption(
     return result
 
 
+_NO_LINE_START = frozenset("，。、；：！？）」』》〉】,.;:!?)")
+
+
 def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str]:
     lines: list[str] = []
     for paragraph in text.splitlines() or [text]:
         line = ""
         for word in paragraph.split():
-            candidate = f"{line} {word}".strip()
-            if line and draw.textlength(candidate, font=font) > max_width:
-                lines.append(line)
-                line = word
-            else:
+            candidate = f"{line} {word}" if line else word
+            if draw.textlength(candidate, font=font) <= max_width:
                 line = candidate
+                continue
+            if line:
+                lines.append(line)
+                line = ""
+            # A token wider than the line is broken between characters: CJK text has no spaces
+            # to break at, and a long URL is a single token. Closing punctuation is not left at
+            # the start of a line; the character before it moves down with it.
+            for char in word:
+                if line and draw.textlength(line + char, font=font) > max_width:
+                    if (
+                        char in _NO_LINE_START
+                        and len(line) > 1
+                        and draw.textlength(line[-1] + char, font=font) <= max_width
+                    ):
+                        lines.append(line[:-1])
+                        line = line[-1] + char
+                    else:
+                        lines.append(line)
+                        line = char
+                else:
+                    line += char
         lines.append(line)
     return lines
 
