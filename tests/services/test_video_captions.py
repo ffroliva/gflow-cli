@@ -626,6 +626,38 @@ def test_caption_overlay_fallback_font_scales_once(
     assert loaded_sizes == [expected_initial, expected_fallback]
 
 
+@pytest.mark.parametrize(("width", "height"), [(1280, 720), (720, 1280), (1920, 1080)])
+def test_caption_box_is_centred_on_the_text_ink(width: int, height: int) -> None:
+    # #1431: the box was drawn from the text origin, not from its ink, so it sat above the
+    # glyphs and descenders hung below its bottom edge.
+    from PIL import ImageDraw, ImageFont
+
+    overlay, _top = service._caption_overlay(
+        width,
+        height,
+        "Generate the clips, narrate a voiceover, and burn in the captions.",
+        ImageDraw,
+        ImageFont,
+    )
+    pixels = overlay.load()
+    ink = [
+        (x, y)
+        for y in range(overlay.height)
+        for x in range(overlay.width)
+        if pixels[x, y][3] == 255 and min(pixels[x, y][:3]) > 128
+    ]
+    box = [(x, y) for y in range(overlay.height) for x in range(overlay.width) if pixels[x, y][3]]
+    assert ink
+    ink_left, ink_right = min(x for x, _ in ink), max(x for x, _ in ink)
+    ink_top, ink_bottom = min(y for _, y in ink), max(y for _, y in ink)
+    box_left, box_right = min(x for x, _ in box), max(x for x, _ in box)
+    box_top, box_bottom = min(y for _, y in box), max(y for _, y in box)
+
+    assert box_top < ink_top and ink_bottom < box_bottom
+    assert box_left < ink_left and ink_right < box_right
+    assert abs((ink_top - box_top) - (box_bottom - ink_bottom)) <= 2
+
+
 def test_caption_background_is_translucent_on_rgb_frame() -> None:
     av = pytest.importorskip("av")
     from PIL import Image, ImageDraw, ImageFont

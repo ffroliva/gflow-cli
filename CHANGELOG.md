@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow video captions` centres the caption box on the text ([#1431](https://github.com/ffroliva/gflow-cli/issues/1431)).** The text was drawn from its layout origin while the box was laid out around its ink, so the box sat above the glyphs and descenders touched or crossed its bottom edge. The text is now drawn so its ink lands where the box expects it, with the same padding above and below.
 - **A new-project button that will not take the click on `flow.google.com` is exit 23, not a crash ([#1434](https://github.com/ffroliva/gflow-cli/issues/1434)).** Generating without `--project` creates a project first. When the projects page's button rendered but the click timed out, Playwright's timeout escaped as an unhandled error (exit 1). gflow now checks whether the create request left the page: if it did not, the run stops with exit 23 and `charged: no`, saying no create request was sent and suggesting `--project` (MCP `project`); if it did, Flow may have made the project, so gflow waits for Flow's reply or reads the new project back, and reports exit 7 (not retryable) only if neither confirms it.
 
 ## [0.105.1] — 2026-11-22
