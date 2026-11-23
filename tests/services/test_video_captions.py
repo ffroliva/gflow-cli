@@ -133,9 +133,18 @@ def test_missing_chain_extra_fails_before_transcription(monkeypatch: pytest.Monk
         caption_video("clip.mp4", srt_path=Path("captions.srt"))
 
 
-def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Path]) -> None:
-    with pytest.raises(ConfigurationError, match="GFLOW_CLI_LLM_BASE_URL"):
-        transcribe_video(str(media_files[0]))
+def test_transcribe_refuses_default_google_endpoint(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pin the default: a developer's .env may point GFLOW_CLI_LLM_BASE_URL elsewhere, and an
+    # environment variable outranks the .env file, so this case cannot depend on the checkout.
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", config.DEFAULT_LLM_BASE_URL)
+    config.reset_settings()
+    try:
+        with pytest.raises(ConfigurationError, match="GFLOW_CLI_LLM_BASE_URL"):
+            transcribe_video(str(media_files[0]))
+    finally:
+        config.reset_settings()
 
 
 def test_transcribe_refuses_existing_srt_before_network(
