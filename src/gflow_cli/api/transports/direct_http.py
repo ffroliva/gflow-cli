@@ -10,7 +10,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import TYPE_CHECKING
-from urllib.parse import urlencode
 
 import httpx
 import structlog
@@ -19,11 +18,11 @@ from gflow_cli.api import flow_wire
 from gflow_cli.api._engine import mint_evaluate_kwargs
 from gflow_cli.api.image import Model
 from gflow_cli.api.recaptcha import TokenMinter
-from gflow_cli.api.transports._common import migrated_route
+from gflow_cli.api.transports._common import flow_host_kind
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.config import get_settings
+from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import NetworkError, RecaptchaError
 
 if TYPE_CHECKING:
@@ -41,12 +40,12 @@ log = structlog.get_logger(__name__)
 # every other model routes to the UI transport until its wire name is captured.
 _WIRE_MODEL: dict[Model, str] = {Model.NARWHAL: "BELUGA"}
 
-
 # Counts measured on the direct path (one POST with two entries returned two images).
 _MAX_DIRECT_COUNT = 2
 _ORIGIN = "https://flow.google.com"
 _MINT_BUDGET_S = 10.0  # how long a freshly navigated page gets to load reCAPTCHA
 _MINT_RETRY_S = 0.5
+_NAVIGATE_MS = 45_000  # the composer's own budget for reaching a project
 _RECONCILE_HINT = (
     "Flow may have accepted this image request before the error, so gflow did not resend "
     "it. Check the project in Flow for the new image before running the command again."
@@ -56,8 +55,9 @@ _RECONCILE_HINT = (
 def direct_can_serve(request: GenerateImageRequest) -> bool:
     """True only for a request whose every wire slot is measured.
 
-    T2I with a measured model, any aspect, and up to ``_MAX_DIRECT_COUNT`` images. No
-    reference images, character entities, Agent instructions or ``@`` mentions yet.
+    T2I with a measured model, any aspect, up to ``_MAX_DIRECT_COUNT`` images, at most one
+    in-project reference or one named character, on the classic composer. No Agent
+    instructions and no ``@`` mentions.
     """
     return (
         request.model in _WIRE_MODEL
@@ -67,36 +67,40 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
         and not request.ref_paths
         and not request.instructions
         and "@" not in request.prompt
+        and resolve_ui_mode(request.ui_mode) is not UiMode.AGENTIC
     )
 
 
 def _references_measured(request: GenerateImageRequest) -> bool:
     """No refs, or the one measured I2I shape: a single in-project image with a display
-    name (the chip needs it), one output image. A local file needs an upload first."""
+    name (the chip needs it), one output image. A ref that came from a local file keeps the
+    UI path: there a missing asset is re-uploaded (#772), which the direct POST cannot do."""
     if not request.refs:
         return True
     (ref, *more) = request.refs
-    return not more and ref.in_project and bool(ref.display_name) and request.count == 1
-
-
-def _characters_measured(request: GenerateImageRequest) -> bool:
-    """No character, or the one measured shape: a single entity id with its name (the chip
-    needs both), no image reference, one output image. A bare ``@Name`` mention carries no
-    id here (the UI picker resolves it in the browser), so it stays on the UI transport."""
-    if not request.reference_entities:
-        return True
-    names = request.reference_entity_names
     return (
-        len(request.reference_entities) == 1
-        and len(names) == 1
-        and bool(names[0])
-        and not request.refs
+        not more
+        and ref.in_project
+        and bool(ref.display_name)
+        and not ref.local_path
         and request.count == 1
     )
 
 
+def _characters_measured(request: GenerateImageRequest) -> bool:
+    """No character, or the one measured shape: a single entity id with its name (the chip
+    needs both), no image reference, one output image. A bare ``@Name`` mention carries a
+    name but no id here (the UI picker resolves it in the browser), so it stays on the UI."""
+    ids, names = request.reference_entities, request.reference_entity_names
+    if not ids and not names:
+        return True
+    return (
+        len(ids) == 1 and len(names) == 1 and bool(names[0]) and not request.refs
+    ) and request.count == 1
+
+
 class _DirectFallbackError(Exception):
-    """Internal sentinel: nothing was sent, so the UI transport may run instead."""
+    """Internal sentinel: nothing was accepted, so the UI transport may run instead."""
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
@@ -114,15 +118,26 @@ def _reconcile_error(detail: str, *, status: int | None = None) -> NetworkError:
     )
 
 
+def _proxy_configured() -> bool:
+    """A proxy anywhere means the browser and this request could leave by different routes.
+    ``NO_PROXY`` alone shows up as the ``no`` key and configures no proxy."""
+    return bool(get_settings().browser_proxy) or any(k != "no" for k in flow_wire.getproxies())
+
+
 async def _session_headers(page: Page, profile_dir: Path) -> dict[str, str]:
     """Read path: the live browser's cookies (the on-disk store is locked while Chrome
-    holds the profile) and the profile's own user agent."""
+    holds the profile) and the profile's own user agent. Read without a URL filter and
+    matched by domain: a URL filter also drops path-scoped cookies (#222)."""
     try:
-        cookies = await page.context.cookies([_ORIGIN])
+        cookies = await page.context.cookies()
     except Exception as exc:
         raise _DirectFallbackError(f"cookie_error:{type(exc).__name__}") from exc
     cookie_header = "; ".join(
-        f"{name}={value}" for c in cookies if (name := c.get("name")) and (value := c.get("value"))
+        f"{name}={value}"
+        for c in cookies
+        if (name := c.get("name"))
+        and (value := c.get("value"))
+        and "flow.google.com".endswith(c.get("domain", "").lstrip("."))
     )
     if not cookie_header:
         raise _DirectFallbackError("cookies_empty")
@@ -147,25 +162,32 @@ async def _shell(
 async def _mint(page: Page, project_id: str) -> str:
     """The single browser step: an IMAGE_GENERATION token minted on the project page.
 
-    Right after a navigation the enterprise script is not loaded yet and the mint raises
-    ``RecaptchaError`` (measured 2026-11-23 on an i2i run with ``--project``). A mint spends
-    nothing, so it is retried until the script answers or the budget runs out.
+    The page must end up on flow.google.com: an account Flow serves on labs.google is
+    redirected there, and the direct path does not serve it. Right after a navigation the
+    enterprise script is not loaded yet and the mint raises ``RecaptchaError`` (measured
+    2026-11-23 on an i2i run with ``--project``). A mint spends nothing, so it is retried,
+    every attempt bounded, until the script answers or the budget runs out.
     """
     target = f"{_ORIGIN}/project/{project_id}"
     try:
         if not page.url.startswith(target):
-            await page.goto(target)
-        minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
-        deadline = time.monotonic() + _MINT_BUDGET_S
-        while True:
-            try:
-                return await minter.mint("IMAGE_GENERATION")
-            except RecaptchaError:
-                if time.monotonic() >= deadline:
-                    raise
-                await asyncio.sleep(_MINT_RETRY_S)
+            await page.goto(target, wait_until="domcontentloaded", timeout=_NAVIGATE_MS)
     except Exception as exc:
-        raise _DirectFallbackError(f"mint_failure:{type(exc).__name__}") from exc
+        raise _DirectFallbackError(f"navigation_failed:{type(exc).__name__}") from exc
+    if flow_host_kind(page.url) != "migrated":
+        raise _DirectFallbackError("served_labs")
+    minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
+    deadline = time.monotonic() + _MINT_BUDGET_S
+    while True:
+        try:
+            remaining = max(deadline - time.monotonic(), 0.1)
+            return await asyncio.wait_for(minter.mint("IMAGE_GENERATION"), remaining)
+        except RecaptchaError as exc:
+            if time.monotonic() >= deadline:
+                raise _DirectFallbackError("mint_failure:RecaptchaError") from exc
+            await asyncio.sleep(_MINT_RETRY_S)
+        except Exception as exc:
+            raise _DirectFallbackError(f"mint_failure:{type(exc).__name__}") from exc
 
 
 def _post_request(
@@ -182,8 +204,8 @@ def _post_request(
     }
     return httpx.Request(
         "POST",
-        f"{_ORIGIN}/_/AiSandboxAngularFrontend/data/batchexecute?"
-        f"{urlencode({k: v for k, v in query.items() if v is not None})}",
+        f"{_ORIGIN}/_/AiSandboxAngularFrontend/data/batchexecute",
+        params={k: v for k, v in query.items() if v is not None},
         content=body,
         headers={
             **headers,
@@ -198,99 +220,100 @@ def _post_request(
     )
 
 
-async def _send_once(client: httpx.AsyncClient, request: httpx.Request) -> httpx.Response:
-    """Write path: exactly one send. A connect error reached nothing; anything after it may
-    have been billed and is never resent."""
+async def _send_once(
+    client: httpx.AsyncClient, request: httpx.Request, profile_dir: Path
+) -> httpx.Response:
+    """Write path: exactly one send.
+
+    Nothing was accepted when the connection never opened, or when Flow redirected (3xx),
+    refused the session (401) or the token (403): the UI transport may run instead.
+    Anything else after the send may have been billed and is never resent. Every rejected
+    reply drops the cached ``at`` so a stale one cannot stick in a long-lived process.
+    """
     try:
         response = await client.send(request)
-    except httpx.ConnectError as exc:
-        raise _DirectFallbackError("connect_error") from exc
+    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+        raise _DirectFallbackError(f"connect:{type(exc).__name__}") from exc
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         cause = (str(exc).strip().splitlines() or [""])[0][:160]
         raise _reconcile_error(f"{type(exc).__name__} on an image submit ({cause})") from exc
-    if response.status_code == 403:
-        raise _DirectFallbackError("http_403")
-    if response.status_code != 200:
-        raise _reconcile_error(
-            f"HTTP {response.status_code} on an image submit", status=response.status_code
+    status = response.status_code
+    if status == 200:
+        return response
+    flow_wire.forget_tokens(profile_dir)
+    if 300 <= status < 400 or status in (401, 403):
+        raise _DirectFallbackError(f"http_{status}")
+    raise _reconcile_error(f"HTTP {status} on an image submit", status=status)
+
+
+def _client(http_transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        follow_redirects=False,
+        trust_env=False,  # nothing env-derived (proxies, netrc) reaches this client
+        timeout=httpx.Timeout(120.0, connect=10.0),  # a generation takes 16-24 s
+        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
+        transport=http_transport,  # None = httpx's default; a mock under test
+    )
+
+
+async def run_direct_images(
+    *,
+    page: Page,
+    profile_dir: Path,
+    project_id: str,
+    request: GenerateImageRequest,
+    http_transport: httpx.AsyncBaseTransport | None = None,
+) -> list[GeneratedImage]:
+    """One direct image generation: read the session, mint, build, send once, parse."""
+    started = time.perf_counter()
+    headers = await _session_headers(page, profile_dir)
+    async with _client(http_transport) as client:
+        tokens = await _shell(client, profile_dir, headers)
+        mint_started = time.perf_counter()
+        token = await _mint(page, project_id)
+        mint_ms = int((time.perf_counter() - mint_started) * 1000)
+        body = build_ogiz0b_body(
+            prompt=request.prompt,
+            model=_WIRE_MODEL[request.model],
+            project_id=project_id,
+            recaptcha_token=token,
+            at_token=tokens.at,
+            batch_id=str(uuid.uuid4()).upper(),
+            entry_seeds=tuple(1 + secrets.randbelow(2**31 - 1) for _ in range(request.count)),
+            aspect=request.aspect,
+            references=tuple((ref.name, ref.display_name) for ref in request.refs),
+            characters=tuple(
+                zip(request.reference_entities, request.reference_entity_names, strict=True)
+            ),
         )
-    return response
-
-
-class DirectImageHttpRunner:
-    """Runs one direct image generation: read the session, mint, build, send once, parse."""
-
-    def __init__(self, *, http_transport: httpx.AsyncBaseTransport | None = None) -> None:
-        self._http_transport = http_transport
-
-    def _client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            follow_redirects=False,
-            trust_env=False,  # nothing env-derived (proxies, netrc) reaches this client
-            timeout=httpx.Timeout(120.0, connect=10.0),  # a generation takes 16-24 s
-            cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),
-            transport=self._http_transport,  # None = httpx's default; a mock under test
-        )
-
-    async def run(
-        self,
-        *,
-        page: Page,
-        profile_dir: Path,
-        project_id: str,
-        request: GenerateImageRequest,
-    ) -> list[GeneratedImage]:
-        started = time.perf_counter()
-        headers = await _session_headers(page, profile_dir)
-        async with self._client() as client:
-            tokens = await _shell(client, profile_dir, headers)
-            mint_started = time.perf_counter()
-            token = await _mint(page, project_id)
-            mint_ms = int((time.perf_counter() - mint_started) * 1000)
-            body = build_ogiz0b_body(
-                prompt=request.prompt,
-                model=_WIRE_MODEL[request.model],
-                project_id=project_id,
-                recaptcha_token=token,
-                at_token=tokens.at,
-                batch_id=str(uuid.uuid4()).upper(),
-                entry_seeds=tuple(1 + secrets.randbelow(2**31 - 1) for _ in range(request.count)),
-                aspect=request.aspect,
-                references=tuple((ref.name, ref.display_name) for ref in request.refs),
-                characters=tuple(
-                    zip(request.reference_entities, request.reference_entity_names, strict=True)
-                ),
-            )
-            log.info(
-                "direct.frame_built",
-                model=request.model.value,
-                prompt_length=len(request.prompt),
-                count=request.count,
-            )
-            post_started = time.perf_counter()
-            response = await _send_once(client, _post_request(project_id, tokens, headers, body))
         log.info(
-            "direct.image_post",
-            status=response.status_code,
-            mint_ms=mint_ms,
-            post_ms=int((time.perf_counter() - post_started) * 1000),
-            total_ms=int((time.perf_counter() - started) * 1000),
+            "direct.frame_built",
+            model=request.model.value,
+            prompt_length=len(request.prompt),
+            count=request.count,
         )
-        images = ogiz0b_reply_images(response.text, request)
-        return [replace(img, transport="direct_http") for img in images]
+        post_started = time.perf_counter()
+        response = await _send_once(
+            client, _post_request(project_id, tokens, headers, body), profile_dir
+        )
+    log.info(
+        "direct.image_post",
+        status=response.status_code,
+        mint_ms=mint_ms,
+        post_ms=int((time.perf_counter() - post_started) * 1000),
+        total_ms=int((time.perf_counter() - started) * 1000),
+    )
+    images = ogiz0b_reply_images(response.text, request)
+    return [replace(img, transport="direct_http") for img in images]
 
 
 class DirectHttpTransport(UiAutomationTransport):
-    """Direct HTTP transport for image generation with reCAPTCHA minting from Flow page."""
+    """The UI transport, with measured image requests sent as one direct ``ogiZ0b`` POST."""
 
     name = "direct_http"
     _profile_dir: Path | None = None
 
-    def __init__(
-        self,
-        *,
-        http_transport: httpx.AsyncBaseTransport | None = None,
-    ) -> None:
+    def __init__(self, *, http_transport: httpx.AsyncBaseTransport | None = None) -> None:
         super().__init__()
         self._http_transport = http_transport
 
@@ -305,61 +328,47 @@ class DirectHttpTransport(UiAutomationTransport):
         request: GenerateImageRequest,
         name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
-        """Generate images via direct HTTP when eligible, falling back to UI automation."""
+        """Generate via one direct POST when the request is measured; otherwise, or when
+        nothing was accepted, through the inherited UI path."""
         if not self._setup_done or self._page is None:
             msg = "DirectHttpTransport.setup() must be called before generate_images()"
             raise RuntimeError(msg)
 
         async with self._generate_lock:
             await self.park_deferred_page()
+            page, profile_dir = self._page, self._profile_dir
+            reason = self._why_not_direct(request, project_id)
+            if reason is None and project_id is not None and profile_dir is not None:
+                try:
+                    images = await run_direct_images(
+                        page=page,
+                        profile_dir=profile_dir,
+                        project_id=project_id,
+                        request=request,
+                        http_transport=self._http_transport,
+                    )
+                except _DirectFallbackError as fb:
+                    reason = fb.reason
+                else:
+                    self.last_image_route = "migrated"
+                    return images
+                finally:
+                    # Never leave a mounted composer for the next request (_park_composer_page).
+                    await self._park_composer_page(page, event="direct.page_park_failed")
+            log.info("direct.fallback_to_ui", reason=reason)
+            return await self._generate_images_locked(
+                request, project_id=project_id, name_resolver=name_resolver
+            )
 
-            if not direct_can_serve(request):
-                log.info("direct.fallback_to_ui", reason="unsupported_shape")
-                return await self._generate_images_locked(
-                    request, project_id=project_id, name_resolver=name_resolver
-                )
-
-            if project_id is None:
-                log.info("direct.fallback_to_ui", reason="no_project")
-                return await self._generate_images_locked(
-                    request, project_id=project_id, name_resolver=name_resolver
-                )
-
-            page = self._page
-            profile_dir = self._profile_dir
-            if profile_dir is None:
-                log.info("direct.fallback_to_ui", reason="no_profile_dir")
-                return await self._generate_images_locked(
-                    request, project_id=project_id, name_resolver=name_resolver
-                )
-
-            flow_host = get_settings().flow_host
-            route = migrated_route(page.url, flow_host, prefer_migrated=True)
-            if route != "migrated":
-                log.info("direct.fallback_to_ui", reason="route_not_migrated")
-                return await self._generate_images_locked(
-                    request, project_id=project_id, name_resolver=name_resolver
-                )
-
-            if get_settings().browser_proxy or flow_wire.getproxies():
-                log.info("direct.fallback_to_ui", reason="proxy_configured")
-                return await self._generate_images_locked(
-                    request, project_id=project_id, name_resolver=name_resolver
-                )
-
-            runner = DirectImageHttpRunner(http_transport=self._http_transport)
-
-            try:
-                images = await runner.run(
-                    page=page,
-                    profile_dir=profile_dir,
-                    project_id=project_id,
-                    request=request,
-                )
-                self.last_image_route = "migrated"
-                return images
-            except _DirectFallbackError as fb:
-                log.info("direct.fallback_to_ui", reason=fb.reason)
-                return await self._generate_images_locked(
-                    request, project_id=project_id, name_resolver=name_resolver
-                )
+    def _why_not_direct(self, request: GenerateImageRequest, project_id: str | None) -> str | None:
+        if not direct_can_serve(request):
+            return "unsupported_shape"
+        if project_id is None:
+            return "no_project"
+        if self._profile_dir is None:
+            return "no_profile_dir"
+        if get_settings().flow_host == "labs.google":
+            return "flow_host_labs"
+        if _proxy_configured():
+            return "proxy_configured"
+        return None

@@ -417,5 +417,6 @@ No new runtime deps — `httpx` and `sqlite3` (stdlib) are already present.
 
 Not served directly yet: a bare `@Name` mention (the request carries no character id),
 count 3-4, several refs or characters, local-file refs (Phase 4), batch runs (`image_batch`
-calls the UI transport's batch method). The telemetry endpoint must accept the `transport`
-key before a client that sends it is released.
+calls the UI transport's batch method). The weekly telemetry field (T3.1) is not in this change: it went out for every
+image user and needed a notice-version bump that stops EU/EEA uploads until re-consent,
+so it ships together with the endpoint change. T3.3 (per-image metadata) is in.

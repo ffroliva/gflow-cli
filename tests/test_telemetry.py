@@ -333,34 +333,6 @@ def test_an_engine_outside_the_enum_is_other_and_facts_reset_per_command(tmp_hom
     assert report["hosts"] == {"labs": 1}
 
 
-def test_a_transport_run_counts_its_transport_once(tmp_home: Path) -> None:
-    telemetry.note_transport("direct")
-    telemetry.record("cli", "image t2i", [], "0", 3.0)
-    report = _report()
-    assert report["transports"] == {"direct": 1}
-
-
-def test_a_transport_ui_counts_ui(tmp_home: Path) -> None:
-    telemetry.note_transport("ui")
-    telemetry.record("cli", "image t2i", [], "0", 3.0)
-    report = _report()
-    assert report["transports"] == {"ui": 1}
-
-
-def test_a_transport_outside_the_enum_is_other(tmp_home: Path) -> None:
-    telemetry.note_transport("custom-grpc")
-    telemetry.record("cli", "image t2i", [], "0", 3.0)
-    report = _report()
-    assert report["transports"] == {"other": 1}
-
-
-def test_an_unlisted_transport_counts_other(tmp_home: Path) -> None:
-    telemetry.note_transport("direct_http")  # a raw transport name never reaches the totals
-    telemetry.record("cli", "image t2i", [], "0", 3.0)
-    report = _report()
-    assert report["transports"] == {"other": 1}
-
-
 def test_the_worker_flushes_a_queued_job_s_facts(tmp_home: Path) -> None:
     telemetry.note_engine("playwright")
     telemetry.note_host("migrated")

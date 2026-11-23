@@ -53,22 +53,22 @@ DB_FILE = "telemetry.db"
 OFF_FILE = "telemetry.off"
 CONSENT_FILE = "telemetry.consent"
 SCHEMA = 1
-NOTICE_VERSION = 4
+NOTICE_VERSION = 3
 NOTICE_TEXT = (
     "gflow sends weekly usage totals to improve it, and we share overall figures publicly and "
     "with\n"
-    "sponsors. Commands, flag names, models, browser engine, image transport, the Flow site used,\n"
-    "error codes, and your country as a total. No ID, prompts, paths or account details. Each\n"
-    "report is added to totals and discarded.\n"
+    "sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, and\n"
+    "your country as a total. No ID, prompts, paths or account details. Each report is added to\n"
+    "totals and discarded.\n"
     "Turn it off: gflow telemetry off, or set GFLOW_CLI_TELEMETRY=0\n"
     "See exactly what is sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
 )
 NOTICE_TEXT_CONSENT = (
     "gflow can send weekly usage totals to help improve it; overall figures are shared publicly "
     "and "
-    "with sponsors. Commands, flag names, models, browser engine, image transport, the Flow site "
-    "used, error codes, and your country as a total. No ID, prompts, paths or account details. "
-    "Each report is added to totals and discarded.\n"
+    "with sponsors. Commands, flag names, models, browser engine, the Flow site used, error codes, "
+    "and your country as a total. No ID, prompts, paths or account details. Each report is "
+    "added to totals and discarded.\n"
     "In your region nothing is sent unless you agree: gflow telemetry on (undo: gflow telemetry "
     "off)\n"
     "See exactly what would be sent: gflow telemetry show. Full notice: gflow docs TELEMETRY"
@@ -450,7 +450,6 @@ _PROCESS_FACTS: dict[str, str] = {}
 _RUN_FACTS: ContextVar[dict[str, str] | None] = ContextVar("gflow_run_facts", default=None)
 _ENGINES = frozenset({"playwright", "patchright"})
 _HOSTS = {"labs": "labs", "migrated": "flow"}
-_TRANSPORTS = frozenset({"direct", "ui"})
 
 
 def _facts() -> dict[str, str]:
@@ -480,23 +479,14 @@ def note_host(kind: str | None) -> None:
         _facts()["host"] = _HOSTS[kind]
 
 
-def note_transport(kind: str) -> None:
-    """Note the image transport used (closed enum: direct, ui; anything else is ``other``)."""
-    _facts()["transport"] = kind if kind in _TRANSPORTS else "other"
-
-
 def _take_run_facts() -> list[tuple[str, str]]:
     """The noted facts as counter keys, cleared so the next run starts empty."""
     facts = _facts()
     noted = dict(facts)  # snapshot, then clear: a concurrent clear cannot raise here
     facts.clear()  # a host noted without a launch must not carry into a later run
-    out: list[tuple[str, str]] = []
-    if "engine" in noted:
-        out.append(("engine", noted["engine"]))
-        out.append(("host", noted.get("host", "unknown")))
-    if "transport" in noted:
-        out.append(("transport", noted["transport"]))
-    return out
+    if "engine" not in noted:
+        return []
+    return [("engine", noted["engine"]), ("host", noted.get("host", "unknown"))]
 
 
 def flush_run_facts(surface: Literal["cli", "mcp"]) -> None:
@@ -943,7 +933,6 @@ def _report_counter_targets() -> dict[str, Any]:
         "mcp_clients": {},
         "engines": {},
         "hosts": {},
-        "transports": {},
         "tools": tools,
         "nested": {"flag": flags, "exit": exits, "duration": durations, "tool": tools},
     }
@@ -990,15 +979,8 @@ def _add_scalar_counter(
     elif kind == "crash":
         values = targets["crashes"].setdefault(surface, {})
         values[key] = values.get(key, 0) + count
-    elif kind in ("client", "engine", "host", "transport"):
-        values = targets[
-            {
-                "client": "mcp_clients",
-                "engine": "engines",
-                "host": "hosts",
-                "transport": "transports",
-            }[kind]
-        ]
+    elif kind in ("client", "engine", "host"):
+        values = targets[{"client": "mcp_clients", "engine": "engines", "host": "hosts"}[kind]]
         values[key] = values.get(key, 0) + count
 
 
@@ -1123,5 +1105,5 @@ def build_report(week: str) -> dict[str, object]:
         "crashes": counters["crashes"],
         "tools": counters["tools"],
         # Sent only when non-empty: an endpoint older than #1326 rejects the keys.
-        **{k: counters[k] for k in ("engines", "hosts", "transports") if counters[k]},
+        **{k: counters[k] for k in ("engines", "hosts") if counters[k]},
     }

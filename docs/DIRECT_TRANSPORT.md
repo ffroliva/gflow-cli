@@ -29,14 +29,14 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 or 2 | yes | a live two-image generation in one request |
-| One `--ref` to an image already in the project (with its display name) | yes | a live generation |
+| One `--ref` to an image already in the project (with its display name), not from a local file | yes | a live generation |
 | One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
 | Count 3 or 4 | no | not sent directly |
 | Several refs, several characters, a ref plus a character | no | not captured |
-| A local-file ref (`--ref ./photo.png`, needs an upload) | no | upload not ported |
+| A ref that came from a local file (`--ref ./photo.png`) | no | the UI path re-uploads a missing asset; a direct request cannot |
 | A bare `@Name` mention | no | the request carries no character id to send |
-| Agent-mode instructions | no | not captured |
+| Agent-mode instructions, or `--ui-mode agentic` | no | not captured |
 | A configured proxy (gflow's, the environment's or the OS's) | no | the browser and the request could leave by different routes |
 
 ## Failure behaviour
@@ -44,19 +44,20 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | What happens | Before the request is sent? | Result |
 |---|---|---|
 | The browser's cookies, the session tokens or the reCAPTCHA mint are unavailable | yes | the same request runs on `ui_automation` |
-| The connection cannot be opened | yes | the same request runs on `ui_automation` |
-| Flow answers HTTP 403 | no, but Flow refused it | the same request runs on `ui_automation` |
+| The connection cannot be opened (or opening it timed out) | yes | the same request runs on `ui_automation` |
+| The account is served on labs.google, or `GFLOW_CLI_FLOW_HOST=labs.google` | yes | the same request runs on `ui_automation` |
+| Flow answers a redirect, HTTP 401 or HTTP 403 | no, but Flow accepted nothing | the same request runs on `ui_automation` |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
 
-A sent request is never retried. A reCAPTCHA mint is retried for up to 10 seconds while the
-page loads its reCAPTCHA script, because a mint spends nothing.
+A sent request is never retried. Every rejected reply drops the cached session token, so a
+stale one cannot stick in a long-running MCP server or worker. A reCAPTCHA mint is retried
+for up to 10 seconds while the page loads its reCAPTCHA script, because a mint spends
+nothing. The page is parked after every direct run, as after a UI run.
 
 ## What it records
 
 - Each image's catalog row carries `"transport": "direct_http"` in its `metadata_json`.
-- The weekly usage report counts image generations by transport (`direct`, `ui`): see
-  [TELEMETRY.md](TELEMETRY.md).
 - Log events: `direct.frame_built`, `direct.image_post` (status, `mint_ms`, `post_ms`,
   `total_ms`) and `direct.fallback_to_ui` (reason). Set `GFLOW_CLI_LOG_LEVEL=INFO` to see
   them. Tokens, cookies, prompts and signed URLs are never logged.

@@ -274,6 +274,11 @@ async def _shell_tokens(
 shell_tokens = _shell_tokens
 
 
+def forget_tokens(profile_dir: Path) -> None:
+    """Drop this profile's cached shell tokens: a rejected POST may mean a stale ``at``."""
+    _tokens.pop(profile_dir, None)
+
+
 async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     """``read_cookies_for`` on a daemon thread, bounded by ``_TOTAL_S``.
 

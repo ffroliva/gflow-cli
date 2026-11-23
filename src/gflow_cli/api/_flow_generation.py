@@ -15,7 +15,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 import structlog
 
-from gflow_cli import telemetry
 from gflow_cli.api import routes
 from gflow_cli.api._engine import (
     mint_evaluate_kwargs,
@@ -564,9 +563,6 @@ class GenerationSurface(WorkspaceSurface):
                     "running the command again."
                 ),
             ) from exc
-        telemetry.note_transport(
-            "direct" if any(img.transport == "direct_http" for img in images) else "ui"
-        )
         if not images:
             raise ContentPolicyError(
                 detail="empty media[]",

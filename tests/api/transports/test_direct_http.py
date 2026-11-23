@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -107,7 +108,8 @@ def _valid_ogiz0b_text() -> str:
 def _make_fake_page(url: str = "https://flow.google.com/project/proj-123") -> MagicMock:
     page = MagicMock()
     page.url = url
-    page.goto = AsyncMock()
+    # Like Playwright: a goto moves page.url (the served host is read after navigating).
+    page.goto = AsyncMock(side_effect=lambda target, **_: setattr(page, "url", target))
     page.context = MagicMock()
     page.context.cookies = AsyncMock(return_value=[{"name": "SID", "value": "test_sid"}])
     return page
@@ -529,7 +531,11 @@ async def test_direct_http_page_navigates_to_project_when_needed(
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="a blue cup")
     await transport.generate_images(project_id="proj-123", request=req)
-    transport._page.goto.assert_awaited_once_with("https://flow.google.com/project/proj-123")
+    # The first navigation is the mint's; the park after the run is the second.
+    assert (
+        transport._page.goto.await_args_list[0].args[0]
+        == "https://flow.google.com/project/proj-123"
+    )
 
 
 @pytest.mark.asyncio
@@ -816,3 +822,190 @@ async def test_direct_http_sends_the_character_pair(
     req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
     await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
+
+
+# --- Review fix round (code-review xhigh + ponytail-review xhigh, 2026-11-23) ----------
+
+
+def _shell_and(post: httpx.Response | Exception) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        if isinstance(post, Exception):
+            raise post
+        return post
+
+    return httpx.MockTransport(handler)
+
+
+def _watch_ui(transport: DirectHttpTransport) -> list[bool]:
+    calls: list[bool] = []
+
+    async def ui(*_: Any, **__: Any) -> list[GeneratedImage]:
+        calls.append(True)
+        return []
+
+    transport._generate_images_locked = ui  # type: ignore[method-assign]
+    return calls
+
+
+def test_a_character_name_without_an_id_is_not_served() -> None:
+    """CR-A: names with no ids crashed in zip(strict=True) after the mint."""
+    req = GenerateImageRequest(prompt="x", reference_entity_names=("Bob",))
+    assert direct_can_serve(req) is False
+
+
+def test_agentic_ui_mode_is_not_served() -> None:
+    """PR-4: --ui-mode agentic would have been sent as a classic frame."""
+    from gflow_cli.config import UiMode
+
+    assert direct_can_serve(GenerateImageRequest(prompt="x", ui_mode=UiMode.AGENTIC)) is False
+
+
+def test_a_reference_from_a_local_file_keeps_the_ui_path() -> None:
+    """CR-I: the UI re-uploads a missing local-file asset (#772); a direct POST cannot."""
+    ref = replace(_IN_PROJECT, local_path="face.png", local_sha256="0" * 64)
+    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(ref,))) is False
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_post_drops_the_cached_shell_tokens(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    """CR-B: a stale at stuck in a long-lived process failed every later direct job."""
+    transport._http_transport = _shell_and(httpx.Response(500))
+    _watch_ui(transport)
+    with pytest.raises(NetworkError):
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
+        )
+    assert transport._profile_dir not in flow_wire._tokens
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [httpx.ConnectTimeout("t"), httpx.PoolTimeout("t")])
+async def test_a_connection_that_never_opened_falls_back(
+    transport: DirectHttpTransport, mock_mint_and_body: None, exc: Exception
+) -> None:
+    """CR-D: ConnectTimeout is not a ConnectError; nothing was sent, so no reconcile."""
+    transport._http_transport = _shell_and(exc)
+    ui = _watch_ui(transport)
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
+    assert ui == [True]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [302, 401])
+async def test_a_redirect_or_401_falls_back_instead_of_reconcile(
+    transport: DirectHttpTransport, mock_mint_and_body: None, status: int
+) -> None:
+    """CR-J: Flow accepted nothing; telling the user to check for an image was wrong."""
+    transport._http_transport = _shell_and(httpx.Response(status))
+    ui = _watch_ui(transport)
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
+    assert ui == [True]
+
+
+@pytest.mark.asyncio
+async def test_the_page_is_parked_after_a_direct_run(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    """CR-E / PR-3: a mounted composer must not leak into the next request."""
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    park = AsyncMock()
+    transport._park_composer_page = park  # type: ignore[method-assign]
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
+    park.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_no_proxy_alone_does_not_disable_the_direct_path(
+    transport: DirectHttpTransport, mock_mint_and_body: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-F: getproxies() returns a 'no' key when only NO_PROXY is set."""
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"no": "localhost"})
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    ui = _watch_ui(transport)
+    images = await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    )
+    assert ui == []
+    assert images[0].transport == "direct_http"
+
+
+@pytest.mark.asyncio
+async def test_an_account_served_labs_falls_back_before_any_post(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    """CR-G: under flow_host=auto the old route check passed every URL."""
+    page = transport._page
+    assert page is not None
+    page.url = "about:blank"
+    page.goto = AsyncMock(
+        side_effect=lambda *_a, **_k: setattr(page, "url", "https://labs.google/fx/tools/flow")
+    )
+    posts: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(True)
+        return httpx.Response(200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid"</html>')
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui = _watch_ui(transport)
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
+    assert ui == [True]
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_a_mint_that_never_settles_is_bounded(
+    transport: DirectHttpTransport, mock_mint_and_body: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-K: one evaluate whose promise never settles hung while holding the lock."""
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._MINT_BUDGET_S", 0.2)
+
+    async def never(*_: Any, **__: Any) -> str:
+        await asyncio.sleep(3600)
+        return ""
+
+    monkeypatch.setattr("gflow_cli.api.recaptcha.TokenMinter.mint", never)
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    ui = _watch_ui(transport)
+    await asyncio.wait_for(
+        transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x")),
+        timeout=5,
+    )
+    assert ui == [True]
+
+
+@pytest.mark.asyncio
+async def test_cookies_are_matched_by_domain_not_by_a_url_filter(
+    transport: DirectHttpTransport, mock_mint_and_body: None
+) -> None:
+    """CR-L: a URL filter also drops path-scoped cookies (#222)."""
+    page = transport._page
+    assert page is not None
+    page.context.cookies = AsyncMock(
+        return_value=[
+            {"name": "SID", "value": "a", "domain": ".google.com", "path": "/"},
+            {"name": "XS", "value": "b", "domain": "flow.google.com", "path": "/_/"},
+            {"name": "OTHER", "value": "c", "domain": "example.com", "path": "/"},
+        ]
+    )
+    sent: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("cookie", ""))
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
+    assert sent[-1] == "SID=a; XS=b"
+    page.context.cookies.assert_awaited_once_with()
