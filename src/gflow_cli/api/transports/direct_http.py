@@ -129,7 +129,7 @@ def _characters_measured(request: GenerateImageRequest) -> bool:
 
 async def _resolve_character(
     page: Page, project_id: str, request: GenerateImageRequest
-) -> tuple[tuple[str, str], ...]:
+) -> tuple[str, str]:
     """Read path: the ``(entity_id, name)`` pair the frame carries, as the project holds it.
 
     Both forms are checked against Flow's own project reply (``read_project``, which also
@@ -142,8 +142,6 @@ async def _resolve_character(
     without it Flow refused an id-carrying request twice (exit 10, 2026-11-23).
     """
     names = request.reference_entity_names
-    if not names:
-        return ()
     try:
         # Bounded: a slow read must fall back, not hold the generate lock for minutes.
         # One outer deadline: read_project's own budget is per attempt, and it retries.
@@ -161,7 +159,7 @@ async def _resolve_character(
     if len(matches) != 1:
         raise _DirectFallbackError(f"character_matches:{len(matches)}")
     log.info("direct.character_resolved", source="project_read")
-    return ((matches[0].entity_id, matches[0].display_name),)
+    return (matches[0].entity_id, matches[0].display_name)
 
 
 class _DirectFallbackError(Exception):
@@ -334,7 +332,11 @@ async def run_direct_images(
     headers = await _session_headers(page, profile_dir)
     async with _client(http_transport) as client:
         tokens = await _shell(client, profile_dir, headers)
-        characters = await _resolve_character(page, project_id, request)
+        characters = (
+            (await _resolve_character(page, project_id, request),)
+            if request.reference_entity_names
+            else ()
+        )
         mint_started = time.perf_counter()
         token = await _mint(page, project_id, _SUBMIT[1])
         mint_ms = int((time.perf_counter() - mint_started) * 1000)
