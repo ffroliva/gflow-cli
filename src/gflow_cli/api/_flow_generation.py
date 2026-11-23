@@ -15,6 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import structlog
 
+from gflow_cli import telemetry
 from gflow_cli.api import routes
 from gflow_cli.api._engine import (
     mint_evaluate_kwargs,
@@ -569,6 +570,9 @@ class GenerationSurface(WorkspaceSurface):
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        # getattr: a caller-owned transport may return image objects without the field.
+        direct = any(getattr(img, "transport", None) == "direct_http" for img in images)
+        telemetry.note_transport("direct" if direct else "ui")
         if on_checkpoint is not None:
             on_checkpoint(
                 GenerationCheckpoint(
