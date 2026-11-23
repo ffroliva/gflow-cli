@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Burned-in captions wrap text that has no spaces to break at ([#1446](https://github.com/ffroliva/gflow-cli/issues/1446)).** `gflow video captions` and `gflow_video_captions` only broke lines at spaces, so Chinese or Japanese text, or a long URL, stayed on one line and ran off the right edge of the frame. A token wider than the line is now broken between characters, and closing punctuation is kept off the start of a line. Text with spaces wraps as before.
 - **A new-project button that will not take the click on `flow.google.com` is exit 23, not a crash ([#1434](https://github.com/ffroliva/gflow-cli/issues/1434)).** Generating without `--project` creates a project first. When the projects page's button rendered but the click timed out, Playwright's timeout escaped as an unhandled error (exit 1). gflow now checks whether the create request left the page: if it did not, the run stops with exit 23 and `charged: no`, saying no create request was sent and suggesting `--project` (MCP `project`); if it did, Flow may have made the project, so gflow waits for Flow's reply or reads the new project back, and reports exit 7 (not retryable) only if neither confirms it.
 
 ## [0.105.1] — 2026-11-22
