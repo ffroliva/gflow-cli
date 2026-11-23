@@ -737,3 +737,35 @@ def test_direct_can_serve_one_in_project_reference() -> None:
 )
 def test_direct_can_serve_refuses_unmeasured_reference_shapes(kwargs: dict[str, object]) -> None:
     assert direct_can_serve(GenerateImageRequest(prompt="x", **kwargs)) is False  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_mint_on_a_page_still_loading_recaptcha_is_retried_not_dropped(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live 2026-11-23: an i2i with --project navigates to the project and mints at once;
+    grecaptcha.enterprise is not loaded yet, and the run fell back to the UI."""
+    from gflow_cli.errors import RecaptchaError
+
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._MINT_RETRY_S", 0.0)
+    mint = AsyncMock(side_effect=[RecaptchaError("grecaptcha.enterprise not loaded"), "tok"])
+    monkeypatch.setattr("gflow_cli.api.recaptcha.TokenMinter.mint", mint)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        MagicMock(return_value="f.req=mock_body&at=at-x&"),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    transport._page.url = "about:blank"  # type: ignore[union-attr]
+    images = await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    )
+    assert images[0].transport == "direct_http"
+    assert mint.await_count == 2

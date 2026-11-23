@@ -90,3 +90,38 @@ def test_a_model_with_no_measured_wire_name_routes_to_the_ui_transport(
     assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
     _saved(tmp_path / "pro.jpg")
     assert _image_transports(e2e_env) == [None]
+
+
+def test_an_in_project_reference_is_generated_by_the_direct_transport(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """T2.1: an i2i whose --ref is an image this project already holds goes direct."""
+    first = _t2i(e2e_env, tmp_path / "source.jpg")
+    assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
+        media_id, project_id = db.execute(
+            "SELECT flow_media_id, flow_project_id FROM assets WHERE kind = 'image'"
+        ).fetchone()
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "image",
+            "i2i",
+            "the same scene at night",
+            "--ref",
+            media_id,
+            "--project",
+            project_id,
+            "--out-file",
+            str(tmp_path / "night.jpg"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env | {"GFLOW_CLI_TRANSPORT": "direct_http"},
+    )
+    assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
+    _saved(tmp_path / "night.jpg")
+    assert _image_transports(e2e_env) == ["direct_http", "direct_http"]

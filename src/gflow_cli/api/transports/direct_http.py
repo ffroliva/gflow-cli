@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import time
 import uuid
@@ -23,7 +24,7 @@ from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings
-from gflow_cli.errors import NetworkError
+from gflow_cli.errors import NetworkError, RecaptchaError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,6 +45,8 @@ _WIRE_MODEL: dict[Model, str] = {Model.NARWHAL: "BELUGA"}
 # Counts measured on the direct path (one POST with two entries returned two images).
 _MAX_DIRECT_COUNT = 2
 _ORIGIN = "https://flow.google.com"
+_MINT_BUDGET_S = 10.0  # how long a freshly navigated page gets to load reCAPTCHA
+_MINT_RETRY_S = 0.5
 _RECONCILE_HINT = (
     "Flow may have accepted this image request before the error, so gflow did not resend "
     "it. Check the project in Flow for the new image before running the command again."
@@ -125,13 +128,25 @@ async def _shell(
 
 
 async def _mint(page: Page, project_id: str) -> str:
-    """The single browser step: an IMAGE_GENERATION token minted on the project page."""
+    """The single browser step: an IMAGE_GENERATION token minted on the project page.
+
+    Right after a navigation the enterprise script is not loaded yet and the mint raises
+    ``RecaptchaError`` (measured 2026-11-23 on an i2i run with ``--project``). A mint spends
+    nothing, so it is retried until the script answers or the budget runs out.
+    """
     target = f"{_ORIGIN}/project/{project_id}"
     try:
         if not page.url.startswith(target):
             await page.goto(target)
         minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
-        return await minter.mint("IMAGE_GENERATION")
+        deadline = time.monotonic() + _MINT_BUDGET_S
+        while True:
+            try:
+                return await minter.mint("IMAGE_GENERATION")
+            except RecaptchaError:
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(_MINT_RETRY_S)
     except Exception as exc:
         raise _DirectFallbackError(f"mint_failure:{type(exc).__name__}") from exc
 
