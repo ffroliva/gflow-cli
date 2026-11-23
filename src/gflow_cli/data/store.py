@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sqlite3
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -10,6 +12,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Self
 
 from gflow_cli.errors import DataMigrationError, DataStoreError
+from gflow_cli.winsec import ensure_profile_hardened
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -203,6 +206,32 @@ def inspect_schema(path: Path) -> SchemaInspection:
     )
 
 
+def _restrict_db_permissions(path: Path) -> None:
+    """Best-effort user-only permissions for the catalog DB (#1437).
+
+    POSIX: parent directory ``0o700``, DB file ``0o600``, plus ``0o600`` on
+    any WAL/SHM sidecars present at open time. Windows: the profile-directory
+    DACL hardening from :mod:`gflow_cli.winsec` (marker-gated, no-op off
+    Windows). Runs on every open, so databases created before this fix get
+    tightened too. Never raises: hardening must not break the open.
+    """
+    if sys.platform == "win32":
+        ensure_profile_hardened(path.parent)
+        return
+    if os.name != "posix":
+        return
+    for target, mode in (
+        (path.parent, 0o700),
+        (path, 0o600),
+        (path.with_name(path.name + "-wal"), 0o600),
+        (path.with_name(path.name + "-shm"), 0o600),
+    ):
+        try:
+            os.chmod(target, mode)
+        except OSError:
+            continue
+
+
 class DataStore:
     def __init__(self, conn: sqlite3.Connection, path: Path) -> None:
         self.conn = conn
@@ -212,6 +241,7 @@ class DataStore:
     def open(cls, path: Path) -> DataStore:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            _restrict_db_permissions(path)
             conn = sqlite3.connect(path, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
@@ -219,6 +249,7 @@ class DataStore:
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
             store = cls(conn=conn, path=path)
             store.apply_migrations()
+            _restrict_db_permissions(path)
             return store
         except DataMigrationError:
             raise

@@ -8,7 +8,10 @@ without ever calling ``apply_migrations``.
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -158,3 +161,47 @@ def test_inspect_schema_never_migrates(tmp_path: Path) -> None:
 def test_inspect_schema_missing_db_raises_datastore_error(tmp_path: Path) -> None:
     with pytest.raises(DataStoreError):
         inspect_schema(tmp_path / "absent.db")
+
+
+# ---------------------------------------------------------------------------
+# DataStore.open permissions (#1437)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits only")
+def test_open_creates_db_with_user_only_permissions(tmp_path: Path) -> None:
+    """A fresh DB lands 0o600 inside a 0o700 directory, even under umask 022."""
+    os.chmod(tmp_path, 0o755)
+    db = tmp_path / "store.db"
+    with DataStore.open(db):
+        pass
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    assert stat.S_IMODE(db.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits only")
+def test_open_tightens_existing_loose_db(tmp_path: Path) -> None:
+    """First open after the fix tightens a pre-existing world-readable DB."""
+    db = tmp_path / "store.db"
+    with DataStore.open(db):
+        pass
+    os.chmod(tmp_path, 0o755)
+    os.chmod(db, 0o644)
+    with DataStore.open(db):
+        pass
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
+    assert stat.S_IMODE(db.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits only")
+def test_open_tightens_wal_sidecar(tmp_path: Path) -> None:
+    """The WAL sidecar created by migration writes is 0o600 while open."""
+    db = tmp_path / "store.db"
+    with DataStore.open(db) as store:
+        store.conn.execute(
+            "INSERT INTO profiles(name, first_seen_at) VALUES ('perm-probe',"
+            " '2026-01-01T00:00:00.000Z')"
+        )
+        wal = db.with_name(db.name + "-wal")
+        assert wal.exists()
+        assert stat.S_IMODE(wal.stat().st_mode) == 0o600
