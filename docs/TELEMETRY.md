@@ -35,7 +35,7 @@ counts.
 | `crashes` | Counts of code-only crash fingerprints by surface. A fingerprint contains exception class names, up to three gflow-cli function names, and a third-party package marker where relevant. |
 | `engines` | Counts of generation, project and catalog commands and queued jobs that selected a browser engine, by engine: `playwright`, `patchright`, or `other`. A run is counted when the engine is selected, so a launch that then fails (a missing patchright install, a locked profile) still counts, which is what sizes an engine-specific failure. `gflow auth` commands and runs that launch no browser are not counted. |
 | `hosts` | For the same runs, the Flow site that served them, as observed from the page address when a generation is routed: `labs` (labs.google), `flow` (flow.google.com), or `unknown` when the run routed no generation (for example a credits, project or character read, or a run that failed first). It records which site served a run and says nothing about what that site supports. |
-| `transports` | Counts of image generations by transport: `direct` (direct HTTP), `ui` (UI automation), or `other`. Runs that noted no transport count as `unknown`. |
+| `transports` | Counts of image generations by transport: `direct` (direct HTTP), `ui` (UI automation), or `other`. A run that generated no image adds nothing to this map. |
 | `tools` | Counts by packaged prompt-tool name and whether it expanded or left the prompt unchanged. Custom tools, including tools that shadow a packaged name, are counted only as `custom`. |
 
 ## What is never sent
