@@ -208,3 +208,60 @@ def test_a_local_file_reference_is_uploaded_then_generated_directly(
     assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
     _saved(tmp_path / "winter.jpg")
     assert _image_transports(e2e_env)[-1] == "direct_http"
+
+
+@pytest.mark.skipif(
+    os.environ.get("GFLOW_CLI_E2E_RUN_CHARACTER") != "1",
+    reason="creates a Flow character (one image generation, zero credits); opt in with "
+    "GFLOW_CLI_E2E_RUN_CHARACTER=1",
+)
+def test_a_bare_mention_is_generated_by_the_direct_transport(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """T2.2: "@Name ..." reaches the transport as the name alone; its id is read from the
+    project and the image goes direct."""
+    first = _t2i(e2e_env, tmp_path / "face.jpg")
+    assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
+        (project_id,) = db.execute("SELECT flow_project_id FROM assets").fetchone()
+    made = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            "Bosun",
+            "--image",
+            str(_saved(tmp_path / "face.jpg")),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env,
+    )
+    assert made.returncode == 0, f"gflow character create failed (exit {made.returncode})"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "image",
+            "t2i",
+            "@Bosun on a pier at sunset",
+            "--project",
+            project_id,
+            "--out-file",
+            str(tmp_path / "pier.jpg"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env | {"GFLOW_CLI_TRANSPORT": "direct_http"},
+    )
+    assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
+    _saved(tmp_path / "pier.jpg")
+    assert _image_transports(e2e_env)[-1] == "direct_http"

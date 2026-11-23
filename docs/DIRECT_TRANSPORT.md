@@ -32,10 +32,11 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | One `--ref` to an image already in the project (with its display name) | yes | a live generation |
 | One `--ref ./photo.png` (a local file) | yes, after the upload | the upload runs on the UI transport, then the generation goes direct; a live generation |
 | One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
+| One `@Name` mention of a character in the project | yes, when exactly one character has that name | the id is read from the project; a live generation |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
 | Count 3 or 4 | no | not sent directly |
 | Several refs, several characters, a ref plus a character | no | not captured |
-| A bare `@Name` mention | no | the request carries no character id to send |
+| A mention whose name matches no character, or several | no | the UI picker decides |
 | Agent-mode instructions, or `--ui-mode agentic` | no | not captured |
 | A configured proxy (gflow's, the environment's or the OS's) | no | the browser and the request could leave by different routes |
 

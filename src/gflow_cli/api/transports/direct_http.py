@@ -21,6 +21,7 @@ from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import flow_host_kind
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
+from gflow_cli.api.transports.migrated_character import read_project
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import NetworkError, RecaptchaError
@@ -83,15 +84,44 @@ def _references_measured(request: GenerateImageRequest) -> bool:
 
 
 def _characters_measured(request: GenerateImageRequest) -> bool:
-    """No character, or the one measured shape: a single entity id with its name (the chip
-    needs both), no image reference, one output image. A bare ``@Name`` mention carries a
-    name but no id here (the UI picker resolves it in the browser), so it stays on the UI."""
+    """No character, or the one measured shape: a single named character, no image
+    reference, one output image. A bare ``@Name`` mention arrives as the name alone; the
+    direct path looks its id up in the project before sending (:func:`_resolve_character`)."""
     ids, names = request.reference_entities, request.reference_entity_names
     if not ids and not names:
         return True
     return (
-        len(ids) == 1 and len(names) == 1 and bool(names[0]) and not request.refs
-    ) and request.count == 1
+        len(ids) <= 1
+        and len(names) == 1
+        and bool(names[0])
+        and not request.refs
+        and request.count == 1
+    )
+
+
+async def _resolve_character(
+    page: Page, project_id: str, request: GenerateImageRequest
+) -> tuple[tuple[str, str], ...]:
+    """Read path: the ``(entity_id, name)`` pair the frame carries.
+
+    A request with the id already has it. A bare mention carries only the name: the id is
+    read from Flow's own project reply (``read_project``, which also lands the page on the
+    project for the mint). Anything but exactly one character with that exact name falls
+    back before any POST, as the UI picker would refuse it.
+    """
+    names = request.reference_entity_names
+    if not names:
+        return ()
+    if request.reference_entities:
+        return ((request.reference_entities[0], names[0]),)
+    try:
+        project = await read_project(page, project_id)
+    except Exception as exc:
+        raise _DirectFallbackError(f"character_read:{type(exc).__name__}") from exc
+    matches = [c.entity_id for c in project.characters if c.display_name == names[0]]
+    if len(matches) != 1:
+        raise _DirectFallbackError(f"character_matches:{len(matches)}")
+    return ((matches[0], names[0]),)
 
 
 class _DirectFallbackError(Exception):
@@ -264,6 +294,7 @@ async def run_direct_images(
     headers = await _session_headers(page, profile_dir)
     async with _client(http_transport) as client:
         tokens = await _shell(client, profile_dir, headers)
+        characters = await _resolve_character(page, project_id, request)
         mint_started = time.perf_counter()
         token = await _mint(page, project_id)
         mint_ms = int((time.perf_counter() - mint_started) * 1000)
@@ -277,9 +308,7 @@ async def run_direct_images(
             entry_seeds=tuple(1 + secrets.randbelow(2**31 - 1) for _ in range(request.count)),
             aspect=request.aspect,
             references=tuple((ref.name, ref.display_name) for ref in request.refs),
-            characters=tuple(
-                zip(request.reference_entities, request.reference_entity_names, strict=True)
-            ),
+            characters=characters,
         )
         log.info(
             "direct.frame_built",

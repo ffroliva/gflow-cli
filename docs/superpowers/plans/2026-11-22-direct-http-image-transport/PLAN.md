@@ -415,8 +415,8 @@ No new runtime deps — `httpx` and `sqlite3` (stdlib) are already present.
 | T3.3 | Recorded by the image recorder from `GeneratedImage.transport`, not by `upsert_asset` (which never sees the transport) |
 | Live e2e | `tests/e2e/test_direct_image_e2e.py` (t2i, 16:9 x2, model routing, in-project I2I, character) and `test_direct_image_worker_e2e.py` (queued MCP path) pass on a `flow.google.com` profile |
 
-Not served directly yet: a bare `@Name` mention (the request carries no character id),
-count 3-4, several refs or characters, local-file refs (Phase 4), batch runs (`image_batch`
+A bare `@Name` mention is served: the id is read from the project's own reply.
+Not served directly yet: count 3-4, several refs or characters, local-file refs (Phase 4), batch runs (`image_batch`
 calls the UI transport's batch method). The weekly telemetry field (T3.1) is not in this change: it went out for every
 image user and needed a notice-version bump that stops EU/EEA uploads until re-consent,
 so it ships together with the endpoint change. T3.3 (per-image metadata) is in.

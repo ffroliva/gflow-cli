@@ -787,7 +787,7 @@ def test_direct_can_serve_one_named_character() -> None:
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"reference_entities": ("entity-1",)},  # a bare @Name mention: no name pair here
+        {"reference_entities": ("entity-1",)},  # an id with no name: the chip needs both
         {"reference_entities": ("entity-1",), "reference_entity_names": ("",)},
         {
             "reference_entities": ("entity-1", "entity-2"),
@@ -849,12 +849,6 @@ def _watch_ui(transport: DirectHttpTransport) -> list[bool]:
 
     transport._generate_images_locked = ui  # type: ignore[method-assign]
     return calls
-
-
-def test_a_character_name_without_an_id_is_not_served() -> None:
-    """CR-A: names with no ids crashed in zip(strict=True) after the mint."""
-    req = GenerateImageRequest(prompt="x", reference_entity_names=("Bob",))
-    assert direct_can_serve(req) is False
 
 
 def test_agentic_ui_mode_is_not_served() -> None:
@@ -1010,3 +1004,79 @@ async def test_cookies_are_matched_by_domain_not_by_a_url_filter(
     await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
     assert sent[-1] == "SID=a; XS=b"
     page.context.cookies.assert_awaited_once_with()
+
+
+# --- A bare @Name mention (T2.2): the name is resolved to the project's character id -----
+
+
+def _project_with(*names: str) -> Any:
+    from gflow_cli.api.character import Character
+    from gflow_cli.api.transports.migrated_character import ProjectRead
+
+    chars = tuple(
+        Character(
+            entity_id=f"entity-{i}",
+            display_name=name,
+            project_id="proj-123",
+            workflow_ids=(),
+            voice=None,
+            personality=None,
+            thumbnail_media_id=None,
+        )
+        for i, name in enumerate(names)
+    )
+    return ProjectRead(characters=chars, voices=())
+
+
+def test_a_bare_mention_name_is_served() -> None:
+    req = GenerateImageRequest(prompt="Skipper on a pier", reference_entity_names=("Skipper",))
+    assert direct_can_serve(req) is True
+
+
+@pytest.mark.asyncio
+async def test_a_bare_mention_is_resolved_to_the_project_character_id(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with("Mate", "Skipper")),
+    )
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    req = GenerateImageRequest(prompt="Skipper on a pier", reference_entity_names=("Skipper",))
+    images = await transport.generate_images(project_id="proj-123", request=req)
+    assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
+    assert images[0].transport == "direct_http"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("names", [(), ("Skipper", "Skipper")])
+async def test_a_mention_with_no_or_several_matches_falls_back_before_any_post(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, names: tuple[str, ...]
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with(*names)),
+    )
+    posts: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(True)
+        return httpx.Response(
+            200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+        )
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui = _watch_ui(transport)
+    req = GenerateImageRequest(prompt="Skipper on a pier", reference_entity_names=("Skipper",))
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui == [True]
+    assert posts == []
