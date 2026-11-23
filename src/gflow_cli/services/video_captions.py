@@ -615,7 +615,11 @@ def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str
             # the start of a line; the character before it moves down with it.
             for char in word:
                 if line and draw.textlength(line + char, font=font) > max_width:
-                    if char in _NO_LINE_START and len(line) > 1:
+                    if (
+                        char in _NO_LINE_START
+                        and len(line) > 1
+                        and draw.textlength(line[-1] + char, font=font) <= max_width
+                    ):
                         lines.append(line[:-1])
                         line = line[-1] + char
                     else:

@@ -694,6 +694,22 @@ def test_caption_wrap_keeps_closing_punctuation_off_the_line_start() -> None:
     assert _wrap_caption("一二三四，五六", font, draw, max_width) == ["一二三", "四，五六"]
 
 
+def test_caption_wrap_does_not_move_a_character_down_when_the_pair_is_too_wide() -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import _wrap_caption
+
+    draw = ImageDraw.Draw(Image.new("RGB", (400, 100)))
+    font = ImageFont.load_default(size=30)
+    # "iW" fits exactly, but "W，" is wider than the line: the comma starts the next line
+    # instead of carrying "W" down into a line wider than the frame.
+    max_width = draw.textlength("iW", font=font)
+    assert draw.textlength("W，", font=font) > max_width
+    lines = _wrap_caption("iW，", font, draw, max_width)
+    assert all(draw.textlength(line, font=font) <= max_width for line in lines)
+    assert "".join(lines) == "iW，"
+
+
 def test_resolve_video_source_accepts_local_and_verified_catalog_video(
     media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
