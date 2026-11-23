@@ -146,3 +146,18 @@ def test_no_reference_keeps_the_plain_prompt_document() -> None:
     _, inner, _ = _decode_body(_build())
     assert inner[1][0][2] is None
     assert inner[1][0][8] == [[["a fox"]]]
+
+
+def test_a_character_rides_slot_10_and_a_character_chip() -> None:
+    """Flow's own @Character submit, captured 2026-11-23: the entity id at entry[10], and a
+    character chip [null, [null, null, [id, name]]] ahead of the text (one leading space)."""
+    _, inner, _ = _decode_body(_build(characters=(("entity-1", "Skipper"),)))
+    entry = inner[1][0]
+    assert entry[10] == [["entity-1"]]
+    assert entry[2] is None
+    assert entry[8] == [[[None, [None, None, ["entity-1", "Skipper"]]], [" a fox"]]]
+
+
+def test_no_character_leaves_slot_10_empty() -> None:
+    _, inner, _ = _decode_body(_build())
+    assert inner[1][0][10] is None

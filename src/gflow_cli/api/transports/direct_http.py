@@ -63,7 +63,8 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
         request.model in _WIRE_MODEL
         and request.count <= _MAX_DIRECT_COUNT
         and _references_measured(request)
-        and not (request.ref_paths or request.reference_entities)
+        and _characters_measured(request)
+        and not request.ref_paths
         and not request.instructions
         and "@" not in request.prompt
     )
@@ -76,6 +77,22 @@ def _references_measured(request: GenerateImageRequest) -> bool:
         return True
     (ref, *more) = request.refs
     return not more and ref.in_project and bool(ref.display_name) and request.count == 1
+
+
+def _characters_measured(request: GenerateImageRequest) -> bool:
+    """No character, or the one measured shape: a single entity id with its name (the chip
+    needs both), no image reference, one output image. A bare ``@Name`` mention carries no
+    id here (the UI picker resolves it in the browser), so it stays on the UI transport."""
+    if not request.reference_entities:
+        return True
+    names = request.reference_entity_names
+    return (
+        len(request.reference_entities) == 1
+        and len(names) == 1
+        and bool(names[0])
+        and not request.refs
+        and request.count == 1
+    )
 
 
 class _DirectFallbackError(Exception):
@@ -240,6 +257,9 @@ class DirectImageHttpRunner:
                 entry_seeds=tuple(1 + secrets.randbelow(2**31 - 1) for _ in range(request.count)),
                 aspect=request.aspect,
                 references=tuple((ref.name, ref.display_name) for ref in request.refs),
+                characters=tuple(
+                    zip(request.reference_entities, request.reference_entity_names, strict=True)
+                ),
             )
             log.info(
                 "direct.frame_built",

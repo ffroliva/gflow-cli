@@ -41,6 +41,7 @@ def build_ogiz0b_body(
     entry_seeds: tuple[int, ...],
     aspect: Aspect = Aspect.PORTRAIT,
     references: tuple[tuple[str, str], ...] = (),
+    characters: tuple[tuple[str, str], ...] = (),
 ) -> str:
     """Return the form-encoded ``f.req`` + ``at`` body for one ``ogiZ0b`` POST.
 
@@ -48,24 +49,40 @@ def build_ogiz0b_body(
     images in one POST, measured 2026-11-22). ``references`` are in-project images as
     ``(media_id, display_name)``: Flow's own I2I submit carries each at ``entry[2]`` and
     as a chip ahead of the prompt text, which then starts with two spaces (captured
-    2026-11-22 with one reference).
+    2026-11-22 with one reference). ``characters`` are ``(entity_id, name)``: each at
+    ``entry[10]`` and as a character chip, the text then starting with one space (captured
+    2026-11-23 with one character). The two are never combined: that shape is unmeasured.
     """
     if not entry_seeds:
         msg = "entry_seeds must name at least one image"
         raise ValueError(msg)
     ctx: list[object] = [None, 22, None, None, None, project_id, None, None, None, None]
     ctx.append([recaptcha_token, 1])
+    if references and characters:
+        msg = "references and characters together are not a measured ogiZ0b shape"
+        raise ValueError(msg)
     media = [[media_id, None, None, None, 1] for media_id, _ in references] or None
-    document = (
-        [[[None, [[media_id, name] for media_id, name in references]], [f"  {prompt}"]]]
-        if references
-        else [[[prompt]]]
-    )
+    entities = [[entity_id] for entity_id, _ in characters] or None
+    document = _prompt_document(prompt, references, characters)
     entries = [
         [None, None, media, seed, _ASPECT_WIRE[aspect], model, None, ctx.copy(), document]
-        + [None, None, None]
+        + [None, entities, None]
         for seed in entry_seeds
     ]
     inner = [None, entries, 1, ctx, [batch_id]]
     f_req = json.dumps([[["ogiZ0b", json.dumps(inner, separators=(",", ":")), None, "generic"]]])
     return urlencode({"f.req": f_req, "at": at_token})
+
+
+def _prompt_document(
+    prompt: str,
+    references: tuple[tuple[str, str], ...],
+    characters: tuple[tuple[str, str], ...],
+) -> list[object]:
+    """``entry[8]``: the prompt as Flow's composer serialises it, chips first."""
+    if references:
+        return [[[None, [[media_id, name] for media_id, name in references]], [f"  {prompt}"]]]
+    if characters:
+        chips = [[None, None, [entity_id, name]] for entity_id, name in characters]
+        return [[[None, *chips], [f" {prompt}"]]]
+    return [[[prompt]]]

@@ -769,3 +769,50 @@ async def test_a_mint_on_a_page_still_loading_recaptcha_is_retried_not_dropped(
     )
     assert images[0].transport == "direct_http"
     assert mint.await_count == 2
+
+
+_SKIPPER = {"reference_entities": ("entity-1",), "reference_entity_names": ("Skipper",)}
+
+
+def test_direct_can_serve_one_named_character() -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", **_SKIPPER)) is True  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"reference_entities": ("entity-1",)},  # a bare @Name mention: no name pair here
+        {"reference_entities": ("entity-1",), "reference_entity_names": ("",)},
+        {
+            "reference_entities": ("entity-1", "entity-2"),
+            "reference_entity_names": ("Skipper", "Mate"),
+        },
+        {**_SKIPPER, "refs": (_IN_PROJECT,)},
+        {**_SKIPPER, "count": 2},
+    ],
+)
+def test_direct_can_serve_refuses_unmeasured_character_shapes(kwargs: dict[str, object]) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", **kwargs)) is False  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_direct_http_sends_the_character_pair(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        return httpx.Response(200, text=_valid_ogiz0b_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
