@@ -73,18 +73,13 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
 
 def _references_measured(request: GenerateImageRequest) -> bool:
     """No refs, or the one measured I2I shape: a single in-project image with a display
-    name (the chip needs it), one output image. A ref that came from a local file keeps the
-    UI path: there a missing asset is re-uploaded (#772), which the direct POST cannot do."""
+    name (the chip needs it), one output image. A local file is uploaded first (on the UI
+    transport) and arrives here as such a ref. local_path is not a signal: the CLI fills it
+    for every catalogued image, generated ones too."""
     if not request.refs:
         return True
     (ref, *more) = request.refs
-    return (
-        not more
-        and ref.in_project
-        and bool(ref.display_name)
-        and not ref.local_path
-        and request.count == 1
-    )
+    return not more and ref.in_project and bool(ref.display_name) and request.count == 1
 
 
 def _characters_measured(request: GenerateImageRequest) -> bool:

@@ -29,12 +29,12 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 or 2 | yes | a live two-image generation in one request |
-| One `--ref` to an image already in the project (with its display name), not from a local file | yes | a live generation |
+| One `--ref` to an image already in the project (with its display name) | yes | a live generation |
+| One `--ref ./photo.png` (a local file) | yes, after the upload | the upload runs on the UI transport, then the generation goes direct; a live generation |
 | One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
 | Count 3 or 4 | no | not sent directly |
 | Several refs, several characters, a ref plus a character | no | not captured |
-| A ref that came from a local file (`--ref ./photo.png`) | no | the UI path re-uploads a missing asset; a direct request cannot |
 | A bare `@Name` mention | no | the request carries no character id to send |
 | Agent-mode instructions, or `--ui-mode agentic` | no | not captured |
 | A configured proxy (gflow's, the environment's or the OS's) | no | the browser and the request could leave by different routes |
@@ -49,6 +49,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Flow answers a redirect, HTTP 401 or HTTP 403 | no, but Flow accepted nothing | the same request runs on `ui_automation` |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
+| A referenced image was deleted in Flow | no | **not measured**: the UI path re-uploads the local copy (#772); the direct path reports the error and does not |
 
 A sent request is never retried. Every rejected reply drops the cached session token, so a
 stale one cannot stick in a long-running MCP server or worker. A reCAPTCHA mint is retried
@@ -61,6 +62,13 @@ nothing. The page is parked after every direct run, as after a UI run.
 - Log events: `direct.frame_built`, `direct.image_post` (status, `mint_ms`, `post_ms`,
   `total_ms`) and `direct.fallback_to_ui` (reason). Set `GFLOW_CLI_LOG_LEVEL=INFO` to see
   them. Tokens, cookies, prompts and signed URLs are never logged.
+
+## Refusals observed
+
+On 2026-11-23 one direct run on the test profile ended in a WAF refusal (exit 10,
+`WafRejectionError`) after about 25 direct generations that day; the same request two
+minutes later went through. Which request drew it was not isolated. Flow refused it before
+generating, so nothing was billed, and gflow did not resend it.
 
 ## Speed
 

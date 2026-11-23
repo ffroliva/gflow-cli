@@ -864,10 +864,11 @@ def test_agentic_ui_mode_is_not_served() -> None:
     assert direct_can_serve(GenerateImageRequest(prompt="x", ui_mode=UiMode.AGENTIC)) is False
 
 
-def test_a_reference_from_a_local_file_keeps_the_ui_path() -> None:
-    """CR-I: the UI re-uploads a missing local-file asset (#772); a direct POST cannot."""
+def test_a_catalogued_reference_with_a_local_copy_is_still_served() -> None:
+    """The CLI fills local_path for EVERY catalogued image, generated ones too: refusing a
+    ref with a local copy sent every in-project i2i to the UI (live e2e, 2026-11-23)."""
     ref = replace(_IN_PROJECT, local_path="face.png", local_sha256="0" * 64)
-    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(ref,))) is False
+    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(ref,))) is True
 
 
 @pytest.mark.asyncio

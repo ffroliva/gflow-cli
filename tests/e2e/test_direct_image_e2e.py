@@ -175,3 +175,36 @@ def test_a_named_character_is_generated_by_the_direct_transport(
     assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
     _saved(tmp_path / "pier.jpg")
     assert _image_transports(e2e_env)[-1] == "direct_http"
+
+
+def test_a_local_file_reference_is_uploaded_then_generated_directly(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """--ref ./file: the upload runs on the UI transport, then the generation goes direct."""
+    first = _t2i(e2e_env, tmp_path / "local.jpg")
+    assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
+        (project_id,) = db.execute("SELECT flow_project_id FROM assets").fetchone()
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "image",
+            "i2i",
+            "the same scene in winter",
+            "--ref",
+            str(_saved(tmp_path / "local.jpg")),
+            "--project",
+            project_id,
+            "--out-file",
+            str(tmp_path / "winter.jpg"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env | {"GFLOW_CLI_TRANSPORT": "direct_http"},
+    )
+    assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
+    _saved(tmp_path / "winter.jpg")
+    assert _image_transports(e2e_env)[-1] == "direct_http"
