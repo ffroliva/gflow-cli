@@ -1622,3 +1622,68 @@ class TestImageInstructionsFlag:
 
         assert result.exit_code == 2, result.output
         assert "single-prompt" in result.output
+
+
+def test_image_batch_gflow_error_before_any_prompt_exits_with_its_code(tmp_path: Path) -> None:
+    """`image batch` on the migrated host exits 36 with the error's message instead of a
+    traceback and exit 1."""
+    from gflow_cli.cli import main
+    from gflow_cli.errors import FlowHostMigratedError
+
+    async def _raise(**_kwargs: object) -> list[object]:
+        raise FlowHostMigratedError(detail="Flow served the migrated flow.google.com frontend")
+
+    manifest = tmp_path / "prompts.tsv"
+    manifest.write_text("a red brick\na blue brick\n")
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "profile"),
+        patch("gflow_cli.cli_image.run_manifest_image_batch", side_effect=_raise),
+    ):
+        result = CliRunner().invoke(
+            main, ["image", "batch", str(manifest), "--out", str(tmp_path / "out")]
+        )
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == 36, result.output
+    assert "migrated flow.google.com frontend" in result.output
+
+
+def test_image_batch_partial_failure_lists_saved_images_then_exits(tmp_path: Path) -> None:
+    """A fail-fast stop after some prompts finished prints the saved paths and the error,
+    and exits with the error's code, instead of a traceback."""
+    from gflow_cli.cli import main
+    from gflow_cli.errors import BatchPartialError, exit_code_for
+    from gflow_cli.image_batch import BatchOutcome, BatchPromptItem
+
+    saved = tmp_path / "out" / "prompt_0_0.jpg"
+    error = BatchPartialError(
+        detail="prompt 2 failed",
+        partial_results=(
+            BatchOutcome(
+                index=0,
+                prompt=BatchPromptItem(text="a red brick"),
+                status="ok",
+                saved_paths=[saved],
+            ),
+        ),
+    )
+
+    async def _raise(**_kwargs: object) -> list[object]:
+        raise error
+
+    manifest = tmp_path / "prompts.tsv"
+    manifest.write_text("a red brick\na blue brick\n")
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "profile"),
+        patch("gflow_cli.cli_image.run_manifest_image_batch", side_effect=_raise),
+    ):
+        result = CliRunner(env={"COLUMNS": "400"}).invoke(
+            main, ["image", "batch", str(manifest), "--out", str(tmp_path / "out")]
+        )
+
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code == exit_code_for(error), result.output
+    assert "prompt_0_0.jpg" in result.output
+    assert "prompt 2 failed" in result.output
