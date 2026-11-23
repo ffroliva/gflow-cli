@@ -49,6 +49,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import os
 import secrets
 import sys
 import time
@@ -172,10 +173,13 @@ async def direct_once(
     dl: dict[str, Any] = {}
     if recs and recs[0].image_url:
         t2 = time.perf_counter()
-        async with httpx.AsyncClient(timeout=30.0, trust_env=False) as hx:
-            img = await hx.get(recs[0].image_url)
-        dl = {"dl_ms": _ms(t2), "dl_status": img.status_code, "dl_bytes": len(img.content),
-              "magic": img.content[:4].hex()}
+        try:  # a failed download must not lose the record of a generation that happened
+            async with httpx.AsyncClient(timeout=30.0, trust_env=False) as hx:
+                img = await hx.get(recs[0].image_url)
+            dl = {"dl_ms": _ms(t2), "dl_status": img.status_code,
+                  "dl_bytes": len(img.content), "magic": img.content[:4].hex()}
+        except httpx.HTTPError as exc:
+            dl = {"dl_ms": _ms(t2), "dl_error": type(exc).__name__}
     _log("direct", i=i, status=resp.status_code,
          verdict="GENERATED" if recs else ("REJECTED" if errors else "EMPTY"),
          images=len(recs), dims=[f"{r.dimensions[0]}x{r.dimensions[1]}" for r in recs],
@@ -211,8 +215,10 @@ async def capture(label: str, client: Any, project_id: str, **req_kw: Any) -> No
         # Run 2 measured: post_data is a strict utf-8 decode and raises on binary bodies.
         data = (req.post_data_buffer or b"").decode("utf-8", errors="replace")
         if _RPCID in req.url or _RPCID in data:
-            bodies.append({"url_rpcids": parse_qs(req.url.split("?", 1)[-1]).get("rpcids"),
-                           "data": data})
+            # The request event fires before interception, so on_request may hold it already.
+            if not any(b["data"] == data for b in bodies):
+                bodies.append({"url_rpcids": parse_qs(req.url.split("?", 1)[-1]).get("rpcids"),
+                               "data": data})
             await route.abort()
         else:
             await route.continue_()
@@ -261,13 +267,13 @@ async def main() -> None:
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--ui-n", type=int, default=10)
     ap.add_argument("--skip-captures", action="store_true")
-    ap.add_argument("--captures-only", action="store_true", help="skip G0.1/G0.2 ($0 run)")
+    ap.add_argument("--captures-only", action="store_true", help="skip G0.1/G0.2 (route-aborted captures cost $0; --capture-ref/--capture-mention spend image quota)")
     ap.add_argument("--project", default=None, help="reuse a project instead of creating one")
     ap.add_argument("--direct-entries", type=int, default=1, help="Phase 2: entries per POST")
     ap.add_argument("--direct-aspect", type=int, default=2, help="Phase 2: entry[4] value")
     ap.add_argument("--capture-aspects", default="", help="Phase 2: Aspect names, comma-separated")
-    ap.add_argument("--capture-ref", action="store_true", help="Phase 2: capture an in-project I2I")
-    ap.add_argument("--capture-mention", default="", help="Phase 2: capture an @Name mention")
+    ap.add_argument("--capture-ref", action="store_true", help="Phase 2: capture an in-project I2I (spends 2 images of daily quota: a source image, and the referenced submit reaches Flow)")
+    ap.add_argument("--capture-mention", default="", help="Phase 2: capture an @Name mention (spends 1 image: the referenced submit reaches Flow)")
     args = ap.parse_args()
     _FRAME.update(entries=args.direct_entries, aspect=args.direct_aspect)
 
@@ -275,6 +281,8 @@ async def main() -> None:
     out = default_out_path("spike_direct_image_gate0", ".jsonl")
     step("OUTPUT", str(out))
     try:
+        # The UI arms and captures must drive the UI transport whatever GFLOW_CLI_TRANSPORT says.
+        os.environ["GFLOW_CLI_TRANSPORT"] = "ui_automation"
         async with build_client(profile_dir, headless=False) as client:
             pid = args.project or (
                 await client.create_project(title="gflow gate0 direct-image spike")

@@ -80,7 +80,9 @@ def step_profile_served_flow(
     page.url = "https://flow.google.com/project/proj-bdd-1"
     page.goto = AsyncMock()
     page.context = MagicMock()
-    page.context.cookies = AsyncMock(return_value=[{"name": "SID", "value": "test_sid"}])
+    page.context.cookies = AsyncMock(
+        return_value=[{"name": "SID", "value": "test_sid", "domain": ".google.com", "path": "/"}]
+    )
 
     t = make_transport("direct_http")
     assert isinstance(t, DirectHttpTransport)

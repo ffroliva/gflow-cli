@@ -112,7 +112,9 @@ def _make_fake_page(url: str = "https://flow.google.com/project/proj-123") -> Ma
     # Like Playwright: a goto moves page.url (the served host is read after navigating).
     page.goto = AsyncMock(side_effect=lambda target, **_: setattr(page, "url", target))
     page.context = MagicMock()
-    page.context.cookies = AsyncMock(return_value=[{"name": "SID", "value": "test_sid"}])
+    page.context.cookies = AsyncMock(
+        return_value=[{"name": "SID", "value": "test_sid", "domain": ".google.com", "path": "/"}]
+    )
     return page
 
 
@@ -183,13 +185,11 @@ async def test_direct_http_happy_path(
 async def test_direct_http_unsupported_shape_falls_back_to_ui(
     transport: DirectHttpTransport, mock_mint_and_body: None
 ) -> None:
-    post_count = 0
+    calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal post_count
-        if request.method == "POST":
-            post_count += 1
-        return httpx.Response(200, text=_valid_ogiz0b_text())
+        calls.append(request.method)  # any request at all means selection came too late
+        raise AssertionError(f"unexpected {request.method} {request.url}")
 
     transport._http_transport = httpx.MockTransport(handler)
     ui_called = False
@@ -201,11 +201,12 @@ async def test_direct_http_unsupported_shape_falls_back_to_ui(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
-    req = GenerateImageRequest(prompt="a blue cup", count=2)
+    # A model with no measured wire name: refused by the selector, before any HTTP work.
+    req = GenerateImageRequest(prompt="a blue cup", model=Model.GEM_PIX_2)
     await transport.generate_images(project_id="proj-123", request=req)
 
     assert ui_called
-    assert post_count == 0
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -483,7 +484,7 @@ async def test_direct_http_no_profile_dir_falls_back(
 async def test_direct_http_route_not_migrated_falls_back(
     transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, mock_mint_and_body: None
 ) -> None:
-    monkeypatch.setattr(get_settings(), "flow_host", "labs")
+    monkeypatch.setattr(get_settings(), "flow_host", "labs.google")
     transport._page.url = "https://labs.google/fx/tools/flow"
     ui_called = False
 
@@ -989,6 +990,10 @@ async def test_cookies_are_matched_by_domain_not_by_a_url_filter(
             {"name": "SID", "value": "a", "domain": ".google.com", "path": "/"},
             {"name": "XS", "value": "b", "domain": "flow.google.com", "path": "/_/"},
             {"name": "OTHER", "value": "c", "domain": "example.com", "path": "/"},
+            # Suffix collisions a plain endswith() would accept (RFC 6265 5.1.3 refuses them).
+            {"name": "SUFFIX", "value": "d", "domain": ".le.com", "path": "/"},
+            {"name": "HOSTONLY", "value": "e", "domain": "le.com", "path": "/"},
+            {"name": "EMPTY", "value": "f", "domain": "", "path": "/"},
         ]
     )
     sent: list[str] = []

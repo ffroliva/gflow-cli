@@ -4,7 +4,7 @@
 **Branch:** `feature/direct-http-image-transport` (off `develop`)
 **Spike evidence:** `chore/spike-direct-image-with-browser-token` — 5 commits proving
 each component end-to-end. Findings doc:
-[`docs/superpowers/spikes/2026-11-22-direct-image-with-browser-token.md`](../spikes/2026-11-22-direct-image-with-browser-token.md)
+[`docs/superpowers/spikes/2026-11-22-direct-image-gate0.md`](../../spikes/2026-11-22-direct-image-gate0.md)
 Gate 0 findings: [`docs/superpowers/spikes/2026-11-22-direct-image-gate0.md`](../../spikes/2026-11-22-direct-image-gate0.md).
 
 ## Goal

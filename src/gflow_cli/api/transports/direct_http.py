@@ -23,6 +23,7 @@ from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
 from gflow_cli.api.transports.migrated_character import read_project
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.auth.cookies import sent_to_flow_host
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import NetworkError, RecaptchaError
 
@@ -160,7 +161,7 @@ async def _session_headers(page: Page, profile_dir: Path) -> dict[str, str]:
         for c in cookies
         if (name := c.get("name"))
         and (value := c.get("value"))
-        and "flow.google.com".endswith(c.get("domain", "").lstrip("."))
+        and sent_to_flow_host(c.get("domain", ""))
     )
     if not cookie_header:
         raise _DirectFallbackError("cookies_empty")

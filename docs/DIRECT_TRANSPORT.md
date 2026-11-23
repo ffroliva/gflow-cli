@@ -29,12 +29,12 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 to 4 | yes | live generations: 2, 3 and 4 entries in one request returned 2, 3 and 4 images |
-| One `--ref` to an image already in the project (with its display name) | yes | a live generation |
+| One `--ref` to an image already in the project (with its display name), one image | yes | a live generation |
 | One `--ref ./photo.png` (a local file) | yes, after the upload | the upload runs on the UI transport, then the generation goes direct; a live generation |
 | One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
 | One `@Name` mention of a character in the project | yes, when exactly one character has that name | the id is read from the project; a live generation |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
-| Several refs, several characters, a ref plus a character | no | not captured |
+| Several refs, several characters, a ref plus a character, or a ref or character with count 2-4 | no | not captured |
 | A mention whose name matches no character, or several | no | the UI picker decides |
 | Agent-mode instructions, or `--ui-mode agentic` | no | not captured |
 | A configured proxy (gflow's, the environment's or the OS's) | no | the browser and the request could leave by different routes |
@@ -46,7 +46,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | The browser's cookies, the session tokens or the reCAPTCHA mint are unavailable | yes | the same request runs on `ui_automation` |
 | The connection cannot be opened (or opening it timed out) | yes | the same request runs on `ui_automation` |
 | The account is served on labs.google, or `GFLOW_CLI_FLOW_HOST=labs.google` | yes | the same request runs on `ui_automation` |
-| Flow answers a redirect, HTTP 401 or HTTP 403 | no, but Flow accepted nothing | the same request runs on `ui_automation` |
+| Flow answers a redirect, HTTP 401 or HTTP 403 | no: it was sent once and refused | the request is submitted a second time, through `ui_automation`'s own page |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
 | A referenced image was deleted in Flow | no | **not measured**: the UI path re-uploads the local copy (#772); the direct path reports the error and does not |

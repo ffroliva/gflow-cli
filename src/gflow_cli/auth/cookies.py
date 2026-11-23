@@ -309,6 +309,9 @@ def _domain_match(domain: str) -> bool:
     return _WIRE_HOST == domain
 
 
+sent_to_flow_host = _domain_match
+
+
 def read_cookies_for(profile_dir: Path) -> list[tuple[str, str]]:
     """The (name, value) pairs a browser on this profile sends on ``GET https://flow.google.com/``.
 
