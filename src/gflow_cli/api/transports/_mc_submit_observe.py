@@ -140,6 +140,56 @@ def _image_request_listener(
     return on_request, unguarded
 
 
+def ogiz0b_reply_images(text: str, request: GenerateImageRequest) -> list[GeneratedImage]:
+    """Extract GeneratedImage DTOs from an ogiZ0b batchexecute response.
+
+    Raises refusal exception (ContentPolicyError, WafRejectionError) if Flow refused the submit.
+    Raises WireFormatError if no ogiZ0b frame or records were returned.
+    """
+    refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
+    if refusal is not None:
+        raise refusal
+    parsed = parse_frames(text)
+    records = [
+        record
+        for rpcid, payload in parsed
+        if rpcid == IMAGE_SUBMIT_RPC
+        for record in image_records(rpcid, payload)
+    ]
+    if not records:
+        log.warning(
+            "migrated.image_submit_unparsed_reply",
+            rpcid=IMAGE_SUBMIT_RPC,
+            text_len=len(text),
+            parsed_count=len(parsed),
+            parsed_rpcids=[p[0] for p in parsed],
+        )
+        raise WireFormatError(
+            detail="migrated image submit returned no ogiZ0b frame",
+            route=f"batchexecute:{IMAGE_SUBMIT_RPC}",
+        )
+    return [
+        GeneratedImage(
+            media_name=record.media_id,
+            workflow_id=record.workflow_id,
+            seed=record.seed,
+            prompt=record.prompt,
+            # #789: the ogiZ0b reply carries no model field. Echoing
+            # the request back would report an attribution this host
+            # never confirmed — and with a hidden model picker (#788)
+            # the selected model can differ from the requested one,
+            # making the echo actively wrong on the single field a
+            # user would check to find out.
+            model_name_type=None,
+            aspect_ratio=request.aspect.value,
+            fife_url=record.image_url,
+            dimensions=record.dimensions,
+            display_name=record.display_name,
+        )
+        for record in records
+    ]
+
+
 class SubmitObserveMixin(MentionMixin):
     """Prompt sending, generation submission, response polling and observation."""
 
@@ -781,48 +831,7 @@ class SubmitObserveMixin(MentionMixin):
                 body_lost.set_result(None)
                 return
             try:
-                refusal = _submit_refusal(text, (IMAGE_SUBMIT_RPC,))
-                if refusal is not None:
-                    raise refusal
-                parsed = parse_frames(text)
-                records = [
-                    record
-                    for rpcid, payload in parsed
-                    if rpcid == IMAGE_SUBMIT_RPC
-                    for record in image_records(rpcid, payload)
-                ]
-                if not records:
-                    log.warning(
-                        "migrated.image_submit_unparsed_reply",
-                        rpcid=IMAGE_SUBMIT_RPC,
-                        text_len=len(text),
-                        parsed_count=len(parsed),
-                        parsed_rpcids=[p[0] for p in parsed],
-                    )
-                    raise WireFormatError(
-                        detail="migrated image submit returned no ogiZ0b frame",
-                        route=f"batchexecute:{IMAGE_SUBMIT_RPC}",
-                    )
-                images = [
-                    GeneratedImage(
-                        media_name=record.media_id,
-                        workflow_id=record.workflow_id,
-                        seed=record.seed,
-                        prompt=record.prompt,
-                        # #789: the ogiZ0b reply carries no model field. Echoing
-                        # the request back would report an attribution this host
-                        # never confirmed — and with a hidden model picker (#788)
-                        # the selected model can differ from the requested one,
-                        # making the echo actively wrong on the single field a
-                        # user would check to find out.
-                        model_name_type=None,
-                        aspect_ratio=request.aspect.value,
-                        fife_url=record.image_url,
-                        dimensions=record.dimensions,
-                        display_name=record.display_name,
-                    )
-                    for record in records
-                ]
+                images = ogiz0b_reply_images(text, request)
             except Exception as exc:  # noqa: BLE001 - delivered through the waiting future
                 result.set_exception(exc)
                 return

@@ -84,3 +84,18 @@ def test_resolve_transport_name_precedence(monkeypatch):
     monkeypatch.setenv("GFLOW_CLI_TRANSPORT", "sapisidhash")
     assert resolve_transport_name() == "sapisidhash"
     assert resolve_transport_name("bearer") == "bearer"  # explicit arg wins over env
+
+
+def test_direct_http_registration() -> None:
+    from gflow_cli.api.transports import (
+        EXPERIMENTAL_TRANSPORTS,
+        STANDALONE_ONLY_TRANSPORTS,
+        make_transport,
+    )
+    from gflow_cli.api.transports.direct_http import DirectHttpTransport
+
+    assert "direct_http" in EXPERIMENTAL_TRANSPORTS
+    assert "direct_http" not in STANDALONE_ONLY_TRANSPORTS
+    t = make_transport("direct_http")
+    assert isinstance(t, DirectHttpTransport)
+    assert t.name == "direct_http"
