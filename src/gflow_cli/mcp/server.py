@@ -396,9 +396,10 @@ async def run_http(host: str = "127.0.0.1", port: int = 8000) -> None:
     ``stateless_http`` is deliberately left at its ``False`` default. The
     2026-07-28 stateless core exists so servers can scale out across
     interchangeable instances — the opposite of what gflow is. Our value is a
-    warm daemon holding one live Chromium profile, serialized by a cross-process
-    ``ProfileLease``; spreading requests over stateless workers would buy
-    nothing and fight that lease. The *protocol* is stateless either way (the
+    daemon serialized by a cross-process ``ProfileLease`` that opens one browser
+    per task (D3: ``ui/app.py``); spreading requests over stateless workers
+    would buy nothing and fight that lease. The *protocol* is stateless either
+    way (the
     2026-07-28 handshake removal is handled by the SDK); this flag only governs
     whether the transport keeps per-connection bookkeeping, and we want it.
 
