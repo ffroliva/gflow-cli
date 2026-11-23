@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -368,6 +369,11 @@ def test_trunc(monkeypatch):
 """)
     result = pytester.runpytest_subprocess("-l")
     output = result.stdout.str()
+    # --showlocals prints object reprs with hex memory addresses
+    # (e.g. <... MonkeyPatch object at 0x7a873abcdb80>), and a hex-only token
+    # fragment such as "abcd" can occur inside one by chance (#1429). Strip
+    # addresses before checking so only a real secret leak can fail the test.
+    output = re.sub(r"0x[0-9a-f]+", "", output, flags=re.IGNORECASE)
     for i in range(len(token) - 3):
         assert token[i : i + 4] not in output
 

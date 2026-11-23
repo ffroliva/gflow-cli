@@ -571,8 +571,16 @@ def _caption_overlay(
     draw.rounded_rectangle(
         (x - 10, y - 6, x + box[2] - box[0] + 10, y + box[3] - box[1] + 6), 8, fill=(0, 0, 0, 180)
     )
+    # The box is laid out in ink coordinates; draw the text so its ink, not its origin, lands at
+    # (x, y). The origin sits box[0], box[1] away from the ink (the font's side bearing and the
+    # space above the tallest glyph), which put the box above the text (#1431).
     draw.multiline_text(
-        (x, y), "\n".join(lines), font=font, fill=(255, 255, 255, 255), align="center", spacing=2
+        (x - box[0], y - box[1]),
+        "\n".join(lines),
+        font=font,
+        fill=(255, 255, 255, 255),
+        align="center",
+        spacing=2,
     )
     return overlay, height - band_height
 
