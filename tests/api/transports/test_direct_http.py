@@ -39,8 +39,10 @@ def test_direct_can_serve_every_measured_aspect(aspect: Aspect) -> None:
     assert direct_can_serve(GenerateImageRequest(prompt="x", aspect=aspect)) is True
 
 
-def test_direct_can_serve_two_images() -> None:
-    assert direct_can_serve(GenerateImageRequest(prompt="x", count=2)) is True
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_direct_can_serve_every_count_flow_offers(count: int) -> None:
+    """One entry per image in one POST: 2, 3 and 4 entries returned 2, 3 and 4 images live."""
+    assert direct_can_serve(GenerateImageRequest(prompt="x", count=count)) is True
 
 
 @pytest.mark.parametrize(
@@ -49,7 +51,6 @@ def test_direct_can_serve_two_images() -> None:
         {"refs": (ImageRef(name="00000000-0000-0000-0000-000000000001"),)},
         {"ref_paths": (Path("image.png"),)},
         {"reference_entities": ("entity-1",)},
-        {"count": 3},  # only count <= 2 is measured on the direct path
         {"instructions": (AgentInstruction(text="keep lighting dark"),)},
         {"prompt": "A photo of @Alice in wonderland"},
     ],

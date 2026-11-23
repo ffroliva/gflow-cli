@@ -41,8 +41,6 @@ log = structlog.get_logger(__name__)
 # every other model routes to the UI transport until its wire name is captured.
 _WIRE_MODEL: dict[Model, str] = {Model.NARWHAL: "BELUGA"}
 
-# Counts measured on the direct path (one POST with two entries returned two images).
-_MAX_DIRECT_COUNT = 2
 _ORIGIN = "https://flow.google.com"
 _MINT_BUDGET_S = 10.0  # how long a freshly navigated page gets to load reCAPTCHA
 _MINT_RETRY_S = 0.5
@@ -56,13 +54,13 @@ _RECONCILE_HINT = (
 def direct_can_serve(request: GenerateImageRequest) -> bool:
     """True only for a request whose every wire slot is measured.
 
-    T2I with a measured model, any aspect, up to ``_MAX_DIRECT_COUNT`` images, at most one
-    in-project reference or one named character, on the classic composer. No Agent
-    instructions and no ``@`` mentions.
+    T2I with a measured model, any aspect, any count Flow offers (1-4: N entries in one
+    POST returned N images live), or one in-project reference or one named character with
+    one image, on the classic composer. No Agent instructions and no raw ``@`` left in the
+    prompt (a mention reaches here already resolved to a name).
     """
     return (
         request.model in _WIRE_MODEL
-        and request.count <= _MAX_DIRECT_COUNT
         and _references_measured(request)
         and _characters_measured(request)
         and not request.ref_paths
