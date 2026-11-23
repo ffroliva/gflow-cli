@@ -14,6 +14,7 @@ Wire shape (proven 2026-11-22, docs/superpowers/spikes/2026-11-22-direct-image-g
 
 from __future__ import annotations
 
+import base64
 import json
 from urllib.parse import urlencode
 
@@ -71,6 +72,30 @@ def build_ogiz0b_body(
     ]
     inner = [None, entries, 1, ctx, [batch_id]]
     f_req = json.dumps([[["ogiZ0b", json.dumps(inner, separators=(",", ":")), None, "generic"]]])
+    return urlencode({"f.req": f_req, "at": at_token})
+
+
+def build_maseq_body(
+    *,
+    project_id: str,
+    recaptcha_token: str,
+    at_token: str,
+    image_bytes: bytes,
+    mime: str,
+    display_name: str,
+    request_ids: tuple[str, str],
+) -> str:
+    """Return the form-encoded body for one ``maseQ`` (image upload) POST.
+
+    The frame Flow's own upload sends (captured 2026-11-23; a direct POST of it returned the
+    new media id): the project context with the token, the bytes inline as base64, the MIME
+    type, ``1``, four nulls, the display name, a null and two client-generated ids.
+    """
+    ctx: list[object] = [None, 22, None, None, None, project_id, None, None, None, None]
+    ctx.append([recaptcha_token, 1])
+    data = base64.b64encode(image_bytes).decode("ascii")
+    frame = [ctx, data, mime, 1, None, None, None, None, display_name, None, *request_ids]
+    f_req = json.dumps([[["maseQ", json.dumps(frame, separators=(",", ":")), None, "generic"]]])
     return urlencode({"f.req": f_req, "at": at_token})
 
 

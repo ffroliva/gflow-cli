@@ -32,7 +32,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 to 4 | yes | live generations: 2, 3 and 4 entries in one request returned 2, 3 and 4 images |
 | One ref made in this run: a `gflow run` row's `"ref": "batch:N"`, one image | yes | a live `gflow run` |
-| One `--ref ./photo.png` (a local file not yet in the catalog), one image | yes, after the upload | the upload runs on the UI transport, then the generation goes direct; a live generation |
+| One `--ref ./photo.png` (a local file not yet in the catalog), one image | yes | uploaded by one direct `maseQ` request (reCAPTCHA action `UPLOAD_IMAGE`), then generated directly; a live generation |
 | One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
 | One `@Name` mention of a character in the project | yes, when exactly one character has that name (trimmed, case-insensitive, as the UI picker matches) | the id is read from the project; a live generation |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
@@ -51,7 +51,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Flow answers a redirect, HTTP 401 or HTTP 403 | no: it was sent once and refused | the request is submitted a second time, through `ui_automation`'s own page |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
-| A `--ref` found in the local catalog (a media id, or a file used before) | no | the catalog may be stale; the UI path proves the image still exists before it submits and refuses at $0 |
+| A `--ref` found in the local catalog (a media id, or a file used before) | yes: the selector routes it before any request | the request runs on `ui_automation`; the catalog may be stale, and the UI path proves the image still exists before it submits, refusing at $0 |
 
 A sent request is never retried. Every rejected reply drops the cached session token, so a
 stale one cannot stick in a long-running MCP server or worker. A reCAPTCHA mint is retried
@@ -72,7 +72,10 @@ Flow answered some requests with a WAF refusal (exit 10, `WafRejectionError`), o
 plain requests alike, including a plain text-to-image with no reference; the identical
 request usually went through minutes later. The refusals followed the day's volume, not a
 request shape: Flow's own submit for each refused shape was captured and matches what the
-direct path sends. A refused request was not billed, and gflow did not resend it.
+direct path sends. Those refusals came back as a refusal reply (exit 10): nothing was billed,
+and gflow did not resend them. This differs from an HTTP 403, a redirect or a 401 on the
+direct POST, where Flow accepted nothing and the request is submitted once more through
+`ui_automation` (see the failure table).
 
 ## Speed
 

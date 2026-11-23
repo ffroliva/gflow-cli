@@ -161,3 +161,41 @@ def test_a_character_rides_slot_10_and_a_character_chip() -> None:
 def test_no_character_leaves_slot_10_empty() -> None:
     _, inner, _ = _decode_body(_build())
     assert inner[1][0][10] is None
+
+
+def test_an_upload_body_matches_flows_own_maseq_frame() -> None:
+    """Captured 2026-11-23 from Flow's own upload: ctx with the token, inline base64 bytes,
+    MIME type, 1, four nulls, the display name, null, two client UUIDs."""
+    from gflow_cli.api.transports.frame_builder import build_maseq_body
+
+    body = build_maseq_body(
+        project_id="project-123",
+        recaptcha_token="captcha-456",
+        at_token="at-789",
+        image_bytes=b"\x89PNG\r\n",
+        mime="image/png",
+        display_name="face-1a2b3c4d.png",
+        request_ids=("ID-A", "ID-B"),
+    )
+    form = parse_qs(body)
+    assert form["at"] == ["at-789"]
+    rpcid, inner_json, _, generic = json.loads(form["f.req"][0])[0][0]
+    assert (rpcid, generic) == ("maseQ", "generic")
+    frame = json.loads(inner_json)
+    assert frame[0] == [
+        None,
+        22,
+        None,
+        None,
+        None,
+        "project-123",
+        None,
+        None,
+        None,
+        None,
+        ["captcha-456", 1],
+    ]
+    assert frame[1] == "iVBORw0K"  # base64 of the bytes
+    assert frame[2:8] == ["image/png", 1, None, None, None, None]
+    assert frame[8:] == ["face-1a2b3c4d.png", None, "ID-A", "ID-B"]
+    assert inner_json == json.dumps(frame, separators=(",", ":"))

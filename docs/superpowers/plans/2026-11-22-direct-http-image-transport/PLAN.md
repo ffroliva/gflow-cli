@@ -420,3 +420,6 @@ Count 1-4 is served (N entries returned N images live). `gflow run` rows go dire
 every transport). The weekly telemetry field (T3.1) is not in this change: it went out for every
 image user and needed a notice-version bump that stops EU/EEA uploads until re-consent,
 so it ships together with the endpoint change. T3.3 (per-image metadata) is in.
+Phase 4 is in: a local file is uploaded by one direct `maseQ` POST (frame and the
+`UPLOAD_IMAGE` action captured from Flow's own upload; a direct upload returned the media id
+live, and a fresh-file i2i uploaded and generated directly).

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import mimetypes
 import secrets
 import time
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -16,20 +18,19 @@ import structlog
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api._engine import mint_evaluate_kwargs
-from gflow_cli.api.image import Model
+from gflow_cli.api.image import ImageRef, Model
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import flow_host_kind
+from gflow_cli.api.transports._mc_common import _first_uuid  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
-from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
+from gflow_cli.api.transports.frame_builder import build_maseq_body, build_ogiz0b_body
 from gflow_cli.api.transports.migrated_character import read_project
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.auth.cookies import sent_to_flow_host
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
-from gflow_cli.errors import NetworkError, RecaptchaError
+from gflow_cli.errors import NetworkError, RecaptchaError, WireFormatError
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from playwright.async_api import Page
 
     from gflow_cli.api.dto import GeneratedImage
@@ -51,6 +52,13 @@ _RECONCILE_HINT = (
     "Flow may have accepted this image request before the error, so gflow did not resend "
     "it. Check the project in Flow for the new image before running the command again."
 )
+_UPLOAD_RECONCILE_HINT = (
+    "Flow may have stored this upload before the error, so gflow did not resend it. Check "
+    "the project in Flow for the uploaded image before running the command again."
+)
+_SUBMIT = ("ogiZ0b", "IMAGE_GENERATION", "image submit", _RECONCILE_HINT)
+_UPLOAD = ("maseQ", "UPLOAD_IMAGE", "image upload", _UPLOAD_RECONCILE_HINT)
+_RpcSpec = tuple[str, str, str, str]  # rpcid, reCAPTCHA action, noun, reconcile hint
 
 
 def direct_can_serve(request: GenerateImageRequest) -> bool:
@@ -129,7 +137,10 @@ async def _resolve_character(
         return ()
     try:
         # Bounded: a slow read must fall back, not hold the generate lock for minutes.
-        project = await read_project(page, project_id, timeout_s=_CHARACTER_READ_S)
+        # One outer deadline: read_project's own budget is per attempt, and it retries.
+        project = await asyncio.wait_for(
+            read_project(page, project_id, timeout_s=_CHARACTER_READ_S), _CHARACTER_READ_S
+        )
     except Exception as exc:
         raise _DirectFallbackError(f"character_read:{type(exc).__name__}") from exc
     if request.reference_entities:
@@ -152,14 +163,14 @@ class _DirectFallbackError(Exception):
         self.reason = reason
 
 
-def _reconcile_error(detail: str, *, status: int | None = None) -> NetworkError:
+def _reconcile_error(detail: str, spec: _RpcSpec, *, status: int | None = None) -> NetworkError:
     """A failure after the POST was sent: never resent, the caller reconciles."""
     return NetworkError(
         detail=f"{detail}; not resent",
         status=status,
-        route="batchexecute:ogiZ0b",
+        route=f"batchexecute:{spec[0]}",
         next_action="reconcile",
-        remediation_hint=_RECONCILE_HINT,
+        remediation_hint=spec[3],
     )
 
 
@@ -204,8 +215,8 @@ async def _shell(
         raise _DirectFallbackError(f"shell_tokens:{type(exc).__name__}") from exc
 
 
-async def _mint(page: Page, project_id: str) -> str:
-    """The single browser step: an IMAGE_GENERATION token minted on the project page.
+async def _mint(page: Page, project_id: str, action: str) -> str:
+    """The single browser step: a reCAPTCHA token for ``action``, minted on the project page.
 
     The page must end up on flow.google.com: an account Flow serves on labs.google is
     redirected there, and the direct path does not serve it. Right after a navigation the
@@ -226,7 +237,7 @@ async def _mint(page: Page, project_id: str) -> str:
     while True:
         try:
             remaining = max(deadline - time.monotonic(), 0.1)
-            return await asyncio.wait_for(minter.mint("IMAGE_GENERATION"), remaining)
+            return await asyncio.wait_for(minter.mint(action), remaining)
         except RecaptchaError as exc:
             if time.monotonic() >= deadline:
                 raise _DirectFallbackError("mint_failure:RecaptchaError") from exc
@@ -236,10 +247,10 @@ async def _mint(page: Page, project_id: str) -> str:
 
 
 def _post_request(
-    project_id: str, tokens: flow_wire.Tokens, headers: dict[str, str], body: str
+    rpcid: str, project_id: str, tokens: flow_wire.Tokens, headers: dict[str, str], body: str
 ) -> httpx.Request:
     query = {
-        "rpcids": "ogiZ0b",
+        "rpcids": rpcid,
         "source-path": f"/project/{project_id}",
         "bl": tokens.bl,
         "f.sid": tokens.fsid,
@@ -266,7 +277,7 @@ def _post_request(
 
 
 async def _send_once(
-    client: httpx.AsyncClient, request: httpx.Request, profile_dir: Path
+    client: httpx.AsyncClient, request: httpx.Request, profile_dir: Path, spec: _RpcSpec
 ) -> httpx.Response:
     """Write path: exactly one send.
 
@@ -281,14 +292,14 @@ async def _send_once(
         raise _DirectFallbackError(f"connect:{type(exc).__name__}") from exc
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         cause = (str(exc).strip().splitlines() or [""])[0][:160]
-        raise _reconcile_error(f"{type(exc).__name__} on an image submit ({cause})") from exc
+        raise _reconcile_error(f"{type(exc).__name__} on an {spec[2]} ({cause})", spec) from exc
     status = response.status_code
     if status == 200:
         return response
     flow_wire.forget_tokens(profile_dir)
     if 300 <= status < 400 or status in (401, 403):
         raise _DirectFallbackError(f"http_{status}")
-    raise _reconcile_error(f"HTTP {status} on an image submit", status=status)
+    raise _reconcile_error(f"HTTP {status} on an {spec[2]}", spec, status=status)
 
 
 def _client(http_transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
@@ -316,7 +327,7 @@ async def run_direct_images(
         tokens = await _shell(client, profile_dir, headers)
         characters = await _resolve_character(page, project_id, request)
         mint_started = time.perf_counter()
-        token = await _mint(page, project_id)
+        token = await _mint(page, project_id, _SUBMIT[1])
         mint_ms = int((time.perf_counter() - mint_started) * 1000)
         body = build_ogiz0b_body(
             prompt=request.prompt,
@@ -338,7 +349,7 @@ async def run_direct_images(
         )
         post_started = time.perf_counter()
         response = await _send_once(
-            client, _post_request(project_id, tokens, headers, body), profile_dir
+            client, _post_request("ogiZ0b", project_id, tokens, headers, body), profile_dir, _SUBMIT
         )
     log.info(
         "direct.image_post",
@@ -349,6 +360,46 @@ async def run_direct_images(
     )
     images = ogiz0b_reply_images(response.text, request)
     return [replace(img, transport="direct_http") for img in images]
+
+
+async def run_direct_upload(
+    *,
+    page: Page,
+    profile_dir: Path,
+    project_id: str,
+    path: Path,
+    http_transport: httpx.AsyncBaseTransport | None = None,
+) -> ImageRef:
+    """One direct ``maseQ`` upload: read the session, mint ``UPLOAD_IMAGE``, send once.
+
+    The caller has validated the file (size, image header). The display name gets a run-
+    unique suffix, as the UI's own upload does, so a later chip names this image only.
+    """
+    started = time.perf_counter()
+    headers = await _session_headers(page, profile_dir)
+    async with _client(http_transport) as client:
+        tokens = await _shell(client, profile_dir, headers)
+        token = await _mint(page, project_id, _UPLOAD[1])
+        display_name = f"{path.stem}-{secrets.token_hex(4)}{path.suffix}"
+        body = build_maseq_body(
+            project_id=project_id,
+            recaptcha_token=token,
+            at_token=tokens.at,
+            image_bytes=await asyncio.to_thread(path.read_bytes),
+            mime=mimetypes.guess_type(path.name)[0] or "image/png",
+            display_name=display_name,
+            request_ids=(str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()),
+        )
+        response = await _send_once(
+            client, _post_request("maseQ", project_id, tokens, headers, body), profile_dir, _UPLOAD
+        )
+    media_id = _first_uuid(response.text)
+    if media_id is None:
+        raise WireFormatError(
+            detail="direct maseQ upload returned no media id", route="batchexecute:maseQ"
+        )
+    log.info("direct.upload", total_ms=int((time.perf_counter() - started) * 1000))
+    return ImageRef(name=media_id, display_name=display_name, in_project=True)
 
 
 class DirectHttpTransport(UiAutomationTransport):
@@ -403,6 +454,41 @@ class DirectHttpTransport(UiAutomationTransport):
             return await self._generate_images_locked(
                 request, project_id=project_id, name_resolver=name_resolver
             )
+
+    async def upload_reference(self, *, project_id: str, path: Path) -> ImageRef | None:
+        """Upload ``path`` with one direct ``maseQ`` POST; the UI upload when nothing was
+        sent (no session, no token, not flow.google.com, a proxy, a refused session)."""
+        if not self._setup_done or self._page is None:
+            msg = "DirectHttpTransport.setup() must be called before upload_reference()"
+            raise RuntimeError(msg)
+        page, profile_dir = self._page, self._profile_dir
+        reason = self._why_not_direct_upload()
+        if reason is None and profile_dir is not None:
+            async with self._generate_lock:
+                await self.park_deferred_page()
+                try:
+                    return await run_direct_upload(
+                        page=page,
+                        profile_dir=profile_dir,
+                        project_id=project_id,
+                        path=path,
+                        http_transport=self._http_transport,
+                    )
+                except _DirectFallbackError as fb:
+                    reason = fb.reason
+                finally:
+                    await self._park_composer_page(page, event="direct.page_park_failed")
+        log.info("direct.upload_fallback_to_ui", reason=reason)
+        return await super().upload_reference(project_id=project_id, path=path)
+
+    def _why_not_direct_upload(self) -> str | None:
+        if self._profile_dir is None:
+            return "no_profile_dir"
+        if get_settings().flow_host == "labs.google":
+            return "flow_host_labs"
+        if _proxy_configured():
+            return "proxy_configured"
+        return None
 
     def _why_not_direct(self, request: GenerateImageRequest, project_id: str | None) -> str | None:
         if not direct_can_serve(request):

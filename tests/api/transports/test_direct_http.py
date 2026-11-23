@@ -16,6 +16,7 @@ from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, 
 from gflow_cli.api.transports._mc_common import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.direct_http import DirectHttpTransport, direct_can_serve
+from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings
 from gflow_cli.errors import NetworkError, WafRejectionError, WireFormatError
 from tests.api.transports.test_migrated_images import MEDIA, URL, WORKFLOW, image_payload
@@ -1180,3 +1181,113 @@ async def test_an_entity_id_uses_the_name_flow_holds_for_it(
     )
     await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
+
+
+# --- Phase 4: direct maseQ upload ----------------------------------------------------------
+
+_UPLOADED = "f9efcc22-495d-4c89-9b9b-f9dce015742b"
+
+
+def _maseq_reply(media_id: str = _UPLOADED) -> str:
+    frame = json.dumps(
+        [["wrb.fr", "maseQ", json.dumps([[media_id, "proj-123"]]), None, None, None, "generic"]]
+    )
+    return f")]}}'\n{frame}"
+
+
+def _png(tmp_path: Path) -> Path:
+    f = tmp_path / "face.png"
+    f.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    return f
+
+
+@pytest.mark.asyncio
+async def test_a_local_file_is_uploaded_with_one_direct_maseq_post(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    mint = AsyncMock(return_value="mock_token")
+    monkeypatch.setattr("gflow_cli.api.recaptcha.TokenMinter.mint", mint)
+    posts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        posts.append(request.url.params["rpcids"])
+        return httpx.Response(200, text=_maseq_reply())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui = AsyncMock()
+    monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
+    ref = await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    assert ref is not None
+    assert ref.name == _UPLOADED
+    assert ref.in_project is True
+    assert ref.display_name.startswith("face-") and ref.display_name.endswith(".png")
+    assert posts == ["maseQ"]
+    assert mint.await_args.args[0] == "UPLOAD_IMAGE"
+    ui.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_upload_that_cannot_start_uses_the_ui_upload(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = transport._page
+    assert page is not None
+    page.context.cookies = AsyncMock(return_value=[])  # no session: nothing can be sent
+    ui = AsyncMock(return_value=None)
+    monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
+    await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    ui.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_an_upload_failing_after_the_send_is_not_resent(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    transport._http_transport = _shell_and(httpx.Response(500))
+    ui = AsyncMock()
+    monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
+    with pytest.raises(NetworkError) as caught:
+        await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    assert caught.value.next_action == "reconcile"
+    assert "upload" in (caught.value.remediation_hint or "")
+    ui.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_upload_reply_without_a_media_id_is_a_wire_format_error(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    transport._http_transport = _shell_and(httpx.Response(200, text=")]}'\n[]"))
+    with pytest.raises(WireFormatError):
+        await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_the_character_read_has_one_outer_deadline(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CodeRabbit: read_project's per-attempt budget plus its retry could stack past 15 s."""
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._CHARACTER_READ_S", 0.2)
+
+    async def slow(*_: Any, **__: Any) -> Any:
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.read_project", slow)
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    ui = _watch_ui(transport)
+    req = GenerateImageRequest(prompt="x", reference_entity_names=("Skipper",))
+    await asyncio.wait_for(transport.generate_images(project_id="proj-123", request=req), timeout=5)
+    assert ui == [True]

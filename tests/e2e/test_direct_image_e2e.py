@@ -180,7 +180,7 @@ def test_a_named_character_is_generated_by_the_direct_transport(
 def test_a_local_file_reference_is_uploaded_then_generated_directly(
     e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
-    """--ref ./fresh.png: uploaded (on the UI transport), then generated directly."""
+    """--ref ./fresh.png: uploaded by one direct maseQ POST, then generated directly."""
     from PIL import Image
 
     first = _t2i(e2e_env, tmp_path / "seed.jpg")  # only to obtain a project

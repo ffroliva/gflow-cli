@@ -261,6 +261,100 @@ async def capture(label: str, client: Any, project_id: str, **req_kw: Any) -> No
          frames=posts)
 
 
+async def direct_upload(
+    *, minter: TokenMinter, project_id: str, tokens: Any, headers: dict[str, str], image: Path
+) -> None:
+    """Phase 4: one direct maseQ upload, built from scratch (frame captured 2026-11-23)."""
+    import base64
+    import mimetypes
+
+    from gflow_cli.api.transports._mc_common import _first_uuid
+
+    t0 = time.perf_counter()
+    token = await minter.mint("UPLOAD_IMAGE")
+    mint_ms = _ms(t0)
+    ctx: list[Any] = [None, 22, None, None, None, project_id, None, None, None, None, [token, 1]]
+    mime = mimetypes.guess_type(image.name)[0] or "image/png"
+    name = f"{image.stem}-{secrets.token_hex(4)}{image.suffix}"
+    payload = [ctx, base64.b64encode(image.read_bytes()).decode("ascii"), mime, 1,
+               None, None, None, None, name, None,
+               str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()]
+    body = urlencode({
+        "f.req": json.dumps([[["maseQ", json.dumps(payload, separators=(",", ":")), None,
+                              "generic"]]]),
+        "at": tokens.at,
+    })
+    query = {"rpcids": "maseQ", "source-path": f"/project/{project_id}", "bl": tokens.bl,
+             "f.sid": tokens.fsid, "hl": "en", "_reqid": str(1000 + secrets.randbelow(9000)),
+             "rt": "c"}
+    url = f"{_BATCHEXECUTE}?{urlencode({k: v for k, v in query.items() if v})}"
+    post_headers = {
+        **headers,
+        "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "x-same-domain": "1", "origin": _ORIGIN, "referer": f"{_ORIGIN}/project/{project_id}",
+        "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors", "sec-fetch-dest": "empty",
+    }
+    t1 = time.perf_counter()
+    async with httpx.AsyncClient(follow_redirects=False, trust_env=False,
+                                 timeout=httpx.Timeout(60.0, connect=10.0)) as hx:
+        resp = await hx.post(url, content=body, headers=post_headers)
+    errors = rpc_errors(resp.text) if resp.status_code == 200 else []
+    media_id = _first_uuid(resp.text) if resp.status_code == 200 else None
+    _log("direct_upload", status=resp.status_code, media_id=media_id, display_name=name,
+         errors=[{"code": e.code, "reasons": list(e.reasons)} for e in errors],
+         head=None if resp.status_code == 200 else resp.text[:200],
+         mint_ms=mint_ms, post_ms=_ms(t1), body_len=len(body))
+
+
+async def capture_upload(client: Any, project_id: str, image: Path) -> None:
+    """Phase 4: Flow's own maseQ upload frame, route-aborted ($0: no asset is created)."""
+    page = client._page  # noqa: SLF001 - spike-only
+    seen: list[dict[str, Any]] = []
+
+    async def on_route(route: Any) -> None:
+        req = route.request
+        data = (req.post_data_buffer or b"").decode("utf-8", errors="replace")
+        if "maseQ" in req.url or "maseQ" in data:
+            seen.append({"url": req.url.split("?", 1)[0], "query": parse_qs(req.url.split("?", 1)[-1]),
+                         "headers": sorted(req.headers), "data": data})
+            await route.abort()
+        else:
+            await route.continue_()
+
+    from gflow_cli.api._engine import mint_evaluate_kwargs
+
+    # Record the reCAPTCHA action the page mints for the upload (main world, like the minter).
+    hook = """() => {
+        const ent = window.grecaptcha && window.grecaptcha.enterprise;
+        if (!ent || ent.__gflowHooked) return !!ent;
+        const orig = ent.execute.bind(ent);
+        window.__gflowActions = [];
+        ent.execute = (key, opts) => { window.__gflowActions.push(opts && opts.action); return orig(key, opts); };
+        ent.__gflowHooked = true;
+        return true;
+    }"""
+    hooked = await page.evaluate(hook, **mint_evaluate_kwargs())
+    await page.route("**/data/batchexecute**", on_route)
+    try:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(client.transport.upload_reference(project_id=project_id,
+                                                                     path=image), timeout=60)
+    finally:
+        await page.unroute("**/data/batchexecute**", on_route)
+    frames = []
+    for b in seen:
+        freq = json.loads(parse_qs(b["data"]).get("f.req", ["null"])[0] or "null")
+        for call in (freq or [[]])[0]:
+            if call and call[0] == "maseQ":
+                frames.append(_redact(json.loads(call[1])))
+    actions = await page.evaluate("() => window.__gflowActions || null", **mint_evaluate_kwargs())
+    _log("upload_actions", hooked=hooked, actions=actions)
+    _log("upload_capture", posts=len(seen), rpcids=[b["query"].get("rpcids") for b in seen],
+         source_path=[b["query"].get("source-path") for b in seen],
+         headers=seen[0]["headers"] if seen else [], frames=frames,
+         body_len=[len(b["data"]) for b in seen])
+
+
 async def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default="denon82")
@@ -273,6 +367,8 @@ async def main() -> None:
     ap.add_argument("--direct-aspect", type=int, default=2, help="Phase 2: entry[4] value")
     ap.add_argument("--capture-aspects", default="", help="Phase 2: Aspect names, comma-separated")
     ap.add_argument("--capture-ref", action="store_true", help="Phase 2: capture an in-project I2I (spends 2 images of daily quota: a source image, and the referenced submit reaches Flow)")
+    ap.add_argument("--direct-upload", default="", help="Phase 4: FILE; one direct maseQ upload (creates an asset, $0)")
+    ap.add_argument("--capture-upload", default="", help="Phase 4: FILE; capture its maseQ upload ($0)")
     ap.add_argument("--capture-entity", default="", help="ID:NAME; capture an attached character (spends 1 image)")
     ap.add_argument("--capture-mention", default="", help="Phase 2: capture an @Name mention (spends 1 image: the referenced submit reaches Flow)")
     args = ap.parse_args()
@@ -315,6 +411,10 @@ async def main() -> None:
             await discover_site_key(page)
             minter = TokenMinter(page)
 
+            if args.direct_upload:  # Phase 4: one direct maseQ upload
+                await direct_upload(minter=minter, project_id=pid, tokens=tokens,
+                                    headers=headers, image=Path(args.direct_upload))
+                return
             if args.captures_only:
                 args.n = args.ui_n = 0
             # G0.1 — N consecutive direct POSTs, UI control on the first refusal.
@@ -329,7 +429,9 @@ async def main() -> None:
                 await ui_once("ui", i, client, pid)
 
             # G0.3 / G0.4 — $0 captures through the real UI transport.
-            if args.capture_entity:  # Flow's own frame for an attached character + plain prompt
+            if args.capture_upload:  # Phase 4: the maseQ upload frame ($0)
+                await capture_upload(client, pid, Path(args.capture_upload))
+            elif args.capture_entity:  # Flow's own frame for an attached character + plain prompt
                 eid, name = args.capture_entity.split(":", 1)
                 req = GenerateImageRequest(
                     prompt=_PROMPT, reference_entities=(eid,), reference_entity_names=(name,)
