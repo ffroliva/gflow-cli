@@ -31,6 +31,7 @@ from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
     _FLOW_ID_RE,
     OutputFormat,
+    _handle_gflow_error,
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
@@ -70,9 +71,11 @@ from gflow_cli.data.recorder import (
 from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
+    BatchPartialError,
     ConfigurationError,
     DataIntegrityError,
     DataStoreError,
+    GFlowError,
 )
 from gflow_cli.image_batch import (
     ALLOWED_ASPECT_RATIOS as _ALLOWED_ASPECT_RATIOS,
@@ -1566,6 +1569,14 @@ def batch(
                 recorder=recorder,
             ),
         )
+    except BatchPartialError as exc:
+        # Fail-fast stop after some prompts finished: list what was saved, then the error.
+        render_image_batch_summary(list(exc.partial_results), title=_BATCH_TITLE)
+        sys.exit(_handle_gflow_error(exc, cli_command="image batch"))
+    except GFlowError as exc:
+        # A failure before any prompt ran (e.g. the migrated host) is not a
+        # per-prompt outcome; report it like every other image command.
+        sys.exit(_handle_gflow_error(exc, cli_command="image batch"))
     finally:
         recorder.close()
     exit_code = render_image_batch_summary(outcomes, title=_BATCH_TITLE)
