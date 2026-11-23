@@ -6,6 +6,23 @@
 
 ## Current release
 
+**v0.106.0 — beta.** An experimental direct HTTP image transport, image transports in the weekly usage report, caption layout fixes, and typed errors for `image batch` and a new-project click timeout on flow.google.com.
+
+**Added.**
+- **Experimental `direct_http` image transport (#1442).** With `GFLOW_CLI_TRANSPORT=direct_http`, an eligible image request on flow.google.com is one direct `ogiZ0b` request; the browser only mints the reCAPTCHA token and holds the session. Any other request runs on the UI transport before anything is sent. See [DIRECT_TRANSPORT](DIRECT_TRANSPORT.md).
+- **Image transports in the usage report (#1442).** The weekly report counts runs by the image transport that made their images (`direct`, `ui`, `other`); the privacy notice moves to version 4.
+
+**Fixed.**
+- **Captions (#1431, #1446).** The caption box is centred on the text ink, and text without spaces (CJK, long URLs) wraps between characters. Contributed by @rayw-lab (#1444, #1447).
+- **`image batch` failures (#1452).** A flow.google.com account gets exit 36 with its hint instead of a traceback; a fail-fast stop lists the images already saved. Contributed by @rayw-lab (#1454).
+- **New-project click timeout (#1434).** A create button that will not take the click is exit 23 with `charged: no` when no create request left the page.
+
+**Documentation and tests.** `docs/ERRORS.md` lists the confirmation-required envelope (#1407, @aryankalantri, #1441); the `--showlocals` redaction test ignores memory addresses (#1429, @aryankalantri, #1440).
+
+Full ledger: [LIVE_VERIFICATION_v0.106.0](LIVE_VERIFICATION_v0.106.0.md).
+
+<details><summary>v0.105.1 — extend catalog rows, Flow's failure text, charge guidance</summary>
+
 **v0.105.1 — beta.** A patch release: complete catalog rows after `video extend` on flow.google.com, Flow's own error text on a failed generation, the free recovery for a billed clip whose download fails, and charge guidance for extend and image-batch failures.
 
 **Fixed.**
@@ -17,6 +34,8 @@
 **Documentation and tests.** `lhm.plugin.json` lists all 27 registered MCP tools (#1407, @aryankalantri, #1418); two e2e expectations follow what Flow returns (#1383, #1408, @aryankalantri, #1414 and #1417).
 
 Full ledger: [LIVE_VERIFICATION_v0.105.1](LIVE_VERIFICATION_v0.105.1.md).
+
+</details>
 
 <details><summary>v0.105.0 — characters from local images, no-replace publishing</summary>
 
@@ -1078,6 +1097,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Experimental `direct_http` image transport on flow.google.com (one `ogiZ0b` request per run) and image transports in the usage report; caption layout fixes; typed errors for `image batch` and a new-project click timeout (#1442 #1431 #1446 #1452 #1434) | ✅ done (v0.106.0) |
 | Complete catalog rows and superseded local copies after `video extend` on flow.google.com; Flow's error text on a failed generation; the free recovery for a billed clip download; extend and image-batch charge guidance (#1299 #1111 #1159 #1416) | ✅ done (v0.105.1) |
 | `character create --image` / `--body-image` on flow.google.com with its MCP twin; no-replace output publishing; `charged: no` for labs pre-submit drift and accurate multi-step video charge reporting; secrets masked in pytest reports (#639 #1406 #1336 #1382) | ✅ done (v0.105.0) |
 | Local post-production (`audio narrate`, `video assemble`, `video transcribe`/`captions`), `media trash`/`restore`, `--max-credits` caps; the agent-only driver on Flow's 2026-11-20 build (#1357 #1359 #1358 #1363 #1355 #1387) | ✅ done (v0.104.0) |

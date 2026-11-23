@@ -92,6 +92,77 @@ def test_record_generated_images_persists_generation_metadata(tmp_path: Path) ->
         assert "display_name" not in json.loads(asset_row["metadata_json"])
 
 
+def test_record_generated_images_persists_transport_when_present(tmp_path: Path) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
+        image = GeneratedImage(
+            media_name="media-generated-direct",
+            workflow_id="workflow-generated-1",
+            seed=123,
+            prompt="prompt text",
+            model_name_type="NARWHAL",
+            aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+            fife_url="https://flow-content.google/path?Signature=abc",
+            dimensions=(1024, 1792),
+            transport="direct_http",
+        )
+        req = GenerateImageRequest(
+            prompt="prompt text",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=project,
+            request=req,
+            images=[image],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+        asset_row = store.conn.execute(
+            "SELECT metadata_json FROM assets WHERE flow_media_id='media-generated-direct'"
+        ).fetchone()
+        assert asset_row is not None
+        metadata = json.loads(asset_row["metadata_json"])
+        assert metadata.get("transport") == "direct_http"
+
+
+def test_record_generated_images_omits_transport_when_none(tmp_path: Path) -> None:
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="store")
+        project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
+        image = _generated_image()
+        assert image.transport is None
+        req = GenerateImageRequest(
+            prompt="prompt text",
+            aspect=Aspect.PORTRAIT,
+            model=Model.NARWHAL,
+        )
+        recorder.record_generated_images(
+            profile_name="default",
+            profile_dir=tmp_path / "profile_default",
+            project=project,
+            request=req,
+            images=[image],
+            saved_paths=[saved],
+            input_media_ids=[],
+            operation_kind="t2i",
+        )
+        asset_row = store.conn.execute(
+            f"SELECT metadata_json FROM assets WHERE flow_media_id='{image.media_name}'"
+        ).fetchone()
+        assert asset_row is not None
+        metadata = json.loads(asset_row["metadata_json"])
+        assert "transport" not in metadata
+
+
 def _generated_image() -> GeneratedImage:
     return GeneratedImage(
         media_name="media-generated-1",

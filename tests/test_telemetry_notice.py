@@ -511,3 +511,17 @@ def test_consent_to_an_earlier_notice_is_not_consent(
     assert telemetry.consent_at() is None  # v2 wrote a bare timestamp
     telemetry.set_consent()
     assert telemetry.consent_at() is not None
+
+
+def test_consent_to_v3_notice_is_not_consent_for_v4(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A v3 consent must be renewed now that notice v4 names image transport."""
+    home = tmp_path / "gflow_home"
+    home.mkdir(exist_ok=True)
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(home))
+    monkeypatch.setattr(telemetry, "consent_region", lambda: True)
+    (home / telemetry.CONSENT_FILE).write_text("2026-11-01T00:00:00+00:00\n3", encoding="utf-8")
+    assert telemetry.consent_at() is None
+    telemetry.set_consent()
+    assert telemetry.consent_at() is not None

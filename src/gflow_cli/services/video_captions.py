@@ -571,8 +571,16 @@ def _caption_overlay(
     draw.rounded_rectangle(
         (x - 10, y - 6, x + box[2] - box[0] + 10, y + box[3] - box[1] + 6), 8, fill=(0, 0, 0, 180)
     )
+    # The box is laid out in ink coordinates; draw the text so its ink, not its origin, lands at
+    # (x, y). The origin sits box[0], box[1] away from the ink (the font's side bearing and the
+    # space above the tallest glyph), which put the box above the text (#1431).
     draw.multiline_text(
-        (x, y), "\n".join(lines), font=font, fill=(255, 255, 255, 255), align="center", spacing=2
+        (x - box[0], y - box[1]),
+        "\n".join(lines),
+        font=font,
+        fill=(255, 255, 255, 255),
+        align="center",
+        spacing=2,
     )
     return overlay, height - band_height
 
@@ -595,17 +603,38 @@ def _blend_caption(
     return result
 
 
+_NO_LINE_START = frozenset("，。、；：！？）」』》〉】,.;:!?)")
+
+
 def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str]:
     lines: list[str] = []
     for paragraph in text.splitlines() or [text]:
         line = ""
         for word in paragraph.split():
-            candidate = f"{line} {word}".strip()
-            if line and draw.textlength(candidate, font=font) > max_width:
-                lines.append(line)
-                line = word
-            else:
+            candidate = f"{line} {word}" if line else word
+            if draw.textlength(candidate, font=font) <= max_width:
                 line = candidate
+                continue
+            if line:
+                lines.append(line)
+                line = ""
+            # A token wider than the line is broken between characters: CJK text has no spaces
+            # to break at, and a long URL is a single token. Closing punctuation is not left at
+            # the start of a line; the character before it moves down with it.
+            for char in word:
+                if line and draw.textlength(line + char, font=font) > max_width:
+                    if (
+                        char in _NO_LINE_START
+                        and len(line) > 1
+                        and draw.textlength(line[-1] + char, font=font) <= max_width
+                    ):
+                        lines.append(line[:-1])
+                        line = line[-1] + char
+                    else:
+                        lines.append(line)
+                        line = char
+                else:
+                    line += char
         lines.append(line)
     return lines
 

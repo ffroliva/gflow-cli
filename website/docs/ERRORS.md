@@ -238,6 +238,7 @@ members. They have no exit code of their own.
 |---|---|---|---|---|
 | `https://gflow-cli.dev/errors/unknown` | MCP and worker, an unclassified failure (the message is never shared; the worker's `detail` is its SHA-256 and `class` names the exception class; after the submit the worker stores the job `indeterminate` and sets `next_action: reconcile`) | — | `maybe` | `none` |
 | `https://gflow-cli.dev/errors/bad-parameter` | MCP, a tool argument it refuses | — | `no` | `fix_input` |
+| `https://gflow-cli.dev/errors/confirmation-required` | MCP `gflow_media_trash` without `confirm=true`; CLI `gflow media trash` without `--yes` in non-interactive `--json` mode (exits 2, and its envelope omits `next_action`) | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/no-profile` | MCP, no profile, or its directory is missing | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/no-default-profile` | MCP, several profiles and no default | — | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/profile-marker-missing` | MCP `gflow_auth_status` | — | `no` | `reauth` |
