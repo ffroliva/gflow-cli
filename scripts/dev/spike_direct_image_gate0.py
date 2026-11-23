@@ -273,6 +273,7 @@ async def main() -> None:
     ap.add_argument("--direct-aspect", type=int, default=2, help="Phase 2: entry[4] value")
     ap.add_argument("--capture-aspects", default="", help="Phase 2: Aspect names, comma-separated")
     ap.add_argument("--capture-ref", action="store_true", help="Phase 2: capture an in-project I2I (spends 2 images of daily quota: a source image, and the referenced submit reaches Flow)")
+    ap.add_argument("--capture-entity", default="", help="ID:NAME; capture an attached character (spends 1 image)")
     ap.add_argument("--capture-mention", default="", help="Phase 2: capture an @Name mention (spends 1 image: the referenced submit reaches Flow)")
     args = ap.parse_args()
     _FRAME.update(entries=args.direct_entries, aspect=args.direct_aspect)
@@ -328,7 +329,14 @@ async def main() -> None:
                 await ui_once("ui", i, client, pid)
 
             # G0.3 / G0.4 — $0 captures through the real UI transport.
-            if args.capture_mention:  # Phase 2 T2.2: Flow's own character-mention submit
+            if args.capture_entity:  # Flow's own frame for an attached character + plain prompt
+                eid, name = args.capture_entity.split(":", 1)
+                req = GenerateImageRequest(
+                    prompt=_PROMPT, reference_entities=(eid,), reference_entity_names=(name,)
+                )
+                await capture("entity", client, pid, request=req)
+                await capture("reset_default", client, pid)
+            elif args.capture_mention:  # Phase 2 T2.2: Flow's own character-mention submit
                 from gflow_cli.services.mentions import resolve_and_apply
 
                 req = await resolve_and_apply(

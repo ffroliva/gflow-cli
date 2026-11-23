@@ -14,9 +14,11 @@ exactly goes to the default `ui_automation` transport before anything is sent.
 GFLOW_CLI_TRANSPORT=direct_http gflow image t2i "a paper boat on a pond"
 ```
 
-The setting applies to `gflow image t2i` / `i2i` / `generate` and to the MCP image tool,
-in-process and as a queued job. Batch runs (`gflow run`, `gflow image batch`) still use the
-UI transport.
+The setting applies to `gflow image t2i` / `i2i` / `generate`, to the MCP image tool
+(in-process and as a queued job), and to each row of `gflow run` (from the environment, or
+`"transport": "direct_http"` in the config; a `"ref": "batch:N"` row is served too).
+`gflow image batch` resolves to the same transport, but its rows run the inherited UI batch
+method, which flow.google.com refuses on every transport.
 
 ## What it serves
 
@@ -29,10 +31,10 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 to 4 | yes | live generations: 2, 3 and 4 entries in one request returned 2, 3 and 4 images |
-| One `--ref` to an image already in the project (with its display name), one image | yes | a live generation |
-| One `--ref ./photo.png` (a local file) | yes, after the upload | the upload runs on the UI transport, then the generation goes direct; a live generation |
+| One ref made in this run: a `gflow run` row's `"ref": "batch:N"`, one image | yes | a live `gflow run` |
+| One `--ref ./photo.png` (a local file not yet in the catalog), one image | yes, after the upload | the upload runs on the UI transport, then the generation goes direct; a live generation |
 | One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
-| One `@Name` mention of a character in the project | yes, when exactly one character has that name | the id is read from the project; a live generation |
+| One `@Name` mention of a character in the project | yes, when exactly one character has that name (trimmed, case-insensitive, as the UI picker matches) | the id is read from the project; a live generation |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
 | Several refs, several characters, a ref plus a character, or a ref or character with count 2-4 | no | not captured |
 | A mention whose name matches no character, or several | no | the UI picker decides |
@@ -49,7 +51,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Flow answers a redirect, HTTP 401 or HTTP 403 | no: it was sent once and refused | the request is submitted a second time, through `ui_automation`'s own page |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
-| A referenced image was deleted in Flow | no | **not measured**: the UI path re-uploads the local copy (#772); the direct path reports the error and does not |
+| A `--ref` found in the local catalog (a media id, or a file used before) | no | the catalog may be stale; the UI path proves the image still exists before it submits and refuses at $0 |
 
 A sent request is never retried. Every rejected reply drops the cached session token, so a
 stale one cannot stick in a long-running MCP server or worker. A reCAPTCHA mint is retried
@@ -65,10 +67,12 @@ nothing. The page is parked after every direct run, as after a UI run.
 
 ## Refusals observed
 
-On 2026-11-23 one direct run on the test profile ended in a WAF refusal (exit 10,
-`WafRejectionError`) after about 25 direct generations that day; the same request two
-minutes later went through. Which request drew it was not isolated. Flow refused it before
-generating, so nothing was billed, and gflow did not resend it.
+On 2026-11-23 the test profile made about 90 image generations in one day. Late in that day
+Flow answered some requests with a WAF refusal (exit 10, `WafRejectionError`), on direct and
+plain requests alike, including a plain text-to-image with no reference; the identical
+request usually went through minutes later. The refusals followed the day's volume, not a
+request shape: Flow's own submit for each refused shape was captured and matches what the
+direct path sends. A refused request was not billed, and gflow did not resend it.
 
 ## Speed
 

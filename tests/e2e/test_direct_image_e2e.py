@@ -93,10 +93,10 @@ def test_a_model_with_no_measured_wire_name_routes_to_the_ui_transport(
     assert _image_transports(e2e_env) == [None]
 
 
-def test_an_in_project_reference_is_generated_by_the_direct_transport(
+def test_a_catalogued_reference_routes_to_the_ui_transport(
     e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
-    """T2.1: an i2i whose --ref is an image this project already holds goes direct."""
+    """A --ref found in the catalog may be stale; the UI proves it exists before submit."""
     first = _t2i(e2e_env, tmp_path / "source.jpg")
     assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
     with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
@@ -125,7 +125,7 @@ def test_an_in_project_reference_is_generated_by_the_direct_transport(
     )
     assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
     _saved(tmp_path / "night.jpg")
-    assert _image_transports(e2e_env) == ["direct_http", "direct_http"]
+    assert _image_transports(e2e_env) == ["direct_http", None]
 
 
 @pytest.mark.skipif(
@@ -180,11 +180,15 @@ def test_a_named_character_is_generated_by_the_direct_transport(
 def test_a_local_file_reference_is_uploaded_then_generated_directly(
     e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
-    """--ref ./file: the upload runs on the UI transport, then the generation goes direct."""
-    first = _t2i(e2e_env, tmp_path / "local.jpg")
+    """--ref ./fresh.png: uploaded (on the UI transport), then generated directly."""
+    from PIL import Image
+
+    first = _t2i(e2e_env, tmp_path / "seed.jpg")  # only to obtain a project
     assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
     with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
         (project_id,) = db.execute("SELECT flow_project_id FROM assets").fetchone()
+    fresh = tmp_path / "fresh.png"  # drawn here, so no catalog knows it
+    Image.new("RGB", (512, 512), (40, 110, 180)).save(fresh)
     proc = subprocess.run(
         [
             sys.executable,
@@ -192,13 +196,13 @@ def test_a_local_file_reference_is_uploaded_then_generated_directly(
             "gflow_cli",
             "image",
             "i2i",
-            "the same scene in winter",
+            "a sailing boat on this blue sea",
             "--ref",
-            str(_saved(tmp_path / "local.jpg")),
+            str(fresh),
             "--project",
             project_id,
             "--out-file",
-            str(tmp_path / "winter.jpg"),
+            str(tmp_path / "boat.jpg"),
         ],
         capture_output=True,
         text=True,
@@ -206,7 +210,7 @@ def test_a_local_file_reference_is_uploaded_then_generated_directly(
         env=e2e_env | {"GFLOW_CLI_TRANSPORT": "direct_http"},
     )
     assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
-    _saved(tmp_path / "winter.jpg")
+    _saved(tmp_path / "boat.jpg")
     assert _image_transports(e2e_env)[-1] == "direct_http"
 
 
@@ -265,3 +269,40 @@ def test_a_bare_mention_is_generated_by_the_direct_transport(
     assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
     _saved(tmp_path / "pier.jpg")
     assert _image_transports(e2e_env)[-1] == "direct_http"
+
+
+def test_a_run_row_referencing_an_earlier_row_goes_direct(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """gflow run: "ref": "batch:0" is referenced in place; both rows go direct."""
+    config = tmp_path / "run.json"
+    config.write_text(
+        json.dumps(
+            {
+                "transport": "direct_http",
+                "prompts": [
+                    {"text": "a single red apple on a wooden table", "aspect_ratio": "1:1"},
+                    {"text": "the same apple, now green", "aspect_ratio": "1:1", "ref": "batch:0"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "run",
+            "--config",
+            str(config),
+            "--output-dir",
+            str(tmp_path / "run_out"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env | {"GFLOW_CLI_EXPERIMENTAL_TRANSPORTS": "1"},
+    )
+    assert proc.returncode == 0, f"gflow run failed (exit {proc.returncode})"
+    assert _image_transports(e2e_env) == ["direct_http", "direct_http"]

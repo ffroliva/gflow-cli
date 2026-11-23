@@ -46,6 +46,7 @@ _ORIGIN = "https://flow.google.com"
 _MINT_BUDGET_S = 10.0  # how long a freshly navigated page gets to load reCAPTCHA
 _MINT_RETRY_S = 0.5
 _NAVIGATE_MS = 45_000  # the composer's own budget for reaching a project
+_CHARACTER_READ_S = 15.0  # a bare @Name's project read; past it, the UI picker decides
 _RECONCILE_HINT = (
     "Flow may have accepted this image request before the error, so gflow did not resend "
     "it. Check the project in Flow for the new image before running the command again."
@@ -73,13 +74,24 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
 
 def _references_measured(request: GenerateImageRequest) -> bool:
     """No refs, or the one measured I2I shape: a single in-project image with a display
-    name (the chip needs it), one output image. A local file is uploaded first (on the UI
-    transport) and arrives here as such a ref. local_path is not a signal: the CLI fills it
-    for every catalogued image, generated ones too."""
+    name (the chip needs it), one output image, made or uploaded in this run.
+
+    Only a ref this run made (a ``batch:N`` row's image) or uploaded carries no
+    ``local_path``; one found in the local catalog always does (the CLI's lookup and the
+    #772 reuse fill it). The catalog can be stale: Flow may have deleted or renamed the
+    image. The UI path proves the ref still exists before it submits and refuses at $0; a
+    direct POST cannot, and what Flow does with a dead id is unmeasured. So catalogued
+    refs stay on the UI path."""
     if not request.refs:
         return True
     (ref, *more) = request.refs
-    return not more and ref.in_project and bool(ref.display_name) and request.count == 1
+    return (
+        not more
+        and ref.in_project
+        and bool(ref.display_name)
+        and not ref.local_path
+        and request.count == 1
+    )
 
 
 def _characters_measured(request: GenerateImageRequest) -> bool:
@@ -101,26 +113,35 @@ def _characters_measured(request: GenerateImageRequest) -> bool:
 async def _resolve_character(
     page: Page, project_id: str, request: GenerateImageRequest
 ) -> tuple[tuple[str, str], ...]:
-    """Read path: the ``(entity_id, name)`` pair the frame carries.
+    """Read path: the ``(entity_id, name)`` pair the frame carries, as the project holds it.
 
-    A request with the id already has it. A bare mention carries only the name: the id is
-    read from Flow's own project reply (``read_project``, which also lands the page on the
-    project for the mint). Anything but exactly one character with that exact name falls
-    back before any POST, as the UI picker would refuse it.
+    Both forms are checked against Flow's own project reply (``read_project``, which also
+    lands the page on the project for the mint), as the UI does when it attaches one:
+    - an id (``--reference-entity``) must be one the project holds; the chip uses Flow's
+      name for it. A stale or foreign id falls back before any POST.
+    - a bare mention carries only the name: exactly one character must match it by the
+      picker's rule (trimmed, case-insensitive), or the UI picker decides.
+    The project read also measured the difference live: with it the request was accepted,
+    without it Flow refused an id-carrying request twice (exit 10, 2026-11-23).
     """
     names = request.reference_entity_names
     if not names:
         return ()
-    if request.reference_entities:
-        return ((request.reference_entities[0], names[0]),)
     try:
-        project = await read_project(page, project_id)
+        # Bounded: a slow read must fall back, not hold the generate lock for minutes.
+        project = await read_project(page, project_id, timeout_s=_CHARACTER_READ_S)
     except Exception as exc:
         raise _DirectFallbackError(f"character_read:{type(exc).__name__}") from exc
-    matches = [c.entity_id for c in project.characters if c.display_name == names[0]]
+    if request.reference_entities:
+        wanted_id = request.reference_entities[0]
+        matches = [c for c in project.characters if c.entity_id == wanted_id]
+    else:  # the picker's own rule (_mc_mention.py): trimmed, case-insensitive, unique
+        wanted = names[0].strip().casefold()
+        matches = [c for c in project.characters if c.display_name.strip().casefold() == wanted]
     if len(matches) != 1:
         raise _DirectFallbackError(f"character_matches:{len(matches)}")
-    return ((matches[0], names[0]),)
+    log.info("direct.character_resolved", source="project_read")
+    return ((matches[0].entity_id, matches[0].display_name),)
 
 
 class _DirectFallbackError(Exception):

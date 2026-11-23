@@ -821,6 +821,10 @@ async def test_direct_http_sends_the_character_pair(
         return httpx.Response(200, text=_valid_ogiz0b_text())
 
     transport._http_transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with("Mate", "Skipper")),
+    )
     req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
     await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
@@ -860,11 +864,11 @@ def test_agentic_ui_mode_is_not_served() -> None:
     assert direct_can_serve(GenerateImageRequest(prompt="x", ui_mode=UiMode.AGENTIC)) is False
 
 
-def test_a_catalogued_reference_with_a_local_copy_is_still_served() -> None:
-    """The CLI fills local_path for EVERY catalogued image, generated ones too: refusing a
-    ref with a local copy sent every in-project i2i to the UI (live e2e, 2026-11-23)."""
+def test_a_catalogued_reference_keeps_the_ui_path() -> None:
+    """A catalogued ref (it carries local_path) may be stale: the UI proves it still exists
+    before submit and refuses at $0; a direct POST cannot (fresh review, 2026-11-23)."""
     ref = replace(_IN_PROJECT, local_path="face.png", local_sha256="0" * 64)
-    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(ref,))) is True
+    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(ref,))) is False
 
 
 @pytest.mark.asyncio
@@ -1086,3 +1090,93 @@ async def test_a_mention_with_no_or_several_matches_falls_back_before_any_post(
     await transport.generate_images(project_id="proj-123", request=req)
     assert ui == [True]
     assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_a_mention_matches_the_picker_rule_trimmed_and_case_insensitive(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fresh review: @kael must find "Kael " as the UI picker does (_mc_mention.py)."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    read = AsyncMock(return_value=_project_with("Mate", "Kael "))
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.read_project", read)
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    req = GenerateImageRequest(prompt="kael on a pier", reference_entity_names=("kael",))
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert builder.call_args.kwargs["characters"] == (("entity-1", "Kael "),)
+    assert read.await_args.kwargs["timeout_s"] == 15.0
+
+
+@pytest.mark.asyncio
+async def test_names_differing_only_in_case_are_ambiguous(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fresh review: "Kael" and "KAEL" are one name to the picker, which refuses; so do we."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with("Kael", "KAEL")),
+    )
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    ui = _watch_ui(transport)
+    req = GenerateImageRequest(prompt="Kael on a pier", reference_entity_names=("Kael",))
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui == [True]
+
+
+@pytest.mark.asyncio
+async def test_an_entity_id_the_project_does_not_hold_falls_back_before_any_post(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--reference-entity is verified against the project, as the UI attach does: a stale
+    or foreign id must not reach Flow on the direct path."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with("Mate")),  # entity-0 only; entity-1 is gone
+    )
+    posts: list[bool] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(True)
+        return httpx.Response(
+            200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+        )
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui = _watch_ui(transport)
+    req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert ui == [True]
+    assert posts == []
+
+
+@pytest.mark.asyncio
+async def test_an_entity_id_uses_the_name_flow_holds_for_it(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The chip carries the character's name as Flow knows it, not a caller's spelling."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with("Mate", "Skipper")),
+    )
+    transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
+    req = GenerateImageRequest(
+        prompt="x", reference_entities=("entity-1",), reference_entity_names=("skipper",)
+    )
+    await transport.generate_images(project_id="proj-123", request=req)
+    assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
