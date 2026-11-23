@@ -40,19 +40,29 @@ def build_ogiz0b_body(
     batch_id: str,
     entry_seeds: tuple[int, ...],
     aspect: Aspect = Aspect.PORTRAIT,
+    references: tuple[tuple[str, str], ...] = (),
 ) -> str:
-    """Return the form-encoded ``f.req`` + ``at`` body for one T2I ``ogiZ0b`` POST.
+    """Return the form-encoded ``f.req`` + ``at`` body for one ``ogiZ0b`` POST.
 
     One entry per image: ``len(entry_seeds)`` is the image count (two entries returned two
-    images in one POST, measured 2026-11-22).
+    images in one POST, measured 2026-11-22). ``references`` are in-project images as
+    ``(media_id, display_name)``: Flow's own I2I submit carries each at ``entry[2]`` and
+    as a chip ahead of the prompt text, which then starts with two spaces (captured
+    2026-11-22 with one reference).
     """
     if not entry_seeds:
         msg = "entry_seeds must name at least one image"
         raise ValueError(msg)
     ctx: list[object] = [None, 22, None, None, None, project_id, None, None, None, None]
     ctx.append([recaptcha_token, 1])
+    media = [[media_id, None, None, None, 1] for media_id, _ in references] or None
+    document = (
+        [[[None, [[media_id, name] for media_id, name in references]], [f"  {prompt}"]]]
+        if references
+        else [[[prompt]]]
+    )
     entries = [
-        [None, None, None, seed, _ASPECT_WIRE[aspect], model, None, ctx.copy(), [[[prompt]]]]
+        [None, None, media, seed, _ASPECT_WIRE[aspect], model, None, ctx.copy(), document]
         + [None, None, None]
         for seed in entry_seeds
     ]

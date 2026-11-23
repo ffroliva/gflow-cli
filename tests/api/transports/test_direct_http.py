@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -714,3 +715,25 @@ async def test_direct_http_sends_one_seed_per_image_and_the_aspect(
     assert len(kwargs["entry_seeds"]) == 2
     assert len(set(kwargs["entry_seeds"])) == 2
     assert kwargs["aspect"] is Aspect.LANDSCAPE
+
+
+_IN_PROJECT = ImageRef(
+    name="00000000-0000-0000-0000-000000000002", display_name="Lighthouse", in_project=True
+)
+
+
+def test_direct_can_serve_one_in_project_reference() -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(_IN_PROJECT,))) is True
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"refs": (_IN_PROJECT, replace(_IN_PROJECT, name="00000000-0000-0000-0000-000000000003"))},
+        {"refs": (replace(_IN_PROJECT, display_name=""),)},
+        {"refs": (replace(_IN_PROJECT, in_project=False),)},
+        {"refs": (_IN_PROJECT,), "count": 2},
+    ],
+)
+def test_direct_can_serve_refuses_unmeasured_reference_shapes(kwargs: dict[str, object]) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", **kwargs)) is False  # type: ignore[arg-type]

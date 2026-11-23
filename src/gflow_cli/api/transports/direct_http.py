@@ -59,10 +59,20 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
     return (
         request.model in _WIRE_MODEL
         and request.count <= _MAX_DIRECT_COUNT
-        and not (request.refs or request.ref_paths or request.reference_entities)
+        and _references_measured(request)
+        and not (request.ref_paths or request.reference_entities)
         and not request.instructions
         and "@" not in request.prompt
     )
+
+
+def _references_measured(request: GenerateImageRequest) -> bool:
+    """No refs, or the one measured I2I shape: a single in-project image with a display
+    name (the chip needs it), one output image. A local file needs an upload first."""
+    if not request.refs:
+        return True
+    (ref, *more) = request.refs
+    return not more and ref.in_project and bool(ref.display_name) and request.count == 1
 
 
 class _DirectFallbackError(Exception):
@@ -214,6 +224,7 @@ class DirectImageHttpRunner:
                 batch_id=str(uuid.uuid4()).upper(),
                 entry_seeds=tuple(1 + secrets.randbelow(2**31 - 1) for _ in range(request.count)),
                 aspect=request.aspect,
+                references=tuple((ref.name, ref.display_name) for ref in request.refs),
             )
             log.info(
                 "direct.frame_built",

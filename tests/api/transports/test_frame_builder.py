@@ -131,3 +131,18 @@ def _build(**overrides: object) -> str:
         "entry_seeds": (12345,),
     }
     return build_ogiz0b_body(**(values | overrides))  # type: ignore[arg-type]
+
+
+def test_an_in_project_reference_rides_slot_2_and_a_prompt_chip() -> None:
+    """Flow's own in-project I2I submit, captured 2026-11-22: the media id at entry[2], and
+    the same id + display name as a chip ahead of the text (which gains two spaces)."""
+    _, inner, _ = _decode_body(_build(references=(("media-1", "Lighthouse"),)))
+    entry = inner[1][0]
+    assert entry[2] == [["media-1", None, None, None, 1]]
+    assert entry[8] == [[[None, [["media-1", "Lighthouse"]]], ["  a fox"]]]
+
+
+def test_no_reference_keeps_the_plain_prompt_document() -> None:
+    _, inner, _ = _decode_body(_build())
+    assert inner[1][0][2] is None
+    assert inner[1][0][8] == [[["a fox"]]]
