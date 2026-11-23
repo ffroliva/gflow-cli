@@ -133,9 +133,18 @@ def test_missing_chain_extra_fails_before_transcription(monkeypatch: pytest.Monk
         caption_video("clip.mp4", srt_path=Path("captions.srt"))
 
 
-def test_transcribe_refuses_default_google_endpoint(media_files: tuple[Path, Path]) -> None:
-    with pytest.raises(ConfigurationError, match="GFLOW_CLI_LLM_BASE_URL"):
-        transcribe_video(str(media_files[0]))
+def test_transcribe_refuses_default_google_endpoint(
+    media_files: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Pin the default: a developer's .env may point GFLOW_CLI_LLM_BASE_URL elsewhere, and an
+    # environment variable outranks the .env file, so this case cannot depend on the checkout.
+    monkeypatch.setenv("GFLOW_CLI_LLM_BASE_URL", config.DEFAULT_LLM_BASE_URL)
+    config.reset_settings()
+    try:
+        with pytest.raises(ConfigurationError, match="GFLOW_CLI_LLM_BASE_URL"):
+            transcribe_video(str(media_files[0]))
+    finally:
+        config.reset_settings()
 
 
 def test_transcribe_refuses_existing_srt_before_network(
@@ -651,6 +660,63 @@ def test_long_caption_wraps_within_frame(size: tuple[int, int]) -> None:
     lines = _wrap_caption("word " * 21, font, draw, size[0] * 0.9)
     assert 1 < len(lines) <= 3
     assert all(draw.textlength(line, font=font) <= size[0] * 0.9 for line in lines)
+
+
+@pytest.mark.parametrize("size", [(1280, 720), (720, 1280)])
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Long enough to overflow 1280 px even where the test font has no CJK glyphs and
+        # draws narrower placeholder boxes.
+        "先生成这几段片子，再配一段旁白，把字幕烧进画面里，最后今晚把成片上传到频道。" * 2,
+        "Install it from https://github.com/ffroliva/gflow-cli/releases/download/v0.105.1/"
+        "gflow_cli-0.105.1-py3-none-any.whl",
+    ],
+    ids=["cjk", "long-url"],
+)
+def test_caption_without_break_points_wraps_within_frame(size: tuple[int, int], text: str) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import _caption_overlay, _wrap_caption
+
+    draw = ImageDraw.Draw(Image.new("RGB", size))
+    font = ImageFont.load_default(size=40)
+    lines = _wrap_caption(text, font, draw, size[0] * 0.9)
+    assert len(lines) > 1
+    assert all(draw.textlength(line, font=font) <= size[0] * 0.9 for line in lines)
+    assert "".join(lines).replace(" ", "") == text.replace(" ", "")
+
+    overlay, _ = _caption_overlay(*size, text, ImageDraw, ImageFont)
+    ink = overlay.getchannel("A").point(lambda alpha: 255 if alpha == 255 else 0).getbbox()
+    assert ink is not None
+    assert ink[0] > 0 and ink[2] < size[0]
+
+
+def test_caption_wrap_keeps_closing_punctuation_off_the_line_start() -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import _wrap_caption
+
+    draw = ImageDraw.Draw(Image.new("RGB", (400, 100)))
+    font = ImageFont.load_default(size=30)
+    max_width = draw.textlength("一二三四", font=font) + 1
+    assert _wrap_caption("一二三四，五六", font, draw, max_width) == ["一二三", "四，五六"]
+
+
+def test_caption_wrap_does_not_move_a_character_down_when_the_pair_is_too_wide() -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import _wrap_caption
+
+    draw = ImageDraw.Draw(Image.new("RGB", (400, 100)))
+    font = ImageFont.load_default(size=30)
+    # "iW" fits exactly, but "W，" is wider than the line: the comma starts the next line
+    # instead of carrying "W" down into a line wider than the frame.
+    max_width = draw.textlength("iW", font=font)
+    assert draw.textlength("W，", font=font) > max_width
+    lines = _wrap_caption("iW，", font, draw, max_width)
+    assert all(draw.textlength(line, font=font) <= max_width for line in lines)
+    assert "".join(lines) == "iW，"
 
 
 def test_resolve_video_source_accepts_local_and_verified_catalog_video(
