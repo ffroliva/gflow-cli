@@ -35,7 +35,10 @@ def browser() -> Iterator[Browser]:
         try:
             b = p.chromium.launch()
         except Exception as exc:  # pragma: no cover - only the 3.13 CI shards install it
-            pytest.skip(f"Playwright Chromium is unavailable: {exc}")
+            # Skip only a missing browser; any other launch failure is a real failure.
+            if "Executable doesn't exist" not in str(exc):
+                raise
+            pytest.skip(f"Playwright Chromium is not installed: {exc}")
         yield b
         b.close()
 
