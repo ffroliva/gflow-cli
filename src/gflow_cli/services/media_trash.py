@@ -168,9 +168,23 @@ def _resolve_target_info(
         profile_name = profile if profile else profile_store.resolve_profile(None)
         with DataStore.open(db_path) as store:
             repo = DataRepository(store)
-            asset = repo.get_asset_by_any_id(profile_name, clean_id)
-        if asset is None:
+            matches = repo.find_assets_by_any_id(clean_id, profile_name=profile_name)
+        if len(matches) > 1:
+            # The catalog row decides which id is sent (#1451), so pick it by project.
+            matches = [m for m in matches if m.flow_project_id == resolved_project_id] or matches
+        if len(matches) > 1:
+            candidates = sorted({f"{m.flow_media_id} ({m.kind.value})" for m in matches})
+            raise DataStoreError(
+                detail=(
+                    f"Multiple media records match {clean_id!r} under profile "
+                    f"{profile_name!r}: {candidates}. Pass a specific media id to disambiguate."
+                ),
+                route=route,
+                charged="no",
+            )
+        if not matches:
             return clean_id, resolved_project_id, "", profile_name, clean_id
+        asset = matches[0]
         return (
             asset.flow_media_id,
             resolved_project_id,

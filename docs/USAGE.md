@@ -1934,7 +1934,7 @@ Options:
 
 - Accepts a Flow media UUID (`flow_media_id`), local catalog asset ID, or workflow UUID.
 - An image is trashed by the id Flow's Trash takes for it, its workflow id, while the output and the restore hint keep the media id gflow reports for it ([#1451](https://github.com/ffroliva/gflow-cli/issues/1451)). A video is trashed by its media id.
-- When `--project` is passed, the project comes from the option; the ID is still looked up in the local catalog under the profile, so a cataloged image is sent by its workflow id. An ID the catalog does not know is sent as given.
+- When `--project` is passed, the project comes from the option; the ID is still looked up in the local catalog under the profile, so a cataloged image is sent by its workflow id. An ID the catalog does not know is sent as given. An ID that matches several cataloged items under the profile resolves to the one in that project; if that still leaves more than one, the command refuses with exit 16 before anything is sent.
 - Resolves the Flow project ID from the local catalog when `--project` is omitted.
 - If the identifier matches assets across multiple profiles and `--profile` is unset, raises exit 16 (`DataStoreError`) requesting `--profile`.
 - In interactive environments, prompts `Move <kind> <id> in project <project_id> (profile: <profile>) to Flow's Trash? [y/N]: ` unless `--yes` (`-y`) is supplied.

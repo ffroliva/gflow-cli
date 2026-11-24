@@ -544,8 +544,9 @@ def _seed_test_asset(
     flow_workflow_id: str | None = "wf-1",
     status: str = "ready",
     kind: AssetKind = AssetKind.IMAGE,
+    created_at: str | None = None,
 ) -> None:
-    now_str = datetime.now(UTC).isoformat()
+    now_str = created_at or datetime.now(UTC).isoformat()
     with DataStore.open(db_path) as store:
         repo = DataRepository(store)
         repo.upsert_profile(
@@ -1214,3 +1215,57 @@ async def test_direct_trash_checks_the_echo_against_the_id_it_sent(
 
     with pytest.raises(WireFormatError, match="media ID mismatch"):
         await flow_wire.direct_trash_media(profile_dir, "img-media", "proj-1")
+
+
+def _seed_cross_column_collision(catalog: Path, *, video_project: str) -> None:
+    """``"x"`` is an image's media id and, in a newer row, a video's workflow id."""
+    _seed_test_asset(
+        catalog,
+        asset_id="local-img",
+        flow_media_id="x",
+        flow_workflow_id="img-wf",
+        flow_project_id="p-1",
+        profile_name="test_prof",
+        created_at="2026-11-01T00:00:00+00:00",
+    )
+    _seed_test_asset(
+        catalog,
+        asset_id="local-vid",
+        flow_media_id="vid-media",
+        flow_workflow_id="x",
+        flow_project_id=video_project,
+        profile_name="test_prof",
+        kind=AssetKind.VIDEO,
+        created_at="2026-11-02T00:00:00+00:00",
+    )
+
+
+@pytest.mark.asyncio
+async def test_project_narrows_an_id_that_matches_several_assets(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_cross_column_collision(catalog, video_project="p-2")
+    mock_trash = AsyncMock(return_value=_echo("img-wf", "p-1", archived=True, workflow_slot="x"))
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    result = await trash_media_service("x", profile="test_prof", project_id="p-1")
+
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_trash.assert_awaited_once_with(expected_pdir, "img-wf", "p-1")
+    assert result.media_id == "x"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("video_project", ["p-1", "p-3"])
+async def test_project_refuses_an_id_that_stays_ambiguous(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch, video_project: str
+) -> None:
+    """Both matches in the project, or neither: refused before anything is sent."""
+    _seed_cross_column_collision(catalog, video_project=video_project)
+    mock_trash = AsyncMock()
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    project = "p-1" if video_project == "p-1" else "p-9"
+    with pytest.raises(DataStoreError, match="Multiple media records match"):
+        await trash_media_service("x", profile="test_prof", project_id=project)
+    mock_trash.assert_not_awaited()
