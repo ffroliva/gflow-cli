@@ -65,6 +65,7 @@ CLI_TO_MCP: dict[str, str] = {
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
     "video generate": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
+    "video extend": "gflow_extend_video",  # single-segment flow.google.com extend
     "video assemble": "gflow_video_assemble",  # local, credit-free media processing
     "video transcribe": "gflow_video_transcribe",
     "video captions": "gflow_video_captions",
@@ -98,22 +99,6 @@ CLI_TO_MCP: dict[str, str] = {
 # entries are backlog, not policy — moving one to CLI_TO_MCP is the upgrade
 # path. Everything else is a considered exclusion.
 _MCP_EXEMPT: dict[str, str] = {
-    # Deliberately deferred, not overlooked (2026-09-01). Three reasons, any one
-    # of which would be enough on its own:
-    #  1. A chained run is minutes long and is not wired to FlowWorker, so it
-    #     would block an MCP client's tool call past its timeout — the exact
-    #     hazard issue #481 exists to address.
-    #  2. The feature has an open defect (a 7s segment padded into an 8s slot
-    #     produces a frozen, silent second at each internal seam — KNOWN_ISSUES).
-    #     Widening the surface before that is settled multiplies the blast radius.
-    #  3. It spends credits per segment behind a confirmation prompt that has no
-    #     MCP equivalent; an agent could not give informed consent on the user's
-    #     behalf.
-    # Revisit once extend is enqueued through the worker like the generate tools.
-    "video extend": (
-        "long-running billed chain; not worker-enqueued, and its cost "
-        "confirmation has no MCP equivalent (#481)"
-    ),
     # Not a gap: the twin is a protocol method, not a tool. SEP-2663 `tasks/cancel` and
     # `gflow cancel` store the same row state through worker.queue.abort_task, and the
     # MCP side also stops a job running in its own server. What differs is the report:
@@ -290,6 +275,8 @@ _PARAM_ALIASES: dict[str, str] = {
     "refs": "reference_images",
     "tool_specs": "tools",
     "image": "initial_frame",
+    "media_id": "source",  # video extend SOURCE accepts Flow media UUID or local video path
+    "prompts": "prompt",  # video extend CLI accepts N prompts for labs chains; MCP takes one
     "enable_mode": "enabled",  # CLI --enable-mode / tool `enabled`: same switch
     "disabled": "enabled",
     "output_file": "out_file",  # --out-file PATH (#1158)
@@ -315,6 +302,14 @@ _OPTION_EXEMPT: dict[str, str] = {
     "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video extend:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video extend:segments": "labs-only multi-segment chain; MCP drives single-segment extend",
+    "video extend:jitter": "pacing knob for labs multi-segment loops; MCP tool is single-segment",
+    "video extend:scene_id": "labs-only existing scene continuation; not ported to flow.google.com",
+    "video extend:resume_from": "labs-only scene resume handle; not ported to flow.google.com",
+    "video extend:seed": "labs-only fixed seed; not ported to flow.google.com",
+    "video extend:yes": "CLI interactive cost-confirmation bypass; MCP tools are non-interactive",
+    "video extend:dry_run": "CLI plan-preview flag; MCP tools execute or return validation errors",
     "character create:face_prompt": "GAP #691 — prompt-generated create not ported over MCP",
     "character create:body_prompt": "GAP #691 — prompt-generated create not ported over MCP",
     "character create:model": "GAP #691 — prompt-generated create not ported over MCP",

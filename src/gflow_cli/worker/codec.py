@@ -41,6 +41,7 @@ from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
+from gflow_cli.api.video_extend import MigratedExtendRequest
 from gflow_cli.config import UiMode
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import QueueSchemaError
@@ -52,6 +53,7 @@ __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "DecodedPayload",
     "build_image_request",
+    "build_video_extend_request",
     "build_video_request",
     "decode_payload",
     "encode_payload",
@@ -60,7 +62,8 @@ __all__ = [
 
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
-_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES
+_VIDEO_EXTEND_TASK_TYPES = frozenset({"extend"})
+_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES | _VIDEO_EXTEND_TASK_TYPES
 
 # The only version this codec writes. 0 (an absent key) is read-only legacy
 # compatibility — nothing ever deliberately encodes as V0.
@@ -85,7 +88,7 @@ class DecodedPayload:
 
     schema_version: int
     task_type: str
-    request: GenerateImageRequest | GenerateVideoRequest
+    request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest
     fields: dict[str, Any]
 
 
@@ -113,11 +116,13 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
 
     try:
-        request: GenerateImageRequest | GenerateVideoRequest = (
-            build_image_request(fields)
-            if task_type in _IMAGE_TASK_TYPES
-            else build_video_request(fields)
-        )
+        request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest
+        if task_type in _IMAGE_TASK_TYPES:
+            request = build_image_request(fields)
+        elif task_type in _VIDEO_EXTEND_TASK_TYPES:
+            request = build_video_extend_request(fields)
+        else:
+            request = build_video_request(fields)
     except (KeyError, ValueError, TypeError) as exc:
         detail = redact_error_detail(f"{task_type} payload rejected: {exc}")
         raise QueueSchemaError(detail, route=_CODEC_ROUTE) from exc
@@ -347,4 +352,36 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         reference_audio=reference_audio,
         ui_mode=ui_mode,
         max_credits=max_credits,
+    )
+
+
+def build_video_extend_request(payload: dict[str, Any]) -> MigratedExtendRequest:
+    """Map an ``extend`` queue payload dict onto :class:`MigratedExtendRequest`."""
+    prompt = payload["prompt"]
+    if not isinstance(prompt, str):
+        raise ValueError("prompt must be a string")
+    source_video = Path(payload["source_video"]) if payload.get("source_video") else None
+    source_media_id = payload.get("source_media_id")
+    if source_media_id is not None and not isinstance(source_media_id, str):
+        raise ValueError("source_media_id must be a string")
+    raw_duration = payload.get("duration")
+    if raw_duration is not None and (
+        isinstance(raw_duration, bool) or not isinstance(raw_duration, int)
+    ):
+        raise ValueError("duration must be an integer")
+    raw_cap = payload.get("max_credits")
+    if raw_cap is not None and (isinstance(raw_cap, bool) or not isinstance(raw_cap, int)):
+        raise ValueError("max_credits must be a non-negative integer")
+    raw_refs = payload.get("reference_images", [])
+    if not isinstance(raw_refs, list):
+        raise ValueError("reference_images must be a list of paths")
+    reference_images = tuple(Path(p) for p in cast("list[Any]", raw_refs))
+    return MigratedExtendRequest(
+        prompt=prompt,
+        source_video=source_video,
+        source_media_id=source_media_id,
+        duration=raw_duration,
+        reference_images=reference_images,
+        aspect=payload.get("aspect"),
+        max_credits=raw_cap,
     )

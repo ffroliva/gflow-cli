@@ -96,7 +96,9 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # --reference-entity-name; #723). UUID references, an entity id without a name,
 # Imagen 4 (image4), image batch, and characters on t2v/i2v are refused there (exit 36);
 # local-file video r2v takes --reference-entity with --reference-entity-name (#723).
-# `gflow video extend` runs there one segment per call (--project required); -n > 1,
+# `gflow video extend` runs there one segment per call (accepts a Flow media UUID with
+# --project or a local video file with auto-created project, optional --duration 3..10,
+# up to 3 --ref images, and --max-credits pre-submit quote enforcement); -n > 1,
 # --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
 # i2i, i2v, r2v and character references exit 36 there, after up to

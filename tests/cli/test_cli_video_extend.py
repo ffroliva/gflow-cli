@@ -675,16 +675,134 @@ def test_the_arm_is_chosen_before_the_browser(
     assert _run_spy["aspect"] is None  # no hidden 9:16 sent to the migrated arm
 
 
-def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> None:
+def test_the_migrated_plan_describes_pre_submit_quote(runner: CliRunner, _host: Any) -> None:
     _host("flow.google.com")
-    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--dry-run"])
-    assert result.exit_code == 0
-    assert "does not report the price" in result.output
-    assert "exact amount" not in result.output
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "extend",
+            MEDIA,
+            "go",
+            "--project",
+            PROJECT,
+            "--duration",
+            "6",
+            "--max-credits",
+            "20",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, result.output
     flat = " ".join(result.output.split())  # Rich wraps at the terminal width
-    assert "grows the source clip in place" in flat  # #1184, a dated observation
-    assert "measured 2026-11-08" in flat
+    assert "pre-submit credit quote" in flat
+    assert "6s" in flat
+    assert "grows the source clip in place" in flat
     assert "Flow bills 8s" not in flat  # the length is the key's, not a fixed Veo 8 s
+
+
+def test_cli_accepts_local_video_duration_refs_and_credit_cap(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    _host("flow.google.com")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "extend",
+            str(clip),
+            "camera rises",
+            "--duration",
+            "6",
+            "--ref",
+            str(ref),
+            "--max-credits",
+            "20",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert _run_spy["migrated"] is True
+    assert _run_spy["source_video"] == clip.resolve()
+    assert _run_spy["duration"] == 6
+    assert _run_spy["refs"] == (ref.resolve(),)
+    assert _run_spy["max_credits"] == 20
+
+
+def test_cli_rejects_more_than_three_refs_at_boundary(
+    runner: CliRunner, _host: Any, tmp_path: Path
+) -> None:
+    _host("flow.google.com")
+    refs = []
+    for i in range(4):
+        p = tmp_path / f"r{i}.png"
+        p.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        refs.extend(["--ref", str(p)])
+    result = runner.invoke(
+        cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, *refs, "--yes"]
+    )
+    assert result.exit_code == 2
+    assert "3" in result.output
+
+
+@pytest.mark.parametrize("bad_dur", ["2", "11"])
+def test_cli_rejects_out_of_range_duration(runner: CliRunner, _host: Any, bad_dur: str) -> None:
+    _host("flow.google.com")
+    result = runner.invoke(
+        cli,
+        ["video", "extend", MEDIA, "go", "--project", PROJECT, "--duration", bad_dur, "--yes"],
+    )
+    assert result.exit_code == 2
+
+
+def test_cli_refuses_migrated_only_extend_options_on_labs_host(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    _host("labs.google")
+    clip = tmp_path / "local.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    result = runner.invoke(cli, ["video", "extend", str(clip), "go", "--duration", "5", "--yes"])
+    assert result.exit_code == 36
+    assert _run_spy == {}
+
+
+def test_migrated_payload_reports_quoted_credits_and_uploaded_source_length() -> None:
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video_reporting import _migrated_extend_payload
+
+    uploaded_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    record = GenerationRecord(
+        workflow_id="wf-up",
+        project_id=PROJECT,
+        media_id=uploaded_id,
+        status=3,
+    )
+    outcome = ExtendOutcome(
+        record=record,
+        video=None,
+        model_key="macaron_cookie_extend_5s",
+        aspect="16:9",
+        scene_id=None,
+        quoted_credits=15,
+        source_media_id=uploaded_id,
+    )
+    payload = _migrated_extend_payload(
+        outcome,
+        "out.mp4",
+        profile_name="p",
+        media_id="/tmp/clip.mp4",
+        project_id=PROJECT,
+        aspect=None,
+    )
+    assert payload["quoted_credits"] == 15
+    assert payload["credits_spent"] == 15
+    assert payload["seconds_added"] == 5
+    assert payload["seconds_billed"] == 5
 
 
 class _MigratedClient:

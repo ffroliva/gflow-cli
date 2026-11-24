@@ -43,9 +43,11 @@ from gflow_cli.storage import AnyPath, write_asset_async
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.api.dto import GenerationCheckpointObserver
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
 from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api._flow_session import JsonObject, _make_instance  # pyright: ignore[reportPrivateUsage]
+from gflow_cli.api._flow_workspace import _default_project_title  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
 
@@ -435,40 +437,77 @@ class MediaEditSurface(GenerationSurface):
     async def extend_video_migrated(  # noqa: PLR0913
         self,
         *,
-        media_id: str,
-        project_id: str,
+        media_id: str | None = None,
+        source_video: Path | None = None,
+        project_id: str | None = None,
+        project_name: str | None = None,
         prompt: str,
-        aspect: str | None,
+        aspect: str | None = None,
+        duration: int | None = None,
+        reference_images: tuple[Path, ...] = (),
         out_path: Path,
         on_started: ExtendStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
         poll_timeout_s: float = 900.0,
         max_credits: int | None = None,
     ) -> tuple[ExtendOutcome, AnyPath | None]:
         """One extend segment through Flow's own UI on flow.google.com. Costs credits.
 
-        The page mints and sends ``fZytfe`` itself; see
-        :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
-        written mp4 (``None`` when the generation did not finish).
+        Supports either an existing Flow ``media_id`` (requires ``project_id``) or a local
+        ``source_video`` (auto-creates a project when ``project_id`` is omitted), optional
+        ``duration`` (3-10s), ``0-3`` ``reference_images``, and pre-submit ``max_credits``
+        enforcement from Flow's extend settings quote. The page mints and sends ``fZytfe``
+        itself; see :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome
+        and the written mp4 (``None`` when the generation did not finish).
         """
-        from gflow_cli.api.transports.migrated_extend import run_extend
-
-        enforce_credit_cap(
-            quoted=None,
-            max_credits=max_credits,
-            route="flow.google.com video extend",
+        from gflow_cli.api.transports.migrated_extend import (
+            run_extend,
+            validate_extend_inputs,
         )
+
+        if self.served_route(prefer_migrated=True) != "migrated":
+            raise FlowHostMigratedError(
+                detail=(
+                    "migrated video extend runs on flow.google.com only, and "
+                    "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
+                ),
+                remediation_hint=(
+                    "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
+                    "to extend via flow.google.com."
+                ),
+            )
+        await validate_extend_inputs(
+            media_id=media_id,
+            source_video=source_video,
+            duration=duration,
+            reference_images=reference_images,
+            max_credits=max_credits,
+        )
+        if media_id is not None and not project_id:
+            raise ConfigurationError(
+                detail="--project is required when extending an existing media_id"
+            )
+        resolved_project_id = project_id
+        if resolved_project_id is None:
+            created = await self.create_project(title=project_name or _default_project_title())
+            resolved_project_id = created.project_id
 
         try:
             page = await self._checkout_page()
             try:
                 outcome = await run_extend(
                     page,
-                    project_id=project_id,
+                    project_id=resolved_project_id,
                     media_id=media_id,
+                    source_video=source_video,
                     prompt=prompt,
                     aspect=aspect,
+                    duration=duration,
+                    reference_images=reference_images,
+                    max_credits=max_credits,
                     poll_timeout_s=poll_timeout_s,
                     on_started=on_started,
+                    on_checkpoint=on_checkpoint,
                 )
             finally:
                 self._checkin_page(page)

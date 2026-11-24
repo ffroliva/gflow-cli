@@ -120,21 +120,55 @@ async def test_malformed_submit_reply_is_wire_error_with_parse_cause(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_migrated_extend_cap_refuses_before_page_checkout(tmp_path: Path) -> None:
-    c = _client(tmp_path)
-    c._checkout_page = AsyncMock()  # type: ignore[method-assign]
-    with pytest.raises(CreditCapExceededError) as caught:
-        await c.extend_video_migrated(
-            media_id=MEDIA,
-            project_id=PROJECT,
-            prompt="continue",
-            aspect=None,
-            out_path=tmp_path / "out.mp4",
-            max_credits=15,
-        )
-    assert caught.value.quoted is None
-    assert caught.value.max_credits == 15
-    c._checkout_page.assert_not_awaited()  # type: ignore[attr-defined]
+async def test_migrated_extend_forwards_cap_duration_and_refs_to_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mp4 = b"\x00\x00\x00\x18ftypmp42"
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+    c, page, run, outcome = _migrated_client(tmp_path, monkeypatch, mp4)
+    out = tmp_path / "out" / "cap.mp4"
+    got, target = await c.extend_video_migrated(
+        media_id=MEDIA,
+        project_id=PROJECT,
+        prompt="continue",
+        aspect=None,
+        duration=6,
+        reference_images=(ref,),
+        out_path=out,
+        max_credits=20,
+    )
+    assert got is outcome
+    assert Path(str(target)).read_bytes() == mp4
+    assert run.await_args.args == (page,)
+    assert run.await_args.kwargs["duration"] == 6
+    assert run.await_args.kwargs["reference_images"] == (ref,)
+    assert run.await_args.kwargs["max_credits"] == 20
+
+
+@pytest.mark.asyncio
+async def test_migrated_extend_local_video_auto_creates_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.dto import ProjectInfo
+
+    mp4 = b"\x00\x00\x00\x18ftypmp42"
+    src = tmp_path / "local.mp4"
+    src.write_bytes(mp4)
+    c, _page, run, _outcome = _migrated_client(tmp_path, monkeypatch, mp4)
+    c.create_project = AsyncMock(return_value=ProjectInfo(project_id=PROJECT, title="auto"))  # type: ignore[method-assign]
+    out = tmp_path / "out" / "ext.mp4"
+    await c.extend_video_migrated(
+        source_video=src,
+        prompt="continue smoothly",
+        out_path=out,
+        duration=5,
+        max_credits=15,
+    )
+    c.create_project.assert_awaited_once()
+    assert run.await_args.kwargs["project_id"] == PROJECT
+    assert run.await_args.kwargs["source_video"] == src
+    assert run.await_args.kwargs["media_id"] is None
 
 
 @pytest.mark.asyncio
@@ -315,3 +349,22 @@ async def test_migrated_extend_without_a_video_writes_nothing(
     assert (got, target) == (outcome, None)
     assert not out.exists()
     c._checkin_page.assert_called_once_with(page)
+
+
+@pytest.mark.asyncio
+async def test_migrated_extend_respects_labs_host_kill_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.errors import FlowHostMigratedError
+
+    c, _page, run, _outcome = _migrated_client(tmp_path, monkeypatch, b"\x00\x00\x00\x18ftypmp42")
+    c.settings.flow_host = "labs.google"
+    with pytest.raises(FlowHostMigratedError, match="labs.google"):
+        await c.extend_video_migrated(
+            media_id=MEDIA,
+            project_id=PROJECT,
+            prompt="go",
+            aspect=None,
+            out_path=tmp_path / "x.mp4",
+        )
+    run.assert_not_awaited()

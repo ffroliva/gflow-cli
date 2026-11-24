@@ -213,6 +213,41 @@ class SubmitObserveMixin(MentionMixin):
         await page.keyboard.insert_text(prompt)
         log.info("migrated.prompt_typed", chars=len(prompt))
 
+    async def _click_submit_button(
+        self,
+        page: Page,
+        *,
+        submit_selector: str | None,
+        on_before_click: Callable[[], None] | None = None,
+    ) -> float:
+        """Wait for submit to enable, run ``on_before_click`` gate, then click submit."""
+        submit = (
+            page.locator(submit_selector).first
+            if submit_selector
+            else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
+        )
+        submit_named = submit_selector or "arrow_forward"
+        await self._await_submit_enabled(
+            page,
+            submit,
+            missing=(
+                f"migrated host: the submit button ({submit_named}) is missing "
+                "after the prompt was typed (host=migrated)"
+            ),
+            disabled=(
+                f"migrated host: the submit button ({submit_named}) stayed disabled for "
+                f"{SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed (host=migrated)"
+            ),
+        )
+        if on_before_click is not None:
+            on_before_click()
+        clicked_at = time.time()
+        # The credit-spending click: a bare timeout here leaves "did it submit?"
+        # unanswerable, which is the worst place in this driver to lose attribution.
+        await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
+        log.info("migrated.submit_clicked")
+        return clicked_at
+
     async def submit_and_observe(
         self,
         page: Page,
@@ -228,6 +263,7 @@ class SubmitObserveMixin(MentionMixin):
         request_check: Callable[[str, str], GFlowError | None] | None = None,
         adopt_ids: tuple[str, ...] = (),
         adopt_prompt: str | None = None,
+        on_before_click: Callable[[], None] | None = None,
     ) -> GenerationRecord:
         """Click submit, then read the page's own submit / ``jwpduf`` / ``as29s``
         replies until the record is terminal. Fires ``on_started`` as soon as the
@@ -527,30 +563,12 @@ class SubmitObserveMixin(MentionMixin):
         page.on("request", on_request)
         try:
             await page.route(BATCHEXECUTE_GLOB, guard)
-            submit = (
-                page.locator(submit_selector).first
-                if submit_selector
-                else page.locator("button").filter(has=_ligature(page, "arrow_forward")).first
-            )
-            submit_named = submit_selector or "arrow_forward"
-            await self._await_submit_enabled(
+            clicked_at = await self._click_submit_button(
                 page,
-                submit,
-                missing=(
-                    f"migrated host: the submit button ({submit_named}) is missing "
-                    "after the prompt was typed (host=migrated)"
-                ),
-                disabled=(
-                    f"migrated host: the submit button ({submit_named}) stayed disabled for "
-                    f"{SUBMIT_ENABLE_BUDGET_S:.0f}s after the prompt was typed (host=migrated)"
-                ),
+                submit_selector=submit_selector,
+                on_before_click=on_before_click,
             )
             deadline = time.monotonic() + poll_timeout_s
-            clicked_at = time.time()
-            # The credit-spending click: a bare timeout here leaves "did it submit?"
-            # unanswerable, which is the worst place in this driver to lose attribution.
-            await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
-            log.info("migrated.submit_clicked")
             budget = min(SUBMIT_REPLY_BUDGET_S, poll_timeout_s)
             await asyncio.wait(
                 {submitted, route_error, candidate_seen},

@@ -123,15 +123,21 @@ class AssetsRepo(RepositoryBase):
     ) -> None:
         """Record a finished extend that grew this clip in place (#1184).
 
-        Status, model and the clip's own workflow are kept; the stored duration is cleared
-        because the clip is now longer. ``extend_workflow_id`` is the billed generation. A
-        later extend overwrites these keys: they describe the latest extend. No row, no-op.
+        Completed status, model and the clip's own workflow are kept; a ``pending`` row
+        (from a freshly uploaded local-video extend) settles to completed. The stored
+        duration is cleared because the clip is now longer. ``extend_workflow_id`` is the
+        billed generation. A later extend overwrites these keys: they describe the latest
+        extend. No row, no-op.
         """
         with self._store.transaction(immediate=True):
             self._store.conn.execute(
                 """
                 UPDATE assets
-                SET duration_seconds = NULL,
+                SET status = CASE
+                        WHEN status = 'pending' THEN 'MEDIA_GENERATION_STATUS_SUCCESSFUL'
+                        ELSE status
+                    END,
+                    duration_seconds = NULL,
                     metadata_json = json_set(
                         COALESCE(metadata_json, '{}'),
                         '$.extended_by', ?,

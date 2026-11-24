@@ -8,7 +8,16 @@
   "icon": "🎬",
   "category": "media-generate",
   "description": "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex or the terminal, on your own Google account's Flow credits.",
-  "tags": ["google-flow", "veo", "omni", "nano-banana", "imagen", "video-generation", "image-generation", "mcp"],
+  "tags": [
+    "google-flow",
+    "veo",
+    "omni",
+    "nano-banana",
+    "imagen",
+    "video-generation",
+    "image-generation",
+    "mcp"
+  ],
   "tools": [
     {
       "name": "gflow_generate_image",
@@ -420,6 +429,130 @@
           "prompt"
         ],
         "title": "gflow_generate_videoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_extend_video",
+      "description": "Continue an existing video (local .mp4/.mov/.m4v/.3gp/.avi file or Flow clip media UUID) by one segment on flow.google.com with a text prompt, optional duration (3-10 seconds), and 0-3 reference_images. max_credits reads Flow's pre-submit quote in the extend settings popover and refuses missing or over-limit quotes before anything is billed. Existing Flow media UUIDs require project (or a catalogued UUID); local video files auto-create a project when project is omitted. Preserves the source clip's aspect (optional aspect '9:16'/'16:9' verifies a match and refuses mismatches pre-submit). out_file, if given, must resolve inside the configured output directory. Spends video credits; returns the local file path to the extended clip.",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 3,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "reference_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Images"
+          },
+          "aspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Aspect"
+          },
+          "max_credits": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Credits"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Name"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "wait": {
+            "default": true,
+            "description": "true (default): run the generation inside this call and return the finished result. The call stays open for the whole generation, minutes for a video, which can outlast an MCP client's tool timeout; raise that timeout, or use false. false: return {status: 'pending', task_id} at once and run the job in the background of this server process. With the SEP-2663 Tasks extension, poll tasks/get by task_id: while it runs the status is working; once done it is completed and its result field holds the same reply wait=true would (files, project id, seed). A failed generation is also completed, with result.isError true, so check isError. tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet submitted to Flow stops before submitting and nothing is charged; once a gflow worker has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage says which). gflow cancel <id> is the CLI twin. The job runs only while this server runs: if the client closes the server, it is cancelled.",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "prompt"
+        ],
+        "title": "gflow_extend_videoArguments",
         "type": "object"
       }
     },
