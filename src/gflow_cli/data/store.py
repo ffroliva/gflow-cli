@@ -3,13 +3,17 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Self
 
+import structlog
+
 from gflow_cli.errors import DataMigrationError, DataStoreError
+from gflow_cli.winsec import ensure_profile_hardened
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -20,6 +24,28 @@ MIGRATION_PACKAGE = "gflow_cli.data.migrations"
 BUSY_TIMEOUT_MS = 5000
 MIGRATION_RE = re.compile(r"^(?P<version>\d{4,})_.+\.sql$")
 _ROUTE_MIGRATE = "data.migrate"
+
+logger = structlog.get_logger(__name__)
+
+
+def _harden_store_permissions(path: Path) -> None:
+    """Restrict the database file and its directory to the owner (issue #1437).
+
+    The catalog holds prompts, media ids and queued payloads, so it gets the
+    same treatment as the auth profiles: ``0o700``/``0o600`` on POSIX, the
+    winsec DACL on Windows. Best-effort like the profile hardening: a mode
+    failure must not break the open. It also doubles as the fixup for files
+    and directories that predate this rule.
+    """
+    if sys.platform == "win32":
+        ensure_profile_hardened(path.parent)
+        return
+    for target, wanted in ((path.parent, 0o700), (path, 0o600)):
+        try:
+            if target.stat().st_mode & 0o777 != wanted:
+                target.chmod(wanted)
+        except OSError as exc:
+            logger.warning("data_store_chmod_failed", path=str(target), error=str(exc))
 
 
 def _utc_now() -> str:
@@ -211,13 +237,14 @@ class DataStore:
     @classmethod
     def open(cls, path: Path) -> DataStore:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             conn = sqlite3.connect(path, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
             store = cls(conn=conn, path=path)
+            _harden_store_permissions(path)
             store.apply_migrations()
             return store
         except DataMigrationError:

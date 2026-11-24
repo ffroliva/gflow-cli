@@ -8,7 +8,10 @@ without ever calling ``apply_migrations``.
 
 from __future__ import annotations
 
+import os
 import sqlite3
+import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -158,3 +161,31 @@ def test_inspect_schema_never_migrates(tmp_path: Path) -> None:
 def test_inspect_schema_missing_db_raises_datastore_error(tmp_path: Path) -> None:
     with pytest.raises(DataStoreError):
         inspect_schema(tmp_path / "absent.db")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_open_creates_db_and_dir_owner_only(tmp_path: Path) -> None:
+    """gflow.db and its parent directory are owner-only (issue #1437)."""
+    db = tmp_path / "data" / "gflow.db"
+    old_umask = os.umask(0o022)
+    try:
+        with DataStore.open(db):
+            pass
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(db.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(db.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_open_tightens_permissions_on_existing_db(tmp_path: Path) -> None:
+    """A database created before the hardening is tightened on first open."""
+    parent = tmp_path / "data"
+    parent.mkdir(mode=0o755)
+    db = parent / "gflow.db"
+    db.touch()
+    os.chmod(db, 0o644)
+    with DataStore.open(db):
+        pass
+    assert stat.S_IMODE(db.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(db.stat().st_mode) == 0o600
