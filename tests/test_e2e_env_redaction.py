@@ -16,6 +16,17 @@ from tests.e2e.conftest import RedactedEnv
 
 pytest_plugins = ["pytester"]
 
+
+@pytest.fixture(autouse=True)
+def _no_shard_in_inner_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CI's shard filter out of the inner ``runpytest_subprocess`` runs.
+
+    The inner run inherits ``GFLOW_TEST_SHARD``; its single generated file always
+    belongs to shard 1, so it was deselected whenever this file ran in another shard.
+    """
+    monkeypatch.delenv("GFLOW_TEST_SHARD", raising=False)
+
+
 _DUMMY_SECRET_NAME = "GFLOW_TEST_SECRET"
 _DUMMY_SECRET_VAL = "sk-fake-1234567890"
 
