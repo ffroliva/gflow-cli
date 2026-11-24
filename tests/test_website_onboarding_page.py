@@ -70,9 +70,13 @@ def test_scrolling_deals_in_every_step_and_marks_the_last_current(browser: Brows
     assert min(page.evaluate(_STEP_MIN_OPACITY)) == 0
     for step in page.query_selector_all(".step"):
         step.scroll_into_view_if_needed()
-        page.wait_for_timeout(150)
+        page.wait_for_function("s => s.classList.contains('in')", arg=step)
     page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-    page.wait_for_timeout(900)
+    page.wait_for_function(
+        """() => { const s = [...document.querySelectorAll('.step')];
+        return s.at(-1).classList.contains('active')
+            && s.slice(0, -1).every(x => x.classList.contains('done')); }"""
+    )
     classes = page.evaluate("() => [...document.querySelectorAll('.step')].map(s => s.className)")
     assert all("in" in c.split() for c in classes), classes
     assert "active" in classes[-1].split() and all("done" in c for c in classes[:-1]), classes
@@ -122,10 +126,17 @@ def test_copy_button_copies_every_command_without_prompts(browser: Browser) -> N
         "() => { window.__copied = []; navigator.clipboard.writeText = t => "
         "{ window.__copied.push(t); return Promise.resolve(); }; }"
     )
-    for button in page.query_selector_all(".copy-btn"):
-        button.click()
+    # A DOM click fires each button's onclick without waiting out the reveal animation.
+    page.evaluate("() => document.querySelectorAll('.copy-btn').forEach(b => b.click())")
     copied: list[str] = page.evaluate("window.__copied")
-    assert len(copied) == len(page.query_selector_all(".copy-btn"))
+    # Each block's commands, in page order, as the reader sees them in the terminal.
+    expected: list[str] = page.evaluate(
+        """() => [...document.querySelectorAll('.copy-btn')].map(b =>
+        [...b.closest('.terminal').querySelectorAll('.terminal-body .cmd')]
+            .map(c => c.textContent.trim()).join('\\n'))"""
+    )
+    assert copied == expected and all(copied), copied
+    assert "/plugin marketplace add ffroliva/gflow-cli\n/plugin install gflow@gflow-cli" in copied
     assert (
         "gflow mcp setup\ngflow mcp setup --target cursor\ngflow mcp setup --target vscode"
         in copied
