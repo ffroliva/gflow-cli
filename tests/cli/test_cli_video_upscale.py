@@ -99,10 +99,23 @@ def test_video_upscale_missing_project_fails_fast(runner: CliRunner) -> None:
     assert "Could not resolve the owning project" in result.output
 
 
+def test_video_upscale_4k_explicit_project(runner: CliRunner, tmp_path: Path) -> None:
+    client = _mock_client(tmp_path / f"{_MEDIA_ID}_4k.mp4")
+    result = _invoke(
+        runner,
+        ["video", "upscale", _MEDIA_ID, "--scale", "4k", "--project", _PROJECT_ID],
+        client=client,
+        tmp_path=tmp_path,
+    )
+    assert result.exit_code == 0, result.output
+    assert "Saved:" in result.output
+    client.upsample_video.assert_awaited_once()
+
+
 def test_video_upscale_invalid_scale(runner: CliRunner) -> None:
     result = _invoke(
         runner,
-        ["video", "upscale", _MEDIA_ID, "--scale", "4k"],
+        ["video", "upscale", _MEDIA_ID, "--scale", "8k"],
     )
     assert result.exit_code == 2
     assert "Invalid value for '--scale'" in result.output

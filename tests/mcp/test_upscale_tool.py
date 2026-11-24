@@ -112,7 +112,7 @@ async def test_video_upscale_invalid_scale() -> None:
 
     res = await gflow_upscale_video(
         media_id=_VALID_MEDIA_ID,
-        scale="4k",  # 4k is not valid for video
+        scale="8k",  # 8k is not valid for video
         project=_VALID_PROJECT_ID,
     )
     assert res["status"] == "error"

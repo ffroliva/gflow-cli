@@ -46,9 +46,9 @@ async def mcp_guide() -> str:
         return """\
 # gflow-cli MCP Agent Guide (no-spend mode)
 
-This server runs in NO-SPEND mode: the credit-spending generate tools
-(`gflow_generate_image`, `gflow_generate_video`) are NOT registered and any
-call to them fails as an unknown tool. Do not attempt generation; tell the
+This server runs in NO-SPEND mode: the credit-spending tools
+(`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`) are NOT registered and any
+call to them fails as an unknown tool. Do not attempt generation or paid upscaling; tell the
 user to restart the server without --no-spend / GFLOW_MCP_NO_SPEND to enable
 it.
 

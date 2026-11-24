@@ -35,7 +35,7 @@
     "_find_character_model_chip": "function (self, page: 'Any') -> 'tuple[Any | None, str]' sha=8326db04253bff77",
     "_generate_character_images_locked": "function (self, *, project_id: 'str', entity_id: 'str', request: 'CharacterImageRequest', image_reference_index: 'int', locale: 'str | None', format_prompt: 'bool' = False) -> 'tuple[list[GeneratedImage], list[dict[str, Any]]]' sha=8dfbc4c6518c2809",
     "_generate_images_batch_locked": "function (self, *, prompts: 'list[GenerateImageRequest]', jitter_range: 'tuple[float, float]', continue_on_error: 'bool') -> 'list[BatchSubmissionResult]' sha=9845d677fa05d419",
-    "_generate_images_locked": "function (self, request: 'GenerateImageRequest', *, project_id: 'str | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=05aa2515a4f450f4",
+    "_generate_images_locked": "function (self, request: 'GenerateImageRequest', *, project_id: 'str | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=7e97306b5d5f6769",
     "_is_settings_panel_open": "staticmethod (page: 'Page') -> 'bool' sha=f2325263471760ce",
     "_locate_body_prompt_box": "function (self, page: 'Page', *, boxes_before: 'int', shared_body_box: 'bool' = False, out_dir: 'Path | None' = None) -> 'Any' sha=50df5d810b002cc6",
     "_locate_format_button": "function (self, page: 'Page', *, prompt_box: 'Any') -> 'Any' sha=9a12f17faa233882",

@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import struct
 from typing import TYPE_CHECKING
 
 import structlog
 
+from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote, resolve_max_credits
 from gflow_cli.api.transports.batchexecute import rpc_errors
 from gflow_cli.api.transports.migrated_recover import MIGRATED_CLIP_URL
 from gflow_cli.api.transports.migrated_upscale import (
@@ -28,6 +30,7 @@ from gflow_cli.api.transports.migrated_upscale import (
     settle_exception,
     wait_for_or_none,
 )
+from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     TransportTimeoutError,
     UpscaleUnavailableError,
@@ -43,6 +46,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 log = structlog.get_logger(__name__)
 
 _DEFAULT_TIMEOUT_S = 120.0
+#: 4K video upscale on Flow Ultra measured ~97 s for a 4 s clip; longer 10-15 s clips need headroom.
+_4K_TIMEOUT_S = 360.0
 #: Flow renders the 270p GIF client-side, and the delay varies: measured 2026-10-07 the blob
 #: arrived 40 s after the click once, a whole run took 104 s once, and one run outlasted the
 #: 120 s MP4 budget. Five minutes covers what was seen with room to spare.
@@ -51,15 +56,17 @@ _GIF_TIMEOUT_S = 300.0
 
 def export_timeout_s(scale_norm: str) -> float:
     """How long to wait for the exported file at ``scale_norm``."""
+    if scale_norm == "4k":
+        return _4K_TIMEOUT_S
     return _GIF_TIMEOUT_S if scale_norm == "270p" else _DEFAULT_TIMEOUT_S
 
 
-VALID_VIDEO_SCALES = ("1080p", "720p", "270p")
+VALID_VIDEO_SCALES = ("4k", "1080p", "720p", "270p")
 _EXPORT_RPCIDS = ("p0UkFb", "jwpduf")
 #: Minimum SHORT side of the exported track per MP4 scale. The short side is what
-#: "1080p" names in either orientation, and it is what tells the upscale (1920x1080)
-#: apart from the 720p original (1280x720), whose long side would clear a 1080 bar.
-_MIN_SHORT_SIDE = {"1080p": 1080, "720p": 720}
+#: "1080p" / "4k" names in either orientation, and it is what tells the upscale apart
+#: from the 720p original (1280x720) or 1080p (1920x1080).
+_MIN_SHORT_SIDE = {"4k": 2160, "1080p": 1080, "720p": 720}
 _CONTAINER_BOXES = (b"moov", b"trak")
 _TKHD_V0_PAYLOAD = 84
 
@@ -107,16 +114,27 @@ _EXPORT_HINT = (
     "Re-run the export; it spends no credits. If it keeps failing, Flow changed how it "
     "delivers exports — file a bug at https://github.com/ffroliva/gflow-cli/issues."
 )
+#: 4K video upscaling bills credits on click, so post-click errors must never invite a blind retry.
+_4K_EXPORT_HINT = (
+    "Check your Flow project and credit balance before re-running (4K video upscaling spends "
+    "credits). If it keeps failing, file a bug at https://github.com/ffroliva/gflow-cli/issues."
+)
+_SCALE_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(?:4k|2160p)(?![0-9A-Za-z])", re.IGNORECASE)
+
+
+def _export_hint(scale: str) -> str:
+    return _4K_EXPORT_HINT if scale == "4k" else _EXPORT_HINT
 
 
 def _check_mp4_resolution(video_bytes: bytes, scale: str) -> None:
     """Refuse an MP4 smaller than ``scale`` — a preview or the 720p original."""
     dims = mp4_track_dimensions(video_bytes)
+    hint = _export_hint(scale)
     if dims is None:
         raise WireFormatError(
             detail=f"{scale} export: could not read the MP4's track dimensions (no tkhd box)",
             route="video_upscale",
-            remediation_hint=_EXPORT_HINT,
+            remediation_hint=hint,
         )
     if min(dims) < _MIN_SHORT_SIDE[scale]:
         raise WireFormatError(
@@ -125,7 +143,7 @@ def _check_mp4_resolution(video_bytes: bytes, scale: str) -> None:
                 "(a preview or the original was captured, not the export)"
             ),
             route="video_upscale",
-            remediation_hint=_EXPORT_HINT,
+            remediation_hint=hint,
         )
 
 
@@ -174,6 +192,7 @@ def _unavailable_error(scale_norm: str) -> UpscaleUnavailableError:
 
 def _export_refusal_listener(
     failed: asyncio.Future[None],
+    scale_norm: str,
 ) -> Callable[[Response], Awaitable[None]]:
     """A response listener that fails ``failed`` on an export RPC refusal.
 
@@ -200,6 +219,7 @@ def _export_refusal_listener(
                             f"reasons={err.reasons}"
                         ),
                         route="video_upscale",
+                        remediation_hint=_export_hint(scale_norm),
                     ),
                 )
 
@@ -219,6 +239,18 @@ async def _await_capture(
         b64_data: str | None = await page.evaluate("() => window._gflowCapturedBase64")
         if b64_data:
             return b64_data
+    if scale_norm == "4k":
+        raise TransportTimeoutError(
+            detail=f"Timed out waiting for {scale_norm} video stream from Flow after {timeout_s}s",
+            route="video_upscale",
+            remediation_hint=(
+                "Flow had not finished rendering the 4K upscale. Check your Flow project and "
+                "balance before re-running (4K video upscaling spends credits)."
+            ),
+            retryable=False,
+            charged="maybe",
+            next_action="reconcile",
+        )
     raise TransportTimeoutError(
         detail=f"Timed out waiting for {scale_norm} video stream from Flow after {timeout_s}s",
         route="video_upscale",
@@ -229,8 +261,10 @@ async def _await_capture(
     )
 
 
-def _bad_export(detail: str) -> WireFormatError:
-    return WireFormatError(detail=detail, route="video_upscale", remediation_hint=_EXPORT_HINT)
+def _bad_export(detail: str, scale_norm: str) -> WireFormatError:
+    return WireFormatError(
+        detail=detail, route="video_upscale", remediation_hint=_export_hint(scale_norm)
+    )
 
 
 def _decode_export(b64_data: str, scale_norm: str) -> bytes:
@@ -238,13 +272,13 @@ def _decode_export(b64_data: str, scale_norm: str) -> bytes:
     try:
         video_bytes = base64.b64decode(b64_data, validate=True)
     except ValueError as exc:
-        raise _bad_export("video upscale returned undecodable stream data") from exc
+        raise _bad_export("video upscale returned undecodable stream data", scale_norm) from exc
     if scale_norm == "270p":
         if not video_bytes.startswith(b"GIF8"):
-            raise _bad_export("upscaled output is not a valid GIF")
+            raise _bad_export("upscaled output is not a valid GIF", scale_norm)
         return video_bytes
     if len(video_bytes) < 8 or video_bytes[4:8] != b"ftyp":
-        raise _bad_export("upscaled output is not a valid MP4")
+        raise _bad_export("upscaled output is not a valid MP4", scale_norm)
     _check_mp4_resolution(video_bytes, scale_norm)
     return video_bytes
 
@@ -256,10 +290,11 @@ async def upscale_video_migrated(
     media_id: str,
     scale: str = "1080p",
     timeout_s: float | None = None,
+    max_credits: int | None = None,
 ) -> bytes:
     """Upscale/export a video on the migrated ``flow.google.com`` frontend.
 
-    Opens the clip's download menu, clicks the requested quality option (1080p, 720p,
+    Opens the clip's download menu, clicks the requested quality option (4k, 1080p, 720p,
     or 270p), and captures the rendered blob. An MP4 is checked to really be at least
     the requested resolution (``tkhd``), so a preview or the 720p original is refused.
 
@@ -281,9 +316,16 @@ async def upscale_video_migrated(
         )
         if await is_menu_item_disabled(btn_target):
             raise _unavailable_error(scale_norm)
+        if scale_norm == "4k":
+            cap = resolve_max_credits(max_credits, get_settings().max_credits)
+            if cap is not None:
+                raw_text = btn_target.inner_text
+                label = await raw_text() if callable(raw_text) else str(raw_text)
+                quoted = parse_credit_quote(_SCALE_TOKEN_RE.sub("", label))
+                enforce_credit_cap(quoted=quoted, max_credits=cap, route="video_upscale")
 
     failed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    on_response = _export_refusal_listener(failed)
+    on_response = _export_refusal_listener(failed, scale_norm)
     try:
         page.on("response", on_response)
         await install_capture_hooks(page, "gif" if scale_norm == "270p" else "video")

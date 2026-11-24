@@ -379,7 +379,7 @@ class MediaEditSurface(GenerationSurface):
         scale: str = "1080p",
         out_path: Path,
     ) -> AnyPath:
-        """Upscale or export a platform-generated video to 1080p, 720p, or 270p GIF.
+        """Upscale or export a platform-generated video to 4k, 1080p, 720p, or 270p GIF.
 
         Drives the migrated Flow editor to export an upsampled 1080p Full HD video or
         animated GIF. There is no labs.google route for this, so

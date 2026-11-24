@@ -2550,16 +2550,17 @@ def extend(  # noqa: PLR0913
     )
 
 
-@spends_credits(False)
+@spends_credits(True)
 @video.command(
     "upscale",
-    short_help="Upscale a Flow-generated video to 1080p (or export as 270p GIF).",
+    short_help="Upscale a Flow-generated video to 4K/1080p (or export as 270p GIF).",
     help=(
-        "Upscale a Flow-generated video to 1080p Full HD, download it at 720p, "
-        "or export as a 270p animated GIF and save it locally.\n\n"
+        "Upscale a Flow-generated video to 4K (Ultra, spends credits) or 1080p Full HD, "
+        "download it at 720p, or export as a 270p animated GIF and save it locally.\n\n"
         "MEDIA_ID is the UUID of a platform video — find one with `gflow data list videos`.\n\n"
         "\b\n"
         "Examples:\n"
+        "  gflow video upscale <mediaId> --scale 4k\n"
         "  gflow video upscale <mediaId> --scale 1080p\n"
         "  gflow video upscale <mediaId> --scale 720p\n"
         "  gflow video upscale <mediaId> --scale 270p\n"
@@ -2569,13 +2570,14 @@ def extend(  # noqa: PLR0913
 @click.argument("media_id")
 @click.option(
     "--scale",
-    type=click.Choice(["1080p", "720p", "270p"], case_sensitive=False),
+    type=click.Choice(["4k", "1080p", "720p", "270p"], case_sensitive=False),
     default="1080p",
     show_default=True,
     help=(
-        "Target quality: 1080p (enhanced Full HD), 720p (the original download, "
-        "or Flow's upscale of a smaller original), or 270p (animated GIF export). "
-        "Flow lists only some scales for some models; an unlisted one exits 22."
+        "Target quality: 4k (Ultra 2160p upscale; spends credits), 1080p (enhanced Full HD), "
+        "720p (the original download, or Flow's upscale of a smaller original), or 270p "
+        "(animated GIF export). Flow lists only some scales for some models; "
+        "an unlisted one exits 22."
     ),
 )
 @upscale_out_dir_option()
