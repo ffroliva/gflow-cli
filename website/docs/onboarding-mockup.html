@@ -483,6 +483,10 @@
       }
       .next-deck svg { transition: none; }
     }
+    /* A printout shows every step, scrolled to or not. */
+    @media print {
+      .motion .step > * { opacity: 1; transform: none; clip-path: none; transition: none; }
+    }
 
     /* ── Responsive ── */
     @media (max-width: 600px) {
@@ -657,7 +661,7 @@
       <p class="terminal-note">
         Any other MCP client: command <code>uvx</code>, arguments <code>gflow-cli mcp run</code>, or <code>gflow serve</code> for Streamable HTTP at <code>/mcp</code>.
         To keep an assistant away from your credits, register <code>gflow mcp run --no-spend</code>: the tools that spend credits are never registered.
-        Full setup: <a href="MCP.md">MCP server</a>.
+        Full setup: <a href="MCP/">MCP server</a>.
       </p>
       <a class="next-deck" href="#step-generate">Next: Generate <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg></a>
     </div>
@@ -713,7 +717,7 @@
       </div>
       <p class="terminal-note">
         Files land in <code>./out/images/</code> and <code>./out/videos/</code> by default.
-        Route outputs to S3, MinIO, or GCS with <a href="EXTERNAL_STORAGE.md">external storage</a>.
+        Route outputs to S3, MinIO, or GCS with <a href="EXTERNAL_STORAGE/">external storage</a>.
       </p>
       <a class="next-deck" href="#step-success">Next: Your first result <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg></a>
     </div>
@@ -753,10 +757,20 @@
 
   <!-- Error: No profiles -->
   <div class="error-card">
-    <div class="error-title">AuthMissingError (exit 8)</div>
-    <div class="error-detail">The profile has no usable Flow session: you generated before signing in, or the account is signed in to Google but not to Flow.</div>
+    <div class="error-title">No profiles found (exit 2)</div>
+    <div class="error-detail">You ran a generation command before signing in, so no profile exists yet.</div>
     <div class="remediation">
       <strong>Fix:</strong> Run the one-time login first:<br>
+      <code>gflow auth login --browser chrome</code>
+    </div>
+  </div>
+
+  <!-- Error: No Flow session -->
+  <div class="error-card">
+    <div class="error-title">Authentication credential missing (exit 8)</div>
+    <div class="error-detail">The profile exists but has no usable Flow session: the account is signed in to Google but not to Flow, or the login did not finish.</div>
+    <div class="remediation">
+      <strong>Fix:</strong> Sign in again with the real-Chrome strategy:<br>
       <code>gflow auth login --browser chrome</code>
     </div>
   </div>
@@ -783,10 +797,10 @@
   <!-- ── Where to next ── -->
   <h2>Where to next</h2>
   <div class="req-badges">
-    <a class="req-badge" href="AUTHENTICATION.md">Authentication →</a>
-    <a class="req-badge" href="USER_GUIDE.md">User Guide (15 journeys) →</a>
-    <a class="req-badge" href="agents.md">Agent-driven (MCP) →</a>
-    <a class="req-badge" href="KNOWN_ISSUES.md">Known issues →</a>
+    <a class="req-badge" href="AUTHENTICATION/">Authentication →</a>
+    <a class="req-badge" href="USER_GUIDE/">User Guide (16 journeys) →</a>
+    <a class="req-badge" href="agents/">Agent-driven (MCP) →</a>
+    <a class="req-badge" href="KNOWN_ISSUES/">Known issues →</a>
   </div>
 
   <div class="footer">
