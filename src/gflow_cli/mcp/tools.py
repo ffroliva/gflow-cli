@@ -779,7 +779,7 @@ def _resolve_ref_local_path(
 # existing tile to select. Image task types DO surface generated media in the
 # reference picker, so their refs are enriched (not rewritten) and attached by
 # selecting the existing asset — see _enrich_image_refs.
-_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
+_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v", "edit"})
 
 
 def _enrich_image_refs(
@@ -826,6 +826,43 @@ def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
             entry["local_sha256"] = local_file.sha256 or ""
             break
     return entry
+
+
+def _resolve_ordered_edit_refs(
+    data_repo: DataRepository, profile: str, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    if "reference_images" not in payload:
+        return None
+    ordered: list[str] = []
+    for item in payload["reference_images"]:
+        if is_media_uuid(item):
+            path, err = _resolve_ref_local_path(data_repo, profile, item)
+            if err is not None:
+                return err
+            assert path is not None
+            ordered.append(path)
+        else:
+            ordered.append(item)
+    payload["reference_images"] = ordered
+    return None
+
+
+def _resolve_r2v_refs(
+    data_repo: DataRepository, profile: str, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    if "refs" not in payload:
+        return None
+    resolved_paths: list[str] = []
+    for ref in payload["refs"]:
+        path, err = _resolve_ref_local_path(data_repo, profile, ref)
+        if err is not None:
+            return err
+        # path is never None when err is None (see _resolve_ref_local_path).
+        assert path is not None
+        resolved_paths.append(path)
+    payload["reference_images"] = list(payload.get("reference_images", [])) + resolved_paths
+    del payload["refs"]
+    return None
 
 
 def _resolve_payload_refs(
@@ -876,18 +913,9 @@ def _resolve_payload_refs(
                 payload[f"{ref_key}_local_path"] = local_path
                 payload[f"{ref_key}_local_sha256"] = entry["local_sha256"]
         return None
-    if "refs" in payload:
-        resolved_paths: list[str] = []
-        for ref in payload["refs"]:
-            path, err = _resolve_ref_local_path(data_repo, profile, ref)
-            if err is not None:
-                return err
-            # path is never None when err is None (see _resolve_ref_local_path).
-            assert path is not None
-            resolved_paths.append(path)
-        payload["reference_images"] = list(payload.get("reference_images", [])) + resolved_paths
-        del payload["refs"]
-    return None
+    if task_type == "edit":
+        return _resolve_ordered_edit_refs(data_repo, profile, payload)
+    return _resolve_r2v_refs(data_repo, profile, payload)
 
 
 def _validate_project(project: str | None) -> dict[str, Any] | None:

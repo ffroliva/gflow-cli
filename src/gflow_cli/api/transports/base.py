@@ -16,7 +16,12 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
+    from gflow_cli.api.video import (
+        EditVideoRequest,
+        GenerateVideoRequest,
+        VideoResult,
+        VideoStartedCallback,
+    )
 
 
 class GenerationRequestRecorder(Protocol):
@@ -159,4 +164,22 @@ class VideoCapableTransport(Protocol):
         ``name_resolver`` (#546): optional sync callable, media UUID -> current
         Flow display name, consulted on an i2v frame picker-search miss.
         """
+        raise NotImplementedError
+
+
+@runtime_checkable
+class VideoEditCapableTransport(Protocol):
+    """Mixin protocol for transports that support video-to-video editing."""
+
+    async def edit_video(
+        self,
+        *,
+        request: EditVideoRequest,
+        project_id: str | None = None,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None = None,
+    ) -> VideoResult:
+        """Drive Flow's video-to-video edit UI and return the resulting clip."""
         raise NotImplementedError

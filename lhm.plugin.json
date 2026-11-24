@@ -8,7 +8,16 @@
   "icon": "🎬",
   "category": "media-generate",
   "description": "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex or the terminal, on your own Google account's Flow credits.",
-  "tags": ["google-flow", "veo", "omni", "nano-banana", "imagen", "video-generation", "image-generation", "mcp"],
+  "tags": [
+    "google-flow",
+    "veo",
+    "omni",
+    "nano-banana",
+    "imagen",
+    "video-generation",
+    "image-generation",
+    "mcp"
+  ],
   "tools": [
     {
       "name": "gflow_generate_image",
@@ -420,6 +429,150 @@
           "prompt"
         ],
         "title": "gflow_generate_videoArguments",
+        "type": "object"
+      }
+    },
+    {
+      "name": "gflow_edit_video",
+      "description": "Edit an existing video (local .mp4/.mov/.m4v/.3gp/.avi file or Flow clip media UUID) with a text prompt and 0-5 reference_images on flow.google.com (single-clip output; Omni models only, default omni-1.2). max_credits uses Flow's pre-submit quote as a hard cap and refuses missing or over-limit quotes. Local files support optional aspect ('16:9'/'9:16') and resolution ('360p'/'720p'); existing Flow media UUIDs require project (or a catalogued UUID) and preserve source aspect at 720p. out_file, if given, must resolve inside the configured output directory. Returns the local file path; a model Flow is retiring adds model_retiring to warnings.",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "reference_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Images"
+          },
+          "model": {
+            "default": "omni-1.2",
+            "title": "Model",
+            "type": "string"
+          },
+          "aspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Aspect"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resolution"
+          },
+          "max_credits": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Credits"
+          },
+          "tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Prompt tools applied before generation. Each item is {\"name\": <slug>, \"options\": {...}}, e.g. [{\"name\": \"creative-director\"}]. gflow_list_tools lists the valid names.",
+            "title": "Tools"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Name"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "wait": {
+            "default": true,
+            "description": "true (default): run the generation inside this call and return the finished result. The call stays open for the whole generation, minutes for a video, which can outlast an MCP client's tool timeout; raise that timeout, or use false. false: return {status: 'pending', task_id} at once and run the job in the background of this server process. With the SEP-2663 Tasks extension, poll tasks/get by task_id: while it runs the status is working; once done it is completed and its result field holds the same reply wait=true would (files, project id, seed). A failed generation is also completed, with result.isError true, so check isError. tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet submitted to Flow stops before submitting and nothing is charged; once a gflow worker has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage says which). gflow cancel <id> is the CLI twin. The job runs only while this server runs: if the client closes the server, it is cancelled.",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "prompt"
+        ],
+        "title": "gflow_edit_videoArguments",
         "type": "object"
       }
     },

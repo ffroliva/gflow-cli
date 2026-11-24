@@ -38,7 +38,7 @@ from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import GenerateVideoRequest, VideoModel
+from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.config import UiMode
@@ -52,6 +52,7 @@ __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "DecodedPayload",
     "build_image_request",
+    "build_video_edit_request",
     "build_video_request",
     "decode_payload",
     "encode_payload",
@@ -60,7 +61,8 @@ __all__ = [
 
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
-_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES
+_VIDEO_EDIT_TASK_TYPES = frozenset({"edit"})
+_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES | _VIDEO_EDIT_TASK_TYPES
 
 # The only version this codec writes. 0 (an absent key) is read-only legacy
 # compatibility — nothing ever deliberately encodes as V0.
@@ -85,7 +87,7 @@ class DecodedPayload:
 
     schema_version: int
     task_type: str
-    request: GenerateImageRequest | GenerateVideoRequest
+    request: GenerateImageRequest | GenerateVideoRequest | EditVideoRequest
     fields: dict[str, Any]
 
 
@@ -113,11 +115,13 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
 
     try:
-        request: GenerateImageRequest | GenerateVideoRequest = (
-            build_image_request(fields)
-            if task_type in _IMAGE_TASK_TYPES
-            else build_video_request(fields)
-        )
+        request: GenerateImageRequest | GenerateVideoRequest | EditVideoRequest
+        if task_type in _IMAGE_TASK_TYPES:
+            request = build_image_request(fields)
+        elif task_type in _VIDEO_EDIT_TASK_TYPES:
+            request = build_video_edit_request(fields)
+        else:
+            request = build_video_request(fields)
     except (KeyError, ValueError, TypeError) as exc:
         detail = redact_error_detail(f"{task_type} payload rejected: {exc}")
         raise QueueSchemaError(detail, route=_CODEC_ROUTE) from exc
@@ -241,7 +245,11 @@ def retirement_warnings(task: QueueTask) -> dict[str, Any]:
     Read from the queued payload's ``model``, the value the worker generated with, so the MCP
     ``wait=true`` reply and ``tasks/get`` say the same thing.
     """
-    alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
+    alias = (
+        task.payload.get("model")
+        if task.task_type in (_VIDEO_TASK_TYPES | _VIDEO_EDIT_TASK_TYPES)
+        else None
+    )
     if not isinstance(alias, str):  # absent, or a hand-edited row; the reply must still go out
         return {}
     try:
@@ -347,4 +355,34 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         reference_audio=reference_audio,
         ui_mode=ui_mode,
         max_credits=max_credits,
+    )
+
+
+def build_video_edit_request(payload: dict[str, Any]) -> EditVideoRequest:
+    """Map an ``edit`` queue payload dict onto :class:`EditVideoRequest`."""
+    prompt = payload["prompt"]
+    source_video = Path(payload["source_video"]) if payload.get("source_video") else None
+    source_media_id = payload.get("source_media_id")
+    aspect_val = payload.get("aspect")
+    aspect = VideoAspect.from_cli(aspect_val) if aspect_val else None
+    model_val = payload.get("model")
+    model = VideoModel.from_cli(model_val) if model_val else None
+    raw_max_credits = payload.get("max_credits")
+    if raw_max_credits is not None and (
+        isinstance(raw_max_credits, bool)
+        or not isinstance(raw_max_credits, int)
+        or raw_max_credits < 0
+    ):
+        raise ValueError("max_credits must be a non-negative integer")
+    reference_images = tuple(Path(p) for p in payload.get("reference_images", []))
+    resolution = payload.get("resolution")
+    return EditVideoRequest(
+        prompt=prompt,
+        source_video=source_video,
+        source_media_id=source_media_id,
+        reference_images=reference_images,
+        model=model,
+        aspect=aspect,
+        resolution=resolution,
+        max_credits=raw_max_credits,
     )

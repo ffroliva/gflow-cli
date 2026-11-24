@@ -5,7 +5,7 @@ Extracted from cli_video.py to keep the module below file length and complexity 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -36,12 +36,45 @@ __all__ = [
     "_print_chain_plan",
     "_print_extend_plan",
     "_record_migrated_extend",
+    "_relocate_and_record_completed_video",
     "_report_migrated_extend",
 ]
 
 _EXTEND_COMMAND = "video extend"
 _EXTEND_SEGMENT_SECONDS = 8
 _EXTEND_CONTENT_SECONDS = 7
+
+
+def _relocate_and_record_completed_video(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    request: Any,
+    result: VideoResult,
+    output_file: Path | None,
+    on_error: Callable[[DataStoreError, VideoResult], None],
+    cloud_info_fn: Callable[[Path], Any] | None = None,
+) -> VideoResult:
+    """Relocate ``result.local_path`` to ``output_file`` and persist the completed catalog row."""
+    from gflow_cli.paths import relocate_video_output
+    from gflow_cli.storage import cloud_info_from_path
+
+    resolve_cloud = cloud_info_fn or cloud_info_from_path
+    relocated = relocate_video_output(result, output_file)
+    try:
+        recorder.record_completed_video(
+            profile_name=profile_name,
+            _profile_dir=profile_dir,
+            request=request,
+            result=relocated,
+            cloud_storage_info=(
+                resolve_cloud(relocated.local_path) if relocated.local_path is not None else None
+            ),
+        )
+    except DataStoreError as exc:
+        on_error(exc, relocated)
+    return relocated
 
 
 def _emit_video_result(

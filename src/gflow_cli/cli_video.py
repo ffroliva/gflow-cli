@@ -50,6 +50,7 @@ from gflow_cli.api.video import (
     validate_duration_for_model,
 )
 from gflow_cli.cli_video_captions import captions, transcribe
+from gflow_cli.cli_video_edit import edit
 from gflow_cli.cli_video_reporting import (
     _chain_json,
     _emit_chain_result,
@@ -59,6 +60,7 @@ from gflow_cli.cli_video_reporting import (
     _print_chain_plan,
     _print_extend_plan,
     _record_migrated_extend,
+    _relocate_and_record_completed_video,
     _report_migrated_extend,
 )
 from gflow_cli.config import UiMode, get_settings
@@ -76,7 +78,6 @@ from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.paths import (
     chain_clip_relocator,
     extend_output_path,
-    relocate_video_output,
 )
 from gflow_cli.services.video_assembly import (
     assemble_videos,
@@ -388,26 +389,18 @@ async def _generate_and_report(
                 **resolver_kw,
             )
 
-        result = relocate_video_output(result, output_file)
-
-        try:
-            recorder.record_completed_video(
-                profile_name=profile_name,
-                _profile_dir=profile_dir,
-                request=request,
-                result=result,
-                cloud_storage_info=(
-                    cloud_info_from_path(result.local_path)
-                    if result.local_path is not None
-                    else None
-                ),
-            )
-        except DataStoreError as exc:
-            _warn_persistence_failed_after_success(
-                exc=exc,
-                flow_media_id=result.status.media_id,
-                local_path=result.local_path,
-            )
+        result = _relocate_and_record_completed_video(
+            recorder,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            request=request,
+            result=result,
+            output_file=output_file,
+            on_error=lambda exc, res: _warn_persistence_failed_after_success(
+                exc=exc, flow_media_id=res.status.media_id, local_path=res.local_path
+            ),
+            cloud_info_fn=cloud_info_from_path,
+        )
     except Exception as exc:
         # #341: persist the failure before re-raising — the STARTED row (if
         # on_started fired) is updated to FAILED, else a fresh row is inserted.
@@ -2656,5 +2649,6 @@ async def _run_video_upscale(
         console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
 
 
+video.add_command(edit)
 video.add_command(transcribe)
 video.add_command(captions)

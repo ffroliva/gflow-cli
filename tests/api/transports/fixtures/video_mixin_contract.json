@@ -24,6 +24,7 @@
     "_detect_non_classic_cohort": "staticmethod (page: 'Page') -> 'str | None' sha=144bc66c933f94a2",
     "_dismiss_agent_affordances": "staticmethod (page: 'Page', *, allow_reload: 'bool' = False) -> 'bool' sha=4a75d82358701b03",
     "_download_video": "function (self, media_id: 'str', out_dir: 'Path | None', page: 'Any') -> 'AnyPath' sha=6b3b9277a09e2849",
+    "_edit_video_locked": "function (self, request: 'EditVideoRequest', *, project_id: 'str | None', out_dir: 'Path | None', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=45892518e97b3a50",
     "_ensure_picker_project": "staticmethod (page: 'Page', project_id: 'str', *, project_name: 'str | None' = None, out_dir: 'Path | None' = None) -> 'bool | None' sha=56dbb960f061f817",
     "_existing_asset_tile": "staticmethod (page: 'Page', media_id: 'str') -> 'Locator' sha=49e2a5c5faf0bde3",
     "_exit_agent_mode": "staticmethod (page: 'Page', *, out_dir: 'Path | None' = None, allow_reload: 'bool' = False) -> 'bool' sha=bffa022183059783",
@@ -70,6 +71,7 @@
     "_wait_project_menu_open": "staticmethod (page: 'Page') -> 'bool' sha=4aa56bb9b24cca8d",
     "_wait_project_menu_populated": "staticmethod (page: 'Page') -> 'int' sha=e61f368c632998d5",
     "_wait_video_editor_ready": "staticmethod (page: 'Page') -> 'None' sha=8caf9a1c5340411e",
+    "edit_video": "function (self, *, request: 'EditVideoRequest', project_id: 'str | None' = None, out_dir: 'Path | None' = None, poll_timeout_s: 'float' = 600.0, download: 'bool' = True, on_started: 'VideoStartedCallback | None' = None) -> 'VideoResult' sha=d3d20bb5f0fda4c0",
     "generate_video": "function (self, *, request: 'GenerateVideoRequest', project_id: 'str | None' = None, out_dir: 'Path | None' = None, poll_timeout_s: 'float' = 600.0, download: 'bool' = True, on_started: 'VideoStartedCallback | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'VideoResult' sha=360bf7bac59bbe03"
   },
   "module_names": {

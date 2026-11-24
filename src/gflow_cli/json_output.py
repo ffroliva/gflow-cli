@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from gflow_cli.api.dto import GeneratedImage
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult
+    from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoResult
     from gflow_cli.services.doctor import DoctorReport
 
 
@@ -220,8 +220,48 @@ def video_result(
             "seed": request.seed,
         },
     }
+    if result.quoted_credits is not None:
+        payload["quoted_credits"] = result.quoted_credits
     if not st.succeeded:
         # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
+        payload.update(charged="maybe", next_action="reconcile")
+        if st.media_id:
+            payload["operation_id"] = st.media_id
+    return payload
+
+
+def edit_video_result(
+    *,
+    command: str,
+    request: EditVideoRequest,
+    result: VideoResult,
+) -> dict[str, Any]:
+    """Complete result for a ``video edit`` run."""
+    st = result.status
+    payload: dict[str, Any] = {
+        "status": "ok" if st.succeeded else "fail",
+        "command": command,
+        "media_id": st.media_id,
+        "project_id": result.project_id,
+        "workflow_id": result.workflow_id,
+        "generation_status": st.status,
+        "succeeded": st.succeeded,
+        "local_path": str(result.local_path) if result.local_path is not None else None,
+        "failure_reasons": list(st.failure_reasons),
+        "error_message": st.error_message,
+        "request": {
+            "source_video": str(request.source_video) if request.source_video is not None else None,
+            "source_media_id": request.source_media_id,
+            "model": request.model.value if request.model is not None else None,
+            "mode": "edit",
+            "aspect": request.aspect.value if request.aspect is not None else None,
+            "resolution": request.resolution,
+            "reference_count": len(request.reference_images),
+        },
+    }
+    if result.quoted_credits is not None:
+        payload["quoted_credits"] = result.quoted_credits
+    if not st.succeeded:
         payload.update(charged="maybe", next_action="reconcile")
         if st.media_id:
             payload["operation_id"] = st.media_id

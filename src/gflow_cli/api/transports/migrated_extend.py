@@ -184,8 +184,14 @@ def source_record(payload: Any, media_id: str) -> SourceClip | None:
     return SourceClip(workflow_id=str(rec[0]), kind=kind)
 
 
-def require_video_source(clip: SourceClip | None, *, media_id: str, project_id: str) -> str:
-    """The workflow id to extend, or exit 11 before any click."""
+def require_video_source(
+    clip: SourceClip | None,
+    *,
+    media_id: str,
+    project_id: str,
+    action: str = "extend continues a video clip",
+) -> str:
+    """The workflow id to extend/edit, or exit 11 before any click."""
     if clip is None:
         raise ConfigurationError(
             detail=(
@@ -197,7 +203,7 @@ def require_video_source(clip: SourceClip | None, *, media_id: str, project_id: 
         raise ConfigurationError(
             detail=(
                 f"media {media_id} is {'an image' if clip.kind == 'image' else 'not a video'}; "
-                "extend continues a video clip"
+                f"{action}"
             ),
             remediation_hint=(
                 "Pass the media id of a generated video (`gflow data list videos`), or make "
@@ -386,20 +392,24 @@ async def _refuse_if_disabled(page: Page, item: Any) -> None:
     )
 
 
-def _listing_clip(text: str, media_id: str) -> tuple[bool, SourceClip | None]:
+def _listing_clip(
+    text: str, media_id: str, *, resolver: Any = source_record
+) -> tuple[bool, SourceClip | None]:
     """(whether any ``Zzl0ze`` frame was in ``text``, the first one holding ``media_id``)."""
     seen = False
     for rid, payload in parse_frames(text):
         if rid != LISTING_RPC:
             continue
         seen = True
-        clip = source_record(payload, media_id)
+        clip = resolver(payload, media_id)
         if clip is not None:
             return True, clip
     return seen, None
 
 
-async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceClip | None:
+async def _source_clip(
+    page: Page, *, project_id: str, media_id: str, resolver: Any = source_record
+) -> SourceClip | None:
     """Open the clip editor and read its own ``Zzl0ze`` replies (no request of ours).
 
     Settles on the reply that holds ``media_id``; at the budget, ``None`` if a read
@@ -418,7 +428,7 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
             text = await response.text()
         except Exception:  # noqa: BLE001 - an aborted body is not our frame
             return
-        listed, clip = _listing_clip(text, media_id)
+        listed, clip = _listing_clip(text, media_id, resolver=resolver)
         seen = seen or listed
         if clip is not None and not found.done():
             found.set_result(clip)

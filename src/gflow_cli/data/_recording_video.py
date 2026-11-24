@@ -11,6 +11,7 @@ from __future__ import annotations
 import mimetypes
 from typing import TYPE_CHECKING
 
+from gflow_cli.api.video import EditVideoRequest
 from gflow_cli.data.models import (
     AssetKind,
     AssetLookup,
@@ -46,8 +47,9 @@ if TYPE_CHECKING:
     from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.storage import CloudStorageInfo
 
-    # Both generation requests carry the tool-provenance fields the recorder reads.
-    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
+    # All generation/edit requests carry the tool-provenance fields the recorder reads.
+    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest | EditVideoRequest
+    _VideoRequest = GenerateVideoRequest | EditVideoRequest
 
 
 from gflow_cli.data._recorder_core import (
@@ -58,6 +60,25 @@ from gflow_cli.data._recorder_core import (
     _new_id,
     _now_utc_iso,
 )
+
+
+def _video_req_fields(
+    request: _VideoRequest,
+) -> tuple[str, str | None, float | None, int | None]:
+    """Return ``(mode_value, aspect_value, duration_seconds, seed)`` for video/edit requests."""
+    if isinstance(request, EditVideoRequest):
+        return (
+            OperationKind.EDIT.value,
+            request.aspect.value if request.aspect is not None else None,
+            None,
+            None,
+        )
+    return (
+        request.mode.value,
+        request.aspect.value,
+        float(request.duration) if request.duration is not None else None,
+        request.seed,
+    )
 
 
 class VideoRecordingMixin(RecorderCore):
@@ -243,7 +264,7 @@ class VideoRecordingMixin(RecorderCore):
         *,
         profile_name: str,
         profile_dir: Path,
-        request: GenerateVideoRequest,
+        request: _VideoRequest,
         started: VideoStarted,
     ) -> None:
         repo = self.repository
@@ -267,6 +288,7 @@ class VideoRecordingMixin(RecorderCore):
         # violates UNIQUE(profile_name, flow_media_id)).
         if repo.get_asset_by_flow_media_id(profile_name, started.media_id) is not None:
             return
+        mode_value, aspect_value, duration_seconds, seed = _video_req_fields(request)
         asset_id = _new_id()
         repo.upsert_asset(
             AssetRecord(
@@ -279,11 +301,11 @@ class VideoRecordingMixin(RecorderCore):
                 kind=AssetKind.VIDEO,
                 status="pending",
                 model=request.model.value if request.model is not None else None,
-                aspect_ratio=request.aspect.value,
+                aspect_ratio=aspect_value,
                 width=None,
                 height=None,
-                duration_seconds=float(request.duration) if request.duration is not None else None,
-                seed=request.seed,
+                duration_seconds=duration_seconds,
+                seed=seed,
                 metadata_json={},
             ),
         )
@@ -295,8 +317,8 @@ class VideoRecordingMixin(RecorderCore):
                 id=op_id,
                 profile_name=profile_name,
                 flow_project_id=started.project_id,
-                command=f"video {request.mode.value}",
-                mode=OperationKind(request.mode.value),
+                command=f"video {mode_value}",
+                mode=OperationKind(mode_value),
                 status=OperationStatus.STARTED,
                 flow_operation_id=started.flow_operation_id,
                 flow_batch_id=None,
@@ -304,7 +326,7 @@ class VideoRecordingMixin(RecorderCore):
                 prompt_hash=pf.prompt_hash,
                 prompt_redacted=pf.prompt_redacted,
                 model=request.model.value if request.model is not None else None,
-                aspect_ratio=request.aspect.value,
+                aspect_ratio=aspect_value,
                 error_type=None,
                 error_detail=None,
                 expanded_prompt=expanded_prompt,
@@ -321,7 +343,7 @@ class VideoRecordingMixin(RecorderCore):
         repo: DataRepository,
         profile_name: str,
         flow_media_id: str,
-        request: GenerateVideoRequest,
+        request: _VideoRequest,
         result: VideoResult,
         terminal: tuple[OperationStatus, str | None, str | None] = (
             OperationStatus.SUCCEEDED,
@@ -335,6 +357,7 @@ class VideoRecordingMixin(RecorderCore):
         default, FAILED/"generation-failed" when the poll completed with
         ``succeeded=False`` (#341).
         """
+        mode_value, aspect_value, _, _ = _video_req_fields(request)
         pf, expanded_prompt = self._resolve_prompts(request)
         op_id = _new_id()
         repo.insert_operation(
@@ -342,8 +365,8 @@ class VideoRecordingMixin(RecorderCore):
                 id=op_id,
                 profile_name=profile_name,
                 flow_project_id=result.project_id,
-                command=f"video {request.mode.value}",
-                mode=OperationKind(request.mode.value),
+                command=f"video {mode_value}",
+                mode=OperationKind(mode_value),
                 status=terminal[0],
                 flow_operation_id=result.flow_operation_id,
                 flow_batch_id=None,
@@ -351,7 +374,7 @@ class VideoRecordingMixin(RecorderCore):
                 prompt_hash=pf.prompt_hash,
                 prompt_redacted=pf.prompt_redacted,
                 model=request.model.value if request.model is not None else None,
-                aspect_ratio=request.aspect.value,
+                aspect_ratio=aspect_value,
                 error_type=terminal[1],
                 error_detail=terminal[2],
                 completed_at=_now_utc_iso(),
@@ -424,7 +447,7 @@ class VideoRecordingMixin(RecorderCore):
         flow_media_id: str,
         result: VideoResult,
         existing_asset: AssetLookup | None,
-        request: GenerateVideoRequest | None,
+        request: _VideoRequest | None,
         model: str | None,
         aspect_ratio: str | None,
     ) -> AssetRecord:
@@ -442,10 +465,10 @@ class VideoRecordingMixin(RecorderCore):
             metadata = {}
 
         if request is not None:
+            _, aspect, duration, seed = _video_req_fields(request)
             model_value = request.model.value if request.model is not None else model
-            aspect = request.aspect.value
-            duration = float(request.duration) if request.duration is not None else None
-            seed = request.seed
+            if aspect is None:
+                aspect = aspect_ratio
         else:
             model_value = model
             aspect = aspect_ratio or "16:9"
@@ -478,7 +501,7 @@ class VideoRecordingMixin(RecorderCore):
         profile_name: str,
         flow_media_id: str,
         result: VideoResult,
-        request: GenerateVideoRequest | None,
+        request: _VideoRequest | None,
         model: str | None,
         aspect_ratio: str | None,
     ) -> None:
@@ -510,16 +533,17 @@ class VideoRecordingMixin(RecorderCore):
         repo: DataRepository,
         profile_name: str,
         flow_media_id: str,
-        request: GenerateVideoRequest,
+        request: _VideoRequest,
         result: VideoResult,
     ) -> None:
         """Update the STARTED operation to terminal SUCCEEDED/FAILED, or insert fallback."""
         terminal = self._resolve_video_terminal_outcome(result.status)
         completed_at = _now_utc_iso()
+        mode_value, _, _, _ = _video_req_fields(request)
         op = repo.get_operation_for_output_asset(
             profile_name,
             flow_media_id,
-            OperationKind(request.mode.value),
+            OperationKind(mode_value),
         )
         if op is not None:
             repo.update_operation_status(op.id, terminal[0], completed_at, terminal[1], terminal[2])
@@ -540,7 +564,7 @@ class VideoRecordingMixin(RecorderCore):
         *,
         profile_name: str,
         _profile_dir: Path,
-        request: GenerateVideoRequest | None = None,
+        request: _VideoRequest | None = None,
         result: VideoResult,
         cloud_storage_info: CloudStorageInfo | None = None,
         model: str | None = None,
@@ -570,12 +594,16 @@ class VideoRecordingMixin(RecorderCore):
             )
 
         if result.local_path is not None or cloud_storage_info is not None:
+            in_place_edit = (
+                isinstance(request, EditVideoRequest) and request.source_media_id == flow_media_id
+            )
             self._persist_completed_video_file(
                 repo=repo,
                 profile_name=profile_name,
                 flow_media_id=flow_media_id,
                 local_path=result.local_path,
                 cloud_storage_info=cloud_storage_info,
+                supersede_existing=in_place_edit,
             )
 
     def record_failed_operation(
@@ -643,7 +671,7 @@ class VideoRecordingMixin(RecorderCore):
         if request is not None:
             pf, expanded_prompt = self._resolve_prompts(request)
             model = request.model.value if request.model is not None else None
-            aspect_ratio = request.aspect.value
+            aspect_ratio = request.aspect.value if request.aspect is not None else None
         else:
             pf, expanded_prompt = prompt_fields(None, mode=self.prompt_mode), None
             model = None

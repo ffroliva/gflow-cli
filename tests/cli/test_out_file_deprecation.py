@@ -52,6 +52,7 @@ _OUT_FILE_ONLY = {
     "image gen",
     "video gen",
     "video assemble",
+    "video edit",
     "video transcribe",
     "video captions",
 }

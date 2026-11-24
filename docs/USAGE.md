@@ -1102,6 +1102,35 @@ gflow video r2v "a continuous scene" --ref scene.png \
   --model omni-1.2-flash --duration 15 --resolution 360p
 ```
 
+## `gflow video edit`
+
+Video-to-video editing on `flow.google.com` (RPC `jIps6`, Omni models only, default `omni-1.2`,
+single-clip output). Accepts either a local video file (`.mp4`, `.m4v`, `.mov`, `.3gp`, `.avi`,
+up to 1 GB) or an existing Flow clip media UUID, plus 0–5 `--ref` local reference images.
+
+```text
+gflow video edit SOURCE PROMPT [--ref IMG ...] [--model {omni-1.2|omni-1.2-flash|omni-flash}] \
+  [--aspect {9:16|16:9}] [--resolution {360p|720p}] [--max-credits N] [--project ID] \
+  [--out-dir DIR] [--out-file FILE] [--json]
+```
+
+```bash
+# Edit a local video file with reference image guidance (Main Composer Ingredients)
+gflow video edit clip.mp4 "shift lighting to warm golden lantern glow" \
+  --ref palette.png --resolution 720p --max-credits 15 --json
+
+# Iteratively edit an existing Flow video clip in place via the Clip Editor
+gflow video edit 11111111-2222-3333-4444-555555555555 "add light drifting snow" \
+  --project <project-id> --max-credits 15 --json
+```
+
+> Local video uploads use Flow's toolbar uploader (up to 1 GB; the one-time "rights to use this
+> video" dialog must be accepted once by hand in Flow). Up to 5 `--ref` images are accepted (Flow
+> drops extra references beyond 5 on `jIps6`). Existing Flow media UUIDs require `--project` (or a
+> catalogued UUID) and preserve the source clip's aspect ratio at `720p` (`--resolution 360p` and
+> mismatched `--aspect` exit 36 before submit). `--max-credits` checks Flow's pre-submit quote
+> (exit 45 if unreadable or over cap).
+
 ### Sharing one project across calls
 
 By default each `video t2v` / `i2v` / `r2v` call creates its own scratch Flow
