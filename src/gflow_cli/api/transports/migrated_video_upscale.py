@@ -119,7 +119,7 @@ _4K_EXPORT_HINT = (
     "Check your Flow project and credit balance before re-running (4K video upscaling spends "
     "credits). If it keeps failing, file a bug at https://github.com/ffroliva/gflow-cli/issues."
 )
-_SCALE_TOKEN_RE = re.compile(r"\b(?:4k|2160p)\b", re.IGNORECASE)
+_SCALE_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(?:4k|2160p)(?![0-9A-Za-z])", re.IGNORECASE)
 
 
 def _export_hint(scale: str) -> str:
@@ -192,6 +192,7 @@ def _unavailable_error(scale_norm: str) -> UpscaleUnavailableError:
 
 def _export_refusal_listener(
     failed: asyncio.Future[None],
+    scale_norm: str,
 ) -> Callable[[Response], Awaitable[None]]:
     """A response listener that fails ``failed`` on an export RPC refusal.
 
@@ -218,6 +219,7 @@ def _export_refusal_listener(
                             f"reasons={err.reasons}"
                         ),
                         route="video_upscale",
+                        remediation_hint=_export_hint(scale_norm),
                     ),
                 )
 
@@ -323,7 +325,7 @@ async def upscale_video_migrated(
                 enforce_credit_cap(quoted=quoted, max_credits=cap, route="video_upscale")
 
     failed: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-    on_response = _export_refusal_listener(failed)
+    on_response = _export_refusal_listener(failed, scale_norm)
     try:
         page.on("response", on_response)
         await install_capture_hooks(page, "gif" if scale_norm == "270p" else "video")
