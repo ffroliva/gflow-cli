@@ -204,10 +204,20 @@ We analyzed whether a terminal-driven CLI guided by a text skill (e.g., `skills/
 | **Output Fragility** | Ephemeral `stdout`/`stderr` log outputs are fragile to format adjustments, progress bars, and ANSI colors. | Strictly structured JSON payloads containing explicit metadata and absolute output file URIs. |
 | **Process Lifecycle**| High process startup overhead (Python import latency) on every individual execution. | Warm daemon process. Retains active caching of database metadata. |
 | **Concurrency** | A second concurrent process against the same profile is rejected immediately by the cross-process `ProfileLease` with `ProfileLockedError` (exit code 11) — a clean fail-fast, never a crash, never a wait. Different profiles run fully in parallel. | Calls on one profile inside one server run one at a time — a second call waits for the first instead of failing. A profile held by a *different* process (a CLI run, another server) is waited out for up to 180 s (`GFLOW_CLI_LEASE_WAIT_SECONDS`, which a value you set yourself overrides) before `ProfileLockedError`; different profiles still run fully in parallel. |
-| **Error Handling** | Agent must scan logs for strings or parse exit codes to check status. | Strongly-typed JSON-RPC errors with mapped codes and clear remediation. A queued failure carries `exit_code` (in the server's active mode, `GFLOW_CLI_EXIT_CODES`, #1202) and `exit_code_legacy`. |
+| **Error Handling** | Agent must scan logs for strings or parse exit codes to check status. | A failed call is a tool result, not a JSON-RPC error: its `structuredContent` is a typed error envelope with mapped codes and clear remediation, and a plain call sets `isError: true`. A queued failure carries `exit_code` (in the server's active mode, `GFLOW_CLI_EXIT_CODES`, #1202) and `exit_code_legacy`. |
 | **Transport Safety** | Volatile console printing. | Stdout is strictly isolated for JSON-RPC; all logs and warnings route to stderr. |
 
 ### Error envelope
+
+A failed tool call is a tool result, not a JSON-RPC error. A plain (not
+task-augmented) `tools/call` whose envelope has `status: "error"` comes back with
+**`isError: true`**, and `structuredContent` carries the same envelope
+([#1453](https://github.com/ffroliva/gflow-cli/issues/1453)); a successful call has
+`isError: false`. Other statuses keep `isError: false`, including `pending`,
+`rate_limited`, `invalid_tools`, `throttled` and a `wait=true` generation's `failed`,
+so read `status` as well. A `wait=false` job reports its own flag: its finished
+result on `tasks/get` has `isError: true` unless the job completed (see
+[Tools](#tools-executable-actions)).
 
 MCP tool failures return a structured error object built from the same RFC 9457
 Problem Details as the CLI, plus a **`retryable`** boolean. `retryable: true`

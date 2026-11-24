@@ -16,11 +16,12 @@ import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 from mcp.server import MCPServer
 from mcp.server.caching import CacheableMethod, CacheHint
+from mcp.types import CallToolResult
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
@@ -68,11 +69,36 @@ _CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
 
 tasks_extension = TasksExtension()
 
+
+class GflowMCPServer(MCPServer):
+    """``MCPServer`` that flags a tool's error envelope with ``isError`` (#1453).
+
+    Every tool returns its envelope as a plain dict, so the SDK reports even a
+    failure as a successful result. A plain ``tools/call`` whose
+    ``structuredContent`` has ``status == "error"`` is returned with
+    ``isError: true``; ``structuredContent`` itself is unchanged. The check runs
+    after ``super().call_tool``, so output-schema validation has already run, and
+    it covers envelopes built outside ``_guarded`` too. Other statuses
+    (``ok``, ``pending``, ``rate_limited``, ...) are left as they are.
+    """
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
+        result = await super().call_tool(name, arguments, context)
+        if isinstance(result, CallToolResult) and not result.is_error:
+            envelope: object = result.structured_content
+            if (
+                isinstance(envelope, dict)
+                and cast("dict[str, Any]", envelope).get("status") == "error"
+            ):
+                return result.model_copy(update={"is_error": True})
+        return result
+
+
 # ``MCPServer`` is the mcp>=2 successor to ``FastMCP`` (which 2.0.0 deleted).
 # The decorator API is unchanged; ``version`` is now a first-class constructor
 # argument, so the old ``server._mcp_server.version = ...`` private-API poke is
 # gone.
-server = MCPServer(
+server = GflowMCPServer(
     name=_SERVER_NAME,
     version=_SERVER_VERSION,
     cache_hints=_CACHE_HINTS,

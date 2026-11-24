@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **An MCP tool call that fails comes back with `isError: true` ([#1453](https://github.com/ffroliva/gflow-cli/issues/1453)).** Every tool returns its envelope as a plain dict, so the SDK reported every failure as a successful result (`isError: false`); only a `wait=false` job's result on `tasks/get` set the flag. The server now sets `isError: true` on a plain `tools/call` whose envelope has `status: "error"`, including envelopes built outside the shared error funnel (the confirmation-required envelope of `gflow_media_trash`, a refused argument). `structuredContent` is unchanged, so a client that reads only the envelope sees no difference; a client that branches on `isError` now sees the failure. Other statuses (`pending`, `rate_limited`, `failed`, ...) keep `isError: false`.
+
 ## [0.106.0] — 2026-11-23
 
 ### Added
