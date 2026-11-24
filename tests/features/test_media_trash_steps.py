@@ -150,6 +150,7 @@ def _seed_catalog_asset(
     project_id: str,
     profile_name: str = "default",
     workflow_id: str = "wf-1",
+    kind: AssetKind = AssetKind.IMAGE,
 ) -> None:
     repo: DataRepository = world["repo"]
     now_str = datetime.now(UTC).isoformat()
@@ -173,7 +174,7 @@ def _seed_catalog_asset(
             flow_media_id=media_id,
             flow_workflow_id=workflow_id,
             flow_media_generation_id=None,
-            kind=AssetKind.IMAGE,
+            kind=kind,
             status="ready",
             model="imagen-3.0-fast-generate-001",
             aspect_ratio="16:9",
@@ -190,6 +191,23 @@ def _seed_catalog_asset(
 @given(parsers.parse('a cataloged media item with ID "{media_id}" in project "{project_id}"'))
 def given_cataloged_media_in_project(world: dict[str, Any], media_id: str, project_id: str) -> None:
     _seed_catalog_asset(world, media_id=media_id, project_id=project_id)
+
+
+@given(
+    parsers.parse(
+        'a cataloged image with ID "{media_id}" and workflow ID "{workflow_id}" '
+        'in project "{project_id}"'
+    )
+)
+def given_cataloged_image(
+    world: dict[str, Any], media_id: str, workflow_id: str, project_id: str
+) -> None:
+    _seed_catalog_asset(world, media_id=media_id, project_id=project_id, workflow_id=workflow_id)
+
+
+@given(parsers.parse('a cataloged video with ID "{media_id}" in project "{project_id}"'))
+def given_cataloged_video(world: dict[str, Any], media_id: str, project_id: str) -> None:
+    _seed_catalog_asset(world, media_id=media_id, project_id=project_id, kind=AssetKind.VIDEO)
 
 
 @given(parsers.parse('a cataloged media item with ID "{media_id}"'))
@@ -285,6 +303,25 @@ def then_json_status_and_project(world: dict[str, Any], status: str, project_id:
     data = json.loads(result.output)
     assert data.get("status") == status, f"Expected status {status!r}, got {data.get('status')!r}"
     assert data.get("project_id") == project_id, f"Expected project {project_id!r}"
+
+
+@then(
+    parsers.parse('the JSON output reports media ID "{media_id}" and workflow ID "{workflow_id}"')
+)
+def then_json_media_and_workflow(world: dict[str, Any], media_id: str, workflow_id: str) -> None:
+    result = world["cli_result"]
+    assert result is not None
+    data = json.loads(result.output)
+    assert data.get("media_id") == media_id, f"Expected media_id {media_id!r}: {data}"
+    assert data.get("workflow_id") == workflow_id, f"Expected workflow_id {workflow_id!r}: {data}"
+
+
+@then(parsers.parse('the JSON output\'s restore hint names "{media_id}"'))
+def then_json_restore_hint_names(world: dict[str, Any], media_id: str) -> None:
+    result = world["cli_result"]
+    assert result is not None
+    data = json.loads(result.output)
+    assert f"gflow media restore {media_id}" in (data.get("restore_hint") or ""), data
 
 
 @then("no network request is sent to Flow")

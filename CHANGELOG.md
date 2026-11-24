@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gflow media trash` and `media restore` work on images by the id gflow reports for them ([#1451](https://github.com/ffroliva/gflow-cli/issues/1451)).** Flow's `pGCYOe` mutation takes the id gflow records as an image's workflow id, so trashing an image by its media id, with or without `--project`, was refused with `code=5`. An image found in the catalog is now sent by its workflow id (an image row without one still sends its media id); the output and the restore hint keep the media id. A video is still sent by its media id. On a four-image generation, each image has its own workflow id and only the image named is trashed. The MCP twins `gflow_media_trash` and `gflow_media_restore` get the same fix.
+
 ## [0.106.0] — 2026-11-23
 
 ### Added

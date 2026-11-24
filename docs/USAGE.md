@@ -1933,7 +1933,8 @@ Options:
 ```
 
 - Accepts a Flow media UUID (`flow_media_id`), local catalog asset ID, or workflow UUID.
-- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- An image is trashed by the id Flow's Trash takes for it, its workflow id, while the output and the restore hint keep the media id gflow reports for it ([#1451](https://github.com/ffroliva/gflow-cli/issues/1451)). A video is trashed by its media id.
+- When `--project` is passed, the project comes from the option; the ID is still looked up in the local catalog under the profile, so a cataloged image is sent by its workflow id. An ID the catalog does not know is sent as given.
 - Resolves the Flow project ID from the local catalog when `--project` is omitted.
 - If the identifier matches assets across multiple profiles and `--profile` is unset, raises exit 16 (`DataStoreError`) requesting `--profile`.
 - In interactive environments, prompts `Move <kind> <id> in project <project_id> (profile: <profile>) to Flow's Trash? [y/N]: ` unless `--yes` (`-y`) is supplied.
@@ -1952,7 +1953,7 @@ Options:
 ```
 
 - Restores a trashed media item back to its Flow project over the wire.
-- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- Takes the same IDs as `gflow media trash` and sends an image by its workflow id the same way; `--project` works the same way too.
 - Clears the `metadata.archived` flag and resets `collection_id` via `pGCYOe`.
 
 Exit codes: `0` success, `2` confirmation missing in non-interactive shell or usage error, `16` ambiguous asset across profiles or catalog record missing.

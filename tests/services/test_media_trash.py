@@ -484,7 +484,8 @@ async def test_trash_media_service_fallback_to_client_on_wire_unavailable(
     result = await trash_media_service("local-uuid-1")
     assert result.status == "trashed"
     mock_direct.assert_awaited_once()
-    mock_client.trash_media.assert_awaited_once_with("m-flow-1", "p-flow-1")
+    # #1451: an image is sent by its workflow id, on the fallback path too.
+    mock_client.trash_media.assert_awaited_once_with("wf-1", "p-flow-1")
 
 
 @pytest.mark.asyncio
@@ -524,7 +525,8 @@ async def test_restore_media_service_fallback_to_client_on_wire_unavailable(
     result = await restore_media_service("local-uuid-1")
     assert result.status == "restored"
     mock_direct.assert_awaited_once()
-    mock_client.restore_media.assert_awaited_once_with("m-flow-1", "p-flow-1")
+    # #1451: an image is sent by its workflow id, on the fallback path too.
+    mock_client.restore_media.assert_awaited_once_with("wf-1", "p-flow-1")
 
 
 # ---------------------------------------------------------------------------
@@ -539,8 +541,9 @@ def _seed_test_asset(
     flow_media_id: str,
     flow_project_id: str,
     profile_name: str = "default",
-    flow_workflow_id: str = "wf-1",
+    flow_workflow_id: str | None = "wf-1",
     status: str = "ready",
+    kind: AssetKind = AssetKind.IMAGE,
 ) -> None:
     now_str = datetime.now(UTC).isoformat()
     with DataStore.open(db_path) as store:
@@ -567,7 +570,7 @@ def _seed_test_asset(
                 flow_media_id=flow_media_id,
                 flow_workflow_id=flow_workflow_id,
                 flow_media_generation_id=None,
-                kind=AssetKind.IMAGE,
+                kind=kind,
                 status=status,
                 model="imagen-3.0-fast-generate-001",
                 aspect_ratio="16:9",
@@ -1039,3 +1042,175 @@ async def test_media_trash_service_refuses_when_trash_did_not_set_archived(
     with pytest.raises(WireFormatError, match="did not set archived flag to True") as exc_info:
         await trash_media_service("m-arch-bad", project_id="proj-bad", profile="test_prof")
     assert exc_info.value.charged == "no"
+
+
+# ---------------------------------------------------------------------------
+# #1451: images are trashed and restored by their workflow id
+# ---------------------------------------------------------------------------
+
+
+def _echo(sent_id: str, project_id: str, *, archived: bool, workflow_slot: str) -> dict[str, Any]:
+    """What the wire layer returns: Flow's echo of the id that was sent."""
+    return {
+        "media_id": sent_id,
+        "project_id": project_id,
+        "workflow_id": workflow_slot,
+        "archived": archived,
+        "status": "trashed" if archived else "restored",
+    }
+
+
+@pytest.fixture
+def catalog(profile_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    db_path = profile_dir.parent.parent / "catalog.db"
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    reset_settings()
+    return db_path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_project", [False, True])
+async def test_image_is_trashed_by_its_workflow_id(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch, use_project: bool
+) -> None:
+    _seed_test_asset(
+        catalog,
+        asset_id="local-img",
+        flow_media_id="img-media",
+        flow_workflow_id="img-wf",
+        flow_project_id="p-1",
+        profile_name="test_prof",
+    )
+    # Flow echoes the id it was sent and puts the reported media id in the workflow slot.
+    mock_trash = AsyncMock(
+        return_value=_echo("img-wf", "p-1", archived=True, workflow_slot="img-media")
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    result = await trash_media_service(
+        "img-media", profile="test_prof", project_id="p-1" if use_project else None
+    )
+
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_trash.assert_awaited_once_with(expected_pdir, "img-wf", "p-1")
+    assert result.media_id == "img-media"
+    assert result.workflow_id == "img-wf"
+    assert result.status == "trashed"
+    assert "gflow media restore img-media" in (result.restore_hint or "")
+
+
+@pytest.mark.asyncio
+async def test_image_is_restored_by_its_workflow_id(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_test_asset(
+        catalog,
+        asset_id="local-img",
+        flow_media_id="img-media",
+        flow_workflow_id="img-wf",
+        flow_project_id="p-1",
+        profile_name="test_prof",
+    )
+    mock_restore = AsyncMock(
+        return_value=_echo("img-wf", "p-1", archived=False, workflow_slot="img-media")
+    )
+    monkeypatch.setattr(flow_wire, "direct_restore_media", mock_restore)
+
+    result = await restore_media_service("img-media", profile="test_prof")
+
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_restore.assert_awaited_once_with(expected_pdir, "img-wf", "p-1")
+    assert result.media_id == "img-media"
+    assert result.workflow_id == "img-wf"
+    assert result.status == "restored"
+
+
+@pytest.mark.asyncio
+async def test_image_given_by_its_workflow_id_reports_its_media_id(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The workaround from #1451 (passing the workflow id) keeps working."""
+    _seed_test_asset(
+        catalog,
+        asset_id="local-img",
+        flow_media_id="img-media",
+        flow_workflow_id="img-wf",
+        flow_project_id="p-1",
+        profile_name="test_prof",
+    )
+    mock_trash = AsyncMock(
+        return_value=_echo("img-wf", "p-1", archived=True, workflow_slot="img-media")
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    result = await trash_media_service("img-wf", profile="test_prof", project_id="p-1")
+
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_trash.assert_awaited_once_with(expected_pdir, "img-wf", "p-1")
+    assert result.media_id == "img-media"
+
+
+@pytest.mark.asyncio
+async def test_video_is_still_trashed_by_its_media_id(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_test_asset(
+        catalog,
+        asset_id="local-vid",
+        flow_media_id="vid-media",
+        flow_workflow_id="vid-wf",
+        flow_project_id="p-1",
+        profile_name="test_prof",
+        kind=AssetKind.VIDEO,
+    )
+    mock_trash = AsyncMock(
+        return_value=_echo("vid-media", "p-1", archived=True, workflow_slot="vid-wf")
+    )
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    result = await trash_media_service("vid-media", profile="test_prof")
+
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_trash.assert_awaited_once_with(expected_pdir, "vid-media", "p-1")
+    assert result.media_id == "vid-media"
+    assert result.workflow_id == "vid-wf"
+
+
+@pytest.mark.asyncio
+async def test_image_without_a_workflow_id_falls_back_to_its_media_id(
+    catalog: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_test_asset(
+        catalog,
+        asset_id="local-img",
+        flow_media_id="img-media",
+        flow_workflow_id=None,
+        flow_project_id="p-1",
+        profile_name="test_prof",
+    )
+    mock_trash = AsyncMock(return_value=_echo("img-media", "p-1", archived=True, workflow_slot=""))
+    monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
+
+    result = await trash_media_service("img-media", profile="test_prof")
+
+    expected_pdir = get_settings().profile_subdir("test_prof")
+    mock_trash.assert_awaited_once_with(expected_pdir, "img-media", "p-1")
+    assert result.media_id == "img-media"
+
+
+@pytest.mark.asyncio
+async def test_direct_trash_checks_the_echo_against_the_id_it_sent(
+    profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flow's echo of the workflow id passes; an echo of another id is refused."""
+    reply = _TRASH_REPLY_BODY.replace("m-1", "img-wf")
+    monkeypatch.setattr(
+        flow_wire,
+        "_execute_direct_rpc",
+        AsyncMock(return_value=(httpx.Response(200, text=reply), 0.01)),
+    )
+    res = await flow_wire.direct_trash_media(profile_dir, "img-wf", "proj-1")
+    assert res["media_id"] == "img-wf"
+
+    with pytest.raises(WireFormatError, match="media ID mismatch"):
+        await flow_wire.direct_trash_media(profile_dir, "img-media", "proj-1")
