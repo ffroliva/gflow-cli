@@ -147,9 +147,30 @@ async def test_migrated_video_upscale_270p_gif() -> None:
     assert await _run(page, "270p") == _GIF
 
 
+async def test_migrated_video_upscale_4k_happy_path() -> None:
+    clip_4k = _mp4((3840, 2160), (0, 0))
+    menu = [
+        FakeItem("270p"),
+        FakeItem("720p"),
+        FakeItem("1080p"),
+        FakeItem("4K Upscaled · 50 credits", disabled=False),
+    ]
+    page = fake_page(menu, captured_b64=_b64(clip_4k))
+
+    assert await _run(page, "4k") == clip_4k
+    assert menu[3].clicked
+
+
+async def test_migrated_video_upscale_4k_disabled_raises_unavailable() -> None:
+    page = fake_page(_video_menu())
+
+    with pytest.raises(UpscaleUnavailableError, match="4k video option is not available"):
+        await _run(page, "4k")
+
+
 async def test_migrated_video_upscale_invalid_scale() -> None:
     with pytest.raises(ValueError, match="Unsupported video upscale scale"):
-        await _run(MagicMock(), "4k")
+        await _run(MagicMock(), "8k")
 
 
 async def test_migrated_video_upscale_disabled_raises_unavailable() -> None:

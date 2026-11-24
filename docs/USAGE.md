@@ -363,8 +363,8 @@ the input file is never overwritten.
 
 ## `gflow video upscale`
 
-Upscale or export a **platform-generated** video to 1080p Full HD, download it at 720p,
-or export as a 270p animated GIF and save it locally.
+Upscale or export a **platform-generated** video to 4K Ultra (spends credits), 1080p Full HD,
+download it at 720p, or export as a 270p animated GIF and save it locally.
 
 ```text
 gflow video upscale MEDIA_ID [OPTIONS]
@@ -374,10 +374,12 @@ Arguments:
                             `gflow data list videos`).
 
 Options:
-  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (the original
-                            download, or Flow's upscale of a smaller original), or 270p
-                            (animated GIF export). Flow lists only some scales for some
-                            models; an unlisted one exits 22. [default: 1080p]
+  --scale [4k|1080p|720p|270p]
+                            Target quality: 4k (Ultra 2160p upscale; spends credits),
+                            1080p (enhanced Full HD), 720p (the original download, or
+                            Flow's upscale of a smaller original), or 270p (animated GIF
+                            export). Flow lists only some scales for some models; an
+                            unlisted one exits 22. [default: 1080p]
   --project ID              Project that owns the video. Resolved from the local
                             catalog when omitted; pass it explicitly for videos
                             gflow didn't record (e.g. generated in the web UI).
@@ -408,7 +410,7 @@ Notes:
   gflow could not pick its item.
 - **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
   refuses the command with exit 36.
-- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
+- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07); the 4K export on Flow Ultra spends credits (measured 50 credits on Omni 1.2 Flash, 2026-11-23).
 - Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
 ## `gflow image generate` / `gflow video generate`
@@ -533,6 +535,10 @@ Options:
                             auto (default) — auto resolves to classic, the only
                             arm that can satisfy an image request (#595).
                             Aborts exit 28 if unreachable.
+  --thinking-level [low|medium|high]
+                            Image thinking level in Flow's settings pane (low,
+                            medium, or high; when omitted, Flow's existing
+                            setting is left untouched). Single-prompt only.
                             Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
   --profile NAME            Profile name (overrides default).
 ```

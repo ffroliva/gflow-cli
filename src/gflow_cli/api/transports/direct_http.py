@@ -84,6 +84,7 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
         and _characters_measured(request)
         and not request.ref_paths
         and not request.instructions
+        and request.thinking_level is None
         and "@" not in request.prompt
         and resolve_ui_mode(request.ui_mode) is not UiMode.AGENTIC
     )

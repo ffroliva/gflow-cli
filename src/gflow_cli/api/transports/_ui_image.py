@@ -34,6 +34,7 @@ from gflow_cli.api.transports.ui_automation_video import (
 )
 from gflow_cli.errors import (
     BatchPartialError,
+    ConfigurationError,
     ContentPolicyError,
     GFlowError,
     MentionIndexUnavailableError,
@@ -46,8 +47,27 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
+    from gflow_cli.config import UiMode
+
 
 log = structlog.get_logger(__name__)
+
+
+def _resolve_labs_ui_mode(request: GenerateImageRequest) -> UiMode:
+    """Resolve required labs UI arm, refusing migrated-only image options."""
+    from gflow_cli.config import infer_required_ui_mode, resolve_ui_mode
+
+    if request.thinking_level is not None:
+        raise ConfigurationError(
+            detail=(
+                "--thinking-level is only supported on migrated flow.google.com image "
+                "generation (the legacy labs.google UI has no thinking-level control)"
+            ),
+            remediation_hint="Omit --thinking-level on labs.google or use flow.google.com.",
+            charged="no",
+        )
+    base_mode = request.ui_mode if request.ui_mode is not None else resolve_ui_mode(None)
+    return infer_required_ui_mode(base_mode, has_instructions=bool(request.instructions))
 
 
 class ImageGenerationMixin(CharacterGenerationMixin):
@@ -246,12 +266,7 @@ class ImageGenerationMixin(CharacterGenerationMixin):
         # (UiModeUnavailableError, exit 28) if the arm is unreachable — so -i can
         # never silently no-op on a classic bind, and no credits are spent. The
         # cohort flaps per page load, so this runs every generation (no caching).
-        from gflow_cli.config import infer_required_ui_mode, resolve_ui_mode
-
-        base_mode = request.ui_mode if request.ui_mode is not None else resolve_ui_mode(None)
-        required_mode = infer_required_ui_mode(
-            base_mode, has_instructions=bool(request.instructions)
-        )
+        required_mode = _resolve_labs_ui_mode(request)
         # Inject ``self`` into the classic driver at construction (via the
         # factory) — never mutate ``_transport`` onto the driver after the fact.
         ui_driver = await get_ui_driver(page, ui_mode=required_mode, transport=self)
