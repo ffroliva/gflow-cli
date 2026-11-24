@@ -165,7 +165,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
 | Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
 | Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | 4K |
-| OpenAI-compatible API | No | — | — | **Yes** | — | — |
+| OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | **Yes** | — | — |
 | Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | **Yes** | — | — |
 | Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
 | `charged` field on every error | **Yes** | — | — | — | — | — |

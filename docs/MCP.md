@@ -478,11 +478,45 @@ A missing header, a non-`Bearer` scheme, or a wrong token is answered `401` with
 `WWW-Authenticate: Bearer` — on `/mcp` and on both halves of the deprecated SSE
 surface (`/sse`, `/messages/`). The comparison is constant-time
 (`hmac.compare_digest`), and auth is the outermost layer, so an unauthenticated
-caller learns nothing about the transport's DNS-rebinding allow-list.
+caller learns nothing about the transport's DNS-rebinding allow-list. The same
+token guards the OpenAI-compatible route below.
 
 Non-loopback binds (e.g. `--host 0.0.0.0`) **require** the token — `gflow serve`
 refuses to start without one (exit 11). A loopback bind with no token stays
 unauthenticated, which is the local single-user default.
+
+### OpenAI-compatible image endpoint
+
+`gflow serve` (either transport) also answers `POST /v1/images/generations` in the
+OpenAI Images schema ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)), so
+OpenAI SDK code can generate Flow images by changing its base URL:
+
+```python
+import base64
+
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="<GFLOW_DAEMON_TOKEN or any string>")
+image = client.images.generate(prompt="a paper boat", size="1792x1024", n=1)
+png_bytes = base64.b64decode(image.data[0].b64_json)
+```
+
+It is the `gflow_generate_image` tool behind another door: the same profile resolution,
+rate limit (429 when the bucket is empty) and `GFLOW_MCP_NO_SPEND` (403 `no_spend`).
+
+| Field | Accepted |
+|---|---|
+| `prompt` | required, non-empty |
+| `model` | gflow image aliases (`nano2`, default; `nano2-lite`, `nano-pro`, `image4` …); anything else is 400 |
+| `n` | 1–4 |
+| `size` | `WIDTHxHEIGHT` → the nearest of Flow's aspects (`1:1`, `9:16`, `16:9`, `4:3`, `3:4`); an aspect string itself; `auto` or absent → `1:1` |
+| `response_format` | `b64_json` only (the default here; OpenAI's default `url` is 400 — gflow does not host files) |
+| `quality`, `style`, `user`, `background`, `output_format` | ignored |
+
+Errors use OpenAI's body, `{"error": {"message", "type", "code", "param"}}`, at the
+HTTP status of the underlying problem; `code` carries the gflow problem `type` URI.
+With no token configured, a request whose `Host` is not loopback is answered 421, the
+DNS-rebinding guard the SDK gives `/mcp`. Video is not exposed yet.
 
 > **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
 > surface are built as internal foundation but are **not yet wired into**

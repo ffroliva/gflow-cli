@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow serve` answers OpenAI's `POST /v1/images/generations` ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)).** OpenAI SDK code can generate Flow images by pointing its base URL at the daemon. The route calls the `gflow_generate_image` tool, so it has the same profile resolution, rate limit (429) and `GFLOW_MCP_NO_SPEND` refusal (403), and the daemon token guards it like `/mcp`. `n` is 1 to 4, `size` picks the nearest Flow aspect, `model` takes gflow's image aliases, and images come back as `b64_json` only (`url` is refused with 400). Without a token, a request whose `Host` is not loopback is refused with 421. Video is not exposed yet. See [docs/MCP.md](docs/MCP.md#openai-compatible-image-endpoint).
+
 ### Changed
 
 - **An MCP tool call that fails comes back with `isError: true` ([#1453](https://github.com/ffroliva/gflow-cli/issues/1453)).** Every tool returns its envelope as a plain dict, so the SDK reported every failure as a successful result (`isError: false`); only a `wait=false` job's result on `tasks/get` set the flag. The server now sets `isError: true` on a plain `tools/call` whose envelope has `status: "error"`, including envelopes built outside the shared error funnel (the confirmation-required envelope of `gflow_media_trash`, a refused argument). `structuredContent` is unchanged, so a client that reads only the envelope sees no difference; a client that branches on `isError` now sees the failure. Other statuses (`pending`, `rate_limited`, `failed`, ...) keep `isError: false`.

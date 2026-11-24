@@ -317,6 +317,11 @@ def build_app(
         if transport == "http"
         else server.sse_app(host=host)
     )
+    # OpenAI-compatible /v1/images/generations (#1365). Behind the same auth layer as
+    # the transport below; it checks Host itself when there is no token.
+    from gflow_cli.mcp import openai_api
+
+    app.router.routes.extend(openai_api.routes(token=token))
     if token is not None:
         # Added LAST on purpose: ``add_middleware`` inserts at index 0, so the
         # last layer added is the outermost one. Auth must answer before the
