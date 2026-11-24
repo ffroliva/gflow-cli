@@ -300,7 +300,7 @@ def then_rpc_sent(world: dict[str, Any], rpcid: str, media_id: str) -> None:
 def then_json_status_and_project(world: dict[str, Any], status: str, project_id: str) -> None:
     result = world["cli_result"]
     assert result is not None
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data.get("status") == status, f"Expected status {status!r}, got {data.get('status')!r}"
     assert data.get("project_id") == project_id, f"Expected project {project_id!r}"
 
@@ -311,7 +311,7 @@ def then_json_status_and_project(world: dict[str, Any], status: str, project_id:
 def then_json_media_and_workflow(world: dict[str, Any], media_id: str, workflow_id: str) -> None:
     result = world["cli_result"]
     assert result is not None
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert data.get("media_id") == media_id, f"Expected media_id {media_id!r}: {data}"
     assert data.get("workflow_id") == workflow_id, f"Expected workflow_id {workflow_id!r}: {data}"
 
@@ -320,7 +320,7 @@ def then_json_media_and_workflow(world: dict[str, Any], media_id: str, workflow_
 def then_json_restore_hint_names(world: dict[str, Any], media_id: str) -> None:
     result = world["cli_result"]
     assert result is not None
-    data = json.loads(result.output)
+    data = json.loads(result.stdout)
     assert f"gflow media restore {media_id}" in (data.get("restore_hint") or ""), data
 
 

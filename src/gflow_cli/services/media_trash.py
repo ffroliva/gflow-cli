@@ -136,7 +136,7 @@ def resolve_media_trash_target(target_id: str, *, profile: str | None, route: st
         return matches[0]
 
 
-def _wire_id(asset: AssetLookup | None, media_id: str) -> str:
+def _wire_id(asset: AssetLookup) -> str:
     """The id ``pGCYOe`` acts on for ``asset`` (#1451).
 
     For an image, Flow's trash mutation takes the id gflow records as the image's
@@ -144,9 +144,9 @@ def _wire_id(asset: AssetLookup | None, media_id: str) -> str:
     reports and catalogs (``node[0]``). A video's media id is the one it takes. An
     image row without a workflow id falls back to its media id.
     """
-    if asset is not None and asset.kind is AssetKind.IMAGE and asset.flow_workflow_id:
+    if asset.kind is AssetKind.IMAGE and asset.flow_workflow_id:
         return asset.flow_workflow_id
-    return media_id
+    return asset.flow_media_id
 
 
 def _resolve_target_info(
@@ -190,7 +190,7 @@ def _resolve_target_info(
             resolved_project_id,
             asset.flow_workflow_id or "",
             profile_name,
-            _wire_id(asset, asset.flow_media_id),
+            _wire_id(asset),
         )
 
     asset = resolve_media_trash_target(clean_id, profile=profile, route=route)
@@ -208,7 +208,7 @@ def _resolve_target_info(
         asset.flow_project_id,
         asset.flow_workflow_id or "",
         asset.profile_name,
-        _wire_id(asset, asset.flow_media_id),
+        _wire_id(asset),
     )
 
 

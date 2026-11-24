@@ -797,7 +797,7 @@ async def test_media_trash_service_refuses_same_profile_ambiguity(
 
 
 @pytest.mark.asyncio
-async def test_media_trash_service_with_explicit_project_bypasses_catalog(
+async def test_media_trash_service_with_explicit_project_sends_an_uncataloged_id_as_given(
     profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db_path = profile_dir.parent.parent / "catalog.db"
@@ -814,7 +814,7 @@ async def test_media_trash_service_with_explicit_project_bypasses_catalog(
     )
     monkeypatch.setattr(flow_wire, "direct_trash_media", mock_trash)
 
-    # Calling with project_id should not query catalog and succeed
+    # An id the catalog does not know is sent as given, under the --project project
     result = await trash_media_service("uncataloged-id", project_id="proj-999", profile="test_prof")
     assert result.media_id == "uncataloged-id"
     assert result.project_id == "proj-999"

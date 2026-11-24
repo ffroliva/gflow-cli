@@ -1925,7 +1925,8 @@ Flow provides a restorable Trash: moving an item to Trash removes it from Flow p
 gflow media trash ID [OPTIONS]
 
 Options:
-  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --project PROJECT_ID           Flow project ID; the ID is still resolved
+                                 through the local catalog.
   --profile TEXT                 Profile name to disambiguate or scope the lookup.
   -y, --yes                      Confirm trashing media without an interactive prompt.
   -o, --output [json|table|id]   Output format (json|table|id). [default: table]
@@ -1946,7 +1947,8 @@ Options:
 gflow media restore ID [OPTIONS]
 
 Options:
-  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --project PROJECT_ID           Flow project ID; the ID is still resolved
+                                 through the local catalog.
   --profile TEXT                 Profile name to disambiguate or scope the lookup.
   -o, --output [json|table|id]   Output format (json|table|id). [default: table]
   --json                         Alias for -o json.
