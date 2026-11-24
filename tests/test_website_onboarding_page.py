@@ -3,7 +3,8 @@
 MkDocs copies this hand-written page to the site unrendered, so nothing else checks it:
 its doc links are not rewritten, its commands are not run, and its scroll motion,
 print layout and colours are only seen in a browser. These tests load it in Chromium
-(installed for the offline CI shards) and check it against the real CLI.
+and check it against the real CLI. Chromium is installed on the 3.13 CI shards; the
+browser tests skip where it is absent.
 """
 
 from __future__ import annotations
@@ -31,7 +32,10 @@ _STEP_MIN_OPACITY = """() => [...document.querySelectorAll('.step')].map(s =>
 @pytest.fixture(scope="module")
 def browser() -> Iterator[Browser]:
     with sync_playwright() as p:
-        b = p.chromium.launch()
+        try:
+            b = p.chromium.launch()
+        except Exception as exc:  # pragma: no cover - only the 3.13 CI shards install it
+            pytest.skip(f"Playwright Chromium is unavailable: {exc}")
         yield b
         b.close()
 
