@@ -21,7 +21,8 @@ from typing import Any, Literal, cast
 import structlog
 from mcp.server import MCPServer
 from mcp.server.caching import CacheableMethod, CacheHint
-from mcp.types import CallToolResult
+from mcp.server.mcpserver.context import Context
+from mcp.types import CallToolResult, InputRequiredResult
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
@@ -82,7 +83,9 @@ class GflowMCPServer(MCPServer):
     (``ok``, ``pending``, ``rate_limited``, ...) are left as they are.
     """
 
-    async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Context[Any, Any] | None = None
+    ) -> CallToolResult | InputRequiredResult:
         result = await super().call_tool(name, arguments, context)
         if isinstance(result, CallToolResult) and not result.is_error:
             envelope: object = result.structured_content
