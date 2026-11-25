@@ -38,7 +38,8 @@ channel no longer accepts anything).
 | Claude Code plugin marketplace (ours) | Claude Code users | — (self-hosted) | shipped | 2026-09-14 |
 | [claude-community](https://github.com/anthropics/claude-plugins-community) | Claude Code + Cowork | Console web form | **not eligible** (policy §4.B) | 2026-09-15 |
 | [cursor.com/marketplace](https://cursor.com/marketplace) | Cursor (curated) | Web form | todo | 2026-09-14 |
-| GitHub MCP Registry / VS Code gallery | Copilot, VS Code | Email, after the MCP Registry | todo | 2026-09-14 |
+| [GitHub MCP Registry](https://github.com/mcp) / VS Code gallery | Copilot, VS Code | Email + one Q&A discussion per server, after the MCP Registry | **submitted** (email; [#3942](https://github.com/github/github-mcp-server/discussions/3942)) | 2026-11-25 |
+| [Archestra MCP Catalog](https://archestra.ai/mcp-catalog) | MCP platform users | Issue (no PRs) | **submitted** ([#11214](https://github.com/archestra-ai/archestra/issues/11214)) | 2026-11-25 |
 | [Arnon-hs/open-source](https://github.com/Arnon-hs/open-source) | Agent-facing catalog | — (auto) | **listed, wrong licence** ([#7](https://github.com/Arnon-hs/open-source/issues/7)) | 2026-09-15 |
 | [hasnocool/AI-CLI-Catalog](https://github.com/hasnocool/AI-CLI-Catalog) | AI CLI catalog | PR | listed | 2026-09-14 |
 | [linny006/mcp-servers-live](https://github.com/linny006/mcp-servers-live) | Auto tracker | — (GitHub topic) | listed, fresh | 2026-09-14 |
@@ -108,8 +109,8 @@ thing, and it is not a distribution task.
    `submitted`, plus the Arnon-hs licence issue. cursor.directory is the one that already went
    live. Nothing to do but check back.
 4. **skills.sh badge** — already listed with 21 installs, zero submission work, still not added.
-5. **GitHub MCP Registry email** — after rung 2, and only if the auto-ingest question below
-   resolves as "still needs the email".
+5. **GitHub MCP Registry request** — done 2026-11-24, awaiting curation. Do not send it again;
+   check the listing with the query in the section below.
 
 Not pursued, with reasons in the sections below: the Anthropic directory (their policy excludes
 us), Smithery and the ChatGPT directory (both need a hosted endpoint), mcp.so ($39), and
@@ -359,16 +360,37 @@ Our own marketplace ships in this repo — see [MCP.md](MCP.md) for the install 
   `.cursor-plugin/plugin.json`, a logo committed to the repo, and Cursor-team review.
 - Note: `cursor.com/directory` serves the generic homepage — it is not a directory.
 
-### GitHub MCP Registry / VS Code gallery — `todo`
+### GitHub MCP Registry / VS Code gallery — `submitted`
 
 VS Code's MCP gallery **is** the GitHub MCP Registry (`chat.mcp.gallery.enabled`, backed by
-`api.github.com/copilot/mcp_registry`). Two stages: publish to the official MCP Registry (self-
-serve), then email `partnerships@github.com` to request inclusion. Curated, 252 servers, weighing
-stability, security practices and ecosystem value. Not listed (all four search terms → 0).
+`api.github.com/copilot/mcp_registry`). The server must first be `active` and `isLatest` in the
+official MCP Registry; `io.github.ffroliva/gflow-cli` 0.106.0 was both on 2026-11-24. GitHub then
+onboards it by hand. [github.com/mcp](https://github.com/mcp) showed 973 servers that day.
 
-**UNVERIFIED:** whether GitHub now auto-ingests from the official registry, making the email
-unnecessary. Its 2025 launch post says servers *"will automatically appear"*; the current how-to
-still says to email. The API needs a Copilot-scoped token to settle it.
+Submitted 2026-11-24 through both channels:
+
+- an email to `partnerships@github.com`, the route in
+  [GitHub's how-to](https://github.blog/ai-and-ml/generative-ai/how-to-find-install-and-manage-mcp-servers-with-the-github-mcp-registry/);
+- Q&A discussion [#3942](https://github.com/github/github-mcp-server/discussions/3942).
+
+**One Q&A discussion per server — do not comment in
+[#1257](https://github.com/github/github-mcp-server/discussions/1257).** A maintainer note there
+(2026-11-05) asks for separate discussions and says that publishing to the official registry
+guarantees neither inclusion nor a date. The opening post of #1257 still says to post in the thread.
+
+**Auto-ingest, answered:** the accepted answer in #1257 (2026-05-19) says onboarding a new server
+is manual, and that versions published afterwards should sync from the official registry. No
+second request is needed per release.
+
+Check the listing without a token (`total` was 0 on 2026-11-25):
+`https://api.mcp.github.com/v0.1/servers?search=gflow`
+
+### Archestra MCP Catalog — `submitted`
+
+Requested 2026-11-24 as [#11214](https://github.com/archestra-ai/archestra/issues/11214), category
+Media. The [catalog README](https://github.com/archestra-ai/archestra/tree/main/mcp-catalog) asks
+for an issue with the server URL, description and category, and maintainers add the entry. The
+site's "Add New MCP Server" button opens an edit to the catalog's JSON file instead.
 
 ### Catalogs already listing us
 
