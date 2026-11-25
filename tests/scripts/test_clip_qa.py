@@ -369,7 +369,8 @@ def test_a_stream_that_ends_early_is_refused(
 
 @pytest.mark.parametrize(
     ("prominence", "expected"),
-    [(0.0, "fluid"), (0.04, "CHECK")],  # a peak at zero confirms; a suppressed one does not
+    # a peak at zero confirms; a suppressed one, up to 0.0496 rounded, does not
+    [(0.0, "fluid"), (0.04, "CHECK"), (0.05, "CHECK")],
 )
 def test_a_suppressed_lag_does_not_confirm_a_stored_offset(
     prominence: float, expected: str

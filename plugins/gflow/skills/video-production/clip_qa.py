@@ -283,7 +283,8 @@ def verdict(fa: dict, is_beat: bool = True) -> str:
     # a weak correlation means the shot gives the detector nothing to align, not that it drifts
     measurable = fa["sync_r"] >= SYNC_MIN_R and not fa.get("sync_edge")
     in_sync = not measurable or SYNC_EARLY <= fa["sync_lag_s"] <= SYNC_LATE
-    suppressed = 0 < fa.get("sync_prominence", 0.0) < MIN_PROMINENCE
+    # a peak away from zero, reported as zero
+    suppressed = fa["sync_lag_s"] == 0 < fa.get("sync_prominence", 0.0)
     if (not measurable or suppressed) and not starts_together:
         return "CHECK"  # the stored offset may be a fault, and nothing here can tell
     return "fluid" if live and in_sync else ("DRIFT" if live else "CHECK")
