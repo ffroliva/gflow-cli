@@ -555,18 +555,35 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
         flow_workflow_id: str | None = None
         seed: int | None = None
         if completed_task.flow_media_id:
-            asset = DataRepository(store).get_asset_by_flow_media_id(
+            repo = DataRepository(store)
+            cp = completed_task.checkpoint if isinstance(completed_task.checkpoint, dict) else {}
+            catalog_op_id = cp.get("catalog_operation_id")
+            output_assets = repo.get_task_output_assets(
                 profile,
                 completed_task.flow_media_id,
+                operation_id=catalog_op_id if isinstance(catalog_op_id, str) else None,
+                mode=completed_task.task_type,
             )
+            asset = next(
+                (out for out in output_assets if out.flow_media_id == completed_task.flow_media_id),
+                None,
+            ) or repo.get_asset_by_flow_media_id(profile, completed_task.flow_media_id)
             if asset:
                 flow_project_id = asset.flow_project_id
                 flow_workflow_id = asset.flow_workflow_id
                 # The catalogued seed (#1013): Flow's own on the classic image paths, the
                 # requested one for video, a 0 placeholder on the agentic/agent-only arms.
                 seed = asset.seed
-                if asset.local_files:
-                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+                if not output_assets:
+                    output_assets = [asset]
+            file_paths = list(
+                dict.fromkeys(
+                    str(lf.path)
+                    for out in output_assets
+                    for lf in out.local_files
+                    if lf.path is not None
+                )
+            )
 
     log.info(
         "mcp.tool.task_completed",
