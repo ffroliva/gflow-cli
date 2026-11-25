@@ -26,7 +26,7 @@ The cause is proven in local Python and SQLite code, so the reproduction is beha
 
 ## Must-cover before merge (Critical + High)
 
-Rows 1 to 5 are covered by new behavioral tests in `tests/data/test_store.py` asserting both immediate Windows file-rename availability while the raised exception is live and zero `ResourceWarning`s across all platforms. Row 6 is covered by existing tests in `tests/data/test_store.py` (`test_open_on_a_blank_path_is_a_data_store_error`, `test_open_restricts_the_db_but_not_its_neighbours`) and `tests/data/test_store_migrations.py` (`test_open_wraps_oserror_into_datastoreerror`).
+Rows 1 to 5 are covered by new behavioral tests in `tests/data/test_store.py` asserting that the opened `sqlite3.Connection` is closed immediately (`sqlite3.ProgrammingError` on `SELECT 1` before GC across Python 3.11–3.13), immediate Windows file-rename availability while the raised exception is live, and zero connection-scoped `ResourceWarning`s. Row 6 is covered by existing tests in `tests/data/test_store.py` (`test_open_on_a_blank_path_is_a_data_store_error`, `test_open_restricts_the_db_but_not_its_neighbours`) and `tests/data/test_store_migrations.py` (`test_open_wraps_oserror_into_datastoreerror`).
 
 ## Deferred (Medium + Low)
 
