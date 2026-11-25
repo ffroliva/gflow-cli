@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -59,6 +60,35 @@ _DOM_PROBE_JS = """() => ({
 })"""
 
 
+async def _collect_row(
+    page: Any,
+    *,
+    mode: str,
+    start: str,
+    locale: str,
+    anchor_selector: str,
+    settle_ms: int,
+) -> dict[str, Any]:
+    anchor_timeout = False
+    try:
+        await page.locator(anchor_selector).first.wait_for(state="attached", timeout=15_000)
+    except PlaywrightTimeoutError:
+        anchor_timeout = True
+    await page.wait_for_timeout(settle_ms)
+    dom = await page.evaluate(_DOM_PROBE_JS)
+    return {
+        "mode": mode,
+        "start": start,
+        "locale": locale,
+        "anchor_timeout": anchor_timeout,
+        "final_url": safe_page_url(page.url),
+        "host": flow_host_kind(page.url),
+        "landing": flow_landing_kind(page.url),
+        "check_logged_in": await UiSessionMixin._check_logged_in(page),  # noqa: SLF001
+        **dom,
+    }
+
+
 async def _probe_signed_out(proxy: str | None) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     launch_kwargs: dict[str, Any] = {"channel": "chrome", "headless": True}
@@ -76,22 +106,15 @@ async def _probe_signed_out(proxy: str | None) -> list[dict[str, Any]]:
                 page = await ctx.new_page()
                 try:
                     await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-                    await page.locator(_SIGNIN_CTA_SELECTOR).first.wait_for(
-                        state="attached", timeout=15_000
-                    )
-                    await page.wait_for_timeout(1_000)
-                    dom = await page.evaluate(_DOM_PROBE_JS)
                     results.append(
-                        {
-                            "mode": "signed_out",
-                            "start": url,
-                            "locale": locale,
-                            "final_url": safe_page_url(page.url),
-                            "host": flow_host_kind(page.url),
-                            "landing": flow_landing_kind(page.url),
-                            "check_logged_in": await UiSessionMixin._check_logged_in(page),  # noqa: SLF001
-                            **dom,
-                        }
+                        await _collect_row(
+                            page,
+                            mode="signed_out",
+                            start=url,
+                            locale=locale,
+                            anchor_selector=_SIGNIN_CTA_SELECTOR,
+                            settle_ms=1_000,
+                        )
                     )
                 finally:
                     await ctx.close()
@@ -112,20 +135,15 @@ async def _probe_signed_in(profile: str) -> list[dict[str, Any]]:
         ):
             await page.set_extra_http_headers({"Accept-Language": accept_lang})
             await page.goto(url, wait_until="domcontentloaded", timeout=20_000)
-            await page.locator("aisandbox-root").first.wait_for(state="attached", timeout=15_000)
-            await page.wait_for_timeout(3_000)
-            dom = await page.evaluate(_DOM_PROBE_JS)
             results.append(
-                {
-                    "mode": "signed_in",
-                    "start": url,
-                    "locale": locale,
-                    "final_url": safe_page_url(page.url),
-                    "host": flow_host_kind(page.url),
-                    "landing": flow_landing_kind(page.url),
-                    "check_logged_in": await UiSessionMixin._check_logged_in(page),  # noqa: SLF001
-                    **dom,
-                }
+                await _collect_row(
+                    page,
+                    mode="signed_in",
+                    start=url,
+                    locale=locale,
+                    anchor_selector="aisandbox-root",
+                    settle_ms=3_000,
+                )
             )
     return results
 
