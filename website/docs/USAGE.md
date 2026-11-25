@@ -1220,7 +1220,10 @@ reach for it before spending anything.
 > new project (named by `--project-name`). Inputs are validated before any project is created,
 > so an unsupported or missing file exits 11 (`charged: no`) and leaves no empty project. The
 > upload is given 120 s plus one second per MiB of the file (a 1 GB clip: about 19 minutes);
-> an upload still processing after a further 90 s exits 9, never 35 or 37.
+> Flow then has 90 s from the end of the upload to list the clip ready (with its size and
+> length) and offer the timeline's add-clip button; still processing after that is exit 9,
+> naming the uploaded media id to extend later. Once the clip is listed ready, a disabled
+> Extend item is exit 35 (37 with Flow's insufficient-credits warning), as for any clip.
 >
 > **On flow.google.com: one segment per call.** gflow optionally uploads a local video file
 > and `0–3` `--ref` reference images to the project, opens the clip's editor
