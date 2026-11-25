@@ -27,6 +27,7 @@ from gflow_cli.api.dto import (
     GenerationCheckpoint,
     GenerationCheckpointObserver,
 )
+from gflow_cli.api.image import IMAGES_MISSING_HINT
 from gflow_cli.api.model_catalog import warn_if_retiring
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import (
@@ -578,10 +579,7 @@ class GenerationSurface(WorkspaceSurface):
                 "client.images_missing",
                 requested=req.count,
                 returned=len(images),
-                hint=(
-                    "Flow returned fewer images than requested. The returned images are kept; "
-                    "check the project in Flow before requesting the rest."
-                ),
+                hint=IMAGES_MISSING_HINT,
             )
         # getattr: a caller-owned transport may return image objects without the field.
         direct = any(getattr(img, "transport", None) == "direct_http" for img in images)

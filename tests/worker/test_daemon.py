@@ -188,6 +188,32 @@ async def test_worker_process_t2i_batch(temp_db: DataStore) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_short_reply_keeps_the_numbered_output_file(
+    temp_db: DataStore, tmp_path: Path
+) -> None:
+    """#1489: ``count=2`` with one image back still writes ``x_1.png``, never ``x.png``."""
+    out_file = tmp_path / "x.png"
+    repo = QueueRepository(temp_db)
+    task = repo.enqueue_task(
+        task_id="task-short-out-file",
+        profile_name="default",
+        task_type="t2i",
+        payload={"prompt": "a lighthouse", "count": 2, "output_file": str(out_file)},
+    )
+    worker = FlowWorker("default", str(temp_db.path))
+    fake_client = FakeFlowApiClient()
+    fake_client.create_project.return_value = MagicMock(project_id="project-abc", title="t")
+    fake_client.generate_images_batch.return_value = [FakeGeneratedImage(media_name="media-1")]
+
+    with patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client):
+        await worker.process_task(task)
+
+    (call,) = fake_client.download_image.await_args_list
+    assert call.args[1] == tmp_path / "x_1.png"
+    worker.close()
+
+
+@pytest.mark.asyncio
 async def test_an_agent_supplied_project_name_becomes_the_created_project_title(
     temp_db: DataStore,
 ) -> None:

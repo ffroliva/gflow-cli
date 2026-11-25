@@ -95,6 +95,8 @@ def test_batch_summary_marks_the_short_row(
         ("t2i", 4, None, False),  # a row without a checkpoint says nothing
         ("t2i", "4", {"media_ids": ["a"]}, False),  # a hand-edited row; the reply still goes out
         ("t2i", 4, {"media_ids": 7}, False),
+        ("t2i", 4, ["not", "a", "dict"], False),  # a hand-edited checkpoint
+        ("t2v", 4, "not a dict", False),
         ("t2i", None, {"media_ids": ["a"]}, False),  # no count in the payload means one
         ("t2v", 4, {"media_ids": ["a"]}, False),
     ],
@@ -104,3 +106,13 @@ def test_task_warnings(task_type: str, count: Any, checkpoint: Any, short: bool)
     task: Any = SimpleNamespace(task_type=task_type, payload=payload, checkpoint=checkpoint)
     types = [w["type"] for w in codec.task_warnings(task).get("warnings", [])]
     assert types == (["images_missing"] if short else [])
+
+
+def test_a_bool_count_is_not_read_as_a_number(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[tuple[int, int]] = []
+    monkeypatch.setattr(codec, "images_missing_warning", lambda r, n: called.append((r, n)) or [])
+    task: Any = SimpleNamespace(
+        task_type="t2i", payload={"count": True}, checkpoint={"media_ids": ["a"]}
+    )
+    assert codec.task_warnings(task) == {}
+    assert called == []

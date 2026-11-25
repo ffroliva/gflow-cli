@@ -2,9 +2,11 @@
 
 Pure module (no I/O beyond the single :func:`emit` ``click.echo``): every
 builder takes already-constructed domain objects and returns a JSON-native
-``dict``. Kept dependency-light (only :mod:`gflow_cli.errors` + typing) so it
-can be imported from both ``_cli_helpers`` (error path) and the command
-modules without an import cycle, and unit-tested without a browser/network.
+``dict``. Kept dependency-light (only :mod:`gflow_cli.errors` + typing at module
+level) so it can be imported from both ``_cli_helpers`` (error path) and the command
+modules without an import cycle, and unit-tested without a browser/network. Anything
+from :mod:`gflow_cli.api` is imported inside the builder that needs it: the package
+``__init__`` loads the client and Playwright.
 
 The shapes here are the stable contract a programmatic caller (e.g. a worker
 that shells out to ``gflow``) parses instead of scraping the Rich tables.

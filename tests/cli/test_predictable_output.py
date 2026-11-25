@@ -10,11 +10,13 @@ Covers:
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
 from gflow_cli.api.dto import GeneratedImage, ProjectInfo
 from gflow_cli.api.video import VideoResult, VideoStatus
@@ -112,6 +114,48 @@ class TestPredictableOutputFlag:
             assert res.exit_code == 0
             assert file_1.exists() and file_1.read_bytes() == b"img_media-1"
             assert file_2.exists() and file_2.read_bytes() == b"img_media-2"
+
+    def test_t2i_short_reply_keeps_the_numbered_name_and_says_so(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """#1489: ``-n 2`` with one image back writes ``output_1.png`` and prints the note."""
+        target_file = tmp_path / "output.png"
+
+        async def _mock_download_image(img: GeneratedImage, out_path: Path) -> Path:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(b"img")
+            return out_path
+
+        client = AsyncMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=None)
+        client.generate_images_batch = AsyncMock(return_value=[_make_gen_image("media-1")])
+        client.download_image = AsyncMock(side_effect=_mock_download_image)
+
+        with (
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch(
+                "gflow_cli.cli_image._resolve_project",
+                AsyncMock(return_value=(ProjectInfo(project_id="proj-123", title="t"), False)),
+            ),
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image.OperationRecorder"),
+            patch("gflow_cli.cli_image.console", Console(file=(out := io.StringIO()), width=200)),
+        ):
+            from gflow_cli.cli import main
+
+            res = runner.invoke(
+                main,
+                ["image", "t2i", "A blue car", "-n", "2", "--out-file", str(target_file)],
+                catch_exceptions=False,
+            )
+        assert res.exit_code == 0
+        assert (tmp_path / "output_1.png").exists()
+        assert not target_file.exists()
+        notes = [line for line in out.getvalue().splitlines() if "images returned" in line]
+        assert len(notes) == 1
+        assert notes[0].startswith("1 of 2 images returned")
 
     def test_t2i_explicit_output_nested_dir(self, runner: CliRunner, tmp_path: Path) -> None:
         nested_file = tmp_path / "deep" / "nested" / "output.png"
