@@ -17,6 +17,7 @@ _ROOT = Path(__file__).resolve().parents[2]
         ("README.md", r"\*\*(\d+) MCP tools\*\*"),
         ("index.html", r"serving (\d+) tools"),
         ("llms.txt", r"MCP server with (\d+) tools"),
+        ("llms.txt", r"against gflow-cli's (\d+)"),
     ],
 )
 def test_published_mcp_tool_count_matches_the_server(
