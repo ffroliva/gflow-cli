@@ -19,6 +19,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     FlowAppError,
     FlowHostMigratedError,
+    GFlowError,
     TransportTimeoutError,
     WireFormatError,
 )
@@ -723,8 +724,9 @@ def _fzytfe_with_refs(
     aspect_idx: int = 2,
     key: str = "macaron_cookie_extend_6s",
     ref_ids: tuple[str, ...] = (),
+    raw_refs: Any = None,
 ) -> str:
-    refs_wire = [[None, r] for r in ref_ids] if ref_ids else None
+    refs_wire = [[None, r] for r in ref_ids] if ref_ids else raw_refs
     entry = [
         [None, wf, 0, 72],
         [None, None, [[["continue with glow"]]]],
@@ -882,7 +884,7 @@ def test_upload_video_reply_normalizes_swapped_rest_uuids() -> None:
             "media": {"name": UPLOADED_WF, "workflowId": UPLOADED_MEDIA},
         }
     )
-    assert _parse_upload_reply(raw, project_id=PID) == (UPLOADED_MEDIA, UPLOADED_WF)
+    assert _parse_upload_reply(raw, project_id=PID) == UPLOADED_MEDIA
 
 
 @pytest.mark.asyncio
@@ -967,7 +969,9 @@ class _FakeCreditLabel:
 
 
 class _FakeSettingsPane:
-    def __init__(self, slider: _FakeSlider, quote_text: str | None) -> None:
+    """``quote_text`` ``None``: the label prices the slider at 3 credits a second."""
+
+    def __init__(self, slider: _FakeSlider, quote_text: str | None = None) -> None:
         self._slider = slider
         self._quote_text = quote_text
         self.first = self
@@ -986,7 +990,9 @@ class _FakeSettingsPane:
     def locator(self, sel: str) -> Any:
         if "flow-duration-slider" in sel:
             return _FakeDurationComponent(self._slider)
-        return _FakeCreditLabel(self._quote_text)
+        if self._quote_text is not None:
+            return _FakeCreditLabel(self._quote_text)
+        return _FakeCreditLabel(f"Generating will use {self._slider.value * 3} credits")
 
 
 @pytest.mark.asyncio
@@ -996,7 +1002,7 @@ async def test_settings_slider_and_credit_cap_pass_and_refuse_pre_submit(
     from gflow_cli.errors import CreditCapExceededError
 
     slider = _FakeSlider(value=4)
-    pane = _FakeSettingsPane(slider, "Generating will use 18 credits")
+    pane = _FakeSettingsPane(slider)
 
     class _SettingsPage(_Page):
         def locator(self, selector: str) -> Any:
@@ -1046,7 +1052,7 @@ async def test_settings_slider_and_credit_cap_pass_and_refuse_pre_submit(
             max_credits=0,
             poll_timeout_s=30.0,
         )
-    assert caught.value.quoted == 18
+    assert caught.value.quoted == 12  # the slider was left at Flow's 4s
     assert caught.value.max_credits == 0
     assert caught.value.charged == "no"
     assert driver["observe"] is None
@@ -1056,42 +1062,47 @@ async def test_settings_slider_and_credit_cap_pass_and_refuse_pre_submit(
 async def test_local_video_and_refs_upload_and_attach_flow(
     driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    from gflow_cli.api.transports._mc_upload_video import UploadedVideo
-
     src = tmp_path / "clip.mp4"
     src.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
     ref = tmp_path / "ref.png"
     ref.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
 
-    attached: list[tuple[str, int]] = []
+    mentioned: list[tuple[str, int, str, str]] = []
 
     async def _fake_ensure(_self: Any, _page: Any, _pid: str, **_kw: Any) -> None:
         return None
 
-    async def _fake_upload_video(_page: Any, _pid: str, _path: Any, **_kw: Any) -> UploadedVideo:
-        return UploadedVideo(
-            media_id=UPLOADED_MEDIA,
-            workflow_id=UPLOADED_WF,
-            display_name="clip-abc.mp4",
-            query_name="clip-abc",
-        )
+    async def _fake_upload_video(_page: Any, _pid: str, _path: Any) -> str:
+        return UPLOADED_MEDIA
 
     async def _fake_upload_frame(_self: Any, _page: Any, _pid: str, _path: Any) -> tuple[str, str]:
         return REF1, "ref-123.png"
 
-    async def _fake_attach(_page: Any, *, query: str, expect_count: int) -> None:
-        attached.append((query, expect_count))
-
-    async def _fake_caret(_page: Any, _sel: str) -> None:
-        return None
+    async def _fake_mention(
+        _self: Any, _page: Any, name: str, *, expect_chips: int, composer: str, chip: str
+    ) -> None:
+        mentioned.append((name, expect_chips, composer, chip))
 
     monkeypatch.setattr(mx.MigratedComposer, "ensure_editor_for", _fake_ensure)
     monkeypatch.setattr(mx, "upload_video", _fake_upload_video)
     monkeypatch.setattr(mx.MigratedComposer, "_upload_via_toolbar", _fake_upload_frame)
-    monkeypatch.setattr(mx, "_attach_extend_ref", _fake_attach)
-    monkeypatch.setattr(mx, "_caret_to_end", _fake_caret)
+    monkeypatch.setattr(mx.MigratedComposer, "_mention_by_name", _fake_mention)
 
-    page = _Page(
+    class _PromptBox(_Locator):
+        @property
+        def first(self) -> _PromptBox:
+            return self
+
+    class _EvalPage(_Page):
+        def locator(self, selector: str) -> Any:
+            if selector == mx.EXTEND_PROMPT:
+                return _PromptBox([], selector)
+            return super().locator(selector)
+
+        async def evaluate(self, *_a: Any) -> None:
+            return None
+
+    page = _EvalPage(
         [[[_uploaded_video_record()]], None],
         land=f"https://flow.google.com/project/{PID}/edit/{UPLOADED_MEDIA}",
     )
@@ -1104,7 +1115,9 @@ async def test_local_video_and_refs_upload_and_attach_flow(
         aspect=None,
         poll_timeout_s=30.0,
     )
-    assert attached == [("ref-123.png", 1)]
+    # The extend box and its chips, not the main composer's.
+    assert mentioned == [("ref-123.png", 1, mx.EXTEND_PROMPT, mx.EXTEND_MENTION_CHIP)]
+    assert page.keyboard.typed[-1] == "continue with blue glow"
     assert out.source_media_id == UPLOADED_MEDIA
     assert (
         driver["observe"]["request_check"](
@@ -1119,33 +1132,80 @@ async def test_local_video_and_refs_upload_and_attach_flow(
 
 
 @pytest.mark.asyncio
-async def test_caret_to_end_evaluates_selector_on_page_not_locator() -> None:
-    from gflow_cli.api.transports._mc_common import _CARET_TO_END_JS
+async def test_a_plain_extend_never_opens_the_settings_pane(driver: dict[str, Any]) -> None:
+    """No --duration and no --max-credits: nothing in the settings popover is needed."""
+    out = await _run(_Page(_zzl0ze()))
+    assert mx.EXTEND_SETTINGS_TRIGGER not in driver["clicks"]
+    assert out.quoted_credits is None
 
-    evals: list[tuple[str, Any]] = []
-    clicks: list[str] = []
 
-    class _EditorLoc:
-        def __init__(self, sel: str) -> None:
-            self.first = self
-            self._sel = sel
+@pytest.mark.asyncio
+async def test_a_quote_that_does_not_reprice_after_the_slider_moves_is_exit_45(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The label still shows the old price: the cap cannot be verified, so it refuses."""
+    from gflow_cli.errors import CreditCapExceededError
 
+    monkeypatch.setattr(mx, "QUOTE_SETTLE_S", 0.0)
+    pane = _FakeSettingsPane(_FakeSlider(value=4), "Generating will use 12 credits")
+
+    class _SettingsPage(_Page):
+        def locator(self, selector: str) -> Any:
+            return pane if selector == mx.EXTEND_SETTINGS_PANE else super().locator(selector)
+
+    with pytest.raises(CreditCapExceededError) as caught:
+        await mx.run_extend(
+            _SettingsPage(_zzl0ze()),  # type: ignore[arg-type]
+            project_id=PID,
+            media_id=MEDIA,
+            prompt="keep going",
+            aspect=None,
+            duration=6,
+            max_credits=100,
+            poll_timeout_s=30.0,
+        )
+    assert caught.value.quoted is None
+    assert caught.value.charged == "no"
+    assert driver["observe"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("max_credits", "code"), [(None, 23), (10, 45)])
+async def test_a_settings_trigger_click_timeout_is_typed(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, max_credits: int | None, code: int
+) -> None:
+    """A Playwright timeout on the trigger is exit 23, or 45 when only the cap needed it."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    class _DeadTrigger(_Locator):
         async def click(self, **_kw: Any) -> None:
-            clicks.append(self._sel)
+            raise PlaywrightTimeoutError("Timeout 4000ms exceeded")
 
-        async def evaluate(self, *_a: Any, **_kw: Any) -> None:
-            raise AssertionError("must call page.evaluate(js, selector), not locator.evaluate")
+    async def anchor(_page: Any, selector: str, *, named: str) -> Any:
+        if selector == mx.EXTEND_SETTINGS_TRIGGER:
+            return _DeadTrigger([], selector)
+        return _Locator(driver["clicks"], selector)
 
-    class _EvalPage:
-        def locator(self, sel: str) -> _EditorLoc:
-            return _EditorLoc(sel)
+    class _PanePage(_Page):
+        def locator(self, selector: str) -> Any:
+            if selector == mx.EXTEND_SETTINGS_PANE:
+                return _FakeSettingsPane(_FakeSlider())
+            return super().locator(selector)
 
-        async def evaluate(self, script: str, arg: Any = None) -> None:
-            evals.append((script, arg))
-
-    await mx._caret_to_end(_EvalPage(), mx.EXTEND_PROMPT)  # type: ignore[arg-type]
-    assert clicks == [mx.EXTEND_PROMPT]
-    assert evals == [(_CARET_TO_END_JS, mx.EXTEND_PROMPT)]
+    monkeypatch.setattr(mx, "_anchor", anchor)
+    with pytest.raises(GFlowError) as caught:
+        await mx.run_extend(
+            _PanePage(_zzl0ze()),  # type: ignore[arg-type]
+            project_id=PID,
+            media_id=MEDIA,
+            prompt="keep going",
+            aspect=None,
+            duration=None if max_credits else 5,
+            max_credits=max_credits,
+            poll_timeout_s=30.0,
+        )
+    assert exit_code_for(caught.value) == code
+    assert caught.value.charged == "no"
 
 
 @pytest.mark.asyncio
@@ -1181,44 +1241,163 @@ async def test_missing_settings_trigger_with_max_credits_raises_exit_45(
 
 
 @pytest.mark.asyncio
-async def test_submit_attempted_checkpoint_runs_after_enable_and_cancels_before_click(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_submit_attempted_is_reported_after_everything_pre_submit(
+    driver: dict[str, Any],
 ) -> None:
-    from gflow_cli.api.transports.migrated_composer import MigratedComposer
-    from gflow_cli.errors import TaskCancelledError
+    """The checkpoint marks the billed click: emitted once preparation is over, never sooner."""
+    phases: list[tuple[str, bool]] = []
 
-    events: list[str] = []
+    def checkpoint(cp: Any) -> None:
+        phases.append((cp.phase, driver["observe"] is None))
 
-    class _Btn:
-        def __init__(self) -> None:
-            self.first = self
+    await mx.run_extend(
+        _Page(_zzl0ze()),  # type: ignore[arg-type]
+        project_id=PID,
+        media_id=MEDIA,
+        prompt="keep going",
+        aspect=None,
+        poll_timeout_s=30.0,
+        on_checkpoint=checkpoint,
+    )
+    assert phases[0] == ("submit_attempted", True)
+    assert [p for p, _ in phases] == ["submit_attempted", "remote_started"]
 
-        async def count(self) -> int:
-            return 1
 
-        async def is_enabled(self) -> bool:
-            events.append("is_enabled")
-            return True
-
-    class _ClickPage:
-        def locator(self, _sel: str) -> _Btn:
-            return _Btn()
-
-    composer = MigratedComposer()
-
-    async def _fake_click(*_a: Any, **_kw: Any) -> None:
-        events.append("click")
-
-    monkeypatch.setattr(composer, "_click", _fake_click)
-
-    def _cancel_gate() -> None:
-        events.append("before_click")
-        raise TaskCancelledError(detail="cancelled during enable wait")
-
-    with pytest.raises(TaskCancelledError):
-        await composer._click_submit_button(  # type: ignore[arg-type]
-            _ClickPage(),  # type: ignore[arg-type]
-            submit_selector=mx.EXTEND_SUBMIT,
-            on_before_click=_cancel_gate,
+@pytest.mark.asyncio
+async def test_a_refusal_before_submit_reports_no_submit_attempt(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mx, "LISTING_BUDGET_S", 0.01)
+    phases: list[str] = []
+    with pytest.raises(ConfigurationError):
+        await mx.run_extend(
+            _Page([[[_image_record()]]]),  # type: ignore[arg-type]
+            project_id=PID,
+            media_id=MEDIA,
+            prompt="keep going",
+            aspect=None,
+            poll_timeout_s=30.0,
+            on_checkpoint=lambda cp: phases.append(cp.phase),
         )
-    assert events == ["is_enabled", "before_click"]
+    assert phases == []
+    assert driver["observe"] is None
+
+
+@pytest.mark.parametrize(
+    "unreadable",
+    [["not-a-list"], [[None]], [[None, 7]], [[None, REF1], "junk"]],
+    ids=["bare-string", "no-id", "non-string-id", "one-good-one-junk"],
+)
+def test_an_unreadable_reference_entry_fails_closed(unreadable: list[Any]) -> None:
+    """An entry the guard cannot read could be a reference the run never asked for."""
+    body = _fzytfe_with_refs(raw_refs=unreadable)
+    entry = mx._at(mx._inner("fZytfe", body), 0, 0)  # noqa: SLF001
+    assert mx._at(entry, 8) == unreadable  # noqa: SLF001 - the fixture really carries it
+    err = mx.extend_request_problem(
+        "fZytfe", body, media_id=MEDIA, workflow_id=WF, aspect=None, expected_reference_ids=()
+    )
+    assert isinstance(err, WireFormatError)
+    assert "reference slots" in err.detail
+
+
+@pytest.mark.asyncio
+async def test_an_upload_still_processing_at_the_deadline_is_a_timeout(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """Never returned not-ready (it would be extended half-ingested); exit 9, charged no."""
+    monkeypatch.setattr(mx, "VIDEO_INGEST_READY_BUDGET_S", 0.0)
+    processing = _uploaded_video_record()
+    processing[5][8] = [1]
+
+    async def _fake_ensure(_self: Any, _page: Any, _pid: str, **_kw: Any) -> None:
+        return None
+
+    async def _fake_upload_video(_page: Any, _pid: str, _path: Any) -> str:
+        return UPLOADED_MEDIA
+
+    monkeypatch.setattr(mx.MigratedComposer, "ensure_editor_for", _fake_ensure)
+    monkeypatch.setattr(mx, "upload_video", _fake_upload_video)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+    page = _Page(
+        [[[processing]], None],
+        land=f"https://flow.google.com/project/{PID}/edit/{UPLOADED_MEDIA}",
+    )
+    with pytest.raises(TransportTimeoutError) as caught:
+        await mx.run_extend(
+            page,  # type: ignore[arg-type]
+            project_id=PID,
+            source_video=src,
+            prompt="go",
+            aspect=None,
+            poll_timeout_s=30.0,
+        )
+    assert exit_code_for(caught.value) == 9
+    assert caught.value.charged == "no"
+    assert driver["observe"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_disabled_extend_item_on_a_fresh_upload_is_a_timeout_not_a_plan_refusal(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flow keeps Extend disabled while it processes an upload: exit 9, not 35/37."""
+    monkeypatch.setattr(mx, "VIDEO_INGEST_READY_BUDGET_S", 0.0)
+
+    async def _never_out_of_credits(_page: Any) -> None:
+        return None
+
+    monkeypatch.setattr(mx, "_raise_if_out_of_credits", _never_out_of_credits)
+    item = _Locator([], mx.EXTEND_MENU_ITEM, disabled_reads=-1)
+    with pytest.raises(TransportTimeoutError, match="still processing"):
+        await mx._refuse_if_disabled(_Page(None), item, uploaded=True)  # type: ignore[arg-type]  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("name", "data"),
+    [("clip.webm", b"\x1aE\xdf\xa3" + b"\x00" * 12), ("notes.txt", b"hello"), ("x.mp4", b"hi")],
+    ids=["webm", "text", "bad-magic"],
+)
+async def test_an_unsupported_local_file_is_exit_11_charged_no(
+    tmp_path: Any, name: str, data: bytes
+) -> None:
+    path = tmp_path / name
+    path.write_bytes(data)
+    with pytest.raises(ConfigurationError) as caught:
+        await mx.validate_extend_inputs(
+            media_id=None, source_video=path, duration=None, reference_images=(), max_credits=None
+        )
+    assert exit_code_for(caught.value) == 11
+    assert caught.value.charged == "no"
+
+
+@pytest.mark.asyncio
+async def test_a_missing_reference_file_is_exit_11(tmp_path: Any) -> None:
+    with pytest.raises(ConfigurationError):
+        await mx.validate_extend_inputs(
+            media_id=MEDIA,
+            source_video=None,
+            duration=None,
+            reference_images=(tmp_path / "gone.png",),
+            max_credits=None,
+        )
+
+
+def test_the_video_upload_budget_scales_with_the_file_size() -> None:
+    from gflow_cli.api.transports._mc_upload_video import video_upload_timeout_s
+
+    small, cap = video_upload_timeout_s(1024 * 1024), video_upload_timeout_s(1024**3)
+    assert small == pytest.approx(121.0)
+    assert cap == pytest.approx(120.0 + 1024)  # 1 GB at 1 MiB/s: ~19 minutes
+
+
+def test_the_click_time_bounding_prompt_adoption_is_taken_before_the_billed_click() -> None:
+    """``clicked_at`` bounds same-prompt adoption for t2v/i2v: a clip created before the
+    click is never adopted. Read after the click, a slow click widens that window."""
+    import inspect
+
+    from gflow_cli.api.transports._mc_submit_observe import SubmitObserveMixin
+
+    source = inspect.getsource(SubmitObserveMixin.submit_and_observe)
+    assert source.index("clicked_at = time.time()") < source.index("named=SUBMIT_BUTTON")

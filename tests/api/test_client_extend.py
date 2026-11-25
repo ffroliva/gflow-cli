@@ -147,7 +147,7 @@ async def test_migrated_extend_forwards_cap_duration_and_refs_to_driver(
 
 
 @pytest.mark.asyncio
-async def test_migrated_extend_local_video_auto_creates_project(
+async def test_migrated_extend_local_video_never_creates_a_project_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gflow_cli.api.dto import ProjectInfo
@@ -158,14 +158,16 @@ async def test_migrated_extend_local_video_auto_creates_project(
     c, _page, run, _outcome = _migrated_client(tmp_path, monkeypatch, mp4)
     c.create_project = AsyncMock(return_value=ProjectInfo(project_id=PROJECT, title="auto"))  # type: ignore[method-assign]
     out = tmp_path / "out" / "ext.mp4"
+    # The caller creates the project after validating inputs, so a refusal leaves none.
     await c.extend_video_migrated(
         source_video=src,
+        project_id=PROJECT,
         prompt="continue smoothly",
         out_path=out,
         duration=5,
         max_credits=15,
     )
-    c.create_project.assert_awaited_once()
+    c.create_project.assert_not_awaited()
     assert run.await_args.kwargs["project_id"] == PROJECT
     assert run.await_args.kwargs["source_video"] == src
     assert run.await_args.kwargs["media_id"] is None

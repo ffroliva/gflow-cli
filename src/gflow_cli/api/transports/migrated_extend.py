@@ -43,14 +43,10 @@ from gflow_cli.api.dto import GenerationCheckpoint
 from gflow_cli.api.transports._common import raise_if_known_landing
 from gflow_cli.api.transports._mc_common import (
     _CARET_TO_END_JS,  # pyright: ignore[reportPrivateUsage]
-    FRAME_SEARCH_ATTEMPTS,
-    FRAME_SEARCH_RETRY_PAUSE_S,
     MENTION_CHIP,
-    PICKER_CONFIRM,
-    PICKER_OPTION,
     SubmitWatch,
 )
-from gflow_cli.api.transports._mc_upload_video import UploadedVideo, upload_video
+from gflow_cli.api.transports._mc_upload_video import upload_video
 from gflow_cli.api.transports.batchexecute import find_record, parse_frames
 from gflow_cli.api.transports.migrated_composer import (
     LISTING_RPC,
@@ -73,7 +69,6 @@ from gflow_cli.errors import (
     FlowAppError,
     FlowHostMigratedError,
     GFlowError,
-    ReferenceNotFoundError,
     TransportTimeoutError,
     UiSelectorDriftError,
     WireFormatError,
@@ -111,7 +106,6 @@ EXTEND_PROMPT = "flow-edit-video-prompt-box .ProseMirror"
 EXTEND_SUBMIT = "flow-edit-video-prompt-box flow-generate-icon-button button"
 EXTEND_SETTINGS_TRIGGER = "flow-edit-video-prompt-box button.settings-trigger-button"
 EXTEND_SETTINGS_PANE = ".cdk-overlay-pane flow-prompt-box-settings"
-EXTEND_DURATION_SLIDER = "flow-duration-slider input[type='range']"
 EXTEND_CREDIT_QUOTE = "flow-credit-cost-label.settings-credit-cost"
 EXTEND_MENTION_CHIP = f"flow-edit-video-prompt-box {MENTION_CHIP}"
 
@@ -120,6 +114,8 @@ LISTING_BUDGET_S = 30.0
 ANCHOR_TIMEOUT_S = 15.0
 #: How long a disabled Extend item may take to enable before the run is refused (#1334).
 DISABLED_GRACE_S = 3.0
+#: How long a re-priced quote label may take to show the chosen duration's price.
+QUOTE_SETTLE_S = 3.0
 #: Budget for a freshly uploaded local video to finish ingest and enable Extend.
 VIDEO_INGEST_READY_BUDGET_S = 90.0
 _VIDEO_INGEST_POLL_S = 3.0
@@ -170,6 +166,25 @@ def unported_refusal(
             "extend the same clip again to go further."
         ),
     )
+
+
+def require_migrated_host(route: str) -> None:
+    """Exit 36 unless the extend would run on flow.google.com (``route`` is the served route).
+
+    One definition for the transport entry and the worker, which checks it before it
+    creates a project.
+    """
+    if route != "migrated":
+        raise FlowHostMigratedError(
+            detail=(
+                "migrated video extend runs on flow.google.com only, and "
+                "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
+            ),
+            remediation_hint=(
+                "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
+                "to extend via flow.google.com."
+            ),
+        )
 
 
 # --- media -> workflow + kind --------------------------------------------------
@@ -303,18 +318,8 @@ def _frames(body: str) -> list[Any]:
     return cast("list[Any]", frames) if isinstance(frames, list) else []
 
 
-def _inner(rpcid: str, body: str) -> Any:
-    """The decoded inner payload of ``rpcid`` in a form-decoded ``f.req`` body, or None."""
-    for frame in _frames(body):
-        if _at(frame, 0) == rpcid:
-            try:
-                return json.loads(str(_at(frame, 1)))
-            except (ValueError, TypeError):
-                return None
-    return None
-
-
 def _decode_rpc_frames(rpcid: str, body: str) -> list[Any]:
+    """The decoded inner payload of every ``rpcid`` frame (``None`` for an unreadable one)."""
     decoded: list[Any] = []
     for frame in _frames(body):
         if _at(frame, 0) != rpcid:
@@ -324,6 +329,11 @@ def _decode_rpc_frames(rpcid: str, body: str) -> list[Any]:
         except (ValueError, TypeError):
             decoded.append(None)
     return decoded
+
+
+def _inner(rpcid: str, body: str) -> Any:
+    """The decoded inner payload of the first ``rpcid`` frame in an ``f.req`` body, or None."""
+    return next(iter(_decode_rpc_frames(rpcid, body)), None)
 
 
 def url_rpcids(url: str) -> list[str]:
@@ -366,7 +376,7 @@ def _single_extend_entry(body: str, *, route: str) -> tuple[Any, GFlowError | No
             route=route,
         )
     entries = _at(frames[0], 0)
-    if not isinstance(entries, list):
+    if not isinstance(entries, list) or len(cast("list[Any]", entries)) != 1:
         return None, WireFormatError(
             detail=(
                 f"migrated host: expected one {EXTEND_SUBMIT_RPC} extend entry — "
@@ -374,19 +384,15 @@ def _single_extend_entry(body: str, *, route: str) -> tuple[Any, GFlowError | No
             ),
             route=route,
         )
-    typed_entries = cast("list[Any]", entries)
-    if len(typed_entries) != 1:
-        return None, WireFormatError(
-            detail=(
-                f"migrated host: expected one {EXTEND_SUBMIT_RPC} extend entry — "
-                "refused before Flow acted on it"
-            ),
-            route=route,
-        )
-    return typed_entries[0], None
+    return cast("list[Any]", entries)[0], None
 
 
 def _extract_reference_ids(entry: Any) -> list[str] | None:
+    """The reference ids in ``entry[8]``, in order; ``None`` when any entry is unreadable.
+
+    Fails closed: an entry that does not carry its id at ``[1]`` could be a reference the
+    run did not ask for, so the whole slot is reported unreadable rather than skipped.
+    """
     raw = _at(entry, 8)
     if raw is None:
         return []
@@ -394,10 +400,10 @@ def _extract_reference_ids(entry: Any) -> list[str] | None:
         return None
     ids: list[str] = []
     for item in cast("list[Any]", raw):
-        if isinstance(item, list):
-            typed_item = cast("list[Any]", item)
-            if len(typed_item) >= 2 and isinstance(typed_item[1], str):
-                ids.append(typed_item[1])
+        ref_id = _at(item, 1)
+        if not isinstance(ref_id, str):
+            return None
+        ids.append(ref_id)
     return ids
 
 
@@ -595,15 +601,20 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
     return locator
 
 
-async def _refuse_if_disabled(page: Page, item: Any, *, grace_s: float | None = None) -> None:
+async def _refuse_if_disabled(page: Page, item: Any, *, uploaded: bool = False) -> None:
     """Exit 37 or 35, before any click, when Flow keeps the Extend item disabled (#1334).
 
     Measured 2026-11-18 on an account holding 12 credits: ``disabled="true"``, a link to
     Google's AI plans beside it and no credits warning, while a funded account's item was
     enabled. The page names no cause, so the error names the item and both remedies. A
     short grace period keeps an item that is enabled a moment late from being refused.
+
+    A clip uploaded in this run keeps the item disabled while Flow processes it, so it is
+    given :data:`VIDEO_INGEST_READY_BUDGET_S`, and still disabled after that it is a
+    timeout (exit 9), not a plan or balance refusal — unless the page shows it is out of
+    credits.
     """
-    budget = DISABLED_GRACE_S if grace_s is None else grace_s
+    budget = VIDEO_INGEST_READY_BUDGET_S if uploaded else DISABLED_GRACE_S
     deadline = asyncio.get_running_loop().time() + budget
     while await is_menu_item_disabled(item):
         if asyncio.get_running_loop().time() >= deadline:
@@ -613,6 +624,8 @@ async def _refuse_if_disabled(page: Page, item: Any, *, grace_s: float | None = 
         return
     await page.keyboard.press("Escape")  # leave no open menu on a pooled page
     await _raise_if_out_of_credits(page)
+    if uploaded:
+        raise _ingest_timeout("its Extend item stayed disabled")
     raise ExtendUnavailableError(
         detail=(
             "migrated host: Flow shows the Extend menu item disabled on this account, so "
@@ -686,17 +699,34 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
             found.cancel()
 
 
+def _ingest_timeout(state: str) -> TransportTimeoutError:
+    """Exit 9 for a clip uploaded in this run that Flow had not finished processing."""
+    return TransportTimeoutError(
+        detail=(
+            f"migrated host: the uploaded clip was still processing after "
+            f"{VIDEO_INGEST_READY_BUDGET_S:.0f}s ({state}) — nothing was submitted"
+        ),
+        remediation_hint=(
+            "Flow keeps the upload in the project. Re-run later with its media id "
+            "(`gflow data list videos`, or the id in the project URL) and --project."
+        ),
+    )
+
+
 async def _load_source_clip(
     page: Page, *, project_id: str, media_id: str, uploaded_video: bool
 ) -> SourceClip | None:
-    """Open the clip editor and wait for ``media_id`` (retrying while a fresh upload ingests)."""
+    """Open the clip editor and wait for ``media_id`` (retrying while a fresh upload ingests).
+
+    A fresh upload that is still not ready at the budget is a timeout, never returned.
+    """
     deadline = time.monotonic() + VIDEO_INGEST_READY_BUDGET_S
     while True:
         clip = await _source_clip(page, project_id=project_id, media_id=media_id)
-        if not uploaded_video or time.monotonic() >= deadline:
+        if not uploaded_video or (clip is not None and clip.ready):
             return clip
-        if clip is not None and clip.ready:
-            return clip
+        if time.monotonic() >= deadline:
+            raise _ingest_timeout("Flow's project read did not list it ready")
         log.info(
             "migrated_extend.upload_ingest_wait",
             media_id=media_id,
@@ -742,14 +772,19 @@ def _confirm_editor(page: Page, *, project_id: str, media_id: str) -> None:
 
 # --- extend settings (duration slider + pre-submit quote) --------------------
 
+_CAP_ROUTE = "flow.google.com video extend"
 
-async def _set_extend_duration_slider(pane: Any, duration: int) -> None:
-    """Set the extend popover's ``flow-duration-slider`` to *duration* seconds and verify."""
+
+async def _set_extend_duration_slider(pane: Any, duration: int) -> bool:
+    """Set the popover's ``flow-duration-slider`` to *duration* seconds and verify it.
+
+    Returns whether the value moved (the quote label then has to catch up).
+    """
     component = pane.locator("flow-duration-slider")
     slider = component.locator('input[type="range"]')
     try:
         await slider.first.wait_for(state="visible", timeout=4000)
-    except Exception as exc:
+    except PlaywrightError as exc:
         raise UiSelectorDriftError(
             detail=(
                 "migrated host: extend duration slider (flow-duration-slider) did not appear "
@@ -780,6 +815,8 @@ async def _set_extend_duration_slider(pane: Any, duration: int) -> None:
             ),
             remediation_hint=f"Pass --duration between {min_val} and {max_val}, or omit it.",
         )
+    if await slider.input_value() == str(duration):
+        return False
     await slider.press("Home")
     for _ in range(duration - min_val):
         await slider.press("ArrowRight")
@@ -793,6 +830,7 @@ async def _set_extend_duration_slider(pane: Any, duration: int) -> None:
                 f"(value={actual_val!r}, label={label!r})"
             ),
         )
+    return True
 
 
 async def _read_extend_credit_quote(pane: Any) -> int | None:
@@ -805,6 +843,22 @@ async def _read_extend_credit_quote(pane: Any) -> int | None:
         if parsed is not None:
             return parsed
     return None
+
+
+async def _settled_quote(pane: Any, *, before: int | None, moved: bool) -> int | None:
+    """The quote once the label reflects the chosen duration, or ``None`` if unconfirmed.
+
+    A moved slider re-prices asynchronously, so a label still showing the old price is
+    polled until it changes or :data:`QUOTE_SETTLE_S` passes.
+    """
+    deadline = asyncio.get_running_loop().time() + QUOTE_SETTLE_S
+    while True:
+        quoted = await _read_extend_credit_quote(pane)
+        if quoted is not None and not (moved and quoted == before):
+            return quoted
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        await asyncio.sleep(0.25)
 
 
 async def _close_extend_settings_pane(page: Page, *, strict: bool) -> None:
@@ -826,132 +880,84 @@ async def _close_extend_settings_pane(page: Page, *, strict: bool) -> None:
         )
 
 
-async def _open_extend_settings_pane(page: Page, *, required: bool) -> Any | None:
-    if required:
-        trigger = await _anchor(page, EXTEND_SETTINGS_TRIGGER, named="extend settings trigger")
-    else:
-        trigger = page.locator(EXTEND_SETTINGS_TRIGGER).first
-        try:
-            if not await trigger.is_visible():
-                return None
-        except PlaywrightError:
-            return None
-    await trigger.click(timeout=4000)
+async def _open_extend_settings_pane(page: Page) -> Any:
+    """Open the extend settings popover, or exit 23 naming the control that failed."""
+    trigger = await _anchor(page, EXTEND_SETTINGS_TRIGGER, named="extend settings trigger")
     pane = page.locator(EXTEND_SETTINGS_PANE).last
     try:
+        await trigger.click(timeout=4000)
         await pane.wait_for(state="visible", timeout=5000)
-    except Exception as exc:
-        if required:
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: extend settings pane ({EXTEND_SETTINGS_PANE}) did not open "
-                    "(host=migrated)"
-                ),
-            ) from exc
+    except PlaywrightError as exc:
         await _close_extend_settings_pane(page, strict=False)
-        return None
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: extend settings pane ({EXTEND_SETTINGS_PANE}) did not open "
+                "(host=migrated)"
+            ),
+        ) from exc
     return pane
 
 
 async def _configure_extend_settings(
     page: Page, *, duration: int | None, max_credits: int | None
 ) -> int | None:
-    """Open the extend settings popover to set *duration* and/or read/enforce credit quote."""
-    required = duration is not None or max_credits is not None
-    try:
-        pane = await _open_extend_settings_pane(page, required=required)
-    except UiSelectorDriftError:
-        if duration is None and max_credits is not None:
-            enforce_credit_cap(
-                quoted=None,
-                max_credits=max_credits,
-                route="flow.google.com video extend",
-            )
-            return None
-        raise
-    if pane is None:
+    """Set *duration* and read the quote in the settings popover; enforce *max_credits*.
+
+    Not opened at all when neither is asked for. Run after the references are attached,
+    so the quote prices the request as it will be sent. A pane gflow cannot drive is exit
+    23, or exit 45 when only the cap needed it (the quote could not be verified).
+    """
+    if duration is None and max_credits is None:
         return None
     try:
-        if duration is not None:
-            await _set_extend_duration_slider(pane, duration)
-        quoted = await _read_extend_credit_quote(pane)
+        pane = await _open_extend_settings_pane(page)
+    except UiSelectorDriftError:
+        if duration is None:
+            enforce_credit_cap(quoted=None, max_credits=max_credits, route=_CAP_ROUTE)
+        raise
+    try:
+        before = await _read_extend_credit_quote(pane)
+        moved = await _set_extend_duration_slider(pane, duration) if duration else False
+        quoted = await _settled_quote(pane, before=before, moved=moved)
+        log.info("migrated_extend.credit_quote_checked", quoted=quoted, max_credits=max_credits)
+        quoted = enforce_credit_cap(quoted=quoted, max_credits=max_credits, route=_CAP_ROUTE)
+    except PlaywrightError as exc:
+        await _close_extend_settings_pane(page, strict=False)
         if max_credits is not None:
-            log.info("migrated_extend.credit_quote_checked", quoted=quoted, max_credits=max_credits)
-            quoted = enforce_credit_cap(
-                quoted=quoted,
-                max_credits=max_credits,
-                route="flow.google.com video extend",
-            )
+            enforce_credit_cap(quoted=None, max_credits=max_credits, route=_CAP_ROUTE)
+        raise UiSelectorDriftError(
+            detail="migrated host: the extend settings pane could not be driven (host=migrated)",
+        ) from exc
     except BaseException:
         await _close_extend_settings_pane(page, strict=False)
         raise
-    await _close_extend_settings_pane(page, strict=required)
+    await _close_extend_settings_pane(page, strict=True)
     return quoted
 
 
 # --- reference attachment in extend prompt box -------------------------------
 
 
-async def _caret_to_end(page: Page, selector: str) -> None:
-    await page.locator(selector).first.click(timeout=5000)
-    await page.evaluate(_CARET_TO_END_JS, selector)
-
-
-async def _try_commit_extend_ref(page: Page, *, query: str, expect_count: int) -> bool:
-    options = page.locator(PICKER_OPTION)
-    count = await options.count()
-    needle = query.lower()
-    for idx in range(count):
-        opt = options.nth(idx)
-        text = (await opt.text_content() or "").lower()
-        if needle in text:
-            await opt.click(timeout=4000)
-            await asyncio.sleep(0.5)
-            confirm = page.locator(PICKER_CONFIRM).first
-            if await confirm.count() > 0 and await confirm.is_visible():
-                await confirm.click(timeout=3000)
-                await asyncio.sleep(0.5)
-            return await page.locator(EXTEND_MENTION_CHIP).count() >= expect_count
-    return False
-
-
-async def _attach_extend_ref(page: Page, *, query: str, expect_count: int) -> None:
-    """Attach one uploaded image reference via ``@<query>`` in the extend prompt box."""
-    for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-        await _caret_to_end(page, EXTEND_PROMPT)
-        await page.keyboard.type("@", delay=80)
-        await page.wait_for_timeout(1200)
-        await page.keyboard.type(query, delay=40)
-        await page.wait_for_timeout(1800)
-        if await _try_commit_extend_ref(page, query=query, expect_count=expect_count):
-            await page.keyboard.type(" ", delay=40)
-            return
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(400)
-        log.info("migrated_extend.mention_retry", attempt=attempt)
-        if attempt < FRAME_SEARCH_ATTEMPTS:
-            await asyncio.sleep(FRAME_SEARCH_RETRY_PAUSE_S)
-    raise ReferenceNotFoundError(
-        detail=(
-            f"migrated host: reference image {query!r} did not attach as a chip "
-            f"(expected {expect_count} chip(s) at {EXTEND_MENTION_CHIP}) — refusing before submit"
-        ),
-    )
-
-
 async def _prepare_extend_prompt(
-    page: Page, *, prompt: str, ref_uploads: tuple[tuple[str, str], ...]
+    composer: MigratedComposer, page: Page, *, prompt: str, ref_names: tuple[str, ...]
 ) -> None:
+    """Attach each uploaded reference as an ``@`` mention, then type the prompt after them."""
     prompt_box = await _anchor(page, EXTEND_PROMPT, named="extend prompt box")
     await prompt_box.click()
-    if ref_uploads:
-        for idx, (_ref_id, ref_name) in enumerate(ref_uploads, start=1):
-            await _attach_extend_ref(page, query=ref_name, expect_count=idx)
-        await _caret_to_end(page, EXTEND_PROMPT)
+    for idx, name in enumerate(ref_names, start=1):
+        await composer._mention_by_name(  # pyright: ignore[reportPrivateUsage]
+            page, name, expect_chips=idx, composer=EXTEND_PROMPT, chip=EXTEND_MENTION_CHIP
+        )
+    if ref_names:
+        await page.locator(EXTEND_PROMPT).first.click(timeout=5000)
+        await page.evaluate(_CARET_TO_END_JS, EXTEND_PROMPT)
     await page.keyboard.insert_text(prompt)
 
 
 # --- input validation & upload preparation -----------------------------------
+
+
+_INPUT_HINT = "Correct the extend inputs and re-run; nothing was uploaded or charged."
 
 
 async def validate_extend_inputs(
@@ -962,14 +968,21 @@ async def validate_extend_inputs(
     reference_images: tuple[Path, ...],
     max_credits: int | None,
 ) -> None:
+    """Exit 11 (nothing charged) for any input Flow must not be sent, before any project.
+
+    Called at each edge (CLI, worker) and again at the transport entry.
+    """
     if bool(media_id) == bool(source_video is not None):
-        raise ConfigurationError(detail="provide exactly one of media_id or source_video")
+        raise ConfigurationError(
+            detail="provide exactly one of media_id or source_video", remediation_hint=_INPUT_HINT
+        )
     if duration is not None and not (EXTEND_MIN_DURATION <= duration <= EXTEND_MAX_DURATION):
         raise ConfigurationError(
             detail=(
                 f"extend duration must be between {EXTEND_MIN_DURATION} and "
                 f"{EXTEND_MAX_DURATION}s, got {duration}"
             ),
+            remediation_hint=_INPUT_HINT,
         )
     if len(reference_images) > MAX_EXTEND_REFERENCE_IMAGES:
         raise ConfigurationError(
@@ -977,13 +990,25 @@ async def validate_extend_inputs(
                 f"video extend accepts at most {MAX_EXTEND_REFERENCE_IMAGES} reference images "
                 f"(got {len(reference_images)})"
             ),
+            remediation_hint=_INPUT_HINT,
         )
     if max_credits is not None and max_credits < 0:
-        raise ConfigurationError(detail=f"max_credits must be >= 0, got {max_credits}")
-    if source_video is not None:
-        await validate_video_file(source_video)
-    for ref_path in reference_images:
-        await validate_image_file(ref_path)
+        raise ConfigurationError(
+            detail=f"max_credits must be >= 0, got {max_credits}", remediation_hint=_INPUT_HINT
+        )
+    try:
+        if source_video is not None:
+            await validate_video_file(source_video)
+        for ref_path in reference_images:
+            await validate_image_file(ref_path)
+    except (ValueError, FileNotFoundError) as exc:
+        raise ConfigurationError(
+            detail=f"cannot upload this file: {exc}",
+            remediation_hint=(
+                "Pass an existing .mp4, .m4v, .mov, .3gp or .avi video of up to 1 GB, and "
+                "image files as --ref. Nothing was uploaded or charged."
+            ),
+        ) from exc
 
 
 async def _upload_extend_inputs(
@@ -993,19 +1018,13 @@ async def _upload_extend_inputs(
     project_id: str,
     source_video: Path | None,
     reference_images: tuple[Path, ...],
-) -> tuple[UploadedVideo | None, tuple[tuple[str, str], ...]]:
+) -> tuple[str | None, tuple[tuple[str, str], ...]]:
+    """Upload the local clip and references: ``(clip media id, ((ref id, name), ...))``."""
     if source_video is None and not reference_images:
         return None, ()
     await composer.ensure_editor_for(page, project_id, needs_classic=True)
-    uploaded: UploadedVideo | None = None
-    if source_video is not None:
-        uploaded = await upload_video(page, project_id, source_video)
-    refs: list[tuple[str, str]] = []
-    for ref_path in reference_images:
-        ref_id, ref_name = await composer._upload_via_toolbar(  # pyright: ignore[reportPrivateUsage]
-            page, project_id, ref_path
-        )
-        refs.append((ref_id, ref_name))
+    uploaded = await upload_video(page, project_id, source_video) if source_video else None
+    refs = [await composer.upload(page, project_id, ref) for ref in reference_images]
     return uploaded, tuple(refs)
 
 
@@ -1143,7 +1162,7 @@ async def _prepare_clip_extend(  # noqa: PLR0913
     reference_images: tuple[Path, ...],
     max_credits: int | None,
 ) -> tuple[str, str, tuple[str, ...], int | None]:
-    """Upload optional inputs, open the clip editor, apply settings & prompt (pre-submit)."""
+    """Upload optional inputs, open the clip editor, apply prompt, refs & settings (pre-submit)."""
     uploaded, ref_uploads = await _upload_extend_inputs(
         composer,
         page,
@@ -1151,7 +1170,7 @@ async def _prepare_clip_extend(  # noqa: PLR0913
         source_video=source_video,
         reference_images=reference_images,
     )
-    resolved_media_id = uploaded.media_id if uploaded is not None else str(media_id)
+    resolved_media_id = uploaded or str(media_id)
     clip = await _load_source_clip(
         page,
         project_id=project_id,
@@ -1167,17 +1186,22 @@ async def _prepare_clip_extend(  # noqa: PLR0913
             add_clip_btn = await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")
             break
         except UiSelectorDriftError:
-            if uploaded is None or time.monotonic() >= add_clip_deadline:
+            if uploaded is None:
                 raise
+            if time.monotonic() >= add_clip_deadline:
+                raise _ingest_timeout("the timeline offered no add-clip button") from None
             log.info("migrated_extend.upload_timeline_wait", media_id=resolved_media_id)
             await asyncio.sleep(_VIDEO_INGEST_POLL_S)
     await add_clip_btn.click()
     extend = await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")
-    grace = VIDEO_INGEST_READY_BUDGET_S if uploaded is not None else None
-    await _refuse_if_disabled(page, extend, grace_s=grace)  # a click would wait out 30 s (#1334)
+    # A click on a disabled item would wait out 30 s (#1334).
+    await _refuse_if_disabled(page, extend, uploaded=uploaded is not None)
     await extend.click()
+    await _prepare_extend_prompt(
+        composer, page, prompt=prompt, ref_names=tuple(name for _, name in ref_uploads)
+    )
+    # After the references: the quote must price the request that will be sent.
     quoted = await _configure_extend_settings(page, duration=duration, max_credits=max_credits)
-    await _prepare_extend_prompt(page, prompt=prompt, ref_uploads=ref_uploads)
     expected_ref_ids = tuple(ref_id for ref_id, _ in ref_uploads)
     return resolved_media_id, workflow_id, expected_ref_ids, quoted
 
@@ -1197,14 +1221,10 @@ async def run_extend(  # noqa: PLR0913
     on_started: ExtendStartedCallback | None = None,
     on_checkpoint: GenerationCheckpointObserver | None = None,
 ) -> ExtendOutcome:
-    """Extend ``media_id`` (or an uploaded local ``source_video``) by one segment via Flow UI."""
-    await validate_extend_inputs(
-        media_id=media_id,
-        source_video=source_video,
-        duration=duration,
-        reference_images=reference_images,
-        max_credits=max_credits,
-    )
+    """Extend ``media_id`` (or an uploaded local ``source_video``) by one segment via Flow UI.
+
+    Inputs are validated by the caller (:func:`validate_extend_inputs`).
+    """
     composer = MigratedComposer()
     # #1320: the submit inside submit_and_observe is the first send; watch for stray submits.
     with (
@@ -1254,11 +1274,9 @@ async def run_extend(  # noqa: PLR0913
     def is_batchexecute(url: str) -> bool:
         return "batchexecute" in url
 
-    before_click = (
-        (lambda: on_checkpoint(GenerationCheckpoint(phase="submit_attempted")))
-        if on_checkpoint is not None
-        else None
-    )
+    if on_checkpoint is not None:
+        # Everything before this point is pre-submit (charged "no"); only the click is next.
+        on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
     await page.route(is_batchexecute, guard)
     try:
         record = await composer.submit_and_observe(
@@ -1269,7 +1287,6 @@ async def run_extend(  # noqa: PLR0913
             submit_rpcs=(EXTEND_SUBMIT_RPC,),
             submit_selector=EXTEND_SUBMIT,
             request_check=check,
-            on_before_click=before_click,
         )
     finally:
         try:
@@ -1292,7 +1309,6 @@ async def run_extend(  # noqa: PLR0913
 
 __all__ = [
     "EXTEND_CREDIT_QUOTE",
-    "EXTEND_DURATION_SLIDER",
     "EXTEND_MAX_DURATION",
     "EXTEND_MENTION_CHIP",
     "EXTEND_MIN_DURATION",
@@ -1305,6 +1321,7 @@ __all__ = [
     "batch_request_problem",
     "extend_key_seconds",
     "extend_request_problem",
+    "require_migrated_host",
     "require_video_source",
     "run_extend",
     "source_record",

@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
 from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api._flow_session import JsonObject, _make_instance  # pyright: ignore[reportPrivateUsage]
-from gflow_cli.api._flow_workspace import _default_project_title  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
 
@@ -439,8 +438,7 @@ class MediaEditSurface(GenerationSurface):
         *,
         media_id: str | None = None,
         source_video: Path | None = None,
-        project_id: str | None = None,
-        project_name: str | None = None,
+        project_id: str,
         prompt: str,
         aspect: str | None = None,
         duration: int | None = None,
@@ -453,29 +451,21 @@ class MediaEditSurface(GenerationSurface):
     ) -> tuple[ExtendOutcome, AnyPath | None]:
         """One extend segment through Flow's own UI on flow.google.com. Costs credits.
 
-        Supports either an existing Flow ``media_id`` (requires ``project_id``) or a local
-        ``source_video`` (auto-creates a project when ``project_id`` is omitted), optional
-        ``duration`` (3-10s), ``0-3`` ``reference_images``, and pre-submit ``max_credits``
-        enforcement from Flow's extend settings quote. The page mints and sends ``fZytfe``
-        itself; see :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome
-        and the written mp4 (``None`` when the generation did not finish).
+        Extends either an existing Flow ``media_id`` in ``project_id`` or a local
+        ``source_video`` uploaded into it, with an optional ``duration`` (3-10 s), ``0-3``
+        ``reference_images``, and ``max_credits`` enforced against Flow's pre-submit quote.
+        The caller owns the project, so it is created only after the inputs are valid.
+        The page mints and sends ``fZytfe`` itself; see
+        :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
+        written mp4 (``None`` when the generation did not finish).
         """
         from gflow_cli.api.transports.migrated_extend import (
+            require_migrated_host,
             run_extend,
             validate_extend_inputs,
         )
 
-        if self.served_route(prefer_migrated=True) != "migrated":
-            raise FlowHostMigratedError(
-                detail=(
-                    "migrated video extend runs on flow.google.com only, and "
-                    "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
-                ),
-                remediation_hint=(
-                    "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
-                    "to extend via flow.google.com."
-                ),
-            )
+        require_migrated_host(self.served_route(prefer_migrated=True))
         await validate_extend_inputs(
             media_id=media_id,
             source_video=source_video,
@@ -483,21 +473,12 @@ class MediaEditSurface(GenerationSurface):
             reference_images=reference_images,
             max_credits=max_credits,
         )
-        if media_id is not None and not project_id:
-            raise ConfigurationError(
-                detail="--project is required when extending an existing media_id"
-            )
-        resolved_project_id = project_id
-        if resolved_project_id is None:
-            created = await self.create_project(title=project_name or _default_project_title())
-            resolved_project_id = created.project_id
-
         try:
             page = await self._checkout_page()
             try:
                 outcome = await run_extend(
                     page,
-                    project_id=resolved_project_id,
+                    project_id=project_id,
                     media_id=media_id,
                     source_video=source_video,
                     prompt=prompt,
