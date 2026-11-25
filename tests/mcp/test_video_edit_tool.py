@@ -77,7 +77,7 @@ async def test_mcp_edit_video_validation_and_confinement(
         # Non-Omni model refused pre-queue
         res = await edit_tools.gflow_edit_video(source=str(clip), prompt="glow", model="veo-lite")
         assert res["status"] == "error"
-        assert res["error"]["title"] == "Unsupported Video Edit Model"
+        assert res["error"]["title"] == "Invalid Video Edit Request"
 
         # >5 reference_images refused pre-queue
         refs = [str(clip)] * 6
@@ -85,7 +85,7 @@ async def test_mcp_edit_video_validation_and_confinement(
             source=str(clip), prompt="glow", reference_images=refs
         )
         assert res["status"] == "error"
-        assert res["error"]["title"] == "Too Many Reference Images"
+        assert res["error"]["title"] == "Invalid Video Edit Request"
 
         # Missing project for uncatalogued UUID refused
         with (
@@ -143,7 +143,7 @@ async def test_mcp_edit_video_validation_and_confinement(
         # An empty prompt is refused before the queue, like the CLI's
         res = await edit_tools.gflow_edit_video(source=str(clip), prompt="  ")
         assert res["status"] == "error"
-        assert res["error"]["title"] == "Invalid Prompt"
+        assert res["error"]["title"] == "Invalid Video Edit Request"
     finally:
         reset_settings()
 
@@ -274,6 +274,12 @@ async def test_worker_refuses_an_unsupported_file_before_creating_a_project(
             assert done.error["exit_code"] == 11
             assert done.error["charged"] == "no"
             assert created == []
+            # The failure is recorded with the edit's own request (its model), not as anonymous.
+            row = worker.db.conn.execute(
+                "SELECT model, status FROM operations WHERE mode = 'edit'"
+            ).fetchone()
+            assert row is not None
+            assert tuple(row) == (VideoModel.OMNI_1_2_FLASH.value, "failed")
         finally:
             worker.close()
     finally:
@@ -307,3 +313,11 @@ def test_an_edit_payload_with_a_wrong_type_is_a_queue_schema_error(bad: dict[str
     with pytest.raises(QueueSchemaError):
         codec.decode_payload("edit", payload)
     assert EXIT_CODE_MAP[QueueSchemaError] == 30
+
+
+def test_an_edit_payload_without_a_model_decodes_to_the_default() -> None:
+    from gflow_cli.api.video import EDIT_DEFAULT_MODEL
+
+    decoded = codec.decode_payload("edit", {"prompt": "go", "source_video": "clip.mp4"})
+    assert isinstance(decoded.request, EditVideoRequest)
+    assert decoded.request.model is EDIT_DEFAULT_MODEL

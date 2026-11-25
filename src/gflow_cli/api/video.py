@@ -553,11 +553,10 @@ class EditVideoRequest:
     source_video: Path | None = None
     source_media_id: str | None = None
     reference_images: tuple[Path, ...] = ()
-    model: VideoModel | None = EDIT_DEFAULT_MODEL
+    model: VideoModel = EDIT_DEFAULT_MODEL
     aspect: Aspect | None = None
     resolution: str | None = None
     max_credits: int | None = None
-    project_name: str | None = None
     original_prompt: str | None = None
     tool: AppliedTool | None = None
 
@@ -582,7 +581,7 @@ class EditVideoRequest:
         if self.resolution is not None and self.resolution not in ("360p", "720p"):
             msg = f"resolution must be '360p' or '720p', got {self.resolution!r}"
             raise ValueError(msg)
-        if self.model is not None and self.model not in EDIT_SUPPORTED_MODELS:
+        if self.model not in EDIT_SUPPORTED_MODELS:
             supported = ", ".join(sorted(m.value for m in EDIT_SUPPORTED_MODELS))
             msg = f"video edit supports only Omni models ({supported}), got {self.model.value!r}"
             raise ValueError(msg)

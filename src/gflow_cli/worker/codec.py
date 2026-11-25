@@ -38,8 +38,13 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
+from gflow_cli.api.video import (
+    EDIT_DEFAULT_MODEL,
+    EditVideoRequest,
+    GenerateVideoRequest,
+    VideoModel,
+)
 from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.api.video_extend import MigratedExtendRequest
@@ -448,7 +453,7 @@ def build_video_edit_request(payload: dict[str, Any]) -> EditVideoRequest:
         source_video=Path(source_video) if source_video else None,
         source_media_id=_optional_str(payload, "source_media_id"),
         reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
-        model=VideoModel.from_cli(model_val) if model_val else None,
+        model=VideoModel.from_cli(model_val) or EDIT_DEFAULT_MODEL,
         aspect=VideoAspect.from_cli(aspect_val) if aspect_val else None,
         resolution=_optional_str(payload, "resolution"),
         max_credits=raw_max_credits,

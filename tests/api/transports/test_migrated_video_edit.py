@@ -14,11 +14,12 @@ from gflow_cli.api.transports import migrated_video_edit as edit_mod
 from gflow_cli.api.transports._mc_upload_video import UploadedVideo
 from gflow_cli.api.transports.batchexecute import GenerationRecord
 from gflow_cli.api.transports.migrated_extend import SourceClip
-from gflow_cli.api.video import Aspect, EditVideoRequest, VideoStarted
+from gflow_cli.api.video import Aspect, EditVideoRequest, VideoModel, VideoStarted
 from gflow_cli.errors import (
     ConfigurationError,
     CreditCapExceededError,
     FlowHostMigratedError,
+    ReferenceNotFoundError,
     UiSelectorDriftError,
     WireFormatError,
 )
@@ -27,7 +28,7 @@ _PID = "11111111-1111-1111-1111-111111111111"
 _MID = "22222222-2222-2222-2222-222222222222"
 _WF = "33333333-3333-3333-3333-333333333333"
 _REF1 = "44444444-4444-4444-4444-444444444444"
-ORIGINAL_CLIP_EDITOR_QUOTE = edit_mod._clip_editor_quote
+ORIGINAL_STABLE_QUOTE = edit_mod._stable_quote
 ORIGINAL_ATTACH_BY_CLICK = edit_mod._attach_by_click
 
 _MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
@@ -150,7 +151,7 @@ def composer(monkeypatch: pytest.MonkeyPatch, files: dict[str, Path]) -> MagicMo
     monkeypatch.setattr(edit_mod, "_confirm_editor", MagicMock())
     monkeypatch.setattr(edit_mod, "_anchor", AsyncMock())
     monkeypatch.setattr(edit_mod, "_select_clip_editor_model", AsyncMock())
-    monkeypatch.setattr(edit_mod, "_clip_editor_quote", AsyncMock(return_value=9))
+    monkeypatch.setattr(edit_mod, "_stable_quote", AsyncMock(return_value=9))
     return fake
 
 
@@ -214,8 +215,9 @@ async def test_local_edit_completes_and_reports_checkpoints_around_the_click(
     assert res.quoted_credits == 9
     assert started == [_MID]
     assert phases == ["submit_attempted", "remote_started"]
-    # The references go through the composer's shared mention, never a private copy.
-    composer._mention_by_name.assert_awaited_once()
+    # Clip and reference are committed by click, never by the shared Enter-based mention.
+    composer._mention_by_name.assert_not_called()
+    assert edit_mod._attach_by_click.await_count == 2  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,7 @@ async def test_quote_over_the_cap_refuses_before_the_click(
     source: str, files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(edit_mod, "_apply_main_edit_settings", AsyncMock(return_value=20))
-    monkeypatch.setattr(edit_mod, "_clip_editor_quote", AsyncMock(return_value=20))
+    monkeypatch.setattr(edit_mod, "_stable_quote", AsyncMock(return_value=20))
     src: dict[str, Any] = (
         {"source_video": files["clip"]} if source == "local" else {"source_media_id": _MID}
     )
@@ -260,7 +262,7 @@ async def test_quote_over_the_cap_refuses_before_the_click(
 async def test_an_unreadable_quote_with_a_cap_refuses(
     files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(edit_mod, "_clip_editor_quote", AsyncMock(return_value=None))
+    monkeypatch.setattr(edit_mod, "_stable_quote", AsyncMock(return_value=None))
     with pytest.raises(CreditCapExceededError):
         await _run(EditVideoRequest(prompt="g", source_media_id=_MID, max_credits=50))
     composer.submit_and_observe.assert_not_called()
@@ -320,36 +322,126 @@ async def test_agent_only_composer_is_refused_before_the_upload(
 # --- the settled quote and the clip editor's model check ---------------------------
 
 
-class _QuotePage:
-    def __init__(self, labels: list[str]) -> None:
-        self._labels = iter(labels)
+class _Clock:
+    """A fake event-loop clock that ``asyncio.sleep`` advances."""
 
-    def locator(self, _sel: str) -> Any:
-        page = self
+    def __init__(self) -> None:
+        self.now = 0.0
 
-        class _L:
-            last = None
+    def time(self) -> float:
+        return self.now
 
-            async def inner_text(self, **_kw: Any) -> str:
-                return next(page._labels)
+    async def sleep(self, seconds: float) -> None:
+        self.now += seconds
 
-        loc = _L()
-        loc.last = loc  # type: ignore[assignment]
-        return loc
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(edit_mod.asyncio, "get_running_loop", lambda: fake)
+    monkeypatch.setattr(edit_mod.asyncio, "sleep", fake.sleep)
+    return fake
+
+
+def _reads(*values: int | None) -> Any:
+    seq = iter(values)
+    last: list[int | None] = [None]
+
+    async def read() -> int | None:
+        last[0] = next(seq, last[0])
+        return last[0]
+
+    return read
 
 
 @pytest.mark.asyncio
-async def test_the_quote_is_taken_once_two_reads_agree(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(edit_mod.asyncio, "sleep", AsyncMock())
-    page = _QuotePage(["10 credits", "15 credits", "15 credits"])
-    assert await edit_mod._settled_overlay_quote(page, scope_selector="x") == 15  # type: ignore[arg-type]
+async def test_a_quote_is_taken_only_once_it_has_held_for_the_settle_time(clock: _Clock) -> None:
+    """Two equal reads 0.25 s apart are not settled: a re-price may start late."""
+    quoted = await edit_mod._stable_quote(_reads(10, 10, 10, 15))
+    assert quoted == 15
+    assert clock.now >= edit_mod.QUOTE_SETTLE_S
 
 
 @pytest.mark.asyncio
-async def test_a_quote_that_never_settles_is_none(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_quote_that_keeps_changing_or_is_unreadable_is_none(clock: _Clock) -> None:
+    flapping = iter(range(1000))
+
+    async def read() -> int | None:
+        return next(flapping)
+
+    assert await edit_mod._stable_quote(read) is None
+    assert await edit_mod._stable_quote(_reads(None)) is None
+
+
+@pytest.mark.asyncio
+async def test_no_quote_is_read_without_a_cap(files: dict[str, Path], composer: MagicMock) -> None:
+    res = await _run(
+        EditVideoRequest(prompt="g", source_media_id=_MID, reference_images=(files["ref"],))
+    )
+    assert res.quoted_credits is None
+    edit_mod._stable_quote.assert_not_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_the_clip_editor_quote_is_read_from_the_prompt_box_with_menus_closed(
+    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    read: list[str] = []
+
+    async def label(_page: Any, selector: str) -> int | None:
+        read.append(selector)
+        return 7
+
+    monkeypatch.setattr(edit_mod, "_read_label", label)
+    monkeypatch.setattr(edit_mod, "_stable_quote", ORIGINAL_STABLE_QUOTE)
     monkeypatch.setattr(edit_mod, "QUOTE_SETTLE_S", 0.0)
-    page = _QuotePage(["10 credits", "15 credits"])
-    assert await edit_mod._settled_overlay_quote(page, scope_selector="x") is None  # type: ignore[arg-type]
+    res = await _run(
+        EditVideoRequest(
+            prompt="g", source_media_id=_MID, reference_images=(files["ref"],), max_credits=9
+        )
+    )
+    assert res.quoted_credits == 7
+    assert set(read) == {edit_mod.CLIP_EDITOR_CREDIT_LABEL}
+
+
+# --- the jIps6 request check ----------------------------------------------------------
+
+
+def _entry_body(refs_wire: Any, aspect: Any = 2) -> str:
+    return _freq(
+        "jIps6",
+        [[[[None, _WF], None, "macaron_cookie_edit", aspect, None, None, None, None, refs_wire]]],
+    )
+
+
+@pytest.mark.parametrize(
+    ("refs_wire", "expected"),
+    [
+        ([[None, _REF1], ["bad"]], (_REF1,)),  # an unreadable slot is not skipped
+        ([[None, _REF1], [None, _MID]], (_MID, _REF1)),  # order matters
+        ([[None, _REF1], [None, _REF1]], (_REF1,)),  # a duplicate is not one reference
+    ],
+    ids=["unreadable", "order", "duplicate"],
+)
+def test_the_reference_check_fails_closed(refs_wire: Any, expected: tuple[str, ...]) -> None:
+    err = edit_mod.edit_request_problem(
+        "jIps6", _entry_body(refs_wire), workflow_id=_WF, expected_reference_ids=expected
+    )
+    assert isinstance(err, WireFormatError), err
+
+
+def test_an_unreadable_aspect_is_refused_when_one_was_asked() -> None:
+    err = edit_mod.edit_request_problem(
+        "jIps6", _entry_body([], aspect=None), workflow_id=_WF, expected_aspect=Aspect.PORTRAIT
+    )
+    assert isinstance(err, WireFormatError)
+    assert "could not read the aspect" in err.detail
+
+
+@pytest.mark.parametrize("rpcid", ["ogiZ0b", "fZytfe", "YhhmEf", "eb1hJf", "MZZa6b", "nprQif"])
+def test_every_other_billed_submit_is_refused(rpcid: str) -> None:
+    err = edit_mod.edit_request_problem(rpcid, _freq(rpcid, []), workflow_id=_WF)
+    assert isinstance(err, WireFormatError), rpcid
 
 
 # --- the clip editor's own controls (live e2e on 2026-11-25: no jIps6 left the page) ---------
@@ -416,25 +508,104 @@ async def test_clip_editor_references_are_committed_by_click_never_by_enter(
     composer.submit_and_observe.assert_awaited_once()
 
 
+class _PickerPage:
+    """A ``@`` picker that lists the fresh upload only from the *listed_from*-th poll on."""
+
+    def __init__(self, names: list[str], *, listed_from: int) -> None:
+        self.names = names
+        self.listed_from = listed_from
+        self.polls = 0
+        self.chips = 0
+        self.keyboard = MagicMock(type=AsyncMock(side_effect=self._typed), press=AsyncMock())
+
+    async def _typed(self, text: str, **_kw: Any) -> None:
+        if text == "@":
+            self.polls += 1
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
+
+    async def evaluate(self, *_a: Any) -> None:
+        return None
+
+    def locator(self, sel: str) -> Any:
+        page = self
+        if sel.endswith(edit_mod.PICKER_OPTION):
+
+            def filtered(*, has_text: Any) -> Any:
+                listed = page.names if page.polls >= page.listed_from else []
+                hits = [n for n in listed if has_text.search(n)]
+                option = MagicMock(
+                    count=AsyncMock(return_value=len(hits)),
+                    is_visible=AsyncMock(return_value=True),
+                    click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", 1)),
+                )
+                option.first = option
+                return option
+
+            return MagicMock(filter=filtered)
+        if sel == "chip":
+            return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
+        loc = MagicMock(count=AsyncMock(return_value=0), click=AsyncMock())
+        loc.first = loc
+        return loc
+
+
+async def _attach(page: _PickerPage, query: str) -> None:
+    await edit_mod._attach_by_click(
+        page,  # type: ignore[arg-type]
+        composer_selector="box",
+        chip_selector="chip",
+        query=query,
+        media_id=_REF1,
+        expect_count=1,
+        what="reference image",
+    )
+
+
 @pytest.mark.asyncio
-async def test_clip_editor_quote_does_not_hang_on_the_trigger_label(
-    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
+async def test_a_fresh_upload_is_awaited_until_the_picker_lists_it(clock: _Clock) -> None:
+    """Live 2026-11-25: a just-uploaded reference was not listed for the first 3 tries."""
+    page = _PickerPage(["ref-f823374b.png"], listed_from=6)
+    await _attach(page, "ref-f823374b.png")
+    assert page.chips == 1
+    assert page.polls == 6
+
+
+@pytest.mark.asyncio
+async def test_an_upload_never_listed_times_out_naming_its_media_id(clock: _Clock) -> None:
+    page = _PickerPage(["ref-f823374b.png"], listed_from=10_000)
+    with pytest.raises(ReferenceNotFoundError, match=_REF1):
+        await _attach(page, "ref-f823374b.png")
+    assert clock.now >= edit_mod.VIDEO_INGEST_READY_BUDGET_S - 30
+
+
+@pytest.mark.asyncio
+async def test_the_picker_option_is_matched_as_a_whole_name(clock: _Clock) -> None:
+    # "clip" must not bind "clip-2" (another upload whose name it prefixes).
+    page = _PickerPage(["clip-2", "clip.mp4"], listed_from=0)
+    with pytest.raises(ReferenceNotFoundError):
+        await _attach(page, "clip")
+    assert page.chips == 0
+    # Two assets with exactly the name: ambiguous, refused rather than guessed.
+    page = _PickerPage(["clip", "clip"], listed_from=0)
+    with pytest.raises(ReferenceNotFoundError, match="lists 2 assets"):
+        await _attach(page, "clip")
+
+
+@pytest.mark.asyncio
+async def test_a_selected_model_the_trigger_does_not_confirm_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The clip editor's trigger need not spell the model the way the composer's menu does;
-    the submitted jIps6's model key is what the request check verifies before billing."""
-    trigger = MagicMock(text_content=AsyncMock(return_value="Omni"))
+    trigger = MagicMock(text_content=AsyncMock(return_value="Veo 3.1 - Fast"))
+    items = MagicMock(
+        all_text_contents=AsyncMock(return_value=["Omni 1.2 Flash", "Veo 3.1 - Fast"]),
+        nth=MagicMock(return_value=MagicMock(click=AsyncMock())),
+    )
+    monkeypatch.setattr(edit_mod, "_anchor", AsyncMock(return_value=trigger))
     monkeypatch.setattr(
-        edit_mod, "_open_clip_editor_model_menu", AsyncMock(return_value=(trigger, MagicMock()))
+        edit_mod, "_open_clip_editor_model_menu", AsyncMock(return_value=(trigger, items))
     )
-    monkeypatch.setattr(edit_mod, "_settled_overlay_quote", AsyncMock(return_value=9))
-    monkeypatch.setattr(edit_mod, "_clip_editor_quote", ORIGINAL_CLIP_EDITOR_QUOTE)
-    res = await _run(
-        EditVideoRequest(
-            prompt="add snow",
-            source_media_id=_MID,
-            reference_images=(files["ref"],),
-            max_credits=12,
-        )
-    )
-    assert res.quoted_credits == 9
-    composer.submit_and_observe.assert_awaited_once()
+    page = MagicMock(keyboard=MagicMock(press=AsyncMock()), wait_for_timeout=AsyncMock())
+    with pytest.raises(UiSelectorDriftError, match="shows model"):
+        await edit_mod._select_clip_editor_model(page, VideoModel.OMNI_1_2_FLASH)

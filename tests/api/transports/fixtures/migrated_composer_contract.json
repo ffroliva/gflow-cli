@@ -147,6 +147,7 @@
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"
   },
   "public_functions": {
+    "attach_submit_evidence": "function (exc: 'Exception', *, quoted_credits: 'int | None', started_ids: 'list[str]') -> 'None' sha=4f36c65b2141e2cb",
     "body_rpcid": "function (body: 'str') -> 'str | None' sha=2742321c5304b2a9",
     "create_project": "function (page: 'Page', title: 'str', *, timeout_s: 'float' = 120.0) -> 'ProjectInfo' sha=1653b77cf258b899",
     "finish_video_result": "function (composer: 'MigratedComposer', page: 'Page', record: 'GenerationRecord', *, project_id: 'str', quoted_credits: 'int | None', save: 'ClipSaver', download: 'bool') -> 'VideoResult' sha=338ba979410a41eb",

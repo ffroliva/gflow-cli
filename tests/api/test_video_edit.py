@@ -175,28 +175,50 @@ def test_parse_upload_reply() -> None:
     assert upload_mod._parse_upload_reply("{}", project_id=_PID) is None
 
 
-def test_run_unique_link_hard_links_under_a_unique_name_and_cleans_up(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_run_unique_name_hard_links_beside_the_source_and_cleans_up(tmp_path: Path) -> None:
+    """Beside the source, so the link stays on the source's volume (no cross-drive copy)."""
     clip = tmp_path / "source.mp4"
     clip.write_bytes(_MP4_BYTES)
-    with upload_mod._run_unique_link(clip) as sent:
+    async with upload_mod._run_unique_name(clip) as sent:
         assert sent != clip
+        assert sent.parent.parent == tmp_path
         assert sent.stem.startswith("source")
         assert sent.suffix == ".mp4"
-        assert sent.read_bytes() == _MP4_BYTES
+        assert sent.stat().st_nlink >= 2  # a hard link, not a copy
         tmp_dir = sent.parent
     assert not tmp_dir.exists()
     assert clip.read_bytes() == _MP4_BYTES
 
 
-def test_run_unique_link_sends_the_file_itself_rather_than_copying(
+@pytest.mark.asyncio
+async def test_run_unique_name_copies_only_when_no_hard_link_is_possible(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Across drives a hard link fails; a clip of up to 1 GB is never copied."""
     clip = tmp_path / "source.mp4"
     clip.write_bytes(_MP4_BYTES)
-    monkeypatch.setattr(upload_mod.os, "link", MagicMock(side_effect=OSError("cross-device")))
-    with upload_mod._run_unique_link(clip) as sent:
+    monkeypatch.setattr(upload_mod.os, "link", MagicMock(side_effect=OSError("no links")))
+    async with upload_mod._run_unique_name(clip) as sent:
+        assert sent != clip
+        assert sent.read_bytes() == _MP4_BYTES
+        assert sent.stat().st_nlink == 1
+
+
+@pytest.mark.asyncio
+async def test_run_unique_name_falls_back_to_the_plain_name_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clip = tmp_path / "source.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    monkeypatch.setattr(
+        upload_mod.tempfile, "mkdtemp", MagicMock(side_effect=PermissionError("read-only"))
+    )
+    warn = MagicMock()
+    monkeypatch.setattr(upload_mod.log, "warning", warn)
+    async with upload_mod._run_unique_name(clip) as sent:
         assert sent == clip
+    warn.assert_called_once()
+    assert warn.call_args.args[0] == "migrated.video_upload_plain_name"
 
 
 @pytest.mark.asyncio
@@ -300,14 +322,14 @@ def test_edit_request_problem_enforces_jips6_contract() -> None:
     ]
     err = edit_mod.edit_request_problem("jIps6", _make_freq("jIps6", two_entries), workflow_id=_WF)
     assert isinstance(err, WireFormatError)
-    assert "single-clip" in err.detail
+    assert "single-clip entry" in err.detail
 
     # Multi-frame jIps6 batch refused before send
     frame_entry = ["jIps6", json.dumps(valid_inner), None, "generic"]
     two_frames = f"f.req={json.dumps([[frame_entry, frame_entry]])}"
     err = edit_mod.edit_request_problem("jIps6", two_frames, workflow_id=_WF)
     assert isinstance(err, WireFormatError)
-    assert "expected 1 jIps6 frame" in err.detail
+    assert "expected one jIps6 frame" in err.detail
 
 
 @pytest.mark.asyncio
@@ -425,5 +447,68 @@ def test_recorder_and_json_output_for_video_edit(tmp_path: Path) -> None:
         gen_req = GenerateVideoRequest(prompt="test", mode=Mode.T2V, aspect=Aspect.LANDSCAPE)
         gen_payload = json_output.video_result(command="video t2v", request=gen_req, result=result)
         assert gen_payload["quoted_credits"] == 9
+    finally:
+        store.close()
+
+
+def test_an_in_place_edit_keeps_the_source_row_and_the_earlier_edit(tmp_path: Path) -> None:
+    """Flow can return an edit under the source's media id: the source's own length and
+    seed stay, and a second, failed edit does not rewrite the first edit's operation."""
+    out_mp4 = tmp_path / "out.mp4"
+    out_mp4.write_bytes(_MP4_BYTES)
+    store = DataStore.open(tmp_path / "gflow.db")
+    try:
+        repo = DataRepository(store)
+        rec = OperationRecorder(repo, prompt_mode="store")
+        source = GenerateVideoRequest(
+            prompt="a lantern", mode=Mode.T2V, aspect=Aspect.LANDSCAPE, duration=8, seed=7
+        )
+        rec.record_started_video(
+            profile_name="p1",
+            profile_dir=tmp_path,
+            request=source,
+            started=VideoStarted(media_id=_MID, project_id=_PID, workflow_id=_WF),
+        )
+        done = VideoResult(
+            status=VideoStatus(media_id=_MID, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=out_mp4,
+            project_id=_PID,
+            workflow_id=_WF,
+        )
+        rec.record_completed_video(
+            profile_name="p1", _profile_dir=tmp_path, request=source, result=done
+        )
+        edit = EditVideoRequest(prompt="snow", source_media_id=_MID)
+        rec.record_completed_video(
+            profile_name="p1", _profile_dir=tmp_path, request=edit, result=done
+        )
+        first_edit = repo.get_operation_for_output_asset("p1", _MID, OperationKind.EDIT)
+        assert first_edit is not None
+        assert first_edit.status == OperationStatus.SUCCEEDED
+
+        failed = VideoResult(
+            status=VideoStatus(media_id=_MID, status="MEDIA_GENERATION_STATUS_FAILED"),
+            local_path=None,
+            project_id=_PID,
+            workflow_id=_WF,
+        )
+        rec.record_completed_video(
+            profile_name="p1", _profile_dir=tmp_path, request=edit, result=failed
+        )
+        row = store.conn.execute(
+            "SELECT duration_seconds, seed, aspect_ratio FROM assets WHERE flow_media_id = ?",
+            (_MID,),
+        ).fetchone()
+        assert tuple(row) == (8.0, 7, Aspect.LANDSCAPE.value)
+        statuses = [
+            r[0]
+            for r in store.conn.execute(
+                "SELECT status FROM operations WHERE mode = ? ORDER BY started_at",
+                (OperationKind.EDIT.value,),
+            )
+        ]
+        assert OperationStatus.SUCCEEDED.value in statuses
+        assert statuses.count(OperationStatus.SUCCEEDED.value) == 1
+        assert len(statuses) == 2
     finally:
         store.close()

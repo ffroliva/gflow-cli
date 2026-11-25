@@ -475,13 +475,20 @@ async def _submit_video_with_evidence(
             ),
         )
     except Exception as exc:
-        if quoted_credits is not None:
-            setattr(exc, "quoted_credits", quoted_credits)  # noqa: B010
-        if started_ids:
-            setattr(exc, "completed_media_ids", started_ids)  # noqa: B010
-            if isinstance(exc, GFlowError):
-                exc.charged, exc.next_action = "maybe", "reconcile"
+        attach_submit_evidence(exc, quoted_credits=quoted_credits, started_ids=started_ids)
         raise
+
+
+def attach_submit_evidence(
+    exc: Exception, *, quoted_credits: int | None, started_ids: list[str]
+) -> None:
+    """Mark a failed submit with its quote and the media ids Flow accepted (it may bill)."""
+    if quoted_credits is not None:
+        setattr(exc, "quoted_credits", quoted_credits)  # noqa: B010
+    if started_ids:
+        setattr(exc, "completed_media_ids", started_ids)  # noqa: B010
+        if isinstance(exc, GFlowError):
+            exc.charged, exc.next_action = "maybe", "reconcile"
 
 
 async def run_video(

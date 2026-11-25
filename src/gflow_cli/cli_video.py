@@ -22,8 +22,10 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     default_project,
+    no_max_credits_option,
     out_file_option,
     output_format_option,
+    resolve_max_credits,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -35,9 +37,6 @@ from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import (
     enforce_credit_cap,
-)
-from gflow_cli.api.credit_cap import (
-    resolve_max_credits as _resolve_max_credits,
 )
 from gflow_cli.api.extend_chain import run_extend_chain
 from gflow_cli.api.transports import migrated_extend
@@ -155,27 +154,6 @@ _max_credits_option = click.option(
 )
 
 
-def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
-    if value:
-        ctx.meta["no_max_credits"] = True
-
-
-_no_max_credits_option = click.option(
-    "--no-max-credits",
-    is_flag=True,
-    expose_value=False,
-    callback=_set_no_max_credits,
-    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
-)
-
-
-def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | None:
-    ctx = click.get_current_context(silent=True)
-    if ctx is not None and ctx.meta.get("no_max_credits"):
-        configured = None
-    return _resolve_max_credits(cli_value, configured)
-
-
 def _warn_persistence_failed_after_success(
     *,
     exc: Exception,
@@ -207,7 +185,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
         (
             click.option("--profile", default=None, help="Profile name (overrides default)."),
             _max_credits_option,
-            _no_max_credits_option,
+            no_max_credits_option,
             tool_option,
             _project_option,
             _project_name_option,
@@ -1692,7 +1670,7 @@ def i2v(  # NOSONAR
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
 @_max_credits_option
-@_no_max_credits_option
+@no_max_credits_option
 @output_format_option(has_out_file=True)
 def r2v(
     prompt: str,
@@ -1819,7 +1797,7 @@ def r2v(
     help="Cap the number of links; error (exit 11) if the manifest has more.",
 )
 @_max_credits_option
-@_no_max_credits_option
+@no_max_credits_option
 @click.option(
     "--yes",
     "-y",
@@ -2453,7 +2431,7 @@ async def _extend_session(  # noqa: PLR0913
 @click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
 @click.option("--profile", default=None, help="Auth profile to use.")
 @_max_credits_option
-@_no_max_credits_option
+@no_max_credits_option
 @output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
     source: str,

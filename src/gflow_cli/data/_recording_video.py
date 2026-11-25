@@ -82,6 +82,11 @@ def _video_req_fields(
     )
 
 
+def _is_in_place_edit(request: _VideoRequest, flow_media_id: str) -> bool:
+    """Flow returned the edited clip under the source's own media id."""
+    return isinstance(request, EditVideoRequest) and request.source_media_id == flow_media_id
+
+
 class VideoRecordingMixin(RecorderCore):
     """Records scenes, extends, videos and failures."""
 
@@ -578,7 +583,11 @@ class VideoRecordingMixin(RecorderCore):
     ) -> None:
         """Upsert the completed video asset or update status for extend in-place."""
         existing_asset = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
-        if request is None and existing_asset is not None:
+        # An edit Flow wrote in place is the source clip's row: its aspect, length and seed
+        # stay as recorded (the edit request carries none of them); only the status moves.
+        if existing_asset is not None and (
+            request is None or _is_in_place_edit(request, flow_media_id)
+        ):
             repo.update_asset_status(
                 profile_name,
                 flow_media_id,
@@ -616,11 +625,15 @@ class VideoRecordingMixin(RecorderCore):
             flow_media_id,
             OperationKind(mode_value),
         )
-        if op is not None:
+        # Only this run's STARTED row: an in-place edit shares its output asset with every
+        # earlier edit of the clip, whose terminal rows are history, never to be rewritten.
+        if op is not None and (
+            op.status == OperationStatus.STARTED or not _is_in_place_edit(request, flow_media_id)
+        ):
             repo.update_operation_status(op.id, terminal[0], completed_at, terminal[1], terminal[2])
             return
 
-        # on_started may have failed — insert a fresh terminal operation
+        # on_started may have failed (or an in-place edit has no row of its own) — insert
         self._insert_fallback_video_operation(
             repo=repo,
             profile_name=profile_name,
@@ -665,9 +678,7 @@ class VideoRecordingMixin(RecorderCore):
             )
 
         if result.local_path is not None or cloud_storage_info is not None:
-            in_place_edit = (
-                isinstance(request, EditVideoRequest) and request.source_media_id == flow_media_id
-            )
+            in_place_edit = request is not None and _is_in_place_edit(request, flow_media_id)
             self._persist_completed_video_file(
                 repo=repo,
                 profile_name=profile_name,

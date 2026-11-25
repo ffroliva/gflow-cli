@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import OutputFormat
+from gflow_cli._cli_helpers import OutputFormat, safe_path_text
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 
@@ -78,44 +78,42 @@ def _relocate_and_record_completed_video(
     return relocated
 
 
-def _emit_video_result(
+def _emit_video_result(  # noqa: PLR0913
     command: str,
     request: Any,
     result: VideoResult,
     output_format: str,
     is_json: bool,
     console: Console,
+    *,
+    noun: str = "Video generation",
+    build: Callable[..., dict[str, Any]] = json_output.video_result,
 ) -> None:
-    """Emit video generation result according to format (id, json, or human table)."""
+    """Emit a one-clip video result according to format (id, json, or human table)."""
+    st = result.status
+    reasons = ", ".join(st.failure_reasons) or st.error_message or "unknown reason"
     if output_format == OutputFormat.ID.value:
-        if not result.status.succeeded:
-            reasons = (
-                ", ".join(result.status.failure_reasons)
-                or result.status.error_message
-                or "unknown reason"
-            )
-            Console(stderr=True).print(f"[red]Video generation failed:[/red] {escape(reasons)}")
+        if not st.succeeded:
+            Console(stderr=True).print(f"[red]{noun} failed:[/red] {escape(reasons)}")
             raise SystemExit(1)
-        if result.status.media_id:
-            click.echo(result.status.media_id)
+        if st.media_id:
+            click.echo(st.media_id)
         return
 
     if is_json or output_format == OutputFormat.JSON.value:
-        json_output.emit(json_output.video_result(command=command, request=request, result=result))
-        if not result.status.succeeded:
+        json_output.emit(build(command=command, request=request, result=result))
+        if not st.succeeded:
             raise SystemExit(1)
         return
 
-    if not result.status.succeeded:
-        reasons = (
-            ", ".join(result.status.failure_reasons)
-            or result.status.error_message
-            or "unknown reason"
-        )
-        console.print(f"[red]Video generation failed:[/red] {escape(reasons)}")
+    if not st.succeeded:
+        console.print(f"[red]{noun} failed:[/red] {escape(reasons)}")
         raise SystemExit(1)
 
-    console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
+    local = result.local_path
+    # Escaped: a path may contain Rich markup such as "[red]".
+    saved = safe_path_text(local) if isinstance(local, Path) else str(local)
+    console.print(f"[bold green]Saved:[/bold green] {escape(saved)}")
 
 
 def _emit_chain_result(

@@ -581,6 +581,8 @@ class FlowWorker:
                 )
 
             elif task.task_type in ("extend", "edit"):
+                # Kept for the failure record below: the edit's prompt and model.
+                req = task.decoded.request if task.decoded is not None else None
                 run_clip_task = {
                     "extend": self._run_video_extend_task,
                     "edit": self._run_video_edit_task,
@@ -669,7 +671,9 @@ class FlowWorker:
                     mode=op_kind,
                     exc=exc,
                     request=req
-                    if isinstance(req, (GenerateImageRequest, GenerateVideoRequest))
+                    if isinstance(
+                        req, (GenerateImageRequest, GenerateVideoRequest, EditVideoRequest)
+                    )
                     else None,
                     flow_project_id=checkpoint_project_id[0],
                     flow_media_ids=started_media_ids,

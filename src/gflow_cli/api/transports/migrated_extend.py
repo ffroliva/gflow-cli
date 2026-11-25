@@ -375,12 +375,15 @@ def submit_facts(body: str) -> tuple[str | None, str | None]:
     )
 
 
-def _single_extend_entry(body: str, *, route: str) -> tuple[Any, GFlowError | None]:
-    frames = _decode_rpc_frames(EXTEND_SUBMIT_RPC, body)
+def _single_extend_entry(
+    body: str, *, route: str, rpc: str = EXTEND_SUBMIT_RPC
+) -> tuple[Any, GFlowError | None]:
+    """The one entry of the one *rpc* frame (extend's ``fZytfe``, edit's ``jIps6``)."""
+    frames = _decode_rpc_frames(rpc, body)
     if len(frames) != 1:
         return None, WireFormatError(
             detail=(
-                f"migrated host: expected one {EXTEND_SUBMIT_RPC} frame, found {len(frames)} "
+                f"migrated host: expected one {rpc} frame, found {len(frames)} "
                 "— refused before Flow acted on it"
             ),
             route=route,
@@ -389,7 +392,7 @@ def _single_extend_entry(body: str, *, route: str) -> tuple[Any, GFlowError | No
     if not isinstance(entries, list) or len(cast("list[Any]", entries)) != 1:
         return None, WireFormatError(
             detail=(
-                f"migrated host: expected one {EXTEND_SUBMIT_RPC} extend entry — "
+                f"migrated host: expected one {rpc} single-clip entry — "
                 "refused before Flow acted on it"
             ),
             route=route,
@@ -435,13 +438,18 @@ def _check_extend_duration(
 
 
 def _check_extend_reference_ids(
-    entry: Any, *, expected_reference_ids: tuple[str, ...], route: str
+    entry: Any,
+    *,
+    expected_reference_ids: tuple[str, ...],
+    route: str,
+    rpc: str = EXTEND_SUBMIT_RPC,
 ) -> GFlowError | None:
+    """Refuse unless ``entry[8]`` holds exactly the expected ids, in order (fails closed)."""
     sent = _extract_reference_ids(entry)
     if sent is None:
         return WireFormatError(
             detail=(
-                f"migrated host: could not read {EXTEND_SUBMIT_RPC} reference slots — "
+                f"migrated host: could not read {rpc} reference slots — "
                 "refused before Flow billed it"
             ),
             route=route,
@@ -459,7 +467,7 @@ def _check_extend_reference_ids(
             mismatch = f"expected order {expected[:4]}, got {sent[:4]}"
         return WireFormatError(
             detail=(
-                f"migrated host: {EXTEND_SUBMIT_RPC} references did not match the request "
+                f"migrated host: {rpc} references did not match the request "
                 f"({mismatch}) — refused before Flow billed it"
             ),
             route=route,

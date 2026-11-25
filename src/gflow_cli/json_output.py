@@ -187,6 +187,33 @@ def image_result(
     return payload
 
 
+def _clip_payload(
+    command: str, result: VideoResult, request_block: dict[str, Any], **ids: Any
+) -> dict[str, Any]:
+    """The result fields every one-clip video command shares, plus its ``request`` block."""
+    st = result.status
+    payload: dict[str, Any] = {
+        "status": "ok" if st.succeeded else "fail",
+        "command": command,
+        "media_id": st.media_id,
+        **ids,
+        "generation_status": st.status,
+        "succeeded": st.succeeded,
+        "local_path": str(result.local_path) if result.local_path is not None else None,
+        "failure_reasons": list(st.failure_reasons),
+        "error_message": st.error_message,
+        "request": request_block,
+    }
+    if result.quoted_credits is not None:
+        payload["quoted_credits"] = result.quoted_credits
+    if not st.succeeded:
+        # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
+        payload.update(charged="maybe", next_action="reconcile")
+        if st.media_id:
+            payload["operation_id"] = st.media_id
+    return payload
+
+
 def video_result(
     *,
     command: str,
@@ -201,17 +228,10 @@ def video_result(
     rather than faked. ``status`` is "ok"/"fail" mirroring ``succeeded``;
     ``generation_status`` is the raw ``MEDIA_GENERATION_STATUS_*`` wire value.
     """
-    st = result.status
-    payload: dict[str, Any] = {
-        "status": "ok" if st.succeeded else "fail",
-        "command": command,
-        "media_id": st.media_id,
-        "generation_status": st.status,
-        "succeeded": st.succeeded,
-        "local_path": str(result.local_path) if result.local_path is not None else None,
-        "failure_reasons": list(st.failure_reasons),
-        "error_message": st.error_message,
-        "request": {
+    return _clip_payload(
+        command,
+        result,
+        {
             "model": request.model.value if request.model is not None else None,
             "mode": request.mode.value,
             "aspect": request.aspect.value,
@@ -219,15 +239,7 @@ def video_result(
             "count": request.count,
             "seed": request.seed,
         },
-    }
-    if result.quoted_credits is not None:
-        payload["quoted_credits"] = result.quoted_credits
-    if not st.succeeded:
-        # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
-        payload.update(charged="maybe", next_action="reconcile")
-        if st.media_id:
-            payload["operation_id"] = st.media_id
-    return payload
+    )
 
 
 def edit_video_result(
@@ -236,33 +248,19 @@ def edit_video_result(
     request: EditVideoRequest,
     result: VideoResult,
 ) -> dict[str, Any]:
-    """Complete result for a ``video edit`` run."""
-    st = result.status
-    payload: dict[str, Any] = {
-        "status": "ok" if st.succeeded else "fail",
-        "command": command,
-        "media_id": st.media_id,
-        "project_id": result.project_id,
-        "workflow_id": result.workflow_id,
-        "generation_status": st.status,
-        "succeeded": st.succeeded,
-        "local_path": str(result.local_path) if result.local_path is not None else None,
-        "failure_reasons": list(st.failure_reasons),
-        "error_message": st.error_message,
-        "request": {
+    """Complete result for a ``video edit`` run (the video shape plus project and workflow)."""
+    return _clip_payload(
+        command,
+        result,
+        {
             "source_video": str(request.source_video) if request.source_video is not None else None,
             "source_media_id": request.source_media_id,
-            "model": request.model.value if request.model is not None else None,
+            "model": request.model.value,
             "mode": "edit",
             "aspect": request.aspect.value if request.aspect is not None else None,
             "resolution": request.resolution,
             "reference_count": len(request.reference_images),
         },
-    }
-    if result.quoted_credits is not None:
-        payload["quoted_credits"] = result.quoted_credits
-    if not st.succeeded:
-        payload.update(charged="maybe", next_action="reconcile")
-        if st.media_id:
-            payload["operation_id"] = st.media_id
-    return payload
+        project_id=result.project_id,
+        workflow_id=result.workflow_id,
+    )

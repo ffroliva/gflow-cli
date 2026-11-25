@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 import click
 import structlog
 from rich.console import Console
-from rich.markup import escape
 
 from gflow_cli import json_output
 from gflow_cli._cli_helpers import (
@@ -17,19 +16,21 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    no_max_credits_option,
     out_file_option,
     output_format_option,
+    resolve_max_credits,
     run_with_handlers,
     slugify_project_name,
     spends_credits,
     tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
-from gflow_cli.api.credit_cap import resolve_max_credits as _resolve_max_credits
 from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.transports.migrated_extend import require_migrated_host
 from gflow_cli.api.transports.migrated_video_edit import validate_edit_inputs
 from gflow_cli.api.video import (
+    EDIT_DEFAULT_MODEL,
     MAX_EDIT_REFERENCE_IMAGES,
     Aspect,
     EditVideoRequest,
@@ -38,7 +39,10 @@ from gflow_cli.api.video import (
     is_media_uuid,
 )
 from gflow_cli.cli_video_extend import refuse_unported_extend, resolve_extend_project
-from gflow_cli.cli_video_reporting import _relocate_and_record_completed_video
+from gflow_cli.cli_video_reporting import (
+    _emit_video_result,
+    _relocate_and_record_completed_video,
+)
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
@@ -46,22 +50,10 @@ from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
-    from gflow_cli.api.video import VideoResult
+    pass
 
 console = Console()
 logger = structlog.get_logger(__name__)
-
-
-def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
-    if value:
-        ctx.meta["no_max_credits"] = True
-
-
-def _resolve_edit_max_credits(cli_value: int | None, configured: int | None) -> int | None:
-    ctx = click.get_current_context(silent=True)
-    if ctx is not None and ctx.meta.get("no_max_credits"):
-        configured = None
-    return _resolve_max_credits(cli_value, configured)
 
 
 def _classify_source(source: str) -> tuple[Path | None, str | None]:
@@ -74,43 +66,6 @@ def _classify_source(source: str) -> tuple[Path | None, str | None]:
             param_hint="SOURCE",
         )
     return path.resolve(), None
-
-
-def _emit_edit_result(
-    *,
-    request: EditVideoRequest,
-    result: VideoResult,
-    output_format: str,
-    is_json: bool,
-) -> None:
-    if output_format == OutputFormat.ID.value:
-        if not result.status.succeeded:
-            reasons = (
-                ", ".join(result.status.failure_reasons)
-                or result.status.error_message
-                or "unknown reason"
-            )
-            Console(stderr=True).print(f"[red]Video edit failed:[/red] {escape(reasons)}")
-            raise SystemExit(1)
-        if result.status.media_id:
-            click.echo(result.status.media_id)
-        return
-    if is_json or output_format == OutputFormat.JSON.value:
-        json_output.emit(
-            json_output.edit_video_result(command="video edit", request=request, result=result)
-        )
-        if not result.status.succeeded:
-            raise SystemExit(1)
-        return
-    if not result.status.succeeded:
-        reasons = (
-            ", ".join(result.status.failure_reasons)
-            or result.status.error_message
-            or "unknown reason"
-        )
-        console.print(f"[red]Video edit failed:[/red] {escape(reasons)}")
-        raise SystemExit(1)
-    console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
 
 
 async def _edit_and_report(
@@ -195,11 +150,15 @@ async def _edit_and_report(
     finally:
         recorder.close()
 
-    _emit_edit_result(
-        request=request,
-        result=result,
-        output_format=output_format,
-        is_json=is_json,
+    _emit_video_result(
+        "video edit",
+        request,
+        result,
+        output_format,
+        is_json,
+        console,
+        noun="Video edit",
+        build=json_output.edit_video_result,
     )
 
 
@@ -240,13 +199,7 @@ async def _edit_and_report(
     default=None,
     help="Refuse before submit if Flow's quote exceeds this cap (default: GFLOW_CLI_MAX_CREDITS).",
 )
-@click.option(
-    "--no-max-credits",
-    is_flag=True,
-    expose_value=False,
-    callback=_set_no_max_credits,
-    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
-)
+@no_max_credits_option
 @tool_option
 @click.option(
     "--project",
@@ -318,13 +271,13 @@ def edit(
         prompt, tool_specs, category="video", quiet=quiet_output
     )
     settings = get_settings()
-    effective_max = _resolve_edit_max_credits(max_credits, settings.max_credits)
+    effective_max = resolve_max_credits(max_credits, settings.max_credits)
     request = EditVideoRequest(
         prompt=prompt_to_send,
         source_video=source_video,
         source_media_id=source_media_id,
         reference_images=tuple(p.resolve() for p in refs),
-        model=VideoModel.from_cli(model),
+        model=VideoModel.from_cli(model) or EDIT_DEFAULT_MODEL,
         aspect=Aspect.from_cli(aspect) if aspect is not None else None,
         resolution=resolution.lower() if resolution is not None else None,
         max_credits=effective_max,

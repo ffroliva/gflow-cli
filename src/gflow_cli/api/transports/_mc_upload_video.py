@@ -9,6 +9,7 @@ this video" dialog is never accepted for the user.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import os
@@ -28,7 +29,7 @@ from gflow_cli.api.transports._mc_common import (
 from gflow_cli.errors import MediaUploadRejectedError
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator
 
     from playwright.async_api import Page
 
@@ -113,30 +114,37 @@ async def upload_video(page: Page, project_id: str, video_path: Path) -> str:
     return media_id
 
 
-@contextlib.contextmanager
-def _run_unique_link(video_path: Path) -> Generator[Path]:
-    """*video_path* under a run-unique name when a hard link can give one at no cost.
+@contextlib.asynccontextmanager
+async def _run_unique_name(video_path: Path) -> AsyncGenerator[Path]:
+    """*video_path* under a run-unique name, for a clip found again by name in the picker.
 
-    A clip found again by name in the ``@`` picker needs a name no earlier upload has.
-    A hard link costs nothing; across drives it fails, and the file is sent under its
-    own name rather than copied (up to 1 GB).
+    A hard link in a private folder next to the source costs nothing and stays on the same
+    volume; where the volume has no hard links, a copy there. If neither is possible (a
+    read-only folder, a full disk) the file is sent under its own name, with a warning: an
+    earlier upload of the same name then makes the picker ambiguous, which is refused.
     """
-    tmp_dir = Path(tempfile.mkdtemp(prefix="gflow-vid-"))
-    link = tmp_dir / _unique_display_name(video_path)
+    tmp_dir: Path | None = None
+    send = video_path
     try:
-        os.link(video_path, link)
-        send = link
-    except OSError:
-        send = video_path
+        tmp_dir = Path(tempfile.mkdtemp(prefix=".gflow-upload-", dir=video_path.parent))
+        target = tmp_dir / _unique_display_name(video_path)
+        try:
+            os.link(video_path, target)
+        except OSError:
+            await asyncio.to_thread(shutil.copyfile, video_path, target)
+        send = target
+    except OSError as exc:
+        log.warning("migrated.video_upload_plain_name", error=type(exc).__name__)
     try:
         yield send
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        if tmp_dir is not None:
+            await asyncio.to_thread(shutil.rmtree, tmp_dir, True)
 
 
 async def upload_video_for_mention(page: Page, project_id: str, video_path: Path) -> UploadedVideo:
     """Upload a validated *video_path* that the composer will ``@``-mention by name."""
-    with _run_unique_link(video_path) as send:
+    async with _run_unique_name(video_path) as send:
         media_id, workflow_id = await _upload(page, project_id, send)
     return UploadedVideo(media_id=media_id, workflow_id=workflow_id, query_name=send.stem)
 

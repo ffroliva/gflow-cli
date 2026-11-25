@@ -837,8 +837,7 @@ class GenerationSurface(WorkspaceSurface):
             msg = f"transport {type(self.transport).__name__} does not support video editing"
             raise RuntimeError(msg)
         await validate_edit_inputs(req)
-        if req.model is not None:
-            warn_if_retiring(req.model, today=_today())
+        warn_if_retiring(req.model, today=_today())
         try:
             return await self.transport.edit_video(
                 request=req,

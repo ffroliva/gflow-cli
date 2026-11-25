@@ -1138,7 +1138,9 @@ gflow video edit 11111111-2222-3333-4444-555555555555 "add light drifting snow" 
 ```
 
 A local file is uploaded with Flow's toolbar uploader and attached in the main composer's
-Ingredients mode; a media UUID is edited in the clip editor. Flow's one-time "rights to use this
+Ingredients mode; a media UUID is edited in the clip editor. Uploaded clips and references are
+attached through the `@` picker under a run-unique name once Flow has processed them (up to
+90 seconds each). Flow's one-time "rights to use this
 video" dialog is never accepted for you: accept it once by hand in Flow.
 
 ### Flags
@@ -1148,18 +1150,19 @@ video" dialog is never accepted for you: accept it once by hand in Flow.
 | `SOURCE` | A Flow media UUID (a clip in the project) or a local `.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi` file of up to 1 GB |
 | `--ref PATH` | Local reference image, repeatable, up to 5, attached in order (Flow drops references past 5 on `jIps6`) |
 | `--model` | `omni-1.2` (default), `omni-1.2-flash` or `omni-flash`; Flow edits with Omni models only |
-| `--aspect 9:16\|16:9` | Local file only: output aspect. A clip is edited in its own aspect; a different `--aspect` exits 36 before the submit |
-| `--resolution 360p\|720p` | `360p` needs a local file (the clip editor has no 360p toggle, exit 36 before any click) |
-| `--max-credits N` | Refuse (exit 45, `charged: no`) unless Flow's pre-submit quote, read once the clip and references are attached, is readable and at most `N`. Default: `GFLOW_CLI_MAX_CREDITS`; `--no-max-credits` ignores it |
+| `--aspect 9:16\|16:9` | Local file only: output aspect; omitted, Flow's current setting is kept. A clip is edited in its own aspect; a different `--aspect` exits 36 before the submit |
+| `--resolution 360p\|720p` | Omitted, Flow's current setting is kept. `360p` needs a local file (the clip editor has no 360p toggle, exit 36 before any click) |
+| `--max-credits N` | Refuse (exit 45, `charged: no`) unless Flow's pre-submit quote is readable and at most `N`. It is read once the settings, the clip and the references are in place, and only after it has held one value for 3 seconds. Default: `GFLOW_CLI_MAX_CREDITS`; `--no-max-credits` ignores it |
 | `--project ID` | The project owning a `MEDIA_ID` (else the catalog's record, else `GFLOW_CLI_PROJECT`); optional for a local file |
 | `--project-name NAME` | Local file: the name of the project created when none is given |
 | `--tool NAME` | Prompt tool applied before submission (as on `video t2v`) |
 | `--out-dir DIR` / `--out-file FILE` | Where the edited mp4 is written |
 | `--json` / `--output-format` | Machine-readable result, or the media id only |
 
-Refusals that cost nothing, all before any project is created or anything is uploaded: a file
-that is missing, not a supported video or image, or over the size limit (exit 11), a media
-UUID with no known project (exit 11), and `GFLOW_CLI_FLOW_HOST=labs.google` (exit 36: video
+Refusals that cost nothing, all before any project is created or anything is uploaded: a
+`SOURCE` that is neither a media UUID nor an existing file, or a missing `--ref` (exit 2, a
+usage error), a file that is not a supported video or image or is over the size limit
+(exit 11), a media UUID with no known project (exit 11), and `GFLOW_CLI_FLOW_HOST=labs.google` (exit 36: video
 edit runs on `flow.google.com` only). While the edit is prepared, any submit the page sends is
 aborted, and the submitted `jIps6` is checked against the request (source workflow, model,
 resolution, aspect and reference set) before Flow sees it. The MCP twin is
