@@ -14,7 +14,7 @@
 - No API key: gflow-cli needs no Gemini or Vertex AI key; it uses the Google account's own Flow access and Flow credits.
 - Compared with other Google Flow automation tools (README comparison table, each project's README read on 2026-11-25): as of that date, gflow-cli is the only project in that table that installs from PyPI and is listed in the official MCP Registry. kodelyx/flow-agent is also both a CLI and an MCP server (5 MCP tools against gflow-cli's 29), and it offers credit pooling across accounts, which gflow-cli does not. Both offer an OpenAI-compatible API; gflow-cli's covers images (`POST /v1/images/generations` on `gflow serve`) and video is planned (#1365). Features gflow-cli does not have yet are tracked in https://github.com/ffroliva/gflow-cli/issues/1367.
 - Name: other projects also use the name gflow-cli, including Node.js packages on npm and JSR. This one is the Python package `gflow-cli` on PyPI, maintained at https://github.com/ffroliva/gflow-cli.
-- Maturity: beta; every release since v0.54.0 is live-verified against real Google Flow. Releases are listed in https://raw.githubusercontent.com/ffroliva/gflow-cli/main/CHANGELOG.md.
+- Maturity: beta; every release since v0.54.0 is live-verified against real Google Flow. Releases are listed in [CHANGELOG.md](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/CHANGELOG.md).
 - Not supported: browser-free (serverless) video generation, because every billed submit needs a reCAPTCHA Enterprise token minted in a live page.
 
 ## Details
