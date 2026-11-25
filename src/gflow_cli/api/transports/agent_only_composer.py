@@ -52,6 +52,7 @@ from playwright.async_api import Error as PlaywrightError
 from gflow_cli.api.credit_cap import parse_credit_quote
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import Aspect as ImageAspect
+from gflow_cli.api.image import ThinkingLevel
 from gflow_cli.api.transports._mc_common import (
     AGENT_PANEL,
     AGENT_PANEL_OPEN,
@@ -276,6 +277,7 @@ class DefaultsSnapshot:
     count_index: int
     model_text: str
     confirm_value: str = "1"
+    thinking_index: int = -1
 
 
 def compose_image_directive(prompt: str, count: int, aspect_label: str) -> str:
@@ -711,6 +713,7 @@ class _AgentSettingsMixin:
         count: int,
         model: ModelMenuMatcher | None,
         confirm: Confirm,
+        thinking_level: ThinkingLevel | None = None,
     ) -> DefaultsSnapshot:
         """Set this run's defaults, Save, and return what to restore."""
         with nothing_submitted():  # #1320: settings are bound before any submit
@@ -722,6 +725,11 @@ class _AgentSettingsMixin:
                     count=count,
                     model=model,
                     confirm=confirm,
+                    thinking_level=thinking_level,
+                )
+            if section == "image" and thinking_level is not None:
+                raise ConfigurationError(
+                    detail="agent-only composer: legacy settings pane has no thinking-level control"
                 )
             await self._open_pane(page)
             base = _GROUP_BASE[section]
@@ -990,6 +998,23 @@ class _AgentSettingsMixin:
             or clicked
         )
 
+    async def _set_unified_thinking_level(self, page: Page, thinking_level: ThinkingLevel) -> bool:
+        if await page.locator(DEFAULTS_TOGGLE_GROUP).count() < 3:
+            raise ConfigurationError(
+                detail="agent-only composer: image defaults render no thinking-level control"
+            )
+        n_radios = await page.locator(DEFAULTS_TOGGLE_GROUP).nth(2).locator(TOGGLE_RADIO).count()
+        try:
+            target_idx = thinking_level.radio_index(n_radios)
+        except ValueError as exc:
+            raise ConfigurationError(
+                detail=f"agent-only composer: {exc}",
+                remediation_hint="Choose a thinking level offered by the Flow defaults pane.",
+            ) from exc
+        return await self._check_radio(
+            page, 2, target_idx, "thinking_level", groups=DEFAULTS_TOGGLE_GROUP
+        )
+
     async def _apply_unified(
         self,
         page: Page,
@@ -999,25 +1024,34 @@ class _AgentSettingsMixin:
         count: int,
         model: ModelMenuMatcher | None,
         confirm: Confirm,
+        thinking_level: ThinkingLevel | None = None,
     ) -> DefaultsSnapshot:
         await self._open_unified(page)
         confirm_value = await self._unified_confirm_value(page)
         await self._open_defaults(page, section)
+        want_think = section == "image" and thinking_level is not None
+        has_think_before = want_think and await page.locator(DEFAULTS_TOGGLE_GROUP).count() >= 3
         snapshot = DefaultsSnapshot(
             section=section,
             aspect_index=await self._checked_index(page, 0, groups=DEFAULTS_TOGGLE_GROUP),
             count_index=await self._checked_index(page, 1, groups=DEFAULTS_TOGGLE_GROUP),
             model_text=await self._unified_model(page),
             confirm_value=confirm_value,
+            thinking_index=(
+                await self._checked_index(page, 2, groups=DEFAULTS_TOGGLE_GROUP)
+                if has_think_before
+                else -1
+            ),
         )
-        for name, readable in (
+        checks = (
             ("confirm", bool(confirm_value)),
             ("model", bool(snapshot.model_text)),
             ("aspect", snapshot.aspect_index >= 0),
             ("count", snapshot.count_index >= 0),
-        ):
+            *(("thinking_level", snapshot.thinking_index >= 0) for _ in (1,) if has_think_before),
+        )
+        for name, readable in checks:
             if not readable:
-                # Nothing changed yet; with no original to restore, nothing may be changed.
                 await self._leave_unified(page)
                 raise UiSelectorDriftError(
                     detail=f"agent-only composer: the {section} {name} choice is unreadable"
@@ -1026,9 +1060,11 @@ class _AgentSettingsMixin:
             try:
                 clicked = await self._set_aspect_and_count(page, aspect_ligature, count)
                 if model is not None and await self._choose_unified_model(page, section, model):
-                    # A model switch can put the aspect and count back to that model's own.
                     await self._set_aspect_and_count(page, aspect_ligature, count)
                     clicked = True
+                if want_think:
+                    assert thinking_level is not None
+                    clicked |= await self._set_unified_thinking_level(page, thinking_level)
                 aspect = await self._aspect_label(page, aspect_ligature)
                 chosen = await self._unified_model(page)
                 await self._open_unified(page)
@@ -1038,14 +1074,8 @@ class _AgentSettingsMixin:
                     page, section, model=chosen, aspect=aspect, count=count
                 )
                 await self._leave_unified(page)
-                # The row is the pane's own state; the run's defaults are the account's only
-                # once every queued save has been answered.
                 await saves.settled(f"applying the {section} defaults", clicked=clicked)
             except BaseException:  # a cancel too: every click here is already saved
-                # No Save and no discard on this build: whatever was clicked is already the
-                # account's. Write the originals back before failing, so the next run does not
-                # snapshot this run's values as them. The same watch, so the apply's saves
-                # still queued count too: the originals queue behind them.
                 await self._rollback_unified(page, snapshot, saves)
                 raise
         log.info(
@@ -1054,6 +1084,7 @@ class _AgentSettingsMixin:
             aspect=aspect_ligature,
             count=count,
             confirm=confirm,
+            thinking_level=thinking_level.value if thinking_level else None,
             row=row,
         )
         return snapshot
@@ -1099,6 +1130,10 @@ class _AgentSettingsMixin:
             if snapshot.count_index >= 0:
                 clicked |= await self._check_radio(
                     page, 1, snapshot.count_index, "count", groups=DEFAULTS_TOGGLE_GROUP
+                )
+            if snapshot.thinking_index >= 0:
+                clicked |= await self._check_radio(
+                    page, 2, snapshot.thinking_index, "thinking_level", groups=DEFAULTS_TOGGLE_GROUP
                 )
             await self._leave_unified(page)
         except BaseException:
@@ -1832,6 +1867,7 @@ async def run_agent_images(
         count=request.count,
         model=IMAGE_MODEL_MENU_MATCHERS[request.model],
         confirm=_confirm_setting(),
+        thinking_level=request.thinking_level,
     )
     try:
         media = await composer.generate(

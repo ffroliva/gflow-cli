@@ -604,3 +604,113 @@ def test_browser_proxy_unset_is_a_pass(
     [row] = [f for f in report.findings if f.check == "env.browser_proxy"]
     assert row.severity == "pass"
     assert "GFLOW_CLI_BROWSER_PROXY" in row.summary
+
+
+# ---------------------------------------------------------------------------
+# Absent vs corrupt/unreadable catalog DB
+# ---------------------------------------------------------------------------
+
+_DB_REQUIRED_CHECK_IDS = frozenset(
+    {
+        "catalog.display_name_missing",
+        "catalog.local_file_missing",
+        "catalog.sha256_null",
+        "db.migration_drift",
+        "operations.stuck_started",
+        "queue.stuck_processing",
+    }
+)
+_ALL_DB_CHECK_IDS = _DB_REQUIRED_CHECK_IDS | {"db.wal_state"}
+
+
+def test_absent_db_reports_info_and_overall_ok(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+) -> None:
+    missing_dir = tmp_path / "missing"
+    db = missing_dir / "gflow.db"
+    report = run_all(db, get_settings())
+    by_check = {f.check: f for f in report.findings}
+    assert set(by_check) == set(CHECK_IDS)
+    for check_id in _ALL_DB_CHECK_IDS:
+        finding = by_check[check_id]
+        assert finding.severity == "info", (check_id, finding)
+        assert "no catalog database yet" in finding.summary
+        assert finding.remediation == ""
+        assert finding.row_uuids == ()
+    assert report.overall_status == "ok"
+    assert not db.exists()
+    assert not missing_dir.exists()
+    assert not db.with_name(db.name + "-wal").exists()
+    assert not db.with_name(db.name + "-shm").exists()
+
+
+def test_absent_db_still_surfaces_env_and_auth_warnings(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gflow_cli.profile_store.list_profiles", list)
+    report = run_all(tmp_path / "fresh" / "gflow.db", get_settings())
+    by_check = {f.check: f for f in report.findings}
+    for check_id in _ALL_DB_CHECK_IDS:
+        assert by_check[check_id].severity == "info"
+    assert by_check["auth.files_present"].severity == "warn"
+    assert report.overall_status == "issues"
+
+
+def test_absent_db_still_flags_orphan_wal_sidecar(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+) -> None:
+    db = tmp_path / "gflow.db"
+    db.with_name(db.name + "-wal").write_bytes(b"\x00" * 128)
+    report = run_all(db, get_settings())
+    by_check = {f.check: f for f in report.findings}
+    for check_id in _DB_REQUIRED_CHECK_IDS:
+        assert by_check[check_id].severity == "info"
+    assert by_check["db.wal_state"].severity == "warn"
+    assert report.overall_status == "issues"
+
+
+def test_corrupt_existing_db_still_fails_db_checks(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+) -> None:
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"not a sqlite database")
+    report = run_all(db, get_settings())
+    by_check = {f.check: f for f in report.findings}
+    for check_id in _DB_REQUIRED_CHECK_IDS:
+        assert by_check[check_id].severity == "fail", (check_id, by_check[check_id])
+        assert "DataStoreError" in by_check[check_id].summary
+    assert report.overall_status == "issues"
+
+
+def test_directory_at_db_path_still_fails_db_checks(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+) -> None:
+    db = tmp_path / "dir_as_db.db"
+    db.mkdir()
+    report = run_all(db, get_settings())
+    by_check = {f.check: f for f in report.findings}
+    for check_id in _DB_REQUIRED_CHECK_IDS:
+        assert by_check[check_id].severity == "fail", (check_id, by_check[check_id])
+    assert report.overall_status == "issues"
+
+
+def test_dangling_symlink_at_db_path_still_fails_db_checks(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+) -> None:
+    db = tmp_path / "dangling.db"
+    try:
+        db.symlink_to(tmp_path / "missing_target.db")
+    except OSError:
+        pytest.skip("symlinks unavailable")
+    report = run_all(db, get_settings())
+    by_check = {f.check: f for f in report.findings}
+    for check_id in _DB_REQUIRED_CHECK_IDS:
+        assert by_check[check_id].severity == "fail", (check_id, by_check[check_id])
+    assert report.overall_status == "issues"

@@ -174,3 +174,46 @@ async def test_a_held_profile_is_the_profile_locked_envelope(
     assert result["error"]["type"] == "https://gflow-cli.dev/errors/profile-locked"
     assert result["error"]["next_action"] == "wait"
     assert "GFLOW_CLI_LEASE_WAIT_SECONDS" in result["error"]["remediation_hint"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", list(FlowSessionOutcome))
+async def test_is_error_follows_the_probe_outcome(
+    outcome: FlowSessionOutcome, monkeypatch: pytest.MonkeyPatch, mcp_server: Any
+) -> None:
+    """#1464: a session the probe cannot verify is a failure, as `gflow auth status` exits 1."""
+    from mcp import Client
+
+    from gflow_cli.mcp import tools
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(tools.verification, "verify_flow_profile", _probe(outcome))
+    async with Client(mcp_server, mode="2026-07-28") as client:
+        result = await client.call_tool("gflow_auth_status", {})
+
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == outcome.value
+    assert result.is_error is (outcome is not FlowSessionOutcome.AUTHENTICATED)
+
+
+@pytest.mark.asyncio
+async def test_a_throttled_probe_is_flagged(
+    monkeypatch: pytest.MonkeyPatch, mcp_server: Any
+) -> None:
+    """#1464: refusing to probe a throttled account is not a verified session."""
+    from mcp import Client
+
+    from gflow_cli.api import flow_wire
+    from gflow_cli.mcp import tools
+
+    async def throttled(_d: Path) -> dict[str, object]:
+        return {"status": "throttled", "build": None, "retry_after": 42}
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(flow_wire, "health", throttled)
+    async with Client(mcp_server, mode="2026-07-28") as client:
+        result = await client.call_tool("gflow_auth_status", {})
+
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == "throttled"
+    assert result.is_error is True

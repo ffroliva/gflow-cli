@@ -8,6 +8,7 @@ A part of `MigratedComposer`, moved byte-identical from
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -15,6 +16,7 @@ from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote
 from gflow_cli.api.image import Model as ImageModel
+from gflow_cli.api.image import ThinkingLevel
 from gflow_cli.api.model_catalog import retires_on
 from gflow_cli.api.transports._mc_common import (
     AGENT_MODE_REMEDIATION,
@@ -182,11 +184,13 @@ class SettingsPaneMixin(EditorGateMixin):
         return quoted
 
     async def apply_image_settings(self, page: Page, request: GenerateImageRequest) -> None:
-        """Bind Image mode, model, aspect and count with read-back before submission."""
+        """Bind Image mode, model, thinking level, aspect, and count with read-back."""
         pane = await self._open_pane(page)
         try:
             await self._select(page, pane, axis="mode", lig="image")
             await self._select_image_model(page, pane, request.model)
+            if request.thinking_level is not None:
+                await self._select_image_thinking_level(page, pane, request.thinking_level)
             await self._select(
                 page,
                 pane,
@@ -199,11 +203,86 @@ class SettingsPaneMixin(EditorGateMixin):
                 model=request.model.value,
                 aspect=request.aspect.value,
                 count=request.count,
+                thinking_level=request.thinking_level.value if request.thinking_level else None,
             )
         except BaseException:
             await self._close_pane(page, strict=False)
             raise
         await self._close_pane(page, strict=True)
+
+    async def _find_thinking_level_group(self, pane: Any) -> Any:
+        """Locate the unique locale-invariant thinking-level radiogroup in the image pane."""
+        groups = pane.locator(RADIOGROUP)
+        group_count = await groups.count()
+        candidates: list[Any] = []
+        for idx in range(group_count):
+            group = groups.nth(idx)
+            if await group.locator("mat-icon, .google-symbols").count():
+                continue
+            radios = group.locator(RADIO)
+            if await radios.count() not in (2, 3):
+                continue
+            labels = [" ".join(t.split()) for t in await radios.all_text_contents()]
+            if any(any(ch.isdigit() for ch in lbl) for lbl in labels):
+                continue
+            candidates.append(group)
+        if not candidates:
+            raise ConfigurationError(
+                detail=(
+                    "the migrated Flow host renders no thinking-level control for image model "
+                    f"({group_count} option groups shown)"
+                ),
+                remediation_hint=(
+                    "Omit --thinking-level or select a model that exposes thinking-level controls."
+                ),
+            )
+        if len(candidates) > 1:
+            raise UiSelectorDriftError(
+                detail=(
+                    f"migrated host: {len(candidates)} ambiguous text-only radiogroups matched "
+                    "while locating image thinking-level toggle (host=migrated)"
+                ),
+            )
+        return candidates[0]
+
+    async def _select_image_thinking_level(
+        self, page: Page, pane: Any, thinking_level: ThinkingLevel
+    ) -> None:
+        """Select image thinking level by structural toggle-group position (locale-invariant)."""
+        radios = (await self._find_thinking_level_group(pane)).locator(RADIO)
+        n_radios = await radios.count()
+        try:
+            target_idx = thinking_level.radio_index(n_radios)
+        except ValueError as exc:
+            raise ConfigurationError(
+                detail=str(exc),
+                remediation_hint="Choose a thinking level offered by the Flow settings pane.",
+            ) from exc
+        target = radios.nth(target_idx)
+        if await target.get_attribute("aria-checked") == "true":
+            log.info(
+                "migrated.image_thinking_level_already_selected",
+                thinking_level=thinking_level.value,
+                option_count=n_radios,
+            )
+            return
+        await target.click(timeout=4000)
+        deadline = time.monotonic() + 3.0
+        while await radios.nth(target_idx).get_attribute("aria-checked") != "true":
+            if time.monotonic() >= deadline:
+                raise UiSelectorDriftError(
+                    detail=(
+                        f"migrated host: image thinking-level radio {thinking_level.value!r} "
+                        f"(index {target_idx}/{n_radios}) did not become aria-checked "
+                        "(host=migrated)"
+                    ),
+                )
+            await asyncio.sleep(0.1)
+        log.info(
+            "migrated.image_thinking_level_selected",
+            thinking_level=thinking_level.value,
+            option_count=n_radios,
+        )
 
     async def _open_pane(self, page: Page) -> Any:
 

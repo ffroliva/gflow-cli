@@ -53,6 +53,7 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.auth_status_errors import auth_status_error
+from gflow_cli.mcp.envelope_status import outcome_of
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -69,7 +70,7 @@ from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker, run_counted
-from gflow_cli.worker.queue import QueueRepository, mark_interrupted
+from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 log = structlog.get_logger()
 
@@ -328,20 +329,6 @@ def client_key(name: str | None) -> str:
     return name if name in KNOWN_MCP_CLIENTS else "other"
 
 
-def outcome_of(result: dict[str, Any]) -> str:
-    """Return the stable telemetry outcome for an MCP result envelope."""
-    status = result.get("status")
-    if status == "pending":
-        return "queued"
-    if status in {"error", "failed", "rate_limited", "invalid_tools"}:
-        error = result.get("error")
-        code: Any = result.get("exit_code")
-        if code is None and isinstance(error, dict):
-            code = cast(dict[str, Any], error).get("exit_code")
-        return str(code) if code is not None else "error"
-    return "0"
-
-
 def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
     """Resolve the requested profile name using the same precedence as the CLI.
 
@@ -509,6 +496,38 @@ def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
         log.warning("mcp.task.settle_failed", task_id=task_id, error_class=type(exc).__name__)
 
 
+def _completed_outputs(
+    store: DataStore, profile: str, task: QueueTask
+) -> tuple[str | None, str | None, int | None, list[str]]:
+    """Project id, workflow id, seed and every local file of a completed task (#1469)."""
+    if not task.flow_media_id:
+        return None, None, None, []
+    repo = DataRepository(store)
+    cp = task.checkpoint if isinstance(task.checkpoint, dict) else {}
+    catalog_op_id = cp.get("catalog_operation_id")
+    output_assets = repo.get_task_output_assets(
+        profile,
+        task.flow_media_id,
+        operation_id=catalog_op_id if isinstance(catalog_op_id, str) else None,
+        mode=task.task_type,
+    )
+    asset = next(
+        (out for out in output_assets if out.flow_media_id == task.flow_media_id), None
+    ) or repo.get_asset_by_flow_media_id(profile, task.flow_media_id)
+    if not output_assets and asset is not None:
+        output_assets = [asset]
+    files = list(
+        dict.fromkeys(
+            str(lf.path) for out in output_assets for lf in out.local_files if lf.path is not None
+        )
+    )
+    if asset is None:
+        return None, None, None, files
+    # The catalogued seed (#1013): Flow's own on the classic image paths, the
+    # requested one for video, a 0 placeholder on the agentic/agent-only arms.
+    return asset.flow_project_id, asset.flow_workflow_id, asset.seed, files
+
+
 def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
     """The tool reply for a finished task: what ``wait=true`` returns and ``tasks/get`` carries."""
     with DataStore.open(db_path) as store:
@@ -549,24 +568,9 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                     failed["flow_project_id"] = asset.flow_project_id
             return failed | codec.retirement_warnings(completed_task)
 
-        # Resolve local file paths from the asset catalog.
-        file_paths: list[str] = []
-        flow_project_id: str | None = None
-        flow_workflow_id: str | None = None
-        seed: int | None = None
-        if completed_task.flow_media_id:
-            asset = DataRepository(store).get_asset_by_flow_media_id(
-                profile,
-                completed_task.flow_media_id,
-            )
-            if asset:
-                flow_project_id = asset.flow_project_id
-                flow_workflow_id = asset.flow_workflow_id
-                # The catalogued seed (#1013): Flow's own on the classic image paths, the
-                # requested one for video, a 0 placeholder on the agentic/agent-only arms.
-                seed = asset.seed
-                if asset.local_files:
-                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+        flow_project_id, flow_workflow_id, seed, file_paths = _completed_outputs(
+            store, profile, completed_task
+        )
 
     log.info(
         "mcp.tool.task_completed",
@@ -1035,6 +1039,40 @@ def _build_video_media_inputs(
 # ---------------------------------------------------------------------------
 
 
+def _validate_image_ui_and_thinking(
+    ui_mode: str | None, thinking_level: str | None
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    norm_ui = None
+    if ui_mode is not None:
+        norm_ui = ui_mode.lower()
+        if norm_ui not in {m.value for m in UiMode}:
+            return (
+                None,
+                None,
+                _bad_param(
+                    "Invalid ui_mode",
+                    f"Expected one of {[m.value for m in UiMode]}, got {norm_ui!r}.",
+                ),
+            )
+    norm_think = None
+    if thinking_level is not None:
+        from gflow_cli.api.image import ThinkingLevel
+
+        try:
+            resolved = ThinkingLevel.from_cli(thinking_level)
+        except ValueError:
+            return (
+                None,
+                None,
+                _bad_param(
+                    "Invalid thinking_level",
+                    f"Expected one of {[t.value for t in ThinkingLevel]}, got {thinking_level!r}.",
+                ),
+            )
+        norm_think = resolved.value if resolved is not None else None
+    return norm_ui, norm_think, None
+
+
 @server.tool(
     name="gflow_generate_image",
     description=(
@@ -1076,6 +1114,7 @@ async def gflow_generate_image(
     project_name: str | None = None,
     instructions: list[str] | None = None,
     ui_mode: str | None = None,
+    thinking_level: str | None = None,
     out_file: OutFileParam = None,
     wait: _WaitParam = True,
 ) -> dict[str, Any]:
@@ -1125,6 +1164,9 @@ async def gflow_generate_image(
             given), or 'auto' (bind whatever renders, the default). If the arm
             can't be reached, generation aborts before submitting (no credits).
             Overrides GFLOW_CLI_UI_MODE.
+        thinking_level: Optional image thinking level in Flow's settings pane —
+            'low', 'medium', or 'high' (mirrors CLI ``--thinking-level``; omit
+            to leave Flow's current setting untouched).
         out_file: Optional file to write, inside the configured output dir: a relative path
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
         wait: Block until the generation finishes (default) or run it in the background;
@@ -1144,18 +1186,9 @@ async def gflow_generate_image(
         return resolved
     output = resolved
 
-    if ui_mode is not None:
-        # Normalize case to mirror the CLI's click.Choice(case_sensitive=False)
-        # and answer with the same _bad_param RFC 9457 envelope the video tool
-        # uses — this branch previously returned a flat ``error`` string, which
-        # crashes any client reading ``error["title"]`` (see the sibling
-        # rejection in gflow_generate_video).
-        ui_mode = ui_mode.lower()
-        if ui_mode not in {m.value for m in UiMode}:
-            return _bad_param(
-                "Invalid ui_mode",
-                f"Expected one of {[m.value for m in UiMode]}, got {ui_mode!r}.",
-            )
+    ui_mode, thinking_level, ui_err = _validate_image_ui_and_thinking(ui_mode, thinking_level)
+    if ui_err is not None:
+        return ui_err
 
     if not await _rate_limiter.acquire():
         log.warning("mcp.tool.rate_limited", tool="gflow_generate_image")
@@ -1197,6 +1230,8 @@ async def gflow_generate_image(
         payload["instructions"] = list(instructions)
     if ui_mode is not None:
         payload["ui_mode"] = ui_mode
+    if thinking_level is not None:
+        payload["thinking_level"] = thinking_level
     if project is not None:
         payload["project_id"] = project
     if project_name is not None:
@@ -1920,19 +1955,21 @@ async def gflow_upscale_image(
 @server.tool(
     name="gflow_upscale_video",
     description=(
-        "Upscale or export a platform-generated Flow video to 1080p Full HD (or 270p GIF). "
+        "Upscale or export a platform-generated Flow video to 4K Ultra, 1080p Full HD, "
+        "720p, or 270p GIF. "
         "media_id is the UUID of the video to upscale. "
-        "scale is '1080p' (Full HD), '720p' (original, or Flow's upscale of a smaller original), "
-        "or '270p' (animated GIF). "
+        "scale is '4k' (Ultra 2160p upscale; spends credits), '1080p' (Full HD), "
+        "'720p' (original, or Flow's upscale of a smaller original), or '270p' (animated GIF). "
         "project is optional (resolved from the local catalog when omitted). "
         "out_dir is the output directory (defaults to configured videos directory; "
         "must resolve inside the configured output directory). "
         "profile selects the auth profile (defaults to the active profile). "
         "flow.google.com only (GFLOW_CLI_FLOW_HOST=labs.google refuses it). "
-        "Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p); "
-        "a scale the clip's menu does not list returns UpscaleUnavailableError (exit 22) "
-        "naming the scales it does list. "
-        "Measured free (1 observation, 2026-10-07): the 1080p export spent no credits."
+        "Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p; "
+        "4k requires Flow Ultra); a scale the clip's menu does not list returns "
+        "UpscaleUnavailableError (exit 22) naming the scales it does list. "
+        "Measured: 1080p export spent 0 credits (2026-10-07); 4k Ultra export spends credits "
+        "(measured 50 credits on Omni 1.2 Flash, 2026-11-23)."
     ),
 )
 @_guarded
@@ -1943,14 +1980,15 @@ async def gflow_upscale_video(
     out_dir: str | None = None,
     profile: str = _DEFAULT_PROFILE,
 ) -> dict[str, Any]:
-    """Upscale or export a platform-generated video to 1080p, 720p, or 270p.
+    """Upscale or export a platform-generated video to 4k, 1080p, 720p, or 270p.
 
-    Driven on flow.google.com only. Measured free (1 observation, 2026-10-07), so this
-    tool is deliberately not in ``_SPEND_TOOLS``.
+    Driven on flow.google.com only. 1080p/720p/270p exports are free; 4k spends
+    Flow Ultra credits (50 credits measured on Omni 1.2 Flash).
 
     Args:
         media_id: The Flow media ID (UUID) of the generated video.
-        scale: Target quality: '1080p' (enhanced), '720p' (original or upscaled), or '270p' (GIF).
+        scale: Target quality: '4k' (Ultra 2160p, spends credits), '1080p' (enhanced),
+            '720p' (original or upscaled), or '270p' (GIF).
         project: Project UUID that owns the media. Resolved from local catalog when omitted.
         out_dir: Output directory, inside the configured output dir (the default).
         profile: Profile name (overrides default).
@@ -2158,7 +2196,8 @@ async def gflow_usage_stats(weeks: int = 12) -> dict[str, Any]:
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
         "BEFORE a generation tool to fail fast on expired auth, before a long "
-        "blocking generation call. Never starts an interactive login flow. May boot a "
+        "blocking generation call. The result has isError true unless `status` is "
+        "`authenticated`. Never starts an interactive login flow. May boot a "
         "short-lived headless browser, which on flow.google.com is the usual path, and "
         "may take up to ~2 min on a slow network. Every session result also carries "
         "`wire: {status, build}`, the health of the direct (browser-free) credits read, "

@@ -16,7 +16,7 @@ import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import structlog
 from mcp.server import MCPServer
@@ -31,6 +31,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from gflow_cli import __version__
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.mcp import tasks_extension as tasks_module
+from gflow_cli.mcp.envelope_status import is_failure
 from gflow_cli.mcp.tasks_extension import TasksExtension
 
 log = structlog.get_logger()
@@ -72,28 +73,28 @@ tasks_extension = TasksExtension()
 
 
 class GflowMCPServer(MCPServer):
-    """``MCPServer`` that flags a tool's error envelope with ``isError`` (#1453).
+    """``MCPServer`` that flags a tool's failure envelope with ``isError`` (#1453, #1464).
 
     Every tool returns its envelope as a plain dict, so the SDK reports even a
     failure as a successful result. A plain ``tools/call`` whose
-    ``structuredContent`` has ``status == "error"`` is returned with
+    ``structuredContent`` has a failure ``status`` (``envelope_status.FAILURE_STATUSES``,
+    the set ``envelope_status.outcome_of`` counts for telemetry) is returned with
     ``isError: true``; ``structuredContent`` itself is unchanged. The check runs
     after ``super().call_tool``, so output-schema validation has already run, and
     it covers envelopes built outside ``_guarded`` too. Other statuses
-    (``ok``, ``pending``, ``rate_limited``, ...) are left as they are.
+    (``ok``, ``pending``, ``completed``, ...) are left as they are.
     """
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any], context: Context[Any, Any] | None = None
     ) -> CallToolResult | InputRequiredResult:
         result = await super().call_tool(name, arguments, context)
-        if isinstance(result, CallToolResult) and not result.is_error:
-            envelope: object = result.structured_content
-            if (
-                isinstance(envelope, dict)
-                and cast("dict[str, Any]", envelope).get("status") == "error"
-            ):
-                return result.model_copy(update={"is_error": True})
+        if (
+            isinstance(result, CallToolResult)
+            and not result.is_error
+            and is_failure(result.structured_content)
+        ):
+            return result.model_copy(update={"is_error": True})
         return result
 
 
@@ -150,10 +151,15 @@ def _configure_utf8_pipes() -> None:
 # ---------------------------------------------------------------------------
 
 
-# Credit-spending tools gated by --no-spend (#496). BOTH generate tools:
-# image generation is only *empirically* free ("~0 credits observed") and
-# no-spend must be a hard guarantee, so anything not contractually free is in.
-_SPEND_TOOLS = ("gflow_generate_image", "gflow_generate_video", "gflow_extend_video")
+# Credit-spending tools gated by --no-spend (#496). Anything not contractually
+# free is in: image generation is only *empirically* free, and video upscale
+# spends credits for 4K Ultra exports.
+_SPEND_TOOLS = (
+    "gflow_generate_image",
+    "gflow_generate_video",
+    "gflow_upscale_video",
+    "gflow_extend_video",
+)
 
 
 #: How long a tool call waits for a profile another process holds (#862). A human at the

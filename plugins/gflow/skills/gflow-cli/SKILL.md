@@ -116,7 +116,7 @@ gflow video generate "<prompt>" [--initial-frame F | --ref IMG] [...]  # bridge:
 gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
 gflow video assemble <clip|catalog-id>... --out-file <path.mp4> [--music FILE] [--voiceover FILE] [--clip-volume 0..1] [--music-volume 0..1] [--voiceover-volume 0..1] [--duck|--no-duck]  # local, credit-free, needs gflow-cli[chain]; normalizes to first clip's size and frame rate
 gflow video transcribe <file|media-UUID> [--out-file FILE.srt] [--language CODE] [--json]  # configured Whisper-compatible endpoint; no Flow credits
-gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
+gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--position bottom|top|middle] [--margin PX] [--font-size PX] [--box-opacity 0..1] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
 gflow media trash <media-UUID|asset-id> [--project ID] --yes [--json]  # moves a generated item to Flow's Trash; 0 credits; MCP: gflow_media_trash(confirm=true)
 gflow media restore <media-UUID|asset-id> [--project ID] [--json]      # brings it back; 0 credits; MCP: gflow_media_restore
 # `gflow video` has no `batch` subcommand — that stub never worked and was
