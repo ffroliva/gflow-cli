@@ -1407,6 +1407,10 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
     except FileNotFoundError as exc:
         msg = f"{param_hint} path {value!r} does not exist."
         raise click.UsageError(msg) from exc
+    if not resolved.is_file():
+        # "" and "." resolve to the current folder, which strict=True accepts.
+        msg = f"{param_hint} path {value!r} is not a file."
+        raise click.UsageError(msg)
     return str(resolved), None
 
 

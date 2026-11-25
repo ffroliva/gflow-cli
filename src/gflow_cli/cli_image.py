@@ -256,22 +256,29 @@ def _classify_ref(ref: str) -> ImageRef | Path:
     ``_run_i2i`` can split UUID refs (wire) from local paths (UI-attached)
     without duplicating the UUID regex check.
 
+    A path that resolves to a folder is refused the same way: ``""`` and ``.``
+    resolve to the current folder, which ``strict=True`` accepts.
+
     Raises:
-        click.UsageError: if *ref* is neither a UUID nor an existing path.
+        click.UsageError: if *ref* is neither a UUID nor an existing file.
     """
     if is_media_uuid(ref):
         return ImageRef(name=ref)
+    hint = (
+        "Pass either a local image path or a 32-char hex UUID with hyphens "
+        "(from a prior `gflow image upload`)."
+    )
     try:
-        return Path(ref).resolve(strict=True)
+        resolved = Path(ref).resolve(strict=True)
     except FileNotFoundError as exc:
-        msg = (
-            f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
-            "Pass either a local image path or a 32-char hex UUID with hyphens "
-            "(from a prior `gflow image upload`)."
-        )
+        msg = f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. {hint}"
         raise click.UsageError(
             msg,
         ) from exc
+    if not resolved.is_file():
+        msg = f"--ref {ref!r} is not a file. {hint}"
+        raise click.UsageError(msg)
+    return resolved
 
 
 def _enrich_uuid_refs(

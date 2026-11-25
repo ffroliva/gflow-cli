@@ -161,6 +161,34 @@ def test_video_i2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_
     assert result.exit_code == 3, result.output
 
 
+@pytest.mark.parametrize("flag", ["--initial-frame", "--end-frame"])
+@pytest.mark.parametrize("kind", ["empty", "folder"])
+def test_video_i2v_frame_that_is_not_a_file_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str, kind: str
+) -> None:
+    """A frame that resolves to a folder exits 2 before the run starts, like a missing file."""
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "frames"
+    folder.mkdir()
+    img = _make_image_file(tmp_path, "first_frame.png")
+    frame = "" if kind == "empty" else str(folder)
+    ran: list[object] = []
+
+    async def _record(*args: Any, **kwargs: Any) -> None:
+        ran.append(args)
+
+    monkeypatch.setattr("gflow_cli.cli_video._run_i2v", _record)
+    args = ["video", "i2v", "make it move", flag, frame]
+    if flag == "--end-frame":
+        args += ["--initial-frame", str(img)]
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 2, result.output
+    assert "is not a file" in result.output
+    assert ran == []
+
+
 def test_video_r2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
     ref = _make_image_file(tmp_path, "ref.png")
