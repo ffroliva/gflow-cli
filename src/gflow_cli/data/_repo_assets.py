@@ -319,28 +319,12 @@ class AssetsRepo(RepositoryBase):
             return None
         return self._hydrate_asset_lookup(row)
 
-    def get_operation_output_assets_for_media(
+    def get_operation_output_assets(
         self,
         profile_name: str,
-        flow_media_id: str,
+        operation_id: str,
     ) -> list[AssetLookup]:
-        """Return all output assets produced by the latest operation owning *flow_media_id*."""
-        op_row = self._store.conn.execute(
-            """
-            SELECT o.id
-            FROM operations o
-            JOIN operation_assets oa ON oa.operation_id = o.id
-            JOIN assets a ON a.id = oa.asset_id
-            WHERE o.profile_name = ?
-              AND a.flow_media_id = ?
-              AND oa.role = 'output'
-            ORDER BY o.started_at DESC, o.id DESC
-            LIMIT 1
-            """,
-            (profile_name, flow_media_id),
-        ).fetchone()
-        if op_row is None:
-            return []
+        """Return every output asset linked to *operation_id*, ordered by position."""
         cols = ", ".join(f"a.{col.strip()}" for col in _ASSET_LOOKUP_COLUMNS.split(","))
         rows = self._store.conn.execute(
             f"""
@@ -352,9 +336,58 @@ class AssetsRepo(RepositoryBase):
               AND a.profile_name = ?
             ORDER BY oa.position ASC, a.created_at ASC, a.id ASC
             """,  # noqa: S608 - constants and ? placeholders only, values stay bound
-            (str(op_row["id"]), profile_name),
+            (operation_id, profile_name),
         ).fetchall()
         return [self._hydrate_asset_lookup(row) for row in rows]
+
+    def get_operation_output_assets_for_media(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        *,
+        mode: str | None = None,
+    ) -> list[AssetLookup]:
+        """Return all output assets produced by the latest operation owning *flow_media_id*."""
+        mode_clause = " AND o.mode = ?" if mode is not None else ""
+        params: list[object] = [profile_name, flow_media_id]
+        if mode is not None:
+            params.append(mode)
+        op_row = self._store.conn.execute(
+            f"""
+            SELECT o.id
+            FROM operations o
+            JOIN operation_assets oa ON oa.operation_id = o.id
+            JOIN assets a ON a.id = oa.asset_id
+            WHERE o.profile_name = ?
+              AND a.flow_media_id = ?
+              AND oa.role = 'output'{mode_clause}
+            ORDER BY o.started_at DESC, o.id DESC
+            LIMIT 1
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
+            params,
+        ).fetchone()
+        if op_row is None:
+            return []
+        return self.get_operation_output_assets(profile_name, str(op_row["id"]))
+
+    def get_task_output_assets(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        *,
+        operation_id: str | None = None,
+        mode: str | None = None,
+    ) -> list[AssetLookup]:
+        """Resolve task outputs by its catalog *operation_id*, falling back to *flow_media_id*."""
+        if operation_id:
+            by_op = self.get_operation_output_assets(profile_name, operation_id)
+            if by_op:
+                return by_op
+        return self.get_operation_output_assets_for_media(
+            profile_name,
+            flow_media_id,
+            mode=mode,
+        )
 
     def get_asset_by_any_id(
         self,

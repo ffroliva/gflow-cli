@@ -566,8 +566,13 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 # The catalogued seed (#1013): Flow's own on the classic image paths, the
                 # requested one for video, a 0 placeholder on the agentic/agent-only arms.
                 seed = asset.seed
-            output_assets = repo.get_operation_output_assets_for_media(
-                profile, completed_task.flow_media_id
+            cp = completed_task.checkpoint if isinstance(completed_task.checkpoint, dict) else {}
+            catalog_op_id = cp.get("catalog_operation_id")
+            output_assets = repo.get_task_output_assets(
+                profile,
+                completed_task.flow_media_id,
+                operation_id=catalog_op_id if isinstance(catalog_op_id, str) else None,
+                mode=completed_task.task_type,
             ) or ([asset] if asset is not None else [])
             file_paths = list(
                 dict.fromkeys(

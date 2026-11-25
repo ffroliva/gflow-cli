@@ -47,6 +47,7 @@ def make_checkpoint_document(
     operation_id: str | None = None,
     media_ids: Sequence[str] = (),
     workflow_ids: Sequence[str] = (),
+    catalog_operation_id: str | None = None,
 ) -> dict[str, Any]:
     """Build a versioned, redacted checkpoint document for a queue task.
 
@@ -55,7 +56,7 @@ def make_checkpoint_document(
     and observed Flow handles. It MUST NEVER carry prompt text, credentials,
     cookies, or signed URLs — the shape here is the allow-list.
     """
-    return {
+    doc: dict[str, Any] = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "claimant": claimant,
         "phase": phase,
@@ -65,6 +66,9 @@ def make_checkpoint_document(
         "media_ids": list(media_ids),
         "workflow_ids": list(workflow_ids),
     }
+    if catalog_operation_id is not None:
+        doc["catalog_operation_id"] = catalog_operation_id
+    return doc
 
 
 @dataclass(frozen=True)
@@ -256,6 +260,7 @@ class QueueRepository:
         operation_id: str | None = None,
         media_ids: Sequence[str] = (),
         workflow_ids: Sequence[str] = (),
+        catalog_operation_id: str | None = None,
     ) -> None:
         """Build (via :func:`make_checkpoint_document` — the redaction allow-list)
         and persist a checkpoint. This is the writer callers SHOULD use: routing
@@ -272,6 +277,7 @@ class QueueRepository:
                 operation_id=operation_id,
                 media_ids=media_ids,
                 workflow_ids=workflow_ids,
+                catalog_operation_id=catalog_operation_id,
             ),
         )
 
