@@ -36,8 +36,33 @@ PRE-REGISTERED READING:
     is invalid for (b)-(d) and the gesture must be named before anything else
   * the editor or the picker never renders              -> UNMEASURED; settles nothing
 
+``--upload-fresh PNG`` (second question, after the 2026-11-25 run of a339823a found nothing
+for an image uploaded in the same page session): uploads the image the way the edit path
+does (``MigratedComposer.upload`` on the project page), opens the clip editor in the SAME
+page, and records the asset list (items, count, whether the new name is present) and where
+the typed text went (prompt box text, the popover's own inputs and their values, the focused
+element) for: (1) ``@`` + full stem; (2) ``@`` + 6-character prefix; (3) after clicking the
+browser's ``image`` tab and opening and closing its sort ``mat-select``; (4) after closing and
+re-opening the browser (``@`` + stem); (5) after reloading the same clip-editor URL
+(``@`` + stem). The upload is free and stays in the project.
+
+PRE-REGISTERED READING (--upload-fresh):
+  * absent in (1)-(4), present in (5)            -> H1: the browser does not list an asset
+    uploaded in this page session until a reload; the edit path must reload (or upload
+    elsewhere) before attaching
+  * absent in (1)-(2), present after (3) or (4)  -> H1, refreshed by that gesture; drive it
+  * absent in (1), present in (2)                -> H2: the filter does not take the full stem;
+    type a prefix
+  * the typed text lands in the prompt box and the popover has its own search input with an
+    empty value                                  -> H2 (where the text goes); type into the input
+  * present in (1)                               -> neither; the attach failure is elsewhere
+    (the click, the add button or the chip check) and is unmeasured here
+  * absent everywhere, including (5)             -> the upload did not reach this project's
+    browser; UNMEASURED for H1/H2
+
     uv run python scripts/dev/spike_1467_clip_editor_refs.py --profile P \
-        --project PROJECT_ID --clip CLIP_MEDIA_ID --image IMAGE_MEDIA_ID [--image-name NAME]
+        --project PROJECT_ID --clip CLIP_MEDIA_ID --image IMAGE_MEDIA_ID [--image-name NAME] \
+        [--upload-fresh PATH_TO_PNG]
 """
 
 from __future__ import annotations
@@ -166,6 +191,115 @@ _OVERLAY_JS = r"""() => {
 }"""
 
 
+#: The clip editor's asset browser (spike 2026-11-25): its items and where typed text lands.
+_ASSET_LIST_JS = r"""(stem) => {
+  const items = [...document.querySelectorAll(
+    "flow-add-menu-asset-list button[role='option'].asset-item")]
+    .map(el => el.textContent.trim().replace(/\s+/g, ' ').slice(0, 80));
+  const pop = document.querySelector('flow-add-menu-popover-content');
+  const box = document.querySelector('flow-edit-video-prompt-box .ProseMirror');
+  const active = document.activeElement;
+  return {
+    popover_open: pop !== null,
+    count: items.length,
+    items: items.slice(0, 20),
+    new_name_present: items.some(t => t.toLowerCase().startsWith(stem.toLowerCase())),
+    prompt_box_text: box ? box.textContent.slice(0, 120) : null,
+    popover_inputs: pop ? [...pop.querySelectorAll('input, textarea, [contenteditable="true"]')]
+      .map(i => ({tag: i.tagName.toLowerCase(), type: i.getAttribute('type'),
+                  value: (i.value ?? i.textContent ?? '').slice(0, 80),
+                  aria: [...i.attributes].filter(a => a.name.startsWith('aria-'))
+                          .map(a => a.name + '=' + a.value.slice(0, 40)),
+                  custom_ancestors: (() => { const a = []; for (let p = i.parentElement;
+                      p && a.length < 5; p = p.parentElement) if (p.tagName.includes('-'))
+                      a.push(p.tagName.toLowerCase()); return a; })()})) : [],
+    focused: active ? {tag: active.tagName.toLowerCase(),
+                       classes: (typeof active.className === 'string' ? active.className : '')
+                                  .trim().split(/\s+/).slice(0, 3),
+                       in_popover: pop !== null && pop.contains(active)} : null,
+  };
+}"""
+
+
+async def _clear_prompt(page: Any) -> None:
+    await page.locator(EXTEND_PROMPT).first.click(timeout=5000)
+    await page.keyboard.press("ControlOrMeta+a")
+    await page.keyboard.press("Backspace")
+    await page.wait_for_timeout(400)
+
+
+async def _fresh_upload_probe(page: Any, args: Any, report: dict[str, Any]) -> None:
+    """``--upload-fresh``: H1 (no refresh in this page session) against H2 (the filter)."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    composer = MigratedComposer()
+    step("fresh", "upload on the project page, as the edit path does")
+    report["fresh_surface"] = await composer.ensure_editor_for(
+        page, args.project, needs_classic=True
+    )
+    media_id, name = await composer.upload(page, args.project, Path(args.upload_fresh))
+    stem = Path(name).stem
+    report["fresh_upload"] = {"media_id": media_id, "name": name, "stem": stem}
+    clip = await _source_clip(page, project_id=args.project, media_id=args.clip)
+    report["fresh_clip"] = None if clip is None else {"kind": clip.kind, "ready": clip.ready}
+    await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
+    steps: dict[str, Any] = {}
+
+    async def snapshot(label: str) -> None:
+        steps[label] = await page.evaluate(_ASSET_LIST_JS, stem)
+
+    step("fresh-1", f"@ + full stem {stem!r}")
+    await _type_in_prompt(page, "@" + stem)
+    await snapshot("1_full_stem")
+    await _close_overlays(page)
+    await _clear_prompt(page)
+
+    step("fresh-2", "@ + 6-character prefix")
+    await _type_in_prompt(page, "@" + stem[:6])
+    await snapshot("2_prefix6")
+
+    step("fresh-3", "image tab, then the sort select")
+    tab = page.locator(
+        "flow-add-menu-popover-content button:has(mat-icon:text-is('image')), "
+        "flow-add-menu-popover-content [role='tab']:has(mat-icon:text-is('image'))"
+    ).first
+    try:
+        await tab.click(timeout=4000)
+        steps["3_tab_clicked"] = True
+    except Exception as exc:  # noqa: BLE001 - a probe: record and go on
+        steps["3_tab_clicked"] = f"failed: {type(exc).__name__}"
+    await page.wait_for_timeout(2000)
+    await snapshot("3a_after_image_tab")
+    sort = page.locator("flow-add-menu-popover-content mat-select").last
+    try:
+        await sort.click(timeout=4000)
+        await page.wait_for_timeout(1000)
+        steps["3_sort_overlay"] = await page.evaluate(_OVERLAY_JS)
+        await page.keyboard.press("Escape")
+        steps["3_sort_clicked"] = True
+    except Exception as exc:  # noqa: BLE001
+        steps["3_sort_clicked"] = f"failed: {type(exc).__name__}"
+    await page.wait_for_timeout(1500)
+    await snapshot("3b_after_sort")
+    await _close_overlays(page)
+    await _clear_prompt(page)
+
+    step("fresh-4", "close and re-open, @ + full stem")
+    await _type_in_prompt(page, "@" + stem)
+    await snapshot("4_reopened_full_stem")
+    await _close_overlays(page)
+    await _clear_prompt(page)
+
+    step("fresh-5", "reload the clip editor, @ + full stem")
+    await page.reload(wait_until="domcontentloaded")
+    await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
+    await page.wait_for_timeout(3000)
+    await _type_in_prompt(page, "@" + stem)
+    await snapshot("5_reloaded_full_stem")
+    await _close_overlays(page)
+    report["fresh_steps"] = steps
+
+
 def _rpcids_of(url: str, body: str) -> list[str]:
     return batch_rpcids(url_rpcids(url), body)
 
@@ -256,6 +390,11 @@ async def main() -> None:  # noqa: PLR0915
     ap.add_argument("--clip", required=True, help="media id of a finished clip in the project")
     ap.add_argument("--image", required=True, help="media id of an image in the project")
     ap.add_argument("--image-name", default=None, help="its display name (else the catalog's)")
+    ap.add_argument(
+        "--upload-fresh",
+        default=None,
+        help="a local image: upload it in this page session and probe H1/H2 (see docstring)",
+    )
     args = ap.parse_args()
 
     profile_dir = resolve_profile_dir(args.profile)
@@ -298,36 +437,41 @@ async def main() -> None:  # noqa: PLR0915
         await page.route("**/batchexecute*", hold)
         page.on("response", on_response)
         try:
-            step("nav", f"clip editor for {args.clip}")
-            clip = await _source_clip(page, project_id=args.project, media_id=args.clip)
-            report["clip"] = None if clip is None else {"kind": clip.kind, "ready": clip.ready}
-            report["url_path"] = str(page.url).split("?")[0].split("flow.google.com")[-1]
-            await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
-
-            step("a", "controls in and around the prompt box")
-            report["a_controls"] = await page.evaluate(_CONTROLS_JS, [_PROMPT_BOX, 4])
-
-            step("b", "@ alone")
-            report["b_overlay_before"] = await page.evaluate(_OVERLAY_JS)
-            await _type_in_prompt(page, "@")
-            report["b_overlay_after"] = await page.evaluate(_OVERLAY_JS)
-            await _close_overlays(page)
-
-            if name:
-                prefix = name[:6]
-                step("c", f"@ + {prefix!r}")
-                report["c_query"] = prefix
-                report["c_overlay_before"] = await page.evaluate(_OVERLAY_JS)
-                await _type_in_prompt(page, "@" + prefix)
-                report["c_overlay_after"] = await page.evaluate(_OVERLAY_JS)
-                await _close_overlays(page)
+            if args.upload_fresh:
+                await _fresh_upload_probe(page, args, report)
             else:
-                report["c_skipped"] = "no display name (pass --image-name)"
+                step("nav", f"clip editor for {args.clip}")
+                clip = await _source_clip(page, project_id=args.project, media_id=args.clip)
+                report["clip"] = None if clip is None else {"kind": clip.kind, "ready": clip.ready}
+                report["url_path"] = str(page.url).split("?")[0].split("flow.google.com")[-1]
+                await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
 
-            step("d", "add-media controls")
-            controls = report["a_controls"].get("controls", [])
-            report["d_add_controls"] = await _probe_add_controls(page, controls)
-            report["a_controls_after_probe"] = await page.evaluate(_CONTROLS_JS, [_PROMPT_BOX, 4])
+                step("a", "controls in and around the prompt box")
+                report["a_controls"] = await page.evaluate(_CONTROLS_JS, [_PROMPT_BOX, 4])
+
+                step("b", "@ alone")
+                report["b_overlay_before"] = await page.evaluate(_OVERLAY_JS)
+                await _type_in_prompt(page, "@")
+                report["b_overlay_after"] = await page.evaluate(_OVERLAY_JS)
+                await _close_overlays(page)
+
+                if name:
+                    prefix = name[:6]
+                    step("c", f"@ + {prefix!r}")
+                    report["c_query"] = prefix
+                    report["c_overlay_before"] = await page.evaluate(_OVERLAY_JS)
+                    await _type_in_prompt(page, "@" + prefix)
+                    report["c_overlay_after"] = await page.evaluate(_OVERLAY_JS)
+                    await _close_overlays(page)
+                else:
+                    report["c_skipped"] = "no display name (pass --image-name)"
+
+                step("d", "add-media controls")
+                controls = report["a_controls"].get("controls", [])
+                report["d_add_controls"] = await _probe_add_controls(page, controls)
+                report["a_controls_after_probe"] = await page.evaluate(
+                    _CONTROLS_JS, [_PROMPT_BOX, 4]
+                )
         except Exception as exc:  # noqa: BLE001 - keep what was captured
             report["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
         finally:
