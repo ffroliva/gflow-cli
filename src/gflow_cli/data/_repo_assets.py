@@ -18,6 +18,7 @@ from gflow_cli.data.models import (
     AssetKind,
     AssetLookup,
     AssetRecord,
+    LocalFileRecord,
 )
 from gflow_cli.errors import DataIntegrityError
 
@@ -319,6 +320,76 @@ class AssetsRepo(RepositoryBase):
             return None
         return self._hydrate_asset_lookup(row)
 
+    def get_operation_output_assets(
+        self,
+        profile_name: str,
+        operation_id: str,
+    ) -> list[AssetLookup]:
+        """Return every output asset linked to *operation_id*, ordered by position."""
+        cols = ", ".join(f"a.{col.strip()}" for col in _ASSET_LOOKUP_COLUMNS.split(","))
+        rows = self._store.conn.execute(
+            f"""
+            SELECT {cols}
+            FROM operation_assets oa
+            JOIN assets a ON a.id = oa.asset_id
+            WHERE oa.operation_id = ?
+              AND oa.role = 'output'
+              AND a.profile_name = ?
+            ORDER BY oa.position ASC, a.created_at ASC, a.id ASC
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
+            (operation_id, profile_name),
+        ).fetchall()
+        return self._hydrate_asset_lookups(rows)
+
+    def get_operation_output_assets_for_media(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        *,
+        mode: str | None = None,
+    ) -> list[AssetLookup]:
+        """Return all output assets produced by the latest operation owning *flow_media_id*."""
+        mode_clause = " AND o.mode = ?" if mode is not None else ""
+        params: list[object] = [profile_name, flow_media_id]
+        if mode is not None:
+            params.append(mode)
+        op_row = self._store.conn.execute(
+            f"""
+            SELECT o.id
+            FROM operations o
+            JOIN operation_assets oa ON oa.operation_id = o.id
+            JOIN assets a ON a.id = oa.asset_id
+            WHERE o.profile_name = ?
+              AND a.flow_media_id = ?
+              AND oa.role = 'output'{mode_clause}
+            ORDER BY o.started_at DESC, o.id DESC
+            LIMIT 1
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
+            params,
+        ).fetchone()
+        if op_row is None:
+            return []
+        return self.get_operation_output_assets(profile_name, str(op_row["id"]))
+
+    def get_task_output_assets(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+        *,
+        operation_id: str | None = None,
+        mode: str | None = None,
+    ) -> list[AssetLookup]:
+        """Resolve task outputs by its catalog *operation_id*, falling back to *flow_media_id*."""
+        if operation_id:
+            by_op = self.get_operation_output_assets(profile_name, operation_id)
+            if by_op:
+                return by_op
+        return self.get_operation_output_assets_for_media(
+            profile_name,
+            flow_media_id,
+            mode=mode,
+        )
+
     def get_asset_by_any_id(
         self,
         profile_name: str,
@@ -362,7 +433,7 @@ class AssetsRepo(RepositoryBase):
             """,  # noqa: S608 - constants and ? placeholders only, values stay bound
             (flow_media_id,),
         ).fetchall()
-        return [self._hydrate_asset_lookup(row) for row in rows]
+        return self._hydrate_asset_lookups(rows)
 
     def find_assets_by_any_id(
         self, ref_id: str, profile_name: str | None = None
@@ -389,32 +460,51 @@ class AssetsRepo(RepositoryBase):
             params.append(profile_name)
         query += " ORDER BY profile_name ASC, id ASC"
         rows = self._store.conn.execute(query, params).fetchall()  # noqa: S608
-        return [self._hydrate_asset_lookup(row) for row in rows]
+        return self._hydrate_asset_lookups(rows)
+
+    def _hydrate_asset_lookups(self, rows: Sequence[sqlite3.Row]) -> list[AssetLookup]:
+        if not rows:
+            return []
+        by_profile: dict[str, list[str]] = {}
+        for row in rows:
+            profile = str(row["profile_name"])  # NOSONAR - sqlite3.Row takes a column name
+            by_profile.setdefault(profile, []).append(str(row["id"]))  # NOSONAR - same
+        files_by_asset: dict[str, list[LocalFileRecord]] = {}
+        for profile_name, asset_ids in by_profile.items():
+            unique_ids = list(dict.fromkeys(asset_ids))
+            placeholders = ", ".join("?" for _ in unique_ids)
+            file_rows = self._store.conn.execute(
+                f"""
+                SELECT id, profile_name, asset_id, path, media_type, bytes, sha256, created_at,
+                       storage_provider, cloud_uri, superseded_at
+                FROM local_files
+                WHERE profile_name = ? AND asset_id IN ({placeholders})
+                  AND superseded_at IS NULL  -- a pre-extend copy is never a live file (#1299)
+                ORDER BY created_at ASC, id ASC
+                """,  # noqa: S608 - only ? placeholders are interpolated
+                (profile_name, *unique_ids),
+            ).fetchall()
+            for file_row in file_rows:
+                files_by_asset.setdefault(str(file_row["asset_id"]), []).append(
+                    _row_to_local_file(file_row)
+                )
+        return [
+            AssetLookup(
+                id=str(row["id"]),
+                profile_name=str(row["profile_name"]),
+                flow_project_id=row["flow_project_id"],
+                flow_media_id=str(row["flow_media_id"]),
+                flow_workflow_id=row["flow_workflow_id"],
+                kind=AssetKind(row["kind"]),
+                local_files=files_by_asset.get(str(row["id"]), []),
+                metadata_json=_decode_metadata_json(row["metadata_json"]),
+                seed=row["seed"],
+            )
+            for row in rows
+        ]
 
     def _hydrate_asset_lookup(self, row: sqlite3.Row) -> AssetLookup:
-        file_rows = self._store.conn.execute(
-            """
-            SELECT id, profile_name, asset_id, path, media_type, bytes, sha256, created_at,
-                   storage_provider, cloud_uri, superseded_at
-            FROM local_files
-            WHERE profile_name = ? AND asset_id = ?
-              AND superseded_at IS NULL  -- a pre-extend copy is never a live file (#1299)
-            ORDER BY created_at ASC, id ASC
-            """,
-            (row["profile_name"], row["id"]),
-        ).fetchall()
-        local_files = [_row_to_local_file(r) for r in file_rows]
-        return AssetLookup(
-            id=str(row["id"]),
-            profile_name=str(row["profile_name"]),
-            flow_project_id=row["flow_project_id"],
-            flow_media_id=str(row["flow_media_id"]),
-            flow_workflow_id=row["flow_workflow_id"],
-            kind=AssetKind(row["kind"]),
-            local_files=local_files,
-            metadata_json=_decode_metadata_json(row["metadata_json"]),
-            seed=row["seed"],
-        )
+        return self._hydrate_asset_lookups([row])[0]
 
     def candidate_image_exists(self, profile_name: str, flow_media_id: str) -> bool:
         row = self._store.conn.execute(

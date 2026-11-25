@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gflow video captions` and `gflow_video_captions` support caption placement and styling ([#1432](https://github.com/ffroliva/gflow-cli/issues/1432)).** Added `--position bottom|top|middle` (default `bottom`), `--margin PX` (default `28`, clamped to `>= 8 px` from the edge to the text ink), `--font-size PX` (`1-1000`, skipping 3-line auto-shrink and fitting within frame width and height), and `--box-opacity 0.0-1.0` (`0.0` omits the pill, default keeps `~0.7` opacity). Normal cues keep the same default layout, while long default-style cues that previously overflowed the fixed 25% band now render in full without clipping.
+
 ### Changed
 
 - **`direct_http` serves counts 2–4 with a single reference or character ([#1455](https://github.com/ffroliva/gflow-cli/issues/1455)).** Captures of Flow's own multi-image submit show every entry in `inner[1]` repeats `entry[2]`/`entry[10]` and the `entry[8]` chip identically, matching what `frame_builder.build_ogiz0b_body` already builds. `_references_measured` and `_characters_measured` now serve `count` 1–4 for one in-project `--ref`, `--reference-entity`, or `@Name` mention instead of falling back to `ui_automation`.
@@ -14,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gflow_generate_image(count > 1)` returns all generated image files ([#1469](https://github.com/ffroliva/gflow-cli/issues/1469)).** `task_payload` previously resolved `files` only from the single asset matching the task's `flow_media_id` (`images[0].media_name`), dropping images 2..N on multi-image runs. The worker now records the task's `catalog_operation_id` on its completed checkpoint, and `task_payload` resolves every output asset linked to that operation in position order (falling back to a mode-scoped media-id operation lookup and finally the single asset when unlinked).
 - **`gflow doctor` reports `info` instead of `[FAIL] DataStoreError` (exit 33) before `gflow.db` exists ([Refs #601](https://github.com/ffroliva/gflow-cli/issues/601)).** On a fresh install before any generation or sync creates the local catalog database, `run_all()` failed to open the absent `gflow.db` read-only and degraded all six DB-required checks (`catalog.*`, `db.migration_drift`, `operations.stuck_started`, `queue.stuck_processing`) to `fail`. Those seven catalog/DB/operations/queue checks (`db.wal_state` included) now report `info` (`no catalog database yet (created on first generation or sync)`) without creating the database; corrupt/unreadable existing databases, dangling symlinks, and orphan WAL sidecars still fail or warn as before.
 - **`gflow media trash` and `media restore` work on images by the id gflow reports for them ([#1451](https://github.com/ffroliva/gflow-cli/issues/1451)).** Flow's `pGCYOe` mutation takes the id gflow records as an image's workflow id, so trashing an image by its media id, with or without `--project`, was refused with `code=5`. An image found in the catalog is now sent by its workflow id (an image row without one still sends its media id); the output and the restore hint keep the media id. A video is still sent by its media id. On a four-image generation, each image has its own workflow id and only the image named is trashed. The MCP twins `gflow_media_trash` and `gflow_media_restore` get the same fix. With `--project`, the id is still resolved through the local catalog (the `--project` help no longer says it skips the lookup): an id that matches several cataloged items under the profile resolves to the one in that project, and one that stays ambiguous is refused with exit 16 before anything is sent.
 

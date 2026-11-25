@@ -211,3 +211,62 @@ async def test_mcp_refuses_explicit_out_file_under_cloud_storage_and_allows_defa
         assert plain_ok["status"] == "ok"
     finally:
         reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_mcp_captions_forwards_style_options_and_rejects_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.mcp import video_captions_tools as tools
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    reset_settings()
+    captured: dict[str, object] = {}
+
+    def fake_caption(file: str, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            source_file=Path(file),
+            output_file=kwargs["out_file"],
+            srt_file=kwargs["srt_path"],
+            duration_seconds=1.0,
+            total_frames=1,
+            frames_burned=1,
+            bytes=10,
+        )
+
+    monkeypatch.setattr(tools, "caption_video", fake_caption)
+    try:
+        res = await gflow_video_captions(
+            "clip.mp4",
+            srt=str(tmp_path / "a.srt"),
+            position="top",
+            margin=48,
+            font_size=28,
+            box_opacity=0.5,
+        )
+        assert res["status"] == "ok"
+        assert captured["position"] == "top"
+        assert captured["margin"] == 48
+        assert captured["font_size"] == 28
+        assert captured["box_opacity"] == 0.5
+    finally:
+        reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_mcp_captions_invalid_style_returns_error_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    reset_settings()
+    try:
+        err = await gflow_video_captions(
+            "clip.mp4",
+            srt=str(tmp_path / "a.srt"),
+            position="left",
+        )
+        assert err["status"] == "error"
+        assert err["error"]["charged"] == "no"
+    finally:
+        reset_settings()
