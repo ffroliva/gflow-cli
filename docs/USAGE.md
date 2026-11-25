@@ -331,7 +331,7 @@ spend no Flow credits. Install media support with `pip install 'gflow-cli[chain]
 
 ```text
 gflow video transcribe FILE [--out-file FILE.srt] [--language CODE] [--profile NAME] [--json]
-gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--json]
+gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--position bottom|top|middle] [--margin PX] [--font-size PX] [--box-opacity 0.0-1.0] [--json]
 ```
 
 `FILE` is a local video path or catalog video UUID. `transcribe` defaults to `<name>.srt`;
@@ -339,7 +339,11 @@ gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language COD
 first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
 burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. It
 chooses a system font with broad glyph coverage; CJK coverage depends on fonts installed
-on the machine.
+on the machine. By default, captions sit in the bottom band (`--position bottom --margin 28`)
+with auto-sized text and a translucent dark pill (`~0.7` opacity); use `--position top|middle`,
+`--margin PX` (distance from the anchored edge for `top`/`bottom`), `--font-size PX` (disables
+auto-sizing), and `--box-opacity 0.0-1.0` (`0.0` removes the pill) to keep lower-thirds or
+on-screen content clear.
 
 Transcription sends only extracted 16 kHz mono WAV audio to the configured
 `GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional

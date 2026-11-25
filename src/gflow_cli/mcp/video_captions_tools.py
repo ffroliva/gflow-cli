@@ -69,8 +69,9 @@ async def gflow_video_transcribe(
     name="gflow_video_captions",
     description=(
         "Burn an authored SRT file into a local video or transcribe first when srt is omitted. "
-        "Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured "
-        "output directory."
+        "Supports optional position ('bottom', 'top', 'middle'), margin (pixels from edge), "
+        "font_size (pixels), and box_opacity (0.0-1.0). Credit-free; generated .mp4 and "
+        "automatic .srt outputs stay inside the configured output directory."
     ),
 )
 @common._guarded  # pyright: ignore[reportPrivateUsage]
@@ -80,6 +81,10 @@ async def gflow_video_captions(
     language: str | None = None,
     out_file: OutFileParam = None,
     profile: str | None = None,
+    position: str = "bottom",
+    margin: int = 28,
+    font_size: int | None = None,
+    box_opacity: float | None = None,
 ) -> dict[str, Any]:
     """Burn SRT captions into FILE, optionally transcribing first."""
     resolved_profile = _profile(file, profile)
@@ -102,5 +107,9 @@ async def gflow_video_captions(
         out_file=Path(output),
         language=language,
         profile=resolved_profile,
+        position=position,
+        margin=margin,
+        font_size=font_size,
+        box_opacity=box_opacity,
     )
     return _result(result)

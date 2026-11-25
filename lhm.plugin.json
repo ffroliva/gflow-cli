@@ -1247,7 +1247,7 @@
     },
     {
       "name": "gflow_video_captions",
-      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
+      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Supports optional position ('bottom', 'top', 'middle'), margin (pixels from edge), font_size (pixels), and box_opacity (0.0-1.0). Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
       "inputSchema": {
         "properties": {
           "file": {
@@ -1302,6 +1302,40 @@
             ],
             "default": null,
             "title": "Profile"
+          },
+          "position": {
+            "default": "bottom",
+            "title": "Position",
+            "type": "string"
+          },
+          "margin": {
+            "default": 28,
+            "title": "Margin",
+            "type": "integer"
+          },
+          "font_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Font Size"
+          },
+          "box_opacity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Box Opacity"
           }
         },
         "required": [

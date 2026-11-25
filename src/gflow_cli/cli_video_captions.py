@@ -97,6 +97,32 @@ def transcribe(
 )
 @out_file_option(help="Explicit output .mp4 file path (defaults to <name>-captions.mp4).")
 @click.option("--profile", default=None, help="Profile name when FILE is a catalog media UUID.")
+@click.option(
+    "--position",
+    type=click.Choice(["bottom", "top", "middle"], case_sensitive=False),
+    default="bottom",
+    show_default=True,
+    help="Vertical caption placement inside the frame.",
+)
+@click.option(
+    "--margin",
+    type=int,
+    default=28,
+    show_default=True,
+    help="Edge distance in pixels for top/bottom placement.",
+)
+@click.option(
+    "--font-size",
+    type=int,
+    default=None,
+    help="Explicit caption font size in pixels (overrides auto-sizing).",
+)
+@click.option(
+    "--box-opacity",
+    type=float,
+    default=None,
+    help="Background pill opacity from 0.0 (none) to 1.0 (solid; default ~0.7).",
+)
 @output_format_option(has_out_file=True)
 def captions(
     file: str,
@@ -104,6 +130,10 @@ def captions(
     language: str | None,
     output_file: Path | None,
     profile: str | None,
+    position: str,
+    margin: int,
+    font_size: int | None,
+    box_opacity: float | None,
     as_json: bool,
     output_format: str = "table",
 ) -> None:
@@ -119,6 +149,10 @@ def captions(
             out_file=output_file,
             language=language,
             profile=profile,
+            position=position,
+            margin=margin,
+            font_size=font_size,
+            box_opacity=box_opacity,
         )
         _emit(result, as_json=is_json, output_format=output_format)
 
