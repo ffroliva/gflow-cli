@@ -516,7 +516,20 @@ png_bytes = base64.b64decode(image.data[0].b64_json)
 It is the `gflow_generate_image` tool behind another door: the same profile resolution,
 rate limit (429 when the bucket is empty) and `GFLOW_MCP_NO_SPEND` (403 `no_spend`).
 Without `GFLOW_CLI_PROJECT` set on the daemon, every request creates
-a new Flow project, as the tool does when it is given no `project`.
+a new Flow project, as the tool does when it is given no `project`. The account is the
+daemon's: `gflow serve --profile <name>` pins it (it sets `GFLOW_CLI_PROFILE` for the
+server process, as `gflow mcp run --profile` does), otherwise the default profile is used.
+
+The route refuses up front, before any quota is spent:
+
+- **A prompt with an `@`-mention and no pinned project.** gflow reads `@Name` as a Flow
+  character name, and names resolve inside a project, so `"a logo for @acme"` is 400
+  `param: "prompt"` unless the daemon sets `GFLOW_CLI_PROJECT`; with a pinned project,
+  mentions resolve as they do on the CLI. An `@` inside a word (`user@example.com`) is
+  not a mention.
+- **Cloud storage.** With `GFLOW_CLI_STORAGE_URI` set to `s3://` or `gs://`, outputs have
+  no local file to read back, so every request is 500 `server_misconfigured` naming the
+  setting.
 
 | Field | Accepted |
 |---|---|
@@ -528,7 +541,10 @@ a new Flow project, as the tool does when it is given no `project`.
 | `stream` | absent, `null`, `false` or `0`; `true` is 400 (streaming is not supported), any other value is 400 (not a boolean) |
 | `quality`, `style`, `user`, `background`, `output_format` | ignored |
 
-An explicit JSON `null` counts as an absent field. Video is not exposed yet.
+An explicit JSON `null` counts as an absent field. Video is not exposed yet. Flow can
+return fewer images than `n`; the response is then still 200 with the images produced
+(they are billed), and the `x-gflow-images-returned` header, present on every 200,
+carries the count, so `data` stays in OpenAI's schema.
 
 **Contract decision — Flow models only.** The endpoint is a facade over Google Flow, not
 an OpenAI emulator: it speaks OpenAI's request and response schema, but the images come
@@ -582,21 +598,23 @@ parameter validation and gflow's `bad-parameter` produce a 400. A missing profil
 ambiguous default profile or a `GFLOW_CLI_PROJECT` that belongs to another profile is a
 fault in the daemon's configuration: a 500 whose message names it, which the caller cannot
 fix by changing the request. The message is the problem's `detail`, else its `message`,
-else its `title`, else `Generation failed.`. The route's own refusals use the same object
-and carry `charged: "no"` (400s also `gflow_type` `bad-parameter`):
+else its `title`, else `Generation failed.`. The refusals made before the tool runs use
+the same object and carry `charged: "no"` (400s also `gflow_type` `bad-parameter`):
 400 `invalid_value` with `param`, 401 `authentication_error`/`invalid_api_key` (a missing
 or wrong daemon token), 403 `permission_error` (`no_spend`, `invalid_origin`), 405
 `method_not_allowed`, 413 `request_too_large`, 415 `unsupported_media_type`, 421
-`invalid_host`, 502 `no_output` (Flow reported success with no file) and 500
-`output_unreadable` (the file could not be read; the path and the OS error are logged on
-the server, not returned).
+`invalid_host` and 500 `server_misconfigured` (cloud storage). Two failures come after a
+generation Flow reported as finished and carry `charged: "yes"`: 502 `no_output` (no file)
+and 500 `output_unreadable` (the file could not be read; the path and the OS error are
+logged on the server, not returned).
 
 **Retries.** The OpenAI SDKs retry 429 and 5xx responses twice by default, and a retried
 generation is a second generation. Every error response therefore carries
 `x-should-retry: false`, which the SDKs obey, except the local rate-limit refusal
 (`status: rate_limited`): it is answered before anything runs and the bucket refills on
-its own. A 429 carries `retry-after` with the problem's own `retry_after` when Flow gave
-one (a daily quota), else 20 seconds, one refill of the bucket; a Flow quota 429 is not
+its own. That refusal carries `retry-after: 20`, one refill of the bucket. Any other 429
+carries `retry-after` only when the problem has a `retry_after` (a Flow quota names its
+own wait); `insufficient_quota` and a Flow 429 without one carry none, and neither is
 retried by the SDK. These requests are counted in telemetry under the client name
 `openai-http`, apart from MCP clients' tool calls.
 

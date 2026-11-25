@@ -289,6 +289,7 @@ class _BearerAuthMiddleware:
                     "Missing or invalid daemon token (Authorization: Bearer <token>).",
                     type_="authentication_error",
                     code="invalid_api_key",
+                    extra={"charged": "no"},
                     headers=challenge,
                 )
             await response(scope, receive, send)

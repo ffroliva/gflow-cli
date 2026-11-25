@@ -876,7 +876,14 @@ def mcp_setup(target: str) -> None:
         "which every request must then present as 'Authorization: Bearer <token>')."
     ),
 )
-@click.option("--profile", default=None, help="Profile for the background worker.")
+@click.option(
+    "--profile",
+    default=None,
+    help=(
+        "Profile for requests that name none, the OpenAI image route included "
+        "(sets GFLOW_CLI_PROFILE for this server process)."
+    ),
+)
 @click.option(
     "--transport",
     type=click.Choice(["http", "sse"]),
@@ -910,6 +917,9 @@ def serve(port: int, host: str, profile: str | None, transport: str, no_spend: b
       gflow serve --host 0.0.0.0 --port 8000  # requires GFLOW_DAEMON_TOKEN
     """
     _activate_no_spend(no_spend)
+    # As in `gflow mcp run`: _resolve_and_validate_profile() reads GFLOW_CLI_PROFILE.
+    if profile:
+        os.environ["GFLOW_CLI_PROFILE"] = profile
 
     if host != "127.0.0.1":
         token = get_settings().daemon_token if hasattr(get_settings(), "daemon_token") else None

@@ -236,6 +236,31 @@ async def _read_json(request: Request) -> object:
         raise _RequestError("Request body is not valid JSON.", code="invalid_json") from exc
 
 
+def _check_daemon(prompt: str) -> None:
+    """Refuse what the daemon's own settings would turn into a failure after billing."""
+    from gflow_cli.config import get_settings
+    from gflow_cli.services.mentions import parse_mentions
+
+    settings = get_settings()
+    if (settings.storage_uri or "").startswith(("s3://", "gs://")):
+        # Cloud outputs have no local path to read back, so a paid image could not be returned.
+        raise _RequestError(
+            "The gflow serve daemon is misconfigured: GFLOW_CLI_STORAGE_URI points at cloud "
+            "storage, and this route returns image bytes read from local files. Unset it on "
+            "the daemon.",
+            status=500,
+            code="server_misconfigured",
+            type_="server_error",
+        )
+    if settings.project is None and (mentions := parse_mentions(prompt)):
+        raise _RequestError(
+            f"The prompt contains '@{mentions[0].candidate_text.strip()}', which gflow reads as "
+            "a Flow character name, and this daemon has no project (GFLOW_CLI_PROJECT) to look "
+            "it up in. Remove the '@', or ask the operator to pin a project.",
+            param="prompt",
+        )
+
+
 def _encode(files: list[Path]) -> list[dict[str, str]]:
     return [{"b64_json": base64.b64encode(f.read_bytes()).decode("ascii")} for f in files]
 
@@ -263,7 +288,11 @@ async def _images_response(result: dict[str, Any]) -> JSONResponse:
             extra=extra,
         )
     log.info("openai_api.images.completed", count=len(data))
-    return JSONResponse({"created": int(time.time()), "data": data})
+    # Flow can return fewer images than ``n``; the count rides in a header, not the body.
+    return JSONResponse(
+        {"created": int(time.time()), "data": data},
+        headers={"x-gflow-images-returned": str(len(data))},
+    )
 
 
 def _image_route(*, check_origin: bool) -> Route:
@@ -281,6 +310,7 @@ def _image_route(*, check_origin: bool) -> Route:
                     type_="permission_error",
                 )
             req = parse_request(await _read_json(request))
+            _check_daemon(req.prompt)
         except _RequestError as exc:
             return exc.response()
 

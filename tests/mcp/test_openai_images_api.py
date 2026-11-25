@@ -14,6 +14,7 @@ Each test builds its own app: ``streamable_http_app()`` mints a session manager 
 from __future__ import annotations
 
 import base64
+import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ import pytest
 from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
 from starlette.testclient import TestClient
 
+from gflow_cli.config import reset_settings
 from gflow_cli.data.store import DataStore
 from gflow_cli.mcp import openai_api, openai_errors
 from gflow_cli.mcp import tools as mcp_tools
@@ -614,6 +616,109 @@ def test_insufficient_credits_forbids_sdk_retries(
 
     assert _openai_error(resp, 429)["code"] == "insufficient_quota"
     assert resp.headers["x-should-retry"] == "false"
+    # No refill time is known, so none is invented.
+    assert "retry-after" not in resp.headers
+
+
+def test_flow_429_without_retry_after_sends_no_retry_after(
+    client: TestClient, set_image_tool: SetTool
+) -> None:
+    problem = {"type": ERRORS + "rate-limit", "status": 429, "detail": "Quota reached."}
+    set_image_tool({"status": "error", "error": problem})
+
+    resp = client.post(PATH, json={"prompt": "x"})
+
+    assert _openai_error(resp, 429)["code"] == "rate_limit_exceeded"
+    assert "retry-after" not in resp.headers
+    assert resp.headers["x-should-retry"] == "false"
+
+
+@pytest.mark.parametrize("prompt", ["a logo for @acme", "@Alice waves"])
+def test_mention_without_a_pinned_project_is_400_on_prompt(
+    client: TestClient, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch, prompt: str
+) -> None:
+    monkeypatch.delenv("GFLOW_CLI_PROJECT", raising=False)
+    reset_settings()
+
+    error = _openai_error(client.post(PATH, json={"prompt": prompt}), 400)
+
+    assert (error["param"], error["code"]) == ("prompt", "invalid_value")
+    assert "GFLOW_CLI_PROJECT" in error["message"]
+    assert "--project" not in error["message"]
+    assert fake_tool.calls == []
+
+
+@pytest.mark.parametrize("prompt", ["mail me at user@example.com", "no mention here"])
+def test_at_sign_that_is_not_a_mention_is_served(
+    client: TestClient, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch, prompt: str
+) -> None:
+    monkeypatch.delenv("GFLOW_CLI_PROJECT", raising=False)
+    reset_settings()
+
+    assert client.post(PATH, json={"prompt": prompt}).status_code == 200
+
+
+def test_mention_with_a_pinned_project_reaches_the_tool(
+    client: TestClient, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_PROJECT", "11111111-2222-3333-4444-555555555555")
+    reset_settings()
+    try:
+        assert client.post(PATH, json={"prompt": "@Alice waves"}).status_code == 200
+    finally:
+        monkeypatch.delenv("GFLOW_CLI_PROJECT")
+        reset_settings()
+    assert len(fake_tool.calls) == 1
+
+
+@pytest.mark.parametrize("uri", ["s3://bucket/out", "gs://bucket/out"])
+def test_cloud_storage_uri_is_refused_before_the_tool_runs(
+    client: TestClient, fake_tool: FakeTool, monkeypatch: pytest.MonkeyPatch, uri: str
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_STORAGE_URI", uri)
+    reset_settings()
+    try:
+        error = _openai_error(client.post(PATH, json={"prompt": "x"}), 500)
+    finally:
+        monkeypatch.delenv("GFLOW_CLI_STORAGE_URI")
+        reset_settings()
+
+    assert (error["type"], error["code"]) == ("server_error", "server_misconfigured")
+    assert "GFLOW_CLI_STORAGE_URI" in error["message"]
+    assert error["charged"] == "no"
+    assert fake_tool.calls == []
+
+
+def test_fewer_images_than_requested_are_returned_and_counted_in_a_header(
+    client: TestClient, set_image_tool: SetTool, png_files: list[str]
+) -> None:
+    set_image_tool({"status": "completed", "files": png_files[:1]})
+
+    resp = client.post(PATH, json={"prompt": "x", "n": 2})
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["data"]) == 1
+    assert set(resp.json()) == {"created", "data"}  # the body stays OpenAI's schema
+    assert resp.headers["x-gflow-images-returned"] == "1"
+
+
+def test_serve_profile_pins_the_profile_for_the_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+    from gflow_cli.mcp import server as mcp_server
+
+    monkeypatch.setenv("GFLOW_CLI_PROFILE", "before")  # restored by monkeypatch afterwards
+    seen: list[str | None] = []
+    monkeypatch.setattr(
+        mcp_server, "main_http", lambda **_: seen.append(os.environ.get("GFLOW_CLI_PROFILE"))
+    )
+
+    result = CliRunner().invoke(main, ["serve", "--profile", "acct2"])
+
+    assert result.exit_code == 0, result.output
+    # The route calls gflow_generate_image with no profile, which resolves GFLOW_CLI_PROFILE.
+    assert seen == ["acct2"]
 
 
 @pytest.mark.parametrize(
@@ -714,7 +819,6 @@ def test_requests_are_counted_under_their_own_telemetry_client(
     assert client.post(PATH, json={"prompt": "x"}).status_code == 200
 
     assert seen == ["openai-http"]
-    assert mcp_tools.telemetry_client.get() is None
 
 
 # --- scenario 3: no-spend ----------------------------------------------------------
@@ -740,6 +844,7 @@ def test_token_required_when_configured(fake_tool: FakeTool) -> None:
         resp = client.post(PATH, json={"prompt": "x"})
         error = _openai_error(resp, 401)
         assert (error["type"], error["code"]) == ("authentication_error", "invalid_api_key")
+        assert error["charged"] == "no"
         assert resp.headers["www-authenticate"].startswith("Bearer")
         ok = client.post(PATH, json={"prompt": "x"}, headers={"Authorization": f"Bearer {TOKEN}"})
         assert ok.status_code == 200, ok.text

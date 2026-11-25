@@ -121,8 +121,6 @@ def error_response(
     all_headers = dict(headers or {})
     if not retry:
         all_headers["x-should-retry"] = "false"
-    if status == 429:  # noqa: PLR2004
-        all_headers.setdefault("retry-after", str(RETRY_AFTER_SECONDS))
     body = {"message": message, "type": type_, "param": param, "code": code, **(extra or {})}
     return JSONResponse({"error": body}, status_code=status, headers=all_headers)
 
@@ -155,10 +153,13 @@ def tool_failure(result: dict[str, Any]) -> JSONResponse:
         extra["gflow_type"] = problem["type"]
     if (task_id := result.get("task_id")) is not None:
         extra["task_id"] = task_id
+    local_bucket = result.get("status") == "rate_limited"
     headers: dict[str, str] = {}
     retry_after = problem.get("retry_after")
     if isinstance(retry_after, int | float) and not isinstance(retry_after, bool):
         headers["retry-after"] = str(max(1, math.ceil(retry_after)))
+    elif local_bucket:
+        headers["retry-after"] = str(RETRY_AFTER_SECONDS)
     return error_response(
         mapped.status,
         _message(result, mapped),
@@ -166,6 +167,6 @@ def tool_failure(result: dict[str, Any]) -> JSONResponse:
         code=mapped.code,
         extra=extra,
         # Only the local bucket refused before anything ran, and it refills on its own.
-        retry=result.get("status") == "rate_limited",
+        retry=local_bucket,
         headers=headers,
     )
