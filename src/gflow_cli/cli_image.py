@@ -51,6 +51,7 @@ from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import (
+    IMAGES_MISSING_HINT,
     AgentInstruction,
     Aspect,
     GenerateImageRequest,
@@ -1109,16 +1110,18 @@ async def _download_images(
     output_root: Path,
     output_file: Path | None = None,
     saved_paths: list[Path] | None = None,
+    requested: int = 1,
 ) -> list[Path]:
     """Download each generated image to its resolved target path.
 
     Appends to ``saved_paths`` when given, so the caller keeps the files written
-    before a failure (#1035).
+    before a failure (#1035). ``requested`` picks the naming: a run that asked for
+    several images keeps numbered names even when fewer came back (#1489).
     """
     saved_paths = [] if saved_paths is None else saved_paths
     for i, img in enumerate(images, start=1):
         if output_file is not None:
-            if len(images) == 1:
+            if requested == 1:
                 target = output_file
             else:
                 target = numbered_path(output_file, i)
@@ -1173,7 +1176,13 @@ async def _generate_verify_download(
     saved_paths: list[Path] = []
     try:
         await _download_images(
-            client, images, out, output_root, output_file=output_file, saved_paths=saved_paths
+            client,
+            images,
+            out,
+            output_root,
+            output_file=output_file,
+            saved_paths=saved_paths,
+            requested=count,
         )
     except BaseException:  # Ctrl-C mid-download must keep the ids too
         undownloaded.extend(
@@ -1359,6 +1368,7 @@ async def _run_t2i(
                 )
             else:
                 _print_t2i_summary(images, saved_paths)
+                _print_missing_images_note(count, len(images))
 
             _record_generated_images_safe(
                 recorder,
@@ -1390,6 +1400,12 @@ async def _run_t2i(
         raise
     finally:
         recorder.close()
+
+
+def _print_missing_images_note(requested: int, returned: int) -> None:
+    """#1489: one line under the table when Flow returned fewer images than requested."""
+    if returned < requested:
+        console.print(f"{returned} of {requested} images returned. {IMAGES_MISSING_HINT}")
 
 
 def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
@@ -1923,6 +1939,7 @@ async def _run_i2i(
                 )
             else:
                 _print_i2i_summary(images, saved_paths)
+                _print_missing_images_note(count, len(images))
 
             _record_generated_images_safe(
                 recorder,

@@ -2496,9 +2496,11 @@ use. When set:
   the returned ones are saved, the exit code is 0, a `client.images_missing` warning
   is logged on stderr, and the object carries
   `"warnings": [{"type": "images_missing", "requested": 4, "returned": 3}]`
-  (no `warnings` key otherwise). Multi-prompt `t2i` and `gflow run` mark the row
+  (no `warnings` key otherwise); without `--json` one `3 of 4 images returned` line
+  follows the table, and `--out-file` keeps the numbered names whenever `--count` is
+  above 1. Multi-prompt `t2i`, `gflow run` and `gflow image batch` mark the row
   `3 of 4 images returned`; `gflow run --resume` generates a short row again in
-  full. `gflow image batch` fails on missing images. Runs that read the images off the page instead of
+  full. Runs that read the images off the page instead of
   Flow's reply (Agent mode, an agent-only composer, a lost reply) fail when some
   are missing. Single-prompt only — `--json` rejects
   multi-prompt batches with a Click usage error.

@@ -1271,7 +1271,9 @@ async def _process_ok_row(
             saved=saved,
         )
 
-    return BatchOutcome(index=item.index, prompt=item, status="ok", saved_paths=saved)
+    return BatchOutcome(
+        index=item.index, prompt=item, status="ok", saved_paths=saved, images=list(result.images)
+    )
 
 
 async def _download_results(
@@ -1408,8 +1410,8 @@ async def run_manifest_image_batch(
             downloadable images before the failing prompt. The orchestrator
             downloads the partial results before re-raising so no paid credits
             are lost.
-        BatchIntegrityError: when the post-download file count does not match
-            the expected count (silent mis-delivery guard).
+        BatchIntegrityError: when fewer files were saved than the images Flow
+            returned (silent mis-delivery guard).
     """
     if jitter_range is None:
         jitter_range = resolve_jitter_range(None)
@@ -1505,17 +1507,14 @@ async def run_manifest_image_batch(
             continue_on_error=continue_on_error,
         )
 
-        # Post-download integrity check.
+        # Post-download integrity check, against what Flow returned: a short reply is
+        # reported on the row (#1489), a file lost after it is not.
         ok_outcomes = [o for o in outcomes if o.status == "ok"]
-        expected_files = sum(
-            p.count for p, o in zip(prompts, outcomes, strict=False) if o.status == "ok"
-        )
+        expected_files = sum(len(o.images) for o in ok_outcomes)
         actual_files = sum(len(o.saved_paths) for o in ok_outcomes)
         if actual_files != expected_files:
             missing_indices = tuple(
-                p.index
-                for p, o in zip(prompts, outcomes, strict=False)
-                if o.status == "ok" and len(o.saved_paths) < p.count
+                o.index for o in ok_outcomes if len(o.saved_paths) < len(o.images)
             )
             raise BatchIntegrityError(
                 detail=f"expected {expected_files} files, got {actual_files}",

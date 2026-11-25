@@ -272,11 +272,14 @@ def _missing_image_warnings(task: QueueTask) -> list[dict[str, Any]]:
     Counted from the checkpoint, not the saved files: those resolve through the catalog,
     which falls back to one asset for an unlinked task.
     """
-    requested = task.payload.get("count", 1)
-    media_ids: object = (task.checkpoint or {}).get("media_ids")
-    # isinstance: a hand-edited row; the reply must still go out
-    if task.task_type not in _IMAGE_TASK_TYPES or not isinstance(requested, int):
+    if task.task_type not in _IMAGE_TASK_TYPES:
         return []
+    requested: object = task.payload.get("count", 1)
+    checkpoint: object = task.checkpoint
+    # isinstance: a hand-edited row; the reply must still go out
+    if not isinstance(checkpoint, dict) or type(requested) is not int:
+        return []
+    media_ids: object = cast("dict[str, object]", checkpoint).get("media_ids")
     if not isinstance(media_ids, list) or not media_ids:
         return []
     return images_missing_warning(requested, len(cast("list[object]", media_ids)))

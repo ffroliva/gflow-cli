@@ -336,7 +336,8 @@ def test_a_run_row_with_two_images_is_not_marked_short(
         capture_output=True,
         text=True,
         check=False,
-        env=e2e_env | {"GFLOW_CLI_EXPERIMENTAL_TRANSPORTS": "1"},
+        # A wide console, so the absent note cannot be hidden by Rich wrapping the row.
+        env=e2e_env | {"GFLOW_CLI_EXPERIMENTAL_TRANSPORTS": "1", "COLUMNS": "200"},
     )
     assert proc.returncode == 0, f"gflow run failed (exit {proc.returncode})"
     assert len(list(out.iterdir())) == 2

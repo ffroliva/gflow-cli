@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from gflow_cli.api.dto import GeneratedImage
-from gflow_cli.errors import BatchPartialError, ConfigurationError
+from gflow_cli.errors import BatchIntegrityError, BatchPartialError, ConfigurationError
 from gflow_cli.image_batch import (
     MAX_BATCH_PROMPTS,
     BatchPromptItem,
@@ -254,8 +255,11 @@ def _make_batch_factory(
     *,
     project_id: str = "shared-proj",
     fail_on_idx: int | None = None,
+    returned: int | None = None,
 ) -> type:
     """Build a client factory stub whose transport implements generate_images_batch.
+
+    ``returned``: if set, every ok row gets that many images instead of ``req.count``.
 
     ``fail_on_idx``: if set, the BatchSubmissionResult at that index will have
     status='fail'. This exercises the _download_results fail-row path.
@@ -303,7 +307,8 @@ def _make_batch_factory(
                                 project_id=project_id,
                                 prompt_idx=idx,
                                 prompt_hash="aabbccdd",
-                                images=(fake_image,) * req.count,
+                                images=(fake_image,)
+                                * (req.count if returned is None else returned),
                             )
                         )
                 return results
@@ -373,6 +378,55 @@ class TestRunManifestImageBatch:
         assert outcomes[0].status == "ok"
         assert outcomes[1].status == "fail"
         assert outcomes[2].status == "ok"
+
+    async def test_a_short_reply_is_an_ok_row_with_the_returned_images(
+        self, tmp_path: Path
+    ) -> None:
+        """#1489: Flow returning 2 of 4 images is reported, not an integrity failure."""
+        item = BatchPromptItem(text="p", count=4, index=0, output_filename="p0")
+
+        (outcome,) = await run_manifest_image_batch(
+            profile_dir=tmp_path,
+            headless=True,
+            transport=None,
+            prompts=(item,),
+            output_dir=tmp_path / "out",
+            continue_on_error=False,
+            jitter_range=(0.0, 0.0),
+            client_factory=_make_batch_factory(returned=2),
+        )
+
+        assert outcome.status == "ok"
+        assert len(outcome.saved_paths) == 2
+        assert len(outcome.images) == 2
+
+    async def test_a_file_lost_after_download_still_fails_the_integrity_check(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fewer saved files than images Flow returned is a delivery loss."""
+        from gflow_cli import image_batch
+
+        real = image_batch._download_item_images  # pyright: ignore[reportPrivateUsage]
+
+        async def _drop_one(**kwargs: Any) -> list[Path]:
+            saved = await real(**kwargs)
+            saved.pop()
+            return saved
+
+        monkeypatch.setattr(image_batch, "_download_item_images", _drop_one)
+        item = BatchPromptItem(text="p", count=4, index=0, output_filename="p0")
+
+        with pytest.raises(BatchIntegrityError, match="expected 2 files, got 1"):
+            await run_manifest_image_batch(
+                profile_dir=tmp_path,
+                headless=True,
+                transport=None,
+                prompts=(item,),
+                output_dir=tmp_path / "out",
+                continue_on_error=False,
+                jitter_range=(0.0, 0.0),
+                client_factory=_make_batch_factory(returned=2),
+            )
 
     async def test_wrong_transport_raises(self, tmp_path: Path) -> None:
         """A non-UiAutomation transport raises RuntimeError."""
