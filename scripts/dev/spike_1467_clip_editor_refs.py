@@ -221,6 +221,19 @@ _ASSET_LIST_JS = r"""(stem) => {
 }"""
 
 
+_PROSEMIRROR_HIT_JS = r"""(sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return {found: false};
+  const r = el.getBoundingClientRect();
+  const at = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+  return {found: true, rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width),
+          Math.round(r.height)],
+          hit: at === null ? 'none' : (el.contains(at) ? 'self' :
+               at.tagName.toLowerCase() + (typeof at.className === 'string' && at.className
+               ? '.' + at.className.trim().split(/\s+/).slice(0, 2).join('.') : ''))};
+}"""
+
+
 async def _clear_prompt(page: Any) -> None:
     await page.locator(EXTEND_PROMPT).first.click(timeout=5000)
     await page.keyboard.press("ControlOrMeta+a")
@@ -228,8 +241,39 @@ async def _clear_prompt(page: Any) -> None:
     await page.wait_for_timeout(400)
 
 
-async def _fresh_upload_probe(page: Any, args: Any, report: dict[str, Any]) -> None:
-    """``--upload-fresh``: H1 (no refresh in this page session) against H2 (the filter)."""
+async def _settle_popover(page: Any) -> bool:
+    """Escape twice and wait for the asset browser to detach; whether it did."""
+    await _close_overlays(page)
+    try:
+        await page.locator("flow-add-menu-popover-content").first.wait_for(
+            state="detached", timeout=5000
+        )
+    except Exception:  # noqa: BLE001 - recorded by the caller
+        return False
+    return True
+
+
+async def _focus_prompt(page: Any, record: dict[str, Any]) -> None:
+    """Click the prompt box; if ``.ProseMirror`` is occluded, its container instead."""
+    record["prosemirror_hit"] = await page.evaluate(_PROSEMIRROR_HIT_JS, EXTEND_PROMPT)
+    try:
+        await page.locator(EXTEND_PROMPT).first.click(timeout=5000)
+        record["focused_via"] = "prosemirror"
+    except Exception as exc:  # noqa: BLE001 - a probe: try the container
+        record["prosemirror_click"] = f"failed: {type(exc).__name__}"
+        await page.locator(_PROMPT_BOX).first.click(timeout=5000)
+        record["focused_via"] = "container"
+    await page.evaluate(_CARET_TO_END_JS, EXTEND_PROMPT)
+
+
+async def _fresh_upload_probe(  # noqa: PLR0915
+    page: Any, args: Any, report: dict[str, Any], flush: Any
+) -> None:
+    """``--upload-fresh``: H1 (no refresh in this page session) against H2 (the filter).
+
+    Every step is recorded and flushed to disk as soon as it ends, and a failing step is
+    recorded and skipped rather than ending the run.
+    """
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     composer = MigratedComposer()
@@ -244,60 +288,80 @@ async def _fresh_upload_probe(page: Any, args: Any, report: dict[str, Any]) -> N
     report["fresh_clip"] = None if clip is None else {"kind": clip.kind, "ready": clip.ready}
     await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
     steps: dict[str, Any] = {}
-
-    async def snapshot(label: str) -> None:
-        steps[label] = await page.evaluate(_ASSET_LIST_JS, stem)
-
-    step("fresh-1", f"@ + full stem {stem!r}")
-    await _type_in_prompt(page, "@" + stem)
-    await snapshot("1_full_stem")
-    await _close_overlays(page)
-    await _clear_prompt(page)
-
-    step("fresh-2", "@ + 6-character prefix")
-    await _type_in_prompt(page, "@" + stem[:6])
-    await snapshot("2_prefix6")
-
-    step("fresh-3", "image tab, then the sort select")
-    tab = page.locator(
-        "flow-add-menu-popover-content button:has(mat-icon:text-is('image')), "
-        "flow-add-menu-popover-content [role='tab']:has(mat-icon:text-is('image'))"
-    ).first
-    try:
-        await tab.click(timeout=4000)
-        steps["3_tab_clicked"] = True
-    except Exception as exc:  # noqa: BLE001 - a probe: record and go on
-        steps["3_tab_clicked"] = f"failed: {type(exc).__name__}"
-    await page.wait_for_timeout(2000)
-    await snapshot("3a_after_image_tab")
-    sort = page.locator("flow-add-menu-popover-content mat-select").last
-    try:
-        await sort.click(timeout=4000)
-        await page.wait_for_timeout(1000)
-        steps["3_sort_overlay"] = await page.evaluate(_OVERLAY_JS)
-        await page.keyboard.press("Escape")
-        steps["3_sort_clicked"] = True
-    except Exception as exc:  # noqa: BLE001
-        steps["3_sort_clicked"] = f"failed: {type(exc).__name__}"
-    await page.wait_for_timeout(1500)
-    await snapshot("3b_after_sort")
-    await _close_overlays(page)
-    await _clear_prompt(page)
-
-    step("fresh-4", "close and re-open, @ + full stem")
-    await _type_in_prompt(page, "@" + stem)
-    await snapshot("4_reopened_full_stem")
-    await _close_overlays(page)
-    await _clear_prompt(page)
-
-    step("fresh-5", "reload the clip editor, @ + full stem")
-    await page.reload(wait_until="domcontentloaded")
-    await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
-    await page.wait_for_timeout(3000)
-    await _type_in_prompt(page, "@" + stem)
-    await snapshot("5_reloaded_full_stem")
-    await _close_overlays(page)
     report["fresh_steps"] = steps
+    flush()
+
+    async def run(label: str, body: Any) -> None:
+        record: dict[str, Any] = {}
+        steps[label] = record
+        step(f"fresh-{label}", "")
+        try:
+            record["popover_detached_before"] = await _settle_popover(page)
+            await body(record)
+        except Exception as exc:  # noqa: BLE001 - keep this step's evidence, go on
+            record["error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        flush()
+
+    async def type_and_snapshot(record: dict[str, Any], text: str) -> None:
+        await _focus_prompt(page, record)
+        await page.keyboard.type(text, delay=100)
+        await page.wait_for_timeout(2500)
+        record["typed"] = text
+        record["list"] = await page.evaluate(_ASSET_LIST_JS, stem)
+
+    async def full_stem(record: dict[str, Any]) -> None:
+        await type_and_snapshot(record, "@" + stem)
+
+    async def prefix6(record: dict[str, Any]) -> None:
+        await _settle_popover(page)
+        await _clear_prompt(page)
+        await type_and_snapshot(record, "@" + stem[:6])
+
+    async def tab_and_sort(record: dict[str, Any]) -> None:
+        await type_and_snapshot(record, "@")
+        tab = page.locator(
+            "flow-add-menu-popover-content button:has(mat-icon:text-is('image')), "
+            "flow-add-menu-popover-content [role='tab']:has(mat-icon:text-is('image'))"
+        ).first
+        try:
+            await tab.click(timeout=4000)
+            record["tab_clicked"] = True
+        except Exception as exc:  # noqa: BLE001
+            record["tab_clicked"] = f"failed: {type(exc).__name__}"
+        await page.wait_for_timeout(2000)
+        record["after_image_tab"] = await page.evaluate(_ASSET_LIST_JS, stem)
+        sort = page.locator("flow-add-menu-popover-content mat-select").last
+        try:
+            await sort.click(timeout=4000)
+            await page.wait_for_timeout(1000)
+            record["sort_overlay"] = await page.evaluate(_OVERLAY_JS)
+            await page.keyboard.press("Escape")
+            record["sort_clicked"] = True
+        except Exception as exc:  # noqa: BLE001
+            record["sort_clicked"] = f"failed: {type(exc).__name__}"
+        await page.wait_for_timeout(1500)
+        record["after_sort"] = await page.evaluate(_ASSET_LIST_JS, stem)
+
+    async def reopened(record: dict[str, Any]) -> None:
+        await _settle_popover(page)
+        record["prompt_box_after_close"] = await page.evaluate(_PROSEMIRROR_HIT_JS, EXTEND_PROMPT)
+        await _focus_prompt(page, record)
+        await page.keyboard.press("ControlOrMeta+a")
+        await page.keyboard.press("Backspace")
+        await type_and_snapshot(record, "@" + stem)
+
+    async def reloaded(record: dict[str, Any]) -> None:
+        await page.reload(wait_until="domcontentloaded")
+        await _anchor(page, EXTEND_PROMPT, named="clip editor prompt box")
+        await page.wait_for_timeout(3000)
+        await type_and_snapshot(record, "@" + stem)
+
+    await run("1_full_stem", full_stem)
+    await run("2_prefix6", prefix6)
+    await run("3_tab_and_sort", tab_and_sort)
+    await run("4_reopened_full_stem", reopened)
+    await run("5_reloaded_full_stem", reloaded)
+    await _settle_popover(page)
 
 
 def _rpcids_of(url: str, body: str) -> list[str]:
@@ -432,13 +496,18 @@ async def main() -> None:  # noqa: PLR0915
                 report["image_record_in_listing"] = {"rpcid": rid, "payload": payload}
 
     out = default_out_path("spike_1467_clip_editor_refs")
+
+    def flush() -> None:
+        """Write what has been captured so far, so a later failure loses nothing."""
+        out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+
     async with build_client(profile_dir) as client:
         page = await client._checkout_page()  # noqa: SLF001 - dev instrument
         await page.route("**/batchexecute*", hold)
         page.on("response", on_response)
         try:
             if args.upload_fresh:
-                await _fresh_upload_probe(page, args, report)
+                await _fresh_upload_probe(page, args, report, flush)
             else:
                 step("nav", f"clip editor for {args.clip}")
                 clip = await _source_clip(page, project_id=args.project, media_id=args.clip)
