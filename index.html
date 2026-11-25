@@ -273,7 +273,7 @@
         <div class="cell"><code>gflow character create</code><h3>The same face, shot after shot</h3><p>Mint a Flow Character once and the same person carries across every generation, instead of re-rolling until the face matches.</p></div>
         <div class="cell"><code>exit 23</code><h3>A broken run costs a message, not credits</h3><p>A billed request is sent once and never retried automatically, and a drifting UI aborts with a distinct exit code instead of resubmitting into a stale state. Nothing generated, nothing spent.</p></div>
         <div class="cell"><code>nightly drift probe</code><h3>It notices when Flow moves</h3><p>A selector registry plus a nightly canary run against the live UI, so breakage is caught by a scheduled run rather than by your batch job.</p></div>
-        <div class="cell"><code>GFLOW_CLI_JITTER_RANGE</code><h3>Configurable batch pacing</h3><p>Tunable jitter between submissions so multi-prompt runs stop tripping rate limits.</p></div>
+        <div class="cell"><code>GFLOW_CLI_JITTER_RANGE</code><h3>Configurable batch pacing</h3><p>Tunable jitter between submissions to reduce rate limiting in multi-prompt runs.</p></div>
         <div class="cell"><code>movie.toml</code><h3>Multi-scene pipeline</h3><p>Direct a whole sequence from one manifest: chain clips, compose scenes, render.</p></div>
       </div>
     </div>
