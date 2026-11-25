@@ -469,7 +469,7 @@ async def test_the_happy_path_drives_the_measured_anchors_and_downloads(
     assert kw["submit_selector"] == mx.EXTEND_SUBMIT
     assert kw["request_check"]("fZytfe", _fzytfe(wf=OTHER_WF)) is not None
     assert driver["routes_during_observe"] == 1
-    assert page.routes == [] and page.unrouted == 1
+    assert page.routes == [] and page.unrouted == 2  # the pre-submit hold, then the guard
     assert out.record.media_id == NEW_MEDIA
     assert out.video is not None and out.video[4:8] == b"ftyp"
     assert out.scene_id == SCENE
@@ -770,7 +770,8 @@ def test_source_record_keeps_malformed_media_info_as_unknown(
 ) -> None:
     bad = [UPLOADED_WF, PID, UPLOADED_MEDIA, None, None, [[1, 2]], None, [None, bad_media_info]]
     clip = mx.source_record([[[bad]], None], UPLOADED_MEDIA)
-    assert clip == mx.SourceClip(workflow_id=UPLOADED_WF, kind="unknown")
+    # No readable media metadata: not a video yet, and not ready to be extended.
+    assert clip == mx.SourceClip(workflow_id=UPLOADED_WF, kind="unknown", ready=False)
 
 
 def test_source_record_marks_processing_upload_not_ready() -> None:
@@ -1140,31 +1141,74 @@ async def test_a_plain_extend_never_opens_the_settings_pane(driver: dict[str, An
     assert out.quoted_credits is None
 
 
-@pytest.mark.asyncio
-async def test_a_quote_that_does_not_reprice_after_the_slider_moves_is_exit_45(
-    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The label still shows the old price: the cap cannot be verified, so it refuses."""
-    from gflow_cli.errors import CreditCapExceededError
+class _DriftingSlider(_FakeSlider):
+    """Binds the requested value, then reads back Flow's 4 s once the quote is checked."""
 
-    monkeypatch.setattr(mx, "QUOTE_SETTLE_S", 0.0)
-    pane = _FakeSettingsPane(_FakeSlider(value=4), "Generating will use 12 credits")
+    def __init__(self) -> None:
+        super().__init__(value=4)
+        self.reads = 0
+
+    async def input_value(self) -> str:
+        self.reads += 1
+        return str(self.value) if self.reads <= 2 else "4"
+
+
+async def _extend_with_pane(pane: _FakeSettingsPane, **kw: Any) -> Any:
+    class _ClosingKeyboard(_Keyboard):
+        async def press(self, key: str) -> None:
+            await super().press(key)
+            pane.open = pane.open and key != "Escape"
 
     class _SettingsPage(_Page):
+        def __init__(self, listing: Any) -> None:
+            super().__init__(listing)
+            self.keyboard = _ClosingKeyboard()
+
         def locator(self, selector: str) -> Any:
             return pane if selector == mx.EXTEND_SETTINGS_PANE else super().locator(selector)
 
-    with pytest.raises(CreditCapExceededError) as caught:
-        await mx.run_extend(
-            _SettingsPage(_zzl0ze()),  # type: ignore[arg-type]
-            project_id=PID,
-            media_id=MEDIA,
-            prompt="keep going",
-            aspect=None,
-            duration=6,
-            max_credits=100,
-            poll_timeout_s=30.0,
+    return await mx.run_extend(
+        _SettingsPage(_zzl0ze()),  # type: ignore[arg-type]
+        project_id=PID,
+        media_id=MEDIA,
+        prompt="keep going",
+        aspect=None,
+        poll_timeout_s=30.0,
+        **kw,
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_lengths_at_the_same_price_pass_the_cap_once_the_slider_confirms(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The label does not move because the price did not: accepted after the wait."""
+    monkeypatch.setattr(mx, "QUOTE_SETTLE_S", 0.0)
+    pane = _FakeSettingsPane(_FakeSlider(value=4), "Generating will use 12 credits")
+    out = await _extend_with_pane(pane, duration=6, max_credits=12)
+    assert out.quoted_credits == 12
+    assert driver["observe"] is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("label", ["Generating will use 12 credits", None])
+async def test_a_quote_for_a_length_the_slider_no_longer_shows_is_exit_45(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, label: str | None
+) -> None:
+    """Unchanged or freshly readable, a label is not trusted for a length that is not set."""
+    from gflow_cli.errors import CreditCapExceededError
+
+    monkeypatch.setattr(mx, "QUOTE_SETTLE_S", 0.0)
+    pane = _FakeSettingsPane(_DriftingSlider(), label)
+    if label is None:  # the label is unreadable before the move, readable after it
+        reads = iter([None, "Generating will use 18 credits"])
+        monkeypatch.setattr(
+            mx,
+            "_read_extend_credit_quote",
+            lambda _p: _coro(mx.parse_credit_quote(next(reads, "18 credits") or "")),
         )
+    with pytest.raises(CreditCapExceededError) as caught:
+        await _extend_with_pane(pane, duration=6, max_credits=100)
     assert caught.value.quoted is None
     assert caught.value.charged == "no"
     assert driver["observe"] is None
@@ -1339,19 +1383,44 @@ async def test_an_upload_still_processing_at_the_deadline_is_a_timeout(
 
 
 @pytest.mark.asyncio
-async def test_a_disabled_extend_item_on_a_fresh_upload_is_a_timeout_not_a_plan_refusal(
-    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+async def test_a_disabled_extend_item_after_the_upload_is_ready_is_exit_35(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
-    """Flow keeps Extend disabled while it processes an upload: exit 9, not 35/37."""
-    monkeypatch.setattr(mx, "VIDEO_INGEST_READY_BUDGET_S", 0.0)
+    """Listed ready, the clip is no longer processing: #1334's refusal, not exit 9."""
+    from gflow_cli.errors import ExtendUnavailableError
+
+    monkeypatch.setattr(mx, "DISABLED_GRACE_S", 0.0)
 
     async def _never_out_of_credits(_page: Any) -> None:
         return None
 
+    async def _classic(_self: Any, _page: Any, _pid: str, **_kw: Any) -> str:
+        return "classic"
+
+    async def _fake_upload_video(_page: Any, _pid: str, _path: Any) -> str:
+        return UPLOADED_MEDIA
+
     monkeypatch.setattr(mx, "_raise_if_out_of_credits", _never_out_of_credits)
-    item = _Locator([], mx.EXTEND_MENU_ITEM, disabled_reads=-1)
-    with pytest.raises(TransportTimeoutError, match="still processing"):
-        await mx._refuse_if_disabled(_Page(None), item, uploaded=True)  # type: ignore[arg-type]  # noqa: SLF001
+    monkeypatch.setattr(mx.MigratedComposer, "ensure_editor_for", _classic)
+    monkeypatch.setattr(mx, "upload_video", _fake_upload_video)
+    driver["disabled"][mx.EXTEND_MENU_ITEM] = -1
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+    page = _Page(
+        [[[_uploaded_video_record()]], None],
+        land=f"https://flow.google.com/project/{PID}/edit/{UPLOADED_MEDIA}",
+    )
+    with pytest.raises(ExtendUnavailableError) as caught:
+        await mx.run_extend(
+            page,  # type: ignore[arg-type]
+            project_id=PID,
+            source_video=src,
+            prompt="go",
+            aspect=None,
+            poll_timeout_s=30.0,
+        )
+    assert exit_code_for(caught.value) == 35
+    assert driver["observe"] is None
 
 
 @pytest.mark.asyncio
@@ -1512,3 +1581,105 @@ async def test_video_upload_waits_past_the_empty_first_reply(tmp_path: Any) -> N
         await page.fire(status=200, body=json.dumps(reply))
 
     assert await uv.upload_video(_UploadPage(resumable), PID, clip) == UPLOADED_MEDIA  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_submit_the_page_sends_during_preparation_is_aborted(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An Enter that lands with no picker open submits the extend before the references,
+    the length and the cap are in place. That ``fZytfe`` is aborted, never released, and
+    the run stops before gflow's own click, charged nothing."""
+    seen: list[str] = []
+    real_prompt = mx._prepare_extend_prompt  # noqa: SLF001
+
+    async def stray_enter(composer: Any, page: Any, **kw: Any) -> None:
+        await real_prompt(composer, page, **kw)
+        route = _Route()
+        await page.routes[-1](route, _Request("fZytfe", _fzytfe()))
+        seen.extend(route.calls)
+
+    monkeypatch.setattr(mx, "_prepare_extend_prompt", stray_enter)
+    page = _Page(_zzl0ze())
+    with pytest.raises(WireFormatError) as caught:
+        await _run(page)
+    assert seen == ["abort"]
+    assert caught.value.charged == "no"
+    assert driver["observe"] is None
+    assert page.routes == []
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_upload_listed_without_its_metadata_is_waited_for(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """A brand-new upload is listed before its size and length: keep reading, never exit 11."""
+    monkeypatch.setattr(mx, "_VIDEO_INGEST_POLL_S", 0.0)
+    bare = _uploaded_video_record()
+    bare[7] = [None, None]
+    reads = iter([[[[bare]], None], [[[_uploaded_video_record()]], None]])
+
+    async def _classic(_self: Any, _page: Any, _pid: str, **_kw: Any) -> str:
+        return "classic"
+
+    async def _fake_upload_video(_page: Any, _pid: str, _path: Any) -> str:
+        return UPLOADED_MEDIA
+
+    async def _listing(_page: Any, **_kw: Any) -> Any:
+        return mx.source_record(next(reads), UPLOADED_MEDIA)
+
+    monkeypatch.setattr(mx.MigratedComposer, "ensure_editor_for", _classic)
+    monkeypatch.setattr(mx, "upload_video", _fake_upload_video)
+    monkeypatch.setattr(mx, "_source_clip", _listing)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+    page = _Page(None, land=f"https://flow.google.com/project/{PID}/edit/{UPLOADED_MEDIA}")
+    page.url = page._land  # noqa: SLF001 - the editor is already open
+    out = await mx.run_extend(
+        page,  # type: ignore[arg-type]
+        project_id=PID,
+        source_video=src,
+        prompt="go",
+        aspect=None,
+        poll_timeout_s=30.0,
+    )
+    assert out.source_media_id == UPLOADED_MEDIA
+
+
+@pytest.mark.asyncio
+async def test_the_agent_only_composer_is_the_unported_refusal_not_drift(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    async def _agent_only(_self: Any, _page: Any, _pid: str, **_kw: Any) -> str:
+        return "agent_only"
+
+    monkeypatch.setattr(mx.MigratedComposer, "ensure_editor_for", _agent_only)
+    src = tmp_path / "clip.mp4"
+    src.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+    with pytest.raises(FlowHostMigratedError) as caught:
+        await mx.run_extend(
+            _Page(None),  # type: ignore[arg-type]
+            project_id=PID,
+            source_video=src,
+            prompt="go",
+            aspect=None,
+            poll_timeout_s=30.0,
+        )
+    assert exit_code_for(caught.value) == 36
+    assert caught.value.charged == "no"
+
+
+def test_the_upload_timeout_names_the_uploaded_clip_to_extend_later() -> None:
+    err = mx._ingest_timeout("x", media_id=UPLOADED_MEDIA, project_id=PID)  # noqa: SLF001
+    assert UPLOADED_MEDIA in err.detail and UPLOADED_MEDIA in (err.remediation_hint or "")
+    assert "gflow data list videos" not in (err.remediation_hint or "")
+
+
+@pytest.mark.asyncio
+async def test_a_folder_or_unreadable_path_is_exit_11(tmp_path: Any) -> None:
+    folder = tmp_path / "clip.mp4"
+    folder.mkdir()
+    with pytest.raises(ConfigurationError):
+        await mx.validate_extend_inputs(
+            media_id=None, source_video=folder, duration=None, reference_images=(), max_credits=None
+        )

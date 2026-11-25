@@ -258,6 +258,9 @@ def source_record(payload: Any, media_id: str) -> SourceClip | None:
 
     An extended clip has one record per extend under the same media id, in no set order;
     its media entry names the newest, which the page's next extend continues (#1346).
+
+    ``ready`` needs the media metadata to be present (a fresh upload is listed before its
+    size and length are) and Flow's processing flag ``rec[5][8] == [1]`` to be clear.
     """
     rec = find_record(payload, (2, media_id))
     if rec is None:
@@ -275,7 +278,7 @@ def source_record(payload: Any, media_id: str) -> SourceClip | None:
         kind = "video"
     else:
         kind = "unknown"
-    ready = _at(rec, 5, 8) != [1]
+    ready = kind != "unknown" and _at(rec, 5, 8) != [1]
     return SourceClip(workflow_id=str(rec[0]), kind=kind, ready=ready)
 
 
@@ -601,21 +604,16 @@ async def _anchor(page: Page, selector: str, *, named: str) -> Any:
     return locator
 
 
-async def _refuse_if_disabled(page: Page, item: Any, *, uploaded: bool = False) -> None:
+async def _refuse_if_disabled(page: Page, item: Any) -> None:
     """Exit 37 or 35, before any click, when Flow keeps the Extend item disabled (#1334).
 
     Measured 2026-11-18 on an account holding 12 credits: ``disabled="true"``, a link to
     Google's AI plans beside it and no credits warning, while a funded account's item was
     enabled. The page names no cause, so the error names the item and both remedies. A
     short grace period keeps an item that is enabled a moment late from being refused.
-
-    A clip uploaded in this run keeps the item disabled while Flow processes it, so it is
-    given :data:`VIDEO_INGEST_READY_BUDGET_S`, and still disabled after that it is a
-    timeout (exit 9), not a plan or balance refusal — unless the page shows it is out of
-    credits.
+    A fresh upload reaches this only once Flow's project read lists it ready.
     """
-    budget = VIDEO_INGEST_READY_BUDGET_S if uploaded else DISABLED_GRACE_S
-    deadline = asyncio.get_running_loop().time() + budget
+    deadline = asyncio.get_running_loop().time() + DISABLED_GRACE_S
     while await is_menu_item_disabled(item):
         if asyncio.get_running_loop().time() >= deadline:
             break
@@ -624,8 +622,6 @@ async def _refuse_if_disabled(page: Page, item: Any, *, uploaded: bool = False) 
         return
     await page.keyboard.press("Escape")  # leave no open menu on a pooled page
     await _raise_if_out_of_credits(page)
-    if uploaded:
-        raise _ingest_timeout("its Extend item stayed disabled")
     raise ExtendUnavailableError(
         detail=(
             "migrated host: Flow shows the Extend menu item disabled on this account, so "
@@ -699,34 +695,40 @@ async def _source_clip(page: Page, *, project_id: str, media_id: str) -> SourceC
             found.cancel()
 
 
-def _ingest_timeout(state: str) -> TransportTimeoutError:
+def _ingest_timeout(state: str, *, media_id: str, project_id: str) -> TransportTimeoutError:
     """Exit 9 for a clip uploaded in this run that Flow had not finished processing."""
     return TransportTimeoutError(
         detail=(
-            f"migrated host: the uploaded clip was still processing after "
-            f"{VIDEO_INGEST_READY_BUDGET_S:.0f}s ({state}) — nothing was submitted"
+            f"migrated host: the uploaded clip {media_id} was still processing "
+            f"{VIDEO_INGEST_READY_BUDGET_S:.0f}s after the upload ({state}) — nothing was "
+            "submitted"
         ),
         remediation_hint=(
-            "Flow keeps the upload in the project. Re-run later with its media id "
-            "(`gflow data list videos`, or the id in the project URL) and --project."
+            f"Flow keeps the upload in project {project_id} as media {media_id}. Re-run "
+            f"later with that id: `gflow video extend {media_id} PROMPT --project "
+            f"{project_id}`."
         ),
     )
 
 
 async def _load_source_clip(
-    page: Page, *, project_id: str, media_id: str, uploaded_video: bool
+    page: Page, *, project_id: str, media_id: str, ingest_deadline: float | None
 ) -> SourceClip | None:
-    """Open the clip editor and wait for ``media_id`` (retrying while a fresh upload ingests).
+    """Open the clip editor and read ``media_id``'s record.
 
-    A fresh upload that is still not ready at the budget is a timeout, never returned.
+    For a clip uploaded in this run (``ingest_deadline`` set), re-read until it is listed
+    ready; still not ready at the deadline is a timeout, never returned.
     """
-    deadline = time.monotonic() + VIDEO_INGEST_READY_BUDGET_S
     while True:
         clip = await _source_clip(page, project_id=project_id, media_id=media_id)
-        if not uploaded_video or (clip is not None and clip.ready):
+        if ingest_deadline is None or (clip is not None and clip.ready):
             return clip
-        if time.monotonic() >= deadline:
-            raise _ingest_timeout("Flow's project read did not list it ready")
+        if time.monotonic() >= ingest_deadline:
+            raise _ingest_timeout(
+                "Flow's project read did not list it ready",
+                media_id=media_id,
+                project_id=project_id,
+            )
         log.info(
             "migrated_extend.upload_ingest_wait",
             media_id=media_id,
@@ -845,27 +847,46 @@ async def _read_extend_credit_quote(pane: Any) -> int | None:
     return None
 
 
-async def _settled_quote(pane: Any, *, before: int | None, moved: bool) -> int | None:
-    """The quote once the label reflects the chosen duration, or ``None`` if unconfirmed.
+async def _settled_quote(
+    pane: Any, *, before: int | None, duration: int | None, moved: bool
+) -> int | None:
+    """The quote for the chosen duration, or ``None`` if it cannot be confirmed.
 
-    A moved slider re-prices asynchronously, so a label still showing the old price is
-    polled until it changes or :data:`QUOTE_SETTLE_S` passes.
+    A moved slider re-prices asynchronously: a changed label is taken at once, and an
+    unchanged one (two lengths can cost the same) after :data:`QUOTE_SETTLE_S`. Either
+    way the slider must still show *duration*, so a label is never trusted for a length
+    that is not the one set.
     """
     deadline = asyncio.get_running_loop().time() + QUOTE_SETTLE_S
     while True:
         quoted = await _read_extend_credit_quote(pane)
-        if quoted is not None and not (moved and quoted == before):
+        settled = asyncio.get_running_loop().time() >= deadline
+        if quoted is not None and not moved:
             return quoted
-        if asyncio.get_running_loop().time() >= deadline:
+        if (
+            quoted is not None
+            and (before is None or quoted != before or settled)
+            and await _slider_shows(pane, duration)
+        ):
+            return quoted
+        if settled:
             return None
         await asyncio.sleep(0.25)
+
+
+async def _slider_shows(pane: Any, duration: int | None) -> bool:
+    slider = pane.locator("flow-duration-slider").locator('input[type="range"]')
+    try:
+        return await slider.input_value() == str(duration)
+    except PlaywrightError:
+        return False
 
 
 async def _close_extend_settings_pane(page: Page, *, strict: bool) -> None:
     pane = page.locator(EXTEND_SETTINGS_PANE)
     for _ in range(3):
         try:
-            if not await pane.count() or not await pane.first.is_visible():
+            if not await pane.count() or not await pane.last.is_visible():
                 return
         except PlaywrightError:
             return
@@ -918,7 +939,7 @@ async def _configure_extend_settings(
     try:
         before = await _read_extend_credit_quote(pane)
         moved = await _set_extend_duration_slider(pane, duration) if duration else False
-        quoted = await _settled_quote(pane, before=before, moved=moved)
+        quoted = await _settled_quote(pane, before=before, duration=duration, moved=moved)
         log.info("migrated_extend.credit_quote_checked", quoted=quoted, max_credits=max_credits)
         quoted = enforce_credit_cap(quoted=quoted, max_credits=max_credits, route=_CAP_ROUTE)
     except PlaywrightError as exc:
@@ -1001,7 +1022,7 @@ async def validate_extend_inputs(
             await validate_video_file(source_video)
         for ref_path in reference_images:
             await validate_image_file(ref_path)
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, OSError) as exc:  # incl. a missing, unreadable or folder path
         raise ConfigurationError(
             detail=f"cannot upload this file: {exc}",
             remediation_hint=(
@@ -1022,7 +1043,17 @@ async def _upload_extend_inputs(
     """Upload the local clip and references: ``(clip media id, ((ref id, name), ...))``."""
     if source_video is None and not reference_images:
         return None, ()
-    await composer.ensure_editor_for(page, project_id, needs_classic=True)
+    if await composer.ensure_editor_for(page, project_id, needs_classic=True) == "agent_only":
+        raise FlowHostMigratedError(
+            detail=(
+                "Flow served the agent-only composer (#799), which has no upload entry; "
+                "video extend from local files is not ported to it yet"
+            ),
+            remediation_hint=(
+                "Extend a clip already in the project by its media id, or re-run later: "
+                "Flow serves the classic composer on most loads."
+            ),
+        )
     uploaded = await upload_video(page, project_id, source_video) if source_video else None
     refs = [await composer.upload(page, project_id, ref) for ref in reference_images]
     return uploaded, tuple(refs)
@@ -1109,6 +1140,30 @@ def _route_guard(  # noqa: PLR0913
     return guard
 
 
+def _is_batchexecute(url: str) -> bool:
+    return "batchexecute" in url
+
+
+def _pre_submit_guard(held: list[str]) -> Callable[[Any, Any], Awaitable[None]]:
+    """While gflow prepares the request, no ``fZytfe`` may leave the page.
+
+    A stray keystroke (an Enter that lands with no picker open) submits the extend before
+    the references, the duration and the credit cap are in place. Such a submit is aborted
+    and recorded in ``held``; only the checked submit after preparation is let through.
+    """
+
+    async def hold(route: Any, request: Any) -> None:
+        body = request_body(request)
+        if EXTEND_SUBMIT_RPC in batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body):
+            held.append(EXTEND_SUBMIT_RPC)
+            await route.abort()
+            log.warning("migrated_extend.early_submit_aborted")
+            return
+        await route.fallback()
+
+    return hold
+
+
 def _started_handler(
     *,
     workflow_id: str,
@@ -1171,31 +1226,37 @@ async def _prepare_clip_extend(  # noqa: PLR0913
         reference_images=reference_images,
     )
     resolved_media_id = uploaded or str(media_id)
+    # One processing budget for a fresh upload, from the end of the upload: the listing
+    # and the timeline share it, so the total wait is what the timeout message says.
+    ingest_deadline = time.monotonic() + VIDEO_INGEST_READY_BUDGET_S if uploaded else None
     clip = await _load_source_clip(
         page,
         project_id=project_id,
         media_id=resolved_media_id,
-        uploaded_video=uploaded is not None,
+        ingest_deadline=ingest_deadline,
     )
     workflow_id = require_video_source(clip, media_id=resolved_media_id, project_id=project_id)
     _confirm_editor(page, project_id=project_id, media_id=resolved_media_id)
     log.info("migrated_extend.source", media_id=resolved_media_id, workflow_id=workflow_id)
-    add_clip_deadline = time.monotonic() + VIDEO_INGEST_READY_BUDGET_S
     while True:
         try:
             add_clip_btn = await _anchor(page, ADD_CLIP_BUTTON, named="timeline add-clip button")
             break
         except UiSelectorDriftError:
-            if uploaded is None:
+            if ingest_deadline is None:
                 raise
-            if time.monotonic() >= add_clip_deadline:
-                raise _ingest_timeout("the timeline offered no add-clip button") from None
+            if time.monotonic() >= ingest_deadline:
+                raise _ingest_timeout(
+                    "the timeline offered no add-clip button",
+                    media_id=resolved_media_id,
+                    project_id=project_id,
+                ) from None
             log.info("migrated_extend.upload_timeline_wait", media_id=resolved_media_id)
             await asyncio.sleep(_VIDEO_INGEST_POLL_S)
     await add_clip_btn.click()
     extend = await _anchor(page, EXTEND_MENU_ITEM, named="Extend menu item")
     # A click on a disabled item would wait out 30 s (#1334).
-    await _refuse_if_disabled(page, extend, uploaded=uploaded is not None)
+    await _refuse_if_disabled(page, extend)
     await extend.click()
     await _prepare_extend_prompt(
         composer, page, prompt=prompt, ref_names=tuple(name for _, name in ref_uploads)
@@ -1226,22 +1287,42 @@ async def run_extend(  # noqa: PLR0913
     Inputs are validated by the caller (:func:`validate_extend_inputs`).
     """
     composer = MigratedComposer()
-    # #1320: the submit inside submit_and_observe is the first send; watch for stray submits.
-    with (
-        SubmitWatch(page, rpcs=_EXTEND_SUBMIT_WATCH_RPCS) as watch,
-        nothing_submitted(sent=watch.seen),
-    ):
-        resolved_media_id, workflow_id, expected_ref_ids, quoted = await _prepare_clip_extend(
-            composer,
-            page,
-            project_id=project_id,
-            media_id=media_id,
-            source_video=source_video,
-            prompt=prompt,
-            duration=duration,
-            reference_images=reference_images,
-            max_credits=max_credits,
+    held: list[str] = []
+    hold = _pre_submit_guard(held)
+    await page.route(_is_batchexecute, hold)
+    try:
+        # #1320: the submit inside submit_and_observe is the first send; watch for strays.
+        with (
+            SubmitWatch(page, rpcs=_EXTEND_SUBMIT_WATCH_RPCS) as watch,
+            nothing_submitted(sent=watch.seen),
+        ):
+            resolved_media_id, workflow_id, expected_ref_ids, quoted = await _prepare_clip_extend(
+                composer,
+                page,
+                project_id=project_id,
+                media_id=media_id,
+                source_video=source_video,
+                prompt=prompt,
+                duration=duration,
+                reference_images=reference_images,
+                max_credits=max_credits,
+            )
+    finally:
+        try:
+            await page.unroute(_is_batchexecute, hold)
+        except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
+            log.debug("migrated_extend.unroute_failed", error=type(exc).__name__)
+    if held:
+        early = WireFormatError(
+            detail=(
+                f"migrated host: the page sent {EXTEND_SUBMIT_RPC} while gflow was still "
+                "preparing the extend; it was aborted before Flow saw it (host=migrated)"
+            ),
+            route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
+            remediation_hint="Nothing was submitted or charged; re-run the command.",
         )
+        early.charged = "no"
+        raise early
 
     facts: dict[str, str | None] = {}
 
@@ -1271,13 +1352,10 @@ async def run_extend(  # noqa: PLR0913
         on_checkpoint=on_checkpoint,
     )
 
-    def is_batchexecute(url: str) -> bool:
-        return "batchexecute" in url
-
     if on_checkpoint is not None:
         # Everything before this point is pre-submit (charged "no"); only the click is next.
         on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
-    await page.route(is_batchexecute, guard)
+    await page.route(_is_batchexecute, guard)
     try:
         record = await composer.submit_and_observe(
             page,
@@ -1290,7 +1368,7 @@ async def run_extend(  # noqa: PLR0913
         )
     finally:
         try:
-            await page.unroute(is_batchexecute, guard)
+            await page.unroute(_is_batchexecute, guard)
         except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
             log.debug("migrated_extend.unroute_failed", error=type(exc).__name__)
     url = str(page.url)
