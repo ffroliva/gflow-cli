@@ -23,6 +23,7 @@ import pytest
 import structlog
 
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
+from gflow_cli.api.transports._ui_session import _SIGNIN_CTA_SELECTOR  # noqa: PLC2701
 from gflow_cli.api.transports.ui_automation import (
     _COUNT_TAB_TEXT_RE,  # noqa: PLC2701
     _ONBOARDING_STRUCTURAL_SELECTORS,  # noqa: PLC2701
@@ -438,6 +439,17 @@ class TestCheckLoggedIn:
         )
         assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
 
+    def test_signin_selector_is_locale_invariant(self) -> None:
+        """#1289: sign-in probe uses Tier 1 structural anchors, never text labels."""
+        lowered = _SIGNIN_CTA_SELECTOR.lower()
+        for forbidden in (":has-text(", ":text(", ":text-is(", "sign in"):
+            assert forbidden not in lowered
+        assert "accounts.google.com/servicelogin" in lowered
+        # Bare accounts.google.com would collide with signed-in SignOutOptions.
+        for arm in _SIGNIN_CTA_SELECTOR.split(","):
+            if "accounts.google.com" in arm:
+                assert "/ServiceLogin" in arm
+
     @pytest.mark.asyncio
     async def test_returns_false_on_flow_landing_with_signin_button(self) -> None:
         t = UiAutomationTransport()
@@ -446,6 +458,7 @@ class TestCheckLoggedIn:
             signin_count=1,
         )
         assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+        page.locator.assert_called_once_with(_SIGNIN_CTA_SELECTOR)
 
     @pytest.mark.asyncio
     async def test_locator_failure_treats_as_no_signin_button(self) -> None:
@@ -494,6 +507,47 @@ class TestCheckLoggedIn:
         t = UiAutomationTransport()
         page = _make_page(url="https://flow.google.com/", signin_count=1)
         assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+        page.locator.assert_called_once_with(_SIGNIN_CTA_SELECTOR)
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_migrated_about_landing_without_calling_locator(
+        self,
+    ) -> None:
+        """#1289: /about is public signed-out landing across all locales."""
+        t = UiAutomationTransport()
+        for url in (
+            "https://flow.google.com/about",
+            "https://flow.google.com/about?hl=pt-BR",
+        ):
+            page = _make_page(url=url, signin_count=0)
+            assert await t._check_logged_in(page) is False, url  # type: ignore[attr-defined]
+            page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_nextauth_signin_even_with_project_callback(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://labs.google/fx/api/auth/signin?callbackUrl=https://labs.google/fx/tools/flow/project/abc-123",
+            signin_count=0,
+        )
+        assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+        page.locator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_project_fragment_in_query_does_not_bypass_signin_check(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(
+            url="https://flow.google.com/?next=/project/abc-123",
+            signin_count=1,
+        )
+        assert await t._check_logged_in(page) is False  # type: ignore[attr-defined]
+        page.locator.assert_called_once_with(_SIGNIN_CTA_SELECTOR)
+
+    @pytest.mark.asyncio
+    async def test_returns_true_on_migrated_404_missing_project_when_no_signin_cta(self) -> None:
+        t = UiAutomationTransport()
+        page = _make_page(url="https://flow.google.com/404?reason=project", signin_count=0)
+        assert await t._check_logged_in(page) is True  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_rejects_flow_host_smuggled_into_a_foreign_url(self) -> None:
