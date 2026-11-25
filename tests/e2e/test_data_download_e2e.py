@@ -159,3 +159,61 @@ async def test_download_recovers_after_the_first_as29s_reply_body_is_evicted_148
         with DataStore.open(db_path) as store:
             store.conn.execute("DELETE FROM local_files WHERE path = ?", (str(result.path),))
             store.conn.commit()
+
+
+async def test_a_lost_status_poll_settles_the_run_from_the_live_listing_1484(
+    e2e_profile_dir: Path, real_catalog: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1484, generation path at $0: a finished, already-billed clip stands in for a run
+    whose terminal status poll body Chrome evicted. The recovery must open the real
+    project listing in a second tab, settle the run from it, and hand back a record with
+    no listing URL, so the download takes the clip route (#948)."""
+    import asyncio
+    import time
+
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.transports import _mc_submit_observe as observe
+    from gflow_cli.api.transports._mc_common import LISTING_RPC
+    from gflow_cli.api.transports.batchexecute import generation_record
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    row = _catalog_video(profile)
+    assert row.project_id is not None
+    monkeypatch.setattr(observe, "RESULT_URL_GRACE_S", 0.5)
+    settings = get_settings()
+    async with FlowApiClient(profile_dir=e2e_profile_dir, headless=settings.headless) as client:
+        page = client._page  # noqa: SLF001 - the e2e drives the transport on the real page
+        assert page is not None
+        setup = await observe.read_project_listing(page, row.project_id, budget_s=60.0)
+        if setup is None:
+            pytest.skip("Flow did not answer the project listing; nothing to recover from")
+        first = generation_record(LISTING_RPC, setup, media_id=row.media_id)
+        if not first.is_done:
+            pytest.skip(f"catalogued clip {row.media_id} is not done in its listing")
+        loop = asyncio.get_running_loop()
+        watch = observe._StatusWatch(  # noqa: SLF001
+            loop.create_future(), loop.create_future(), {"id": first.workflow_id}
+        )
+        watch.status_lost.set()  # the terminal jwpduf body was evicted
+        composer = MigratedComposer()
+        reads: list[float] = []
+        real_read = composer._read_listing  # noqa: SLF001
+
+        async def counted(*args: object, **kw: float) -> object:
+            reads.append(kw["budget_s"])
+            return await real_read(*args, **kw)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(composer, "_read_listing", counted)
+        rec = await observe._finish_submitted(  # noqa: SLF001
+            composer,
+            page,
+            first=first,
+            project_id=row.project_id,
+            on_started=None,
+            status_watch=watch,
+            deadline=time.monotonic() + 120.0,
+        )
+    assert rec.workflow_id == first.workflow_id and rec.media_id == row.media_id
+    assert rec.is_done and rec.video_url is None
+    assert len(reads) == 1

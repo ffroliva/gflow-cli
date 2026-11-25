@@ -599,6 +599,13 @@ class FakeResponse:
         return self._text
 
 
+class _NoSecondTab:
+    async def new_page(self) -> Any:
+        from playwright.async_api import Error as PlaywrightError
+
+        raise PlaywrightError("this fake page opens no second tab")
+
+
 class FakePage:
     """Resolves the fixed set of CSS the composer is allowed to use."""
 
@@ -618,6 +625,9 @@ class FakePage:
         self.scripted_request: tuple[str | None, str] | None = (
             None  # (rpcid, body); None = bare URL
         )
+        # No second tab unless a test supplies one: the listing read fails closed on a
+        # Playwright error, as it does when the browser refuses a new page.
+        self.context: Any = _NoSecondTab()
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
@@ -4980,3 +4990,107 @@ async def test_a_poll_timeout_re_reads_the_listing_before_raising_exit_9_1484() 
     )
     assert rec.workflow_id == WF_OURS and rec.is_done
     assert tab.closed
+
+
+class _LatePollsPage(FakePage):
+    """Fires ``late`` responses ``spacing_s`` apart once submit's own replies are out."""
+
+    def __init__(self, late: list[tuple[str, str]], *, spacing_s: float = 0.1) -> None:
+        super().__init__()
+        self.late, self.spacing_s = late, spacing_s
+
+    def _fire_submit(self) -> None:
+        super()._fire_submit()
+        loop = asyncio.get_event_loop()
+        for i, (url, text) in enumerate(self.late, start=1):
+            loop.call_later(i * self.spacing_s, self._fire_response, FakeResponse(url, text))
+
+
+def _listing_tabs(page: FakePage, *listings: str) -> list[ListingTab]:
+    """Each read of the listing opens the next tab; the last one repeats."""
+    from types import SimpleNamespace
+
+    opened: list[ListingTab] = []
+
+    async def new_page() -> ListingTab:
+        opened.append(ListingTab(listings[min(len(opened), len(listings) - 1)]))
+        return opened[-1]
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    return opened
+
+
+async def test_a_loss_cleared_by_a_readable_poll_keeps_the_recovery_watching_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost `jwpduf` and a readable running `as29s` on one tick cleared the loss before
+    the loop looked; it read that as a timeout and stopped watching, so the later lost
+    terminal poll went unnoticed and a finished clip waited blind for the deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.02)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.2)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(2))),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(2)), _listing(_ours(3)))
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert time.monotonic() - started < 2.0, "settled only at the poll deadline"
+    assert len(tabs) == 2
+
+
+async def test_a_clip_settled_from_the_listing_carries_no_listing_url_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); the
+    download must go through the clip route, which fetches a signed one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.02)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    _listing_tabs(page, _listing(_ours(3, "https://lh3.googleusercontent.com/unsigned")))
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_repeated_lost_polls_re_read_the_listing_a_bounded_number_of_times_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 6, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(2)))
+    with pytest.raises(TransportTimeoutError):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
+        )
+    assert len(tabs) <= 2  # one within the interval, one final read at the deadline
+
+
+async def test_the_default_fake_page_cannot_open_a_listing_tab() -> None:
+    """The listing read must fail closed on a Playwright error, not on AttributeError."""
+    from playwright.async_api import Error as PlaywrightError
+
+    with pytest.raises(PlaywrightError):
+        await FakePage().context.new_page()

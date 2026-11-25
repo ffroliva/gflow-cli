@@ -29,7 +29,7 @@ need is locale-dependent.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -53,10 +53,13 @@ MIGRATED_CLIP_URL = "https://flow.google.com/project/{project_id}/edit/{media_id
 #: Measured: the reply lands within a few seconds: this is slack, not a poll budget.
 SIGNED_URL_WAIT_S = 45.0
 
-#: Route-load attempts within :data:`SIGNED_URL_WAIT_S` (#1484). ``as29s`` is sent once as
-#: the clip route loads; if Chrome evicts that reply body or a load misses it, an already
-#: loaded page will not send a second ``as29s`` without re-opening the route.
+#: Route loads within :data:`SIGNED_URL_WAIT_S` (#1484). ``as29s`` is sent once as the clip
+#: route loads; if Chrome evicts that reply body, an already loaded page will not send a
+#: second ``as29s`` without re-opening the route.
 _SIGNED_URL_ATTEMPTS = 3
+
+#: Timeout for the first load of the clip route; the wait budget starts after it.
+_NAVIGATION_TIMEOUT_S = 90.0
 
 _ROUTE = "batchexecute:as29s"
 
@@ -75,6 +78,34 @@ def _clip_url(project_id: str, media_id: str) -> str:
     return MIGRATED_CLIP_URL.format(project_id=project_id, media_id=media_id)
 
 
+@dataclass
+class _As29sWatch:
+    """Collects this clip's ``as29s`` record and notes which load lost its body."""
+
+    media_id: str
+    found: dict[str, Any] = field(default_factory=dict[str, Any])
+    attempt: int = 0
+    unreadable_on: int = 0
+
+    @property
+    def waiting(self) -> bool:
+        """Still no record, and the current load has not lost its ``as29s`` body."""
+        return not self.found and self.unreadable_on != self.attempt
+
+    async def on_response(self, response: Any) -> None:
+        url = str(getattr(response, "url", ""))
+        if self.found or "batchexecute" not in url:
+            return
+        load = self.attempt  # a read pending across a reload fails on behalf of its own load
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+            if "as29s" in url and load == self.attempt:
+                self.unreadable_on = load
+            return
+        _collect(text, media_id=self.media_id, into=self.found)
+
+
 async def _await_signed_record(
     page: Page, *, media_id: str, project_id: str, wait_s: float
 ) -> dict[str, Any]:
@@ -84,44 +115,42 @@ async def _await_signed_record(
     only source of a freshly signed URL, because signed URLs expire and are therefore
     never persisted in the catalog.
     """
-    found: dict[str, Any] = {}
-    unreadable = False
-
-    async def on_response(response: Any) -> None:
-        nonlocal unreadable
-        url = str(getattr(response, "url", ""))
-        if found or "batchexecute" not in url:
-            return
-        try:
-            text = await response.text()
-        except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
-            if "as29s" in url:
-                unreadable = True
-            return
-        _collect(text, media_id=media_id, into=found)
-
-    page.on("response", on_response)
+    watch = _As29sWatch(media_id)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    deadline: float | None = None
+    page.on("response", watch.on_response)
     try:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + wait_s
-        attempt_wait_s = wait_s / _SIGNED_URL_ATTEMPTS
-        for _ in range(_SIGNED_URL_ATTEMPTS):
-            if found or loop.time() >= deadline:
-                break
-            unreadable = False
-            log.info("migrated.recover_navigate", project_id=project_id, media_id=media_id)
-            await page.goto(
-                _clip_url(project_id, media_id), wait_until="domcontentloaded", timeout=90_000
-            )
-            attempt_deadline = min(deadline, loop.time() + attempt_wait_s)
-            while not found and loop.time() < attempt_deadline:
-                await page.wait_for_timeout(500)
-                if unreadable:
+        # Total time is capped at the first navigation's timeout plus ``wait_s``: the wait
+        # starts once the route has loaded, and a reload spends what is left of it.
+        while not watch.found and watch.attempt < _SIGNED_URL_ATTEMPTS:
+            nav_timeout_s = _NAVIGATION_TIMEOUT_S
+            if deadline is not None:
+                nav_timeout_s = deadline - loop.time()
+                if nav_timeout_s <= 0:
                     break
+            watch.attempt += 1
+            log.info(
+                "migrated.recover_navigate",
+                project_id=project_id,
+                media_id=media_id,
+                attempt=watch.attempt,
+            )
+            await page.goto(
+                _clip_url(project_id, media_id),
+                wait_until="domcontentloaded",
+                timeout=nav_timeout_s * 1000,
+            )
+            if deadline is None:
+                deadline = loop.time() + wait_s
+            # A healthy load keeps the whole remaining budget: re-opening the route would
+            # cancel an as29s still in flight. Only an observed unreadable body reloads.
+            while watch.waiting and loop.time() < deadline:
+                await page.wait_for_timeout(500)
     finally:
-        page.remove_listener("response", on_response)
+        page.remove_listener("response", watch.on_response)
 
-    if not found:
+    if not watch.found:
         # #877: the class-default remediation on WireFormatError is written for
         # generation payloads — "check request payload parameters or retry with a
         # simpler prompt text" — and this command has neither a payload nor a prompt.
@@ -129,8 +158,9 @@ async def _await_signed_record(
         # so the remaining causes really are about the clip.
         raise WireFormatError(
             detail=(
-                f"migrated host: no signed media URL for {media_id} within "
-                f"{wait_s:.0f}s of opening its clip route."
+                f"migrated host: no signed media URL for {media_id} after {watch.attempt} "
+                f"load(s) of its clip route ({loop.time() - started:.0f}s including "
+                f"navigation; {wait_s:.0f}s wait once the route loaded)."
             ),
             remediation_hint=(
                 "Flow did not report a media URL for this clip. Open the project in "
@@ -141,7 +171,7 @@ async def _await_signed_record(
             ),
             route=_ROUTE,
         )
-    return found
+    return watch.found
 
 
 def _collect(text: str, *, media_id: str, into: dict[str, Any]) -> None:
