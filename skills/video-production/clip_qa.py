@@ -41,16 +41,29 @@ from pathlib import Path
 
 FACE_CROP = "crop=iw*0.6:ih*0.75:iw*0.2:0,scale=320:240"
 SYNC_EARLY, SYNC_LATE, SYNC_MIN_R, MIN_PROMINENCE = -0.045, 0.125, 0.3, 0.05
+AUDIO = ["-map", "0:a:0"]  # the stream probe_streams reads, whatever ffmpeg would pick
 AV_DURATION_TOLERANCE = 0.1  # video vs audio stream length on an assembled cut
 
 
 def run(args: list[str], cwd: Path) -> str:
     """ffmpeg, failing loudly: a silent failure would surface later as missing output."""
-    r = subprocess.run(args, capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed ffmpeg args
+    r = subprocess.run(  # noqa: S603 - fixed ffmpeg args
+        args, capture_output=True, encoding="utf-8", errors="replace", cwd=cwd
+    )
     if r.returncode != 0:
         target = args[args.index("-i") + 1]
         raise RuntimeError(f"ffmpeg failed ({r.returncode}) on {target}:\n{r.stderr[-800:]}")
     return r.stderr
+
+
+def ffprobe(clip: Path, entries: str, *options: str) -> str:
+    return subprocess.run(  # noqa: S603 - fixed ffprobe args
+        ["ffprobe", "-v", "error", *options]  # noqa: S607 - system tool
+        + ["-show_entries", entries, str(clip.absolute())],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    ).stdout.strip()
 
 
 def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
@@ -61,55 +74,22 @@ def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
     and ffprobe only (minimal Windows builds ship without it, and a gate that cannot run
     is not a gate).
     """
-    dur = float(
-        subprocess.run(  # noqa: S603 - fixed ffprobe args
-            [  # noqa: S607 - system tool
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "csv=p=0",
-                str(clip),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        or 0
-    )
+    dur = float(ffprobe(clip, "format=duration", "-of", "csv=p=0") or 0)
     n = max(1, round(dur * fps))
     cols = min(6, n)
     rows = -(-n // cols)  # ceil
     out = out_dir / f"{clip.stem}_{fps:g}fps.png"
     run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip),
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip.absolute()),
          "-vf", f"fps={fps},scale=420:-1,tile={cols}x{rows}",
-         "-frames:v", "1", str(out)],
+         "-frames:v", "1", str(out.absolute())],
         out_dir,
     )
     return out
 
 
 def probe_fps(clip: Path) -> float:
-    out = subprocess.run(  # noqa: S603 - fixed ffprobe args
-        [  # noqa: S607 - system tool
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=r_frame_rate",
-            "-of",
-            "csv=p=0",
-            clip.name,
-        ],
-        capture_output=True,
-        text=True,
-        cwd=clip.parent,
-    ).stdout.strip()
+    out = ffprobe(clip, "stream=r_frame_rate", "-select_streams", "v:0", "-of", "csv=p=0")
     num, _, den = out.partition("/")
     if not num.strip().isdigit():
         raise RuntimeError(
@@ -125,8 +105,9 @@ def frame_metadata(clip: Path, flag: str, filters: str) -> str:
     """
     with tempfile.TemporaryDirectory() as d:
         run(
-            ["ffmpeg", "-v", "error", "-i", str(clip.resolve()), flag, f"{filters}:file=out.txt"]
-            + ["-f", "null", "-"],
+            ["ffmpeg", "-v", "error", "-i", str(clip.resolve())]
+            + (AUDIO if flag == "-af" else [])
+            + [flag, f"{filters}:file=out.txt", "-f", "null", "-"],
             Path(d),
         )
         return (Path(d) / "out.txt").read_text()
@@ -160,6 +141,12 @@ def audio_envelope(clip: Path, fps: float) -> list[float]:
         for x in re.findall(r"RMS_level=(-?inf|-?[0-9.]+)", text)
     ]
     return [10 ** (x / 20) for x in db]
+
+
+def on_video_timeline(envelope: list[float], audio_start: float, fps: float) -> list[float]:
+    """The envelope as heard: a late stream opens with silence, an early one loses its head."""
+    frames = round(audio_start * fps)
+    return [0.0] * frames + envelope[max(0, -frames) :]
 
 
 def smooth(v: list[float], k: int = 5) -> list[float]:
@@ -216,41 +203,54 @@ def sync(motion: list[float], envelope: list[float], fps: float, window_s: float
     return round(best_lag / fps, 3), round(peak_r, 2), round(prominence, 3), at_edge
 
 
-def av_duration_delta(clip: Path) -> float:
-    """Video stream length minus audio stream length. The 25 fps title cards concatenated
-    into 24 fps clips produced 164 s of video under 171 s of audio — this is that check."""
-    out = subprocess.run(  # noqa: S603 - fixed ffprobe args
-        [  # noqa: S607 - system tool
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,duration",
-            "-of",
-            "csv=p=0",
-            clip.name,
-        ],
-        capture_output=True,
-        text=True,
-        cwd=clip.parent,
-    ).stdout
-    rows = (line.partition(",") for line in out.splitlines() if "," in line)
-    d = {k: float(v) for k, _, v in rows if v.replace(".", "").isdigit()}
-    return round(d.get("video", 0.0) - d.get("audio", 0.0), 3)
+def probe_streams(clip: Path) -> tuple[float, float]:
+    """(audio start minus video start, video length minus audio length), in seconds.
+
+    The length delta: the 25 fps title cards concatenated into 24 fps clips produced 164 s of
+    video under 171 s of audio. A truncated clip is refused: ffmpeg exits 0 on one and its
+    header keeps the full durations, so those are checked against the packets in the file.
+    """
+    entries = "stream=index,codec_type,start_time,duration"
+    entries += ":packet=stream_index,pts_time,dts_time,duration_time"
+    found = json.loads(ffprobe(clip, entries, "-of", "json") or "{}")
+    ends: dict[int, float] = {}
+    for p in found.get("packets", []):
+        time = p.get("pts_time", p.get("dts_time"))  # AVI stores no presentation times
+        if time is not None:
+            end = float(time) + float(p.get("duration_time", 0))
+            ends[p["stream_index"]] = max(end, ends.get(p["stream_index"], end))
+    start, length = {}, {}
+    for s in found.get("streams", []):
+        kind = s["codec_type"]
+        if kind in start:  # the first stream of a type is the one measured
+            continue
+        start[kind], length[kind] = float(s.get("start_time", 0)), float(s.get("duration", 0))
+        if kind not in ("video", "audio"):
+            continue
+        missing = start[kind] + length[kind] - ends.get(s["index"], start[kind])
+        if missing > AV_DURATION_TOLERANCE:
+            raise RuntimeError(f"{clip.name}: truncated, {missing:.2f} s of {kind} is missing")
+    if "audio" not in start:
+        raise RuntimeError(f"{clip.name}: no audio stream, so speech and sync cannot be measured")
+    return start["audio"] - start["video"], round(length["video"] - length["audio"], 3)
 
 
 def measure(clip: Path) -> tuple[dict, dict]:
     fps = probe_fps(clip)
+    audio_start, duration_delta = probe_streams(clip)
     whole = yavg(clip, "scale=180:320")
     face = yavg(clip, FACE_CROP)
-    lag, r, prom, edge = sync(face, audio_envelope(clip, fps), fps)
+    heard = on_video_timeline(audio_envelope(clip, fps), audio_start, fps)
+    lag, r, prom, edge = sync(face, heard, fps)
     err = run(
-        ["ffmpeg", "-i", clip.name, "-af", "silencedetect=n=-35dB:d=0.3", "-f", "null", "-"],
+        ["ffmpeg", "-i", clip.name, *AUDIO]
+        + ["-af", "silencedetect=n=-35dB:d=0.3", "-f", "null", "-"],
         clip.parent,
     )
     starts = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", err)]
     ends = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", err)]
-    onset = ends[0] if starts and starts[0] < 0.05 and ends else 0.0
+    begins = max(0.0, audio_start)  # a late stream's first sample is not at zero
+    onset = ends[0] if starts and starts[0] < begins + 0.05 and ends else begins
     return (
         {
             "median": round(statistics.median(whole), 2),
@@ -265,7 +265,8 @@ def measure(clip: Path) -> tuple[dict, dict]:
             "sync_r": r,
             "sync_prominence": prom,
             "sync_edge": edge,
-            "av_duration_delta_s": av_duration_delta(clip),
+            "audio_start_s": round(audio_start, 3),
+            "av_duration_delta_s": duration_delta,
         },
     )
 
@@ -275,12 +276,17 @@ def verdict(fa: dict, is_beat: bool = True) -> str:
     and per-shot sync gates do not apply — the stream-length check does."""
     if abs(fa["av_duration_delta_s"]) > AV_DURATION_TOLERANCE:
         return "DRIFT"
+    starts_together = SYNC_EARLY <= fa.get("audio_start_s", 0.0) <= SYNC_LATE
     if not is_beat:
-        return "ok"
+        return "ok" if starts_together else "CHECK"
     live = fa["speech_onset_s"] <= 1.6 and fa["face_motion_p10"] > 0.15
     # a weak correlation means the shot gives the detector nothing to align, not that it drifts
     measurable = fa["sync_r"] >= SYNC_MIN_R and not fa.get("sync_edge")
     in_sync = not measurable or SYNC_EARLY <= fa["sync_lag_s"] <= SYNC_LATE
+    # a peak away from zero, reported as zero
+    suppressed = fa["sync_lag_s"] == 0 < fa.get("sync_prominence", 0.0)
+    if (not measurable or suppressed) and not starts_together:
+        return "CHECK"  # the stored offset may be a fault, and nothing here can tell
     return "fluid" if live and in_sync else ("DRIFT" if live else "CHECK")
 
 
@@ -300,6 +306,9 @@ def selftest(clip: Path, shift_s: float = 0.2) -> None:
                 "error",
                 "-i",
                 str(clip.resolve()),
+                "-map",
+                "0:v",
+                *AUDIO,
                 "-af",
                 f"adelay={int(shift_s * 1000)}:all=1",
                 "-c:v",
@@ -323,6 +332,8 @@ def selftest(clip: Path, shift_s: float = 0.2) -> None:
 
 
 if __name__ == "__main__":
+    # A console code page that cannot show a clip's name must not end the run.
+    sys.stdout.reconfigure(errors="backslashreplace")
     if sys.argv[1] == "--selftest":
         selftest(Path(sys.argv[2]))
         raise SystemExit(0)
@@ -350,7 +361,11 @@ if __name__ == "__main__":
     motion, face = {}, {}
     for clip in clips:
         is_beat = bool(re.fullmatch(r"[a-z]{2}\d{2}", clip.stem))
-        motion[clip.stem], face[clip.stem] = measure(clip)
+        try:
+            motion[clip.stem], face[clip.stem] = measure(clip)
+        except RuntimeError as e:
+            print(f"REFUSED {e}")
+            continue
         f, m = face[clip.stem], motion[clip.stem]
         print(
             f"{verdict(f, is_beat):5} {clip.stem} onset={f['speech_onset_s']:.2f}s "
@@ -358,10 +373,11 @@ if __name__ == "__main__":
             f"sync={f['sync_lag_s']:+.3f}s r={f['sync_r']} prom={f['sync_prominence']:+.3f} "
             f"a/v={f['av_duration_delta_s']:+.3f}s"
         )
-    for clip in clips:
+    for clip in (c for c in clips if c.stem in motion):
         # Not optional, and not left to the operator's memory: the numbers above cannot
         # see a temporal artifact, so the artifact that CAN is produced every run.
         print(f"strip {strip(clip, out_dir).name}  (cell k = second k, read in order)")
     if target.is_dir():  # a single-file run is a spot check; do not clobber the batch results
         (out_dir / "motion.json").write_text(json.dumps(motion, indent=1))
         (out_dir / "motion_face.json").write_text(json.dumps(face, indent=1))
+    raise SystemExit(len(motion) < len(clips))
