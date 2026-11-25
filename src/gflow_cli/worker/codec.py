@@ -260,10 +260,13 @@ def _missing_image_warnings(task: QueueTask) -> list[dict[str, Any]]:
     which falls back to one asset for an unlinked task.
     """
     requested = task.payload.get("count", 1)
-    media_ids = (task.checkpoint or {}).get("media_ids")
-    if task.task_type not in _IMAGE_TASK_TYPES or not isinstance(requested, int) or not media_ids:
+    media_ids: object = (task.checkpoint or {}).get("media_ids")
+    # isinstance: a hand-edited row; the reply must still go out
+    if task.task_type not in _IMAGE_TASK_TYPES or not isinstance(requested, int):
         return []
-    return images_missing_warning(requested, len(media_ids))
+    if not isinstance(media_ids, list) or not media_ids:
+        return []
+    return images_missing_warning(requested, len(cast("list[object]", media_ids)))
 
 
 def _retirement_warnings(task: QueueTask) -> list[dict[str, Any]]:

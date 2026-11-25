@@ -49,8 +49,25 @@ async def test_a_short_reply_is_kept_and_logged_for_every_transport() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_full_reply_logs_nothing() -> None:
-    assert await _drive(returned=4, requested=4) == []
+@pytest.mark.parametrize("returned", [4, 5])
+async def test_a_full_reply_logs_nothing(returned: int) -> None:
+    assert await _drive(returned=returned, requested=4) == []
+
+
+def test_batch_summary_counts_and_labels_every_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    out = io.StringIO()
+    monkeypatch.setattr(image_batch, "console", Console(file=out, width=200))
+    item = BatchPromptItem(text="x")
+    statuses = ["ok", "fail", "fail", "skipped", "skipped", "skipped"] + ["resumed"] * 4
+    outcomes = [
+        BatchOutcome(index=i, prompt=item, status=s, error=f"why-{s}", saved_paths=[Path("a.png")])
+        for i, s in enumerate(statuses)
+    ]
+    render_image_batch_summary(outcomes, title="t")
+    text = out.getvalue()
+    assert "1/10 succeeded · 2 failure(s) · 3 skipped · 4 resumed" in text
+    assert [text.count(w) for w in ("OK", "FAIL", "SKIPPED", "RESUMED")] == [1, 2, 3, 4]
+    assert [text.count(w) for w in ("why-fail", "why-skipped")] == [2, 3]
 
 
 @pytest.mark.parametrize(("saved", "note"), [(3, "3 of 4 images returned"), (4, None)])
@@ -77,12 +94,13 @@ def test_batch_summary_marks_the_short_row(
         ("t2i", 4, {"media_ids": []}, False),  # nothing came back: a failure, not a short reply
         ("t2i", 4, None, False),  # a row without a checkpoint says nothing
         ("t2i", "4", {"media_ids": ["a"]}, False),  # a hand-edited row; the reply still goes out
+        ("t2i", 4, {"media_ids": 7}, False),
+        ("t2i", None, {"media_ids": ["a"]}, False),  # no count in the payload means one
         ("t2v", 4, {"media_ids": ["a"]}, False),
     ],
 )
 def test_task_warnings(task_type: str, count: Any, checkpoint: Any, short: bool) -> None:
-    task: Any = SimpleNamespace(
-        task_type=task_type, payload={"count": count}, checkpoint=checkpoint
-    )
+    payload = {} if count is None else {"count": count}
+    task: Any = SimpleNamespace(task_type=task_type, payload=payload, checkpoint=checkpoint)
     types = [w["type"] for w in codec.task_warnings(task).get("warnings", [])]
     assert types == (["images_missing"] if short else [])

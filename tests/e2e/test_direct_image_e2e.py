@@ -309,6 +309,41 @@ def test_a_run_row_referencing_an_earlier_row_goes_direct(
     assert _image_transports(e2e_env) == ["direct_http", "direct_http"]
 
 
+def test_two_images_on_the_ui_transport_raise_no_missing_warning(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """#1489: a full reply read by the UI path has no ``warnings`` in ``--json``."""
+    proc = _t2i(e2e_env, tmp_path / "ui.jpg", "--model", "nano-pro", "-n", "2", "--json")
+    assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
+    data = json.loads(proc.stdout)
+    assert data["count"] == 2
+    assert "warnings" not in data
+    assert "client.images_missing" not in proc.stderr
+    assert _image_transports(e2e_env) == [None, None]
+
+
+def test_a_run_row_with_two_images_is_not_marked_short(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """#1489: a full ``gflow run`` row carries no "images returned" note."""
+    config = tmp_path / "run.json"
+    row = {"text": "a single red apple on a wooden table", "aspect_ratio": "1:1", "count": 2}
+    config.write_text(json.dumps({"transport": "direct_http", "prompts": [row]}), encoding="utf-8")
+    out = tmp_path / "run_out"
+    proc = subprocess.run(
+        [sys.executable, "-m", "gflow_cli", "run", "--config", str(config)]
+        + ["--output-dir", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env | {"GFLOW_CLI_EXPERIMENTAL_TRANSPORTS": "1"},
+    )
+    assert proc.returncode == 0, f"gflow run failed (exit {proc.returncode})"
+    assert len(list(out.iterdir())) == 2
+    assert "images returned" not in proc.stdout
+    assert "client.images_missing" not in proc.stderr
+
+
 def test_local_file_reference_with_count_two_goes_direct(
     e2e_env: RedactedEnv, tmp_path: Path
 ) -> None:
