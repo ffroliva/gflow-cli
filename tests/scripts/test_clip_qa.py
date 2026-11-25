@@ -365,3 +365,26 @@ def test_a_stream_that_ends_early_is_refused(
 ) -> None:
     with pytest.raises(RuntimeError, match=rf"a\.mp4: truncated, .* of {kind} is missing"):
         _probe(monkeypatch, video, audio)
+
+
+@pytest.mark.parametrize(
+    ("prominence", "expected"),
+    [(0.0, "fluid"), (0.04, "CHECK")],  # a peak at zero confirms; a suppressed one does not
+)
+def test_a_suppressed_lag_does_not_confirm_a_stored_offset(
+    prominence: float, expected: str
+) -> None:
+    face = FACE | {"sync_r": 0.9, "sync_prominence": prominence}
+
+    assert clip_qa.verdict(face | {"audio_start_s": 1.0}) == expected
+    assert clip_qa.verdict(face | {"audio_start_s": 0.0}) == "fluid"
+
+
+@needs_ffmpeg
+def test_the_audio_measured_is_the_stream_that_was_probed(good_clip: Path, tmp_path: Path) -> None:
+    # ffmpeg left alone picks the stereo track, which is silent and starts later.
+    silent = ("-itsoffset", "0.5", "-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000:d=3")
+    maps = ("-map", "0:v", "-map", "0:a", "-map", "1:a")
+    ffmpeg("-i", str(good_clip), *silent, *maps, "-c:v", "copy", "sa01.mp4", cwd=tmp_path)
+
+    assert clip_qa.measure(tmp_path / "sa01.mp4")[1]["sync_r"] >= clip_qa.SYNC_MIN_R

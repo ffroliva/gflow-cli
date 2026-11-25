@@ -41,6 +41,7 @@ from pathlib import Path
 
 FACE_CROP = "crop=iw*0.6:ih*0.75:iw*0.2:0,scale=320:240"
 SYNC_EARLY, SYNC_LATE, SYNC_MIN_R, MIN_PROMINENCE = -0.045, 0.125, 0.3, 0.05
+AUDIO = ["-map", "0:a:0"]  # the stream probe_streams reads; ffmpeg alone prefers more channels
 AV_DURATION_TOLERANCE = 0.1  # video vs audio stream length on an assembled cut
 
 
@@ -104,8 +105,9 @@ def frame_metadata(clip: Path, flag: str, filters: str) -> str:
     """
     with tempfile.TemporaryDirectory() as d:
         run(
-            ["ffmpeg", "-v", "error", "-i", str(clip.resolve()), flag, f"{filters}:file=out.txt"]
-            + ["-f", "null", "-"],
+            ["ffmpeg", "-v", "error", "-i", str(clip.resolve())]
+            + (AUDIO if flag == "-af" else [])
+            + [flag, f"{filters}:file=out.txt", "-f", "null", "-"],
             Path(d),
         )
         return (Path(d) / "out.txt").read_text()
@@ -241,7 +243,8 @@ def measure(clip: Path) -> tuple[dict, dict]:
     heard = on_video_timeline(audio_envelope(clip, fps), audio_start, fps)
     lag, r, prom, edge = sync(face, heard, fps)
     err = run(
-        ["ffmpeg", "-i", clip.name, "-af", "silencedetect=n=-35dB:d=0.3", "-f", "null", "-"],
+        ["ffmpeg", "-i", clip.name, *AUDIO]
+        + ["-af", "silencedetect=n=-35dB:d=0.3", "-f", "null", "-"],
         clip.parent,
     )
     starts = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", err)]
@@ -280,7 +283,8 @@ def verdict(fa: dict, is_beat: bool = True) -> str:
     # a weak correlation means the shot gives the detector nothing to align, not that it drifts
     measurable = fa["sync_r"] >= SYNC_MIN_R and not fa.get("sync_edge")
     in_sync = not measurable or SYNC_EARLY <= fa["sync_lag_s"] <= SYNC_LATE
-    if not measurable and not starts_together:
+    suppressed = 0 < fa.get("sync_prominence", 0.0) < MIN_PROMINENCE
+    if (not measurable or suppressed) and not starts_together:
         return "CHECK"  # the stored offset may be a fault, and nothing here can tell
     return "fluid" if live and in_sync else ("DRIFT" if live else "CHECK")
 
