@@ -8,12 +8,15 @@ without ever calling ``apply_migrations``.
 
 from __future__ import annotations
 
+import gc
 import os
 import sqlite3
 import stat
 import subprocess
 import sys
 import threading
+import warnings
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -22,8 +25,9 @@ import pytest
 from structlog.testing import capture_logs
 
 from gflow_cli import winsec
-from gflow_cli.data.store import DataStore, _secure_store_files, inspect_schema
-from gflow_cli.errors import DataStoreError
+from gflow_cli.data import store as store_module
+from gflow_cli.data.store import DataStore, Migration, _secure_store_files, inspect_schema
+from gflow_cli.errors import DataMigrationError, DataStoreError
 
 
 def _new_db(tmp_path: Path) -> Path:
@@ -416,3 +420,177 @@ def test_harden_file_once_does_not_retry_a_failure(
     for _ in range(3):
         assert winsec.harden_file_once(str(tmp_path / "once.db")) is False
     assert calls == [1]
+
+
+def _clear_tracebacks(exc: BaseException) -> None:
+    exc.__traceback__ = None
+    if exc.__cause__ is not None:
+        exc.__cause__.__traceback__ = None
+    if exc.__context__ is not None:
+        exc.__context__.__traceback__ = None
+
+
+def _assert_closed_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    db: Path,
+    call: Callable[[], object],
+    expected: type[BaseException],
+) -> BaseException:
+    real_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    def track_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", ResourceWarning)
+        try:
+            with monkeypatch.context() as patched:
+                patched.setattr(sqlite3, "connect", track_connect)
+                with pytest.raises(expected) as exc_info:
+                    call()
+            assert len(opened) == 1
+            conn_repr = repr(opened[0])
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                opened[0].execute("SELECT 1")
+            if db.is_file():
+                moved = db.with_name(f"{db.name}.moved")
+                db.rename(moved)
+                moved.replace(db)
+            caught = exc_info.value
+            del exc_info
+            _clear_tracebacks(caught)
+            opened.clear()
+            gc.collect()
+            leaks = [
+                str(w.message)
+                for w in recorded
+                if issubclass(w.category, ResourceWarning) and conn_repr in str(w.message)
+            ]
+            assert leaks == []
+            return caught
+        finally:
+            opened.clear()
+            recorded.clear()
+            gc.collect()
+
+
+def test_open_closes_connection_when_pragma_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"not a sqlite database" * 4)
+    exc = _assert_closed_on_failure(monkeypatch, db, lambda: DataStore.open(db), DataStoreError)
+    assert isinstance(exc, DataStoreError)
+    assert exc.route == "data.open"
+    assert isinstance(exc.__cause__, sqlite3.DatabaseError)
+    db.unlink()
+    with DataStore.open(db):
+        pass
+
+
+def test_open_closes_connection_when_migration_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    newer_db = tmp_path / "newer.db"
+    conn = sqlite3.connect(newer_db)
+    try:
+        conn.execute(
+            "CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, filename TEXT, "
+            "checksum TEXT, applied_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations(version, filename, checksum, applied_at) "
+            "VALUES ('9999', '9999_future.sql', 'abc', '2026-05-24T00:00:00Z')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    _assert_closed_on_failure(
+        monkeypatch, newer_db, lambda: DataStore.open(newer_db), DataMigrationError
+    )
+    newer_db.unlink()
+    with DataStore.open(newer_db):
+        pass
+
+    drift_db = tmp_path / "drift.db"
+    with DataStore.open(drift_db):
+        pass
+    drift_conn = sqlite3.connect(drift_db)
+    try:
+        drift_conn.execute("UPDATE schema_migrations SET checksum='bad' WHERE version='0001'")
+        drift_conn.commit()
+    finally:
+        drift_conn.close()
+    _assert_closed_on_failure(
+        monkeypatch, drift_db, lambda: DataStore.open(drift_db), DataMigrationError
+    )
+    drift_db.unlink()
+    with DataStore.open(drift_db):
+        pass
+
+
+def test_open_closes_connection_when_migration_sql_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bad_migration.db"
+    base = store_module._load_migrations()
+    bad = Migration(
+        version="9999",
+        version_number=9999,
+        filename="9999_bad.sql",
+        sql="CREATE TABLE leak_probe(x); INSERT INTO no_such_table VALUES (1);",
+        checksum="0" * 64,
+    )
+    monkeypatch.setattr(store_module, "_load_migrations", lambda: [*base, bad])
+    exc = _assert_closed_on_failure(monkeypatch, db, lambda: DataStore.open(db), DataStoreError)
+    assert isinstance(exc, DataStoreError)
+    assert exc.route == "data.transaction"
+    probe = sqlite3.connect(db)
+    try:
+        row = probe.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='leak_probe'"
+        ).fetchone()
+    finally:
+        probe.close()
+    assert row is None
+
+
+def test_open_closes_connection_on_post_connect_oserror_and_base_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def raise_oserror() -> list[Migration]:
+        raise OSError("io fault")
+
+    def raise_interrupt() -> list[Migration]:
+        raise KeyboardInterrupt
+
+    db_os = tmp_path / "oserror.db"
+    with monkeypatch.context() as patched:
+        patched.setattr(store_module, "_load_migrations", raise_oserror)
+        exc = _assert_closed_on_failure(
+            monkeypatch, db_os, lambda: DataStore.open(db_os), DataStoreError
+        )
+    assert isinstance(exc, DataStoreError)
+    assert exc.route == "data.open"
+    assert isinstance(exc.__cause__, OSError)
+
+    db_int = tmp_path / "interrupt.db"
+    with monkeypatch.context() as patched:
+        patched.setattr(store_module, "_load_migrations", raise_interrupt)
+        _assert_closed_on_failure(
+            monkeypatch, db_int, lambda: DataStore.open(db_int), KeyboardInterrupt
+        )
+
+    ro_db = _new_db(tmp_path)
+
+    def fail_init(self: DataStore, conn: sqlite3.Connection, path: Path) -> None:
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patched:
+        patched.setattr(DataStore, "__init__", fail_init)
+        _assert_closed_on_failure(
+            monkeypatch, ro_db, lambda: DataStore.open_readonly(ro_db), KeyboardInterrupt
+        )
