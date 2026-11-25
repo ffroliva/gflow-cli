@@ -70,10 +70,6 @@ _NO_PROFILE = {
     "spike_session_oracle.py",
     # #1140: launches real Chrome on throwaway temp profiles only.
     "spike_disable_features_merge.py",
-    # #1289: its direct launch is the anonymous signed-out arm (fresh context with no
-    # cookies/profile); the optional --profile arm runs through `build_client`, which
-    # takes the lease itself.
-    "spike_1289_signed_out_locale.py",
 }
 
 

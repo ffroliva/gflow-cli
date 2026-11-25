@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import asyncio
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 import structlog
 from playwright.async_api import Page
 
-from gflow_cli.api.transports._common import flow_host_kind, flow_landing_kind
 from gflow_cli.api.transports._ui_common import (
-    _PROJECT_URL_FRAGMENT,
     ONBOARDING_SELECTORS,
     _jitter_ms,
 )
@@ -27,13 +24,6 @@ if TYPE_CHECKING:
     from gflow_cli.profile_lease import ProfileLease
 
 log = structlog.get_logger(__name__)
-
-#: Tier 1 locale-invariant sign-in / public-landing anchors (#1289).
-#: Measured live on en-US, pt-BR and zh-CN signed-out landings
-#: (``flow.google.com/about``) vs signed-in ``flow.google.com/`` (where the
-#: Google Bar links to ``SignOutOptions``, not ``ServiceLogin``, and no
-#: ``<flow-landing-page>`` mounts).
-_SIGNIN_CTA_SELECTOR = "a[href^='https://accounts.google.com/ServiceLogin'], flow-landing-page"
 
 
 class UiSessionMixin:
@@ -105,43 +95,6 @@ class UiSessionMixin:
         self._output_dir = config.output_dir
         self._record_generation_request = config.record_generation_request
         self._account_locale = config.account_locale
-
-    @staticmethod
-    async def _check_logged_in(page: Page) -> bool:
-        """True if the page shows the authenticated Flow UI.
-
-        Gates (pattern G13, locale-invariant #1289):
-        - URL's host is one of Flow's own origins — ``labs.google`` or, since
-          #639, the migrated ``flow.google.com``. Locale-stable: /fx/pt/tools/flow,
-          /fx/es/tools/flow etc. all match, and so does the migrated /project/<id>.
-        - Known signed-out / public landings (``flow_landing_kind`` in
-          ``("signin", "public")``) return ``False`` before any path check,
-          so ``flow.google.com/about`` or OAuth callback URLs never read as
-          authenticated.
-        - ``/project/<uuid>`` in the URL path short-circuits to ``True``
-          (editor already open).
-        - Otherwise reject if a locale-invariant structural sign-in anchor
-          (``_SIGNIN_CTA_SELECTOR``) is present.
-
-        The host is PARSED and matched exactly. This gate used to be the
-        substring test ``"labs.google" in page.url``, which any foreign URL
-        satisfies simply by carrying the string in a path or query.
-
-        A failure in the locator probe is treated as "no Sign-in CTA"
-        — the URL gate already established Flow context, and a transient
-        DOM error shouldn't force a re-auth loop.
-        """
-        if flow_host_kind(page.url) is None:
-            return False
-        if flow_landing_kind(page.url) in ("signin", "public"):
-            return False
-        if _PROJECT_URL_FRAGMENT in urlsplit(page.url).path:
-            return True
-        try:
-            signin_button = await page.locator(_SIGNIN_CTA_SELECTOR).count()
-        except Exception:
-            signin_button = 0
-        return signin_button == 0
 
     async def _bypass_onboarding(self, page: Page) -> None:
         """Click through cookie banners and 'Get Started' pages if they appear."""

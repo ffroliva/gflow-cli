@@ -21,7 +21,6 @@
     "_capture_batch_response": "staticmethod (page: 'Page', timeout_s: 'float' = 120.0, *, poll_interval_s: 'float' = 0.5) -> 'list[dict[str, Any]]' sha=2a12712387ec8863",
     "_capture_diag_screenshot": "staticmethod (page: 'Page', out_dir: 'Path | None', prompt_idx: 'int | None', suffix: 'str') -> 'None' sha=559090db66e5e80e",
     "_changelog_overlay_present": "staticmethod (page: 'Page') -> 'bool' sha=e8caad54514faa63",
-    "_check_logged_in": "staticmethod (page: 'Page') -> 'bool' sha=14c482eb0a837aa7",
     "_click_character_slot_add": "function (self, page: 'Any', out_dir: 'Any' = None) -> 'bool' sha=4557a6342cb55036",
     "_click_submit": "function (self, page: 'Page') -> 'None' sha=6906abf317f0d84c",
     "_configure_generation_settings": "staticmethod (page: 'Page', aspect_cli: 'str | None', count: 'int | None', *, model: 'Model | None' = None, out_dir: 'Path | None' = None, prompt_idx: 'int | None' = None) -> 'None' sha=fe4e3bf015e16741",

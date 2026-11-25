@@ -1,7 +1,9 @@
 # Spike — signed-out `_check_logged_in` behavior outside English (#1289)
 
 **Date:** 2026-11-25 · **Cost:** $0 (read-only navigation and DOM counts only; nothing typed or submitted)
-**Instrument:** [`scripts/dev/spike_1289_signed_out_locale.py`](../../../scripts/dev/spike_1289_signed_out_locale.py)
+**Instrument:** `scripts/dev/spike_1289_signed_out_locale.py` (in the history of #1481; removed with the method)
+
+> **Outcome.** No production code called `UiSessionMixin._check_logged_in`, so the false `True` measured below never reached a user. #1481 removed the method and its tests instead of hardening it. The measured anchors remain valid for any future signed-in check: `a[href^='https://accounts.google.com/ServiceLogin']` and `<flow-landing-page>` mark a signed-out landing in every locale probed, and neither appears on a signed-in page, whose Google Bar links to `SignOutOptions`.
 (browser `locale` + `Accept-Language` header + `?hl=` forced per pass)
 
 ## Question
