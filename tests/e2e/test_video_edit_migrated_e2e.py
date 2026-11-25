@@ -55,8 +55,16 @@ def _decoded_edits(request: Any) -> list[Any]:
     return ve._decode_rpc_frames(ve.EDIT_SUBMIT_RPC, body)  # noqa: SLF001
 
 
-async def _live_page(profile: Path, captured: list[Any]) -> tuple[UiAutomationTransport, Any]:
-    """A live page whose context aborts (and records) every ``jIps6``, checked or not."""
+async def _live_page(
+    profile: Path, captured: list[Any], attempted: list[str] | None = None
+) -> tuple[UiAutomationTransport, Any]:
+    """A live page whose context aborts (and records) every ``jIps6``, checked or not.
+
+    ``attempted`` also records each ``jIps6`` the page *sends*, from the request event,
+    which fires before any route: one the driver's own page route aborts (the pre-submit
+    hold, the request check) never reaches the context route, and would otherwise be
+    indistinguishable from no submit at all.
+    """
 
     async def block_edit(route: Any, request: Any) -> None:
         edits = _decoded_edits(request)
@@ -71,6 +79,11 @@ async def _live_page(profile: Path, captured: list[Any]) -> tuple[UiAutomationTr
     page = transport._page  # noqa: SLF001 - the e2e reads the live page
     assert page is not None
     await page.context.route("**/batchexecute*", block_edit)
+    if attempted is not None:
+        page.on(
+            "request",
+            lambda request: attempted.extend(ve.EDIT_SUBMIT_RPC for _ in _decoded_edits(request)),
+        )
     return transport, page
 
 
@@ -170,9 +183,10 @@ async def test_e2e_edit_request_targets_the_source_and_carries_the_ref_at_zero_c
     monkeypatch.setattr(ve, "upload_video_for_mention", spy_upload_mention)
     monkeypatch.setattr(MigratedComposer, "upload", spy_upload)
     captured: list[Any] = []
-    transport, page = await _live_page(e2e_profile_dir, captured)
+    attempted: list[str] = []
+    transport, page = await _live_page(e2e_profile_dir, captured, attempted)
     try:
-        with pytest.raises(GFlowError):  # the aborted submit never gets a reply
+        with pytest.raises(GFlowError) as raised:  # the aborted submit never gets a reply
             await ve.run_video_edit(
                 page,
                 request,
@@ -187,7 +201,8 @@ async def test_e2e_edit_request_targets_the_source_and_carries_the_ref_at_zero_c
 
     # Exactly one jIps6 left the page, and the production check let it through: it targets
     # the source's workflow, carries an Omni edit key and exactly the uploaded reference.
-    assert len(captured) == 1, captured
+    outcome = (type(raised.value).__name__, raised.value.detail, attempted)
+    assert len(captured) == 1, outcome
     entry = ve._at(captured[0], 0, 0)  # noqa: SLF001
     assert ve._at(entry, 0, 1) == seen["workflow"], (entry, seen)  # noqa: SLF001
     assert "_edit" in str(ve._at(entry, 2)), entry  # noqa: SLF001

@@ -119,6 +119,7 @@ CLIP_EDITOR_MODEL_TRIGGER = f"{CLIP_EDITOR_BOX} button:has(mat-icon:text-is('arr
 #: Budget for an uploaded local video to finish server-side ingest and become attachable
 #: via the ``@`` picker (while processing, the picker's confirm button stays disabled).
 VIDEO_INGEST_ATTACH_BUDGET_S = 90.0
+REFERENCE_ATTACH_BUDGET_S = 30.0
 _VIDEO_INGEST_POLL_S = 3.0
 _CAP_ROUTE = "flow.google.com video edit"
 
@@ -401,18 +402,21 @@ async def _clear_editor_prompt(page: Page, selector: str) -> None:
     await page.wait_for_timeout(400)
 
 
-async def _try_commit_picker_option(page: Page, *, query: str) -> tuple[bool, bool]:
+async def _try_commit_picker_option(
+    page: Page, *, query: str, chip_selector: str, expect_count: int
+) -> tuple[bool, bool]:
     """Click the picker option matching *query*: ``(committed, still_processing)``.
 
-    ``still_processing`` is True when the clip is listed but the picker's confirm button
-    is still disabled (Flow is still transcoding the upload). No Enter is pressed.
+    ``still_processing`` is True when the asset is listed but the picker's confirm button
+    is still disabled (Flow is still transcoding an upload). No Enter is pressed: in the
+    edit prompt boxes Enter can submit the edit.
     """
     options = page.locator(f"{OVERLAY} {PICKER_OPTION}").filter(has_text=query)
     if not await options.count() or not await options.first.is_visible():
         return False, False
     await options.first.click(timeout=4000)
     await page.wait_for_timeout(500)
-    if await page.locator(VIDEO_CHIP_SELECTOR).count() >= 1:
+    if await page.locator(chip_selector).count() >= expect_count:
         return True, False
     confirm = page.locator(PICKER_CONFIRM).first
     if await confirm.count() and await confirm.is_visible():
@@ -420,28 +424,40 @@ async def _try_commit_picker_option(page: Page, *, query: str) -> tuple[bool, bo
             return False, True
         await confirm.click(timeout=4000)
         await page.wait_for_timeout(700)
-    return await page.locator(VIDEO_CHIP_SELECTOR).count() >= 1, False
+    return await page.locator(chip_selector).count() >= expect_count, False
 
 
-async def _attach_uploaded_video(page: Page, query: str) -> None:
-    """Attach the clip uploaded in this run via ``@<query>``, waiting out Flow's ingest."""
-    deadline = time.monotonic() + VIDEO_INGEST_ATTACH_BUDGET_S
+async def _attach_by_click(  # noqa: PLR0913
+    page: Page,
+    *,
+    composer_selector: str,
+    chip_selector: str,
+    query: str,
+    expect_count: int,
+    budget_s: float,
+    what: str,
+) -> None:
+    """Attach one asset via ``@<query>`` by clicking its picker option, waiting out ingest."""
+    deadline = time.monotonic() + budget_s
     attempt = 0
     while True:
         attempt += 1
-        await _caret_to_end(page, MAIN_COMPOSER_SELECTOR)
+        await _caret_to_end(page, composer_selector)
         await page.keyboard.type("@", delay=100)
         await page.wait_for_timeout(1500)
         await page.keyboard.type(query, delay=60)
         await page.wait_for_timeout(2000)
-        committed, still_processing = await _try_commit_picker_option(page, query=query)
+        committed, still_processing = await _try_commit_picker_option(
+            page, query=query, chip_selector=chip_selector, expect_count=expect_count
+        )
         if committed:
             await page.keyboard.type(" ", delay=60)
             return
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
         log.info(
-            "migrated_video_edit.video_mention_retry",
+            "migrated_video_edit.mention_retry",
+            what=what,
             attempt=attempt,
             still_processing=still_processing,
         )
@@ -450,7 +466,7 @@ async def _attach_uploaded_video(page: Page, query: str) -> None:
         ):
             raise ReferenceNotFoundError(
                 detail=(
-                    f"migrated host: the uploaded video {query!r} did not attach as a chip "
+                    f"migrated host: the {what} {query!r} did not attach as a chip "
                     f"(still_processing={still_processing}) — refusing before submit"
                 ),
             )
@@ -553,18 +569,15 @@ async def _select_clip_editor_model(page: Page, model: VideoModel) -> None:
     await page.wait_for_timeout(400)
 
 
-async def _clip_editor_quote(page: Page, model: VideoModel) -> int | None:
-    """The settled quote in the model menu, once the trigger confirms *model* is selected."""
-    trigger, _ = await _open_clip_editor_model_menu(page)
+async def _clip_editor_quote(page: Page) -> int | None:
+    """The settled quote in the clip editor's model menu.
+
+    The trigger's label is not checked against the composer's menu labels: the clip
+    editor need not spell the model that way, and the submitted ``jIps6``'s model key is
+    what the request check verifies before Flow bills it.
+    """
+    await _open_clip_editor_model_menu(page)
     try:
-        shown = (await trigger.text_content() or "").strip()
-        if not _model_matcher(model).matches(shown):
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: the clip editor shows model {shown!r} after selecting "
-                    f"{model.value!r} — refusing before submit (host=migrated)"
-                ),
-            )
         return await _settled_overlay_quote(page, scope_selector=OVERLAY)
     finally:
         await page.keyboard.press("Escape")
@@ -610,7 +623,15 @@ async def _prepare_local_edit(
     await _apply_main_edit_settings(composer, page, request, quote=False)
     await composer.clear_composer(page)
     await _clear_main_composer_chips(page)
-    await _attach_uploaded_video(page, uploaded.query_name)
+    await _attach_by_click(
+        page,
+        composer_selector=MAIN_COMPOSER_SELECTOR,
+        chip_selector=VIDEO_CHIP_SELECTOR,
+        query=uploaded.query_name,
+        expect_count=1,
+        budget_s=VIDEO_INGEST_ATTACH_BUDGET_S,
+        what="uploaded video",
+    )
     for idx, (_, name) in enumerate(refs, start=1):
         await composer._mention_by_name(
             page,
@@ -648,14 +669,21 @@ async def _prepare_clip_editor_edit(
     model = request.model or EDIT_DEFAULT_MODEL
     await _select_clip_editor_model(page, model)
     await _clear_editor_prompt(page, CLIP_EDITOR_PROMPT)
+    # By click, never Enter: in this prompt box Enter submits the edit (#1467 e2e).
     for idx, (_, name) in enumerate(refs, start=1):
-        await composer._mention_by_name(
-            page, name, expect_chips=idx, composer=CLIP_EDITOR_PROMPT, chip=CLIP_EDITOR_MENTION_CHIP
+        await _attach_by_click(
+            page,
+            composer_selector=CLIP_EDITOR_PROMPT,
+            chip_selector=CLIP_EDITOR_MENTION_CHIP,
+            query=name,
+            expect_count=idx,
+            budget_s=REFERENCE_ATTACH_BUDGET_S,
+            what="reference image",
         )
     await _caret_to_end(page, CLIP_EDITOR_PROMPT)
     await page.keyboard.insert_text(request.prompt)
     # After the references and the prompt: the quote prices the request as it will be sent.
-    quoted = await _clip_editor_quote(page, model)
+    quoted = await _clip_editor_quote(page)
     quoted = enforce_credit_cap(quoted=quoted, max_credits=request.max_credits, route=_CAP_ROUTE)
     await _require_chips(
         page, selector=CLIP_EDITOR_MENTION_CHIP, count=len(refs), what="reference image"

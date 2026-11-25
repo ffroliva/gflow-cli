@@ -14,7 +14,7 @@ from gflow_cli.api.transports import migrated_video_edit as edit_mod
 from gflow_cli.api.transports._mc_upload_video import UploadedVideo
 from gflow_cli.api.transports.batchexecute import GenerationRecord
 from gflow_cli.api.transports.migrated_extend import SourceClip
-from gflow_cli.api.video import Aspect, EditVideoRequest, VideoModel, VideoStarted
+from gflow_cli.api.video import Aspect, EditVideoRequest, VideoStarted
 from gflow_cli.errors import (
     ConfigurationError,
     CreditCapExceededError,
@@ -27,6 +27,8 @@ _PID = "11111111-1111-1111-1111-111111111111"
 _MID = "22222222-2222-2222-2222-222222222222"
 _WF = "33333333-3333-3333-3333-333333333333"
 _REF1 = "44444444-4444-4444-4444-444444444444"
+ORIGINAL_CLIP_EDITOR_QUOTE = edit_mod._clip_editor_quote
+ORIGINAL_ATTACH_BY_CLICK = edit_mod._attach_by_click
 
 _MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
@@ -143,7 +145,7 @@ def composer(monkeypatch: pytest.MonkeyPatch, files: dict[str, Path]) -> MagicMo
         AsyncMock(return_value=UploadedVideo(_MID, _WF, "in-12345678")),
     )
     monkeypatch.setattr(edit_mod, "_apply_main_edit_settings", AsyncMock(return_value=9))
-    monkeypatch.setattr(edit_mod, "_attach_uploaded_video", AsyncMock())
+    monkeypatch.setattr(edit_mod, "_attach_by_click", AsyncMock())
     monkeypatch.setattr(edit_mod, "_source_clip", AsyncMock(return_value=SourceClip(_WF, "video")))
     monkeypatch.setattr(edit_mod, "_confirm_editor", MagicMock())
     monkeypatch.setattr(edit_mod, "_anchor", AsyncMock())
@@ -350,15 +352,89 @@ async def test_a_quote_that_never_settles_is_none(monkeypatch: pytest.MonkeyPatc
     assert await edit_mod._settled_overlay_quote(page, scope_selector="x") is None  # type: ignore[arg-type]
 
 
+# --- the clip editor's own controls (live e2e on 2026-11-25: no jIps6 left the page) ---------
+
+
+class _ClipEditorPage(_Page):
+    """A clip editor whose prompt box submits the edit on Enter, as a composer does.
+
+    An option click in the ``@`` picker commits a chip; Enter sends ``jIps6`` through the
+    page's routes (the pre-submit hold while preparing).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.chips = 0
+        self.pressed: list[str] = []
+        self.keyboard.press = AsyncMock(side_effect=self._press)
+
+    async def _press(self, key: str) -> None:
+        self.pressed.append(key)
+        if key == "Enter":
+            route = MagicMock(abort=AsyncMock(), fallback=AsyncMock())
+            request = MagicMock(
+                url="https://flow.google.com/_/batchexecute?rpcids=jIps6", post_data=_edit_body()
+            )
+            for handler in list(self.routes):
+                await handler(route, request)
+
+    def locator(self, sel: str) -> Any:
+        page = self
+        if sel == edit_mod.CLIP_EDITOR_MENTION_CHIP:
+            return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
+        if sel.endswith(edit_mod.PICKER_OPTION):
+            option = MagicMock(
+                count=AsyncMock(return_value=1),
+                is_visible=AsyncMock(return_value=True),
+                click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", page.chips + 1)),
+            )
+            option.first = option
+            return MagicMock(filter=MagicMock(return_value=option))
+        return super().locator(sel)
+
+
 @pytest.mark.asyncio
-async def test_clip_editor_quote_refuses_when_another_model_is_shown(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_clip_editor_references_are_committed_by_click_never_by_enter(
+    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    trigger = MagicMock(text_content=AsyncMock(return_value="Veo 3.1 - Fast"))
+    """Enter in the edit prompt box submits: the hold aborted that jIps6, so the checked
+    submit never left the page and the run failed as an early submit."""
+
+    async def shared_mention(page: Any, *_a: Any, **_k: Any) -> None:
+        await page.keyboard.press("Enter")  # the shared @-mention commits with Enter
+
+    composer._mention_by_name = AsyncMock(side_effect=shared_mention)
+    monkeypatch.setattr(edit_mod, "_attach_by_click", ORIGINAL_ATTACH_BY_CLICK)
+    page = _ClipEditorPage()
+    res = await _run(
+        EditVideoRequest(prompt="add snow", source_media_id=_MID, reference_images=(files["ref"],)),
+        page=page,
+    )
+    assert res.status.succeeded is True
+    assert "Enter" not in page.pressed
+    assert page.chips == 1
+    composer.submit_and_observe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_clip_editor_quote_does_not_hang_on_the_trigger_label(
+    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The clip editor's trigger need not spell the model the way the composer's menu does;
+    the submitted jIps6's model key is what the request check verifies before billing."""
+    trigger = MagicMock(text_content=AsyncMock(return_value="Omni"))
     monkeypatch.setattr(
         edit_mod, "_open_clip_editor_model_menu", AsyncMock(return_value=(trigger, MagicMock()))
     )
-    page = MagicMock(keyboard=MagicMock(press=AsyncMock()), wait_for_timeout=AsyncMock())
-    with pytest.raises(UiSelectorDriftError, match="shows model"):
-        await edit_mod._clip_editor_quote(page, VideoModel.OMNI_1_2_FLASH)
-    page.keyboard.press.assert_awaited_with("Escape")
+    monkeypatch.setattr(edit_mod, "_settled_overlay_quote", AsyncMock(return_value=9))
+    monkeypatch.setattr(edit_mod, "_clip_editor_quote", ORIGINAL_CLIP_EDITOR_QUOTE)
+    res = await _run(
+        EditVideoRequest(
+            prompt="add snow",
+            source_media_id=_MID,
+            reference_images=(files["ref"],),
+            max_credits=12,
+        )
+    )
+    assert res.quoted_credits == 9
+    composer.submit_and_observe.assert_awaited_once()
