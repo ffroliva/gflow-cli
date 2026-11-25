@@ -35,10 +35,10 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 to 4 | yes | live generations: 2, 3 and 4 entries in one request returned 2, 3 and 4 images |
-| One ref made in this run: a `gflow run` row's `"ref": "batch:N"`, count 1 to 4 | yes | a live `gflow run` (count 1) and live count=2 capture + direct POST |
-| One `--ref ./photo.png` (a local file not yet in the catalog), count 1 to 4 | yes | uploaded by one direct `maseQ` request (reCAPTCHA action `UPLOAD_IMAGE`), then generated directly; live count 1 and 2 generations |
-| One `--reference-entity` with its `--reference-entity-name`, count 1 to 4 | yes | live count 1 and 2 generations (and UI count=2 capture) |
-| One `@Name` mention of a character in the project, count 1 to 4 | yes, when exactly one character has that name (trimmed, case-insensitive, as the UI picker matches) | the id is read from the project; live count 1 and 2 generations |
+| One ref made in this run: a `gflow run` row's `"ref": "batch:N"`, count 1 to 4 | yes | a live `gflow run` (count 1) and live ref generations (2, 3 and 4 entries returned 2, 3 and 4 images) |
+| One `--ref ./photo.png` (a local file not yet in the catalog), count 1 to 4 | yes | uploaded by one direct `maseQ` request (reCAPTCHA action `UPLOAD_IMAGE`), then generated directly; live generations: 2, 3 and 4 entries returned 2, 3 and 4 images |
+| One `--reference-entity` with its `--reference-entity-name`, count 1 to 4 | yes | live generations: 2, 3 and 4 entries returned 2, 3 and 4 images |
+| One `@Name` mention of a character in the project, count 1 to 4 | yes, when exactly one character has that name (trimmed, case-insensitive, as the UI picker matches) | the id is read from the project; live count 1 and 2 generations (and shares the resolved entity frame measured at count 3 and 4) |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
 | Several refs, several characters, or a ref plus a character | no | not captured |
 | A mention whose name matches no character, or several | no | the UI picker decides |

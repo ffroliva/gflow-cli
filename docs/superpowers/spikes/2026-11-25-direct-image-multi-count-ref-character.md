@@ -1,7 +1,7 @@
 # Spike: `direct_http` multi-count (`count 2-4`) with a reference or character (#1455)
 
 **Date:** 2026-11-25 · **Profile:** `<profile>` (served `flow.google.com`)
-**Cost:** 7 image generations (daily image quota, zero Veo credits): 2 UI captures + 3 direct POST proofs + 1 setup `maseQ` upload ($0) + 1 `character create --image` ($0)
+**Cost:** 11 image generations (daily image quota, zero Veo credits): 2 UI captures + 7 direct POST proofs + 1 setup `maseQ` upload ($0) + 1 `character create --image` ($0)
 
 ## Question
 
@@ -26,10 +26,14 @@ Both UI submits shared one `inner[4]` batch UUID and matched what `frame_builder
 | Shape | Requested | Returned | Distinct media IDs | Dimensions | `transport` | Mint + POST |
 |---|---|---|---|---|---|---|
 | In-project `--ref`, `-n 2` | 2 | 2 | 2 | `768x1376` x 2 | `direct_http` | 19.4 s |
+| In-project `--ref`, `-n 3` | 3 | 3 | 3 | `768x1376` x 3 | `direct_http` | 26.1 s |
+| In-project `--ref`, `-n 4` | 4 | 4 | 4 | `768x1376` x 4 | `direct_http` | 21.8 s |
 | `--reference-entity`, `-n 2` | 2 | 2 | 2 | `768x1376` x 2 | `direct_http` | 24.4 s |
+| `--reference-entity`, `-n 3` | 3 | 3 | 3 | `768x1376` x 3 | `direct_http` | 25.9 s |
+| `--reference-entity`, `-n 4` | 4 | 4 | 4 | `768x1376` x 4 | `direct_http` | 27.1 s |
 | `@Name` mention (resolved via `read_project`), `-n 2` | 2 | 2 | 2 | `768x1376` x 2 | `direct_http` | 22.1 s |
 
 ## Conclusions & unmeasured gaps
 
-- **Measured:** Flow's own multi-image submit repeats `entry[2]`, `entry[10]`, and the `entry[8]` chip identically across every entry in `inner[1]`, and direct `ogiZ0b` POSTs built by `build_ogiz0b_body()` return 2 distinct `direct_http` images for all three paths (in-project `--ref`, `--reference-entity`, and `@Name`).
-- **Not measured individually:** counts `3` and `4` combined with `--ref` or character (inferred safe from plain T2I `count 1-4` + the uniform per-entry frame structure measured at `count = 2`); multiple refs, multiple characters, or a ref + character combined (still routed to `ui_automation`); and subprocess CLI E2E without an HTTP proxy (this host requires `GFLOW_CLI_BROWSER_PROXY`, which routes `DirectHttpTransport` to `ui_automation` per `docs/DIRECT_TRANSPORT.md`).
+- **Measured:** Flow's own multi-image submit repeats `entry[2]`, `entry[10]`, and the `entry[8]` chip identically across every entry in `inner[1]`, and direct `ogiZ0b` POSTs built by `build_ogiz0b_body()` return 2/2, 3/3, and 4/4 distinct `direct_http` images for both in-project `--ref` and `--reference-entity`, plus 2/2 for `@Name` mention resolution (which sends the exact same resolved entity frame).
+- **Not measured:** multiple refs, multiple characters, or a ref + character combined (still routed to `ui_automation`); and subprocess CLI E2E without an HTTP proxy (this host requires `GFLOW_CLI_BROWSER_PROXY`, which routes `DirectHttpTransport` to `ui_automation` per `docs/DIRECT_TRANSPORT.md`).
