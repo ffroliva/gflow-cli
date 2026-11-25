@@ -279,6 +279,10 @@ class TestGenerateImageWired:
         assert len(result["files"]) == 3
         assert len(set(result["files"])) == 3
         assert all(Path(p).is_file() for p in result["files"])
+        for path, expected_media in zip(
+            result["files"], ("media-img-1", "media-img-2", "media-img-3"), strict=True
+        ):
+            assert Path(path).stem.startswith(expected_media)
         payload = task_payload("default", result["task_id"], temp_db.path)
         assert payload["files"] == result["files"]
 
@@ -398,6 +402,7 @@ class TestGenerateImageWired:
         )
         from gflow_cli.data.repository import DataRepository
         from gflow_cli.mcp.tools import gflow_generate_image, task_payload
+        from gflow_cli.worker.queue import QueueRepository
 
         fake_client = _FakeFlowApiClient()
         fake_client.generate_images_batch = AsyncMock(
@@ -488,6 +493,9 @@ class TestGenerateImageWired:
         repo.link_operation_asset("op-char-later", "asset-char-body", OperationAssetRole.OUTPUT, 1)
 
         # Primary lookup uses catalog_operation_id recorded on the task checkpoint.
+        cp = QueueRepository(temp_db).read_checkpoint(result["task_id"])
+        assert cp is not None
+        assert isinstance(cp.get("catalog_operation_id"), str) and cp["catalog_operation_id"]
         payload = task_payload("default", result["task_id"], temp_db.path)
         assert payload["files"] == result["files"]
         assert str(char_body_file) not in payload["files"]

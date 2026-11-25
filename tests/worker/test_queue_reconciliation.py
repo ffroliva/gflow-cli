@@ -383,3 +383,9 @@ def test_recover_pre_submit_task_is_failed(temp_db: DataStore) -> None:
     assert task is not None
     assert task.status == "failed"
     assert counts["failed"] == 1
+
+
+def test_classify_interrupted_treats_completed_checkpoint_as_indeterminate() -> None:
+    from gflow_cli.worker.queue import classify_interrupted
+
+    assert classify_interrupted({"phase": "completed"}) == "indeterminate"

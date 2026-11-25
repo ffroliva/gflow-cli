@@ -433,12 +433,13 @@ def classify_interrupted(checkpoint: dict[str, Any] | None) -> str:
 
     * pre-submit — no checkpoint, or ``phase`` still ``claimed`` → ``failed``
       (the credit-spending gesture never fired; nothing was spent, safe to retry).
-    * post-submit — ``phase`` is ``submit_attempted`` or ``remote_started`` →
-      ``indeterminate`` (a credit MAY have been spent and the outcome is unknown;
-      it must NEVER be silently reported as ``failed`` and NEVER auto-resubmitted).
+    * post-submit — ``phase`` is ``submit_attempted``, ``remote_started``, or
+      ``completed`` → ``indeterminate`` (a credit MAY have been spent and the
+      outcome is unknown; it must NEVER be silently reported as ``failed`` and
+      NEVER auto-resubmitted).
     """
     phase = (checkpoint or {}).get("phase")
-    if phase in ("submit_attempted", "remote_started"):
+    if phase in ("submit_attempted", "remote_started", "completed"):
         return "indeterminate"
     return "failed"
 
