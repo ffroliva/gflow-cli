@@ -73,6 +73,26 @@ def _assert_caption_pixels(source: Path, output: Path) -> None:
     assert not plain_diffs or max(plain_diffs) < 2
 
 
+def _assert_top_caption_pixels(source: Path, output: Path) -> None:
+    av = pytest.importorskip("av")
+    with av.open(str(source)) as original, av.open(str(output)) as rendered:
+        fps = float(original.streams.video[0].average_rate or 10)
+        source_frames = list(original.decode(video=0))
+        output_frames = list(rendered.decode(video=0))
+    assert len(source_frames) == len(output_frames)
+    top_diffs: list[float] = []
+    bottom_diffs: list[float] = []
+    for index, (before, after) in enumerate(zip(source_frames, output_frames, strict=True)):
+        if 0.2 <= index / fps <= 1.0:
+            b_arr = before.to_ndarray(format="rgb24").astype(float)
+            a_arr = after.to_ndarray(format="rgb24").astype(float)
+            mid_y = b_arr.shape[0] // 2
+            top_diffs.append(float(np.mean(np.abs(b_arr[:mid_y] - a_arr[:mid_y]))))
+            bottom_diffs.append(float(np.mean(np.abs(b_arr[mid_y:] - a_arr[mid_y:]))))
+    assert top_diffs and max(top_diffs) > 1
+    assert bottom_diffs and max(bottom_diffs) < 2
+
+
 @dataclass(frozen=True)
 class InstalledCli:
     python: Path
@@ -186,6 +206,69 @@ async def test_mcp_tool_burns_srt_inside_output_directory(
     assert Path(result["output_file"]).is_relative_to(output_dir.resolve())
     assert result["frames_burned"] > 0
     _assert_caption_pixels(clip, Path(result["output_file"]))
+
+
+def test_installed_cli_burns_styled_top_caption(
+    installed_cli: InstalledCli, clip_files: tuple[Path, Path], tmp_path: Path
+) -> None:
+    clip, srt = clip_files
+    output = tmp_path / "cli-top-styled.mp4"
+    result = subprocess.run(
+        [
+            str(installed_cli.python),
+            "-m",
+            "gflow_cli",
+            "video",
+            "captions",
+            str(clip),
+            "--srt",
+            str(srt),
+            "--out-file",
+            str(output),
+            "--position",
+            "top",
+            "--margin",
+            "12",
+            "--font-size",
+            "16",
+            "--box-opacity",
+            "0.5",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=RedactedEnv({**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")}),
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["frames_burned"] > 0
+    _assert_top_caption_pixels(clip, output)
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_burns_styled_top_caption(
+    clip_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.config import reset_settings
+    from gflow_cli.mcp.video_captions_tools import gflow_video_captions
+
+    clip, srt = clip_files
+    output_dir = tmp_path / "mcp-top-styled"
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(output_dir))
+    reset_settings()
+    result = await gflow_video_captions(
+        str(clip),
+        srt=str(srt),
+        position="top",
+        margin=12,
+        font_size=16,
+        box_opacity=0.0,
+    )
+    reset_settings()
+    assert result["status"] == "ok", result
+    assert result["frames_burned"] > 0
+    _assert_top_caption_pixels(clip, Path(result["output_file"]))
 
 
 @pytest.mark.asyncio
