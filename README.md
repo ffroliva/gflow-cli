@@ -2,7 +2,7 @@
 
 # gflow-cli: MCP server and CLI for Google Flow (Veo 3.1, Omni, Nano Banana)
 
-> **gflow-cli is an open-source MCP server and command-line tool that automates [Google Flow](https://labs.google/fx/tools/flow).** It generates Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or your terminal, billed to your own Google account's Flow credits. Install it from PyPI with `uv tool install gflow-cli` (MIT, macOS, Windows and Linux).
+> **gflow-cli is an open-source MCP server and command-line tool that automates [Google Flow](https://labs.google/fx/tools/flow).** It generates Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or your terminal, billed to your own Google account's Flow credits. Use it as a Google Flow CLI or a Veo MCP server. Install it from PyPI with `uv tool install gflow-cli` (MIT, macOS, Windows and Linux).
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
@@ -70,6 +70,15 @@ The Claude Code plugin ships disabled, because enabling it starts a server that 
 
 ## 60-second quick start
 
+**Before you install**, check that you have:
+
+- Python 3.11 or newer (`uv tool install` fetches it) and [`uv`](https://docs.astral.sh/uv/getting-started/installation/);
+- Google Chrome (sign-in and generation drive a real Chrome window);
+- a display for the one-time sign-in (on Linux servers, Xvfb);
+- a Google account with Flow access, in a [region where Google offers Flow](https://support.google.com/flow/answer/16353544).
+
+If PyPI, the Chromium download or Google is not reachable directly, read [Behind a proxy or a package mirror](docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror) first.
+
 Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x86_64 / Xvfb).
 
 ```bash
@@ -84,7 +93,7 @@ uv tool run --from gflow-cli playwright install chromium     # one-time, ~150 MB
 #   (a --user install: py -3.X -m pip install --user --upgrade gflow-cli; see https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md#gflow-update)
 
 # 2 · Authenticate (one-time, opens a real Chrome window)
-# Behind a proxy (e.g. Clash)? Set GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897 first (docs/CONFIGURATION.md)
+# Behind a proxy (e.g. Clash)? Set GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897 first; mirrors and details: docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror
 gflow auth login --browser chrome
 
 # Check the session (spends nothing)
@@ -92,17 +101,19 @@ gflow auth status
 gflow credits user          # Veo credit balance (no browser when the direct read is on and the saved session is accepted; spends nothing)
 gflow capabilities          # what gflow can drive here: yes/no/partial per capability (no call to Flow)
 gflow models list           # image and video models, aliases, durations (no call to Flow)
+gflow doctor                # read-only pre-flight check; exit 33 means it found something to fix, not a crash
 # Every error says whether Flow may have charged you and what to do next: docs/ERRORS.md
 
 # 3 · Generate
 gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # or:
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
-# or mint a reusable Character (face + body reference):
-gflow character create --project <id> --name "Aria" --face-prompt "..." --body-prompt "..."
+# or mint a reusable Character (face + body reference); it needs a project id:
+# `gflow project create` makes a project and `gflow project list` shows yours
+gflow character create --project <project-id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
-Outputs land under `$GFLOW_CLI_OUTPUT_DIR`, or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
+Outputs land under `$GFLOW_CLI_OUTPUT_DIR` (default `~/Downloads/gflow-cli`), or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
 
 To save one result at an exact path, pass `--out-file PATH` (for example `gflow image t2i "..." --out-file hero.png`). Use `-o/--output` to select the output format (`json|table|id`). Non-format arguments to `-o` fail fast with exit 2 reminding you to use `--out-file`. See [USAGE](docs/USAGE.md#gflow-image-t2i).
 
@@ -180,25 +191,61 @@ Compared from each project's own README on 2026-11-25. "—" means that README d
 | Machine-readable self-description | `capabilities`, `--help --json`, `models`, `llms.txt`, agent skills | — | — | — | — | Agent skills |
 | Live-verified against real Flow every release | Yes (since v0.54.0) | — | — | — | — | — |
 
+**Which should I choose?**
+
+- Choose gflow-cli for a CLI and an MCP server in one PyPI package, with a spend lockout (`--no-spend`), a per-call credit cap and a `charged` field on every error.
+- Choose [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) for its local web panel.
+- Choose [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) for credit pooling across Google accounts.
+- Choose [crisng95/flowkit](https://github.com/crisng95/flowkit) for its Chrome extension and dashboards.
+
 The full list of planned items is in [#1367](https://github.com/ffroliva/gflow-cli/issues/1367). A correction to a cell is welcome as an issue or a pull request.
 
-## FAQ
+## Frequently asked questions
 
-**Is gflow-cli an official Google tool?** No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.
+### Is gflow-cli an official Google tool?
 
-**Is this the gflow-cli package on npm or JSR?** No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at [github.com/ffroliva/gflow-cli](https://github.com/ffroliva/gflow-cli) and listed in the MCP Registry as `io.github.ffroliva/gflow-cli`.
+No. It is an independent, MIT-licensed project that drives your own signed-in Google Flow session.
 
-**Do I need a Gemini or Vertex AI API key?** No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.
+### Is this the gflow-cli package on npm or JSR?
 
-**Does it cost anything?** The tool is free. Video generation spends your Flow credits; image generation spends none but counts against a daily image quota.
+No. Other projects use the name, including Node.js packages on npm and JSR. This gflow-cli is the Python package on PyPI, maintained at [github.com/ffroliva/gflow-cli](https://github.com/ffroliva/gflow-cli) and listed in the MCP Registry as `io.github.ffroliva/gflow-cli`.
 
-**Can an AI agent spend my credits without asking?** Not when you register `gflow mcp run --no-spend`: the credit-spending tools are never registered. The Claude Code plugin also ships disabled.
+### Do I need a Gemini or Vertex AI API key?
 
-**Does it run headless or on a server?** Sign-in needs a display once. Generation drives a real Chrome window, so on Linux servers it runs under Xvfb. A pure-HTTP transport for video is blocked by Google's reCAPTCHA (see [Architecture](#architecture--current-limitations)).
+No. gflow-cli uses your Google account's Flow access and Flow credits, not the pay-per-use API.
 
-**Does it work with flow.google.com as well as labs.google?** Yes. It drives both Flow frontends and chooses the driver from the host that Flow serves for your account. On flow.google.com it supports text-to-video, image-to-video and reference-to-video from local files. It also supports Nano Banana image generation, a single-segment extend, image and video upscale, and characters by `@Name`. Features that are not ported yet still use the labs driver ([Architecture](#architecture--current-limitations)).
+### Does it cost anything?
 
-**Which Python version?** Python 3.11 or newer. `uv tool install gflow-cli` handles it for you.
+The tool is free. Video generation spends your Flow credits; image generation spends none but counts against a daily image quota.
+
+### Can an AI agent spend my credits without asking?
+
+Not when you register `gflow mcp run --no-spend`: the credit-spending tools are never registered. The Claude Code plugin also ships disabled.
+
+### Does it run headless or on a server?
+
+Sign-in needs a display once. Generation drives a real Chrome window, so on Linux servers it runs under Xvfb. A pure-HTTP transport for video is blocked by Google's reCAPTCHA (see [Architecture](#architecture--current-limitations)).
+
+### Does it work with flow.google.com as well as labs.google?
+
+Yes. It drives both Flow frontends and chooses the driver from the host that Flow serves for your account. On flow.google.com it supports text-to-video, image-to-video and reference-to-video from local files. It also supports Nano Banana image generation, a single-segment extend, image and video upscale, and characters by `@Name`. Features that are not ported yet still use the labs driver ([Architecture](#architecture--current-limitations)).
+
+### Which Python version?
+
+Python 3.11 or newer. `uv tool install gflow-cli` handles it for you.
+
+### Is there a Google Flow API?
+
+Google does not publish a public Flow API. gflow-cli drives your own signed-in Flow session and exposes it as a command-line tool, MCP tools and an OpenAI-compatible image endpoint (`gflow serve`,`POST /v1/images/generations`).
+
+### Is there a Veo 3 CLI?
+
+Yes. `gflow video t2v`, `i2v` and `r2v` generate Veo 3.1 video from the terminal, and the same operations are MCP tools. Omni models use the same commands.
+
+### Where is Google Flow available?
+
+Google lists the supported countries and territories in [Where you can use Google Flow](https://support.google.com/flow/answer/16353544). gflow-cli adds no regional access. If your network needs a proxy or a package mirror, see [Behind a proxy or a package mirror](docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror).
+
 
 ## Examples
 

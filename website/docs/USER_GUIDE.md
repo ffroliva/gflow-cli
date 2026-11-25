@@ -96,6 +96,18 @@ Expected: `Flow session verified as <your account>.` and exit code 0 — the com
 
 You're done. Skip to [Journey 2](#journey-2-your-first-video-single-t2v).
 
+### 1.5 Behind a proxy or a package mirror
+
+Use this section only if PyPI, the Chromium download or Google is not reachable directly from your network. gflow-cli adds no regional access: Google Flow works only where Google offers it ([Where you can use Google Flow](https://support.google.com/flow/answer/16353544)).
+
+1. **Install through a package mirror.** Point uv at a PyPI mirror's simple index: `UV_DEFAULT_INDEX=<mirror-index-url> uv tool install gflow-cli` (with pip: `pip install -i <mirror-index-url> gflow-cli`).
+2. **Download Chromium through a mirror.** Playwright reads `PLAYWRIGHT_DOWNLOAD_HOST` for the one-time `playwright install chromium` step. gflow-cli does not test or endorse a specific mirror.
+3. **Point the browser at your proxy before the first sign-in.** Put `GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:<port>` in `$GFLOW_CLI_HOME/.env` or `./.env`. The proxy must not ask for a password, because the Flow page does not finish loading through one that does ([details](CONFIGURATION.md#gflow_cli_browser_proxy)).
+4. **Point gflow's own HTTP calls at the same proxy.** Set `HTTPS_PROXY` to the same address. The browser ignores `HTTPS_PROXY`, and gflow never copies one setting into the other.
+5. **MCP clients:** set the proxy in `$GFLOW_CLI_HOME/.env` or in the client's `env` block. The MCP server does not read a `.env` from your shell's directory.
+6. **Expect a slower credit read.** Under any proxy, `gflow credits user` reads the balance through the browser (about 10 seconds) instead of the direct read.
+7. **Diagnose with `gflow doctor`**, which shows `env.browser_proxy`.
+
 ---
 
 ## Journey 2 — Your first video (single t2v)
