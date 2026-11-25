@@ -329,6 +329,9 @@ async def test_mcp_captions_accepts_case_insensitive_position_on_wire(
         {"box_opacity": -0.1},
         {"box_opacity": 1.1},
         {"position": "left"},
+        {"margin": True},
+        {"font_size": True},
+        {"box_opacity": True},
     ],
 )
 async def test_mcp_captions_rejects_out_of_bounds_style_on_wire(
@@ -338,8 +341,12 @@ async def test_mcp_captions_rejects_out_of_bounds_style_on_wire(
 ) -> None:
     from mcp import Client
 
+    from gflow_cli.mcp import video_captions_tools as tools
+
     monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
     reset_settings()
+    calls: list[object] = []
+    monkeypatch.setattr(tools, "caption_video", lambda *a, **k: calls.append((a, k)))
     try:
         async with Client(server, mode="2026-07-28") as client:
             result = await client.call_tool(
@@ -347,6 +354,7 @@ async def test_mcp_captions_rejects_out_of_bounds_style_on_wire(
                 {"file": "clip.mp4", "srt": str(tmp_path / "a.srt"), **bad_args},
             )
         assert result.is_error is True
+        assert calls == []
     finally:
         reset_settings()
 

@@ -112,7 +112,10 @@ def transcribe(
     type=click.IntRange(min=0),
     default=DEFAULT_CAPTION_STYLE.margin,
     show_default=True,
-    help="Edge distance in pixels for top/bottom placement (values 0-7 clamp to 8).",
+    help=(
+        "Distance in pixels from the top/bottom edge to the text: at least 8 where the "
+        "frame allows, at most half the free height."
+    ),
 )
 @click.option(
     "--font-size",

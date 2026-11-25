@@ -66,7 +66,6 @@ class CaptionsResult:
 
 CaptionPosition = Literal["bottom", "top", "middle"]
 CAPTION_POSITIONS: tuple[CaptionPosition, ...] = get_args(CaptionPosition)
-_CAPTION_POSITIONS = frozenset(CAPTION_POSITIONS)
 MAX_FONT_SIZE = 1000
 _MIN_AUTO_FONT_SIZE = 12
 _MIN_FONT_SIZE = 1
@@ -94,11 +93,12 @@ def _validate_caption_style(
     box_opacity: object,
 ) -> CaptionStyle:
     normalized = position.strip().lower() if isinstance(position, str) else ""
-    if not isinstance(position, str) or normalized not in _CAPTION_POSITIONS:
+    if not isinstance(position, str) or normalized not in CAPTION_POSITIONS:
+        choices = ", ".join(CAPTION_POSITIONS)
         raise ConfigurationError(
-            detail=f"Invalid caption position {position!r}; expected bottom, top, or middle.",
+            detail=f"Invalid caption position {position!r}; expected one of: {choices}.",
             charged="no",
-            remediation_hint="Pass --position bottom, top, or middle.",
+            remediation_hint=f"Pass --position with one of: {choices}.",
         )
     if isinstance(margin, bool) or not isinstance(margin, int) or margin < 0:
         raise ConfigurationError(
@@ -641,18 +641,20 @@ def _draw_caption(
     )
 
 
-def _vertical_inset(height: int) -> int:
-    return min(_MIN_EDGE_Y, max(0, (height - 1) // 2))
+def _edge_inset(extent: int) -> int:
+    return min(_MIN_EDGE_Y, max(0, (extent - 1) // 2))
 
 
 def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
+    # A margin past half the free height would put `top` below `bottom`.
+    margin = min(style.margin, max(0, (height - box_height) // 2))
     if style.position == "top":
-        raw_y = style.margin
+        raw_y = margin
     elif style.position == "middle":
         raw_y = (height - box_height) // 2
     else:
-        raw_y = height - box_height - style.margin
-    inset = min(_vertical_inset(height), max(0, (height - box_height) // 2))
+        raw_y = height - box_height - margin
+    inset = min(_edge_inset(height), max(0, (height - box_height) // 2))
     return max(inset, min(raw_y, max(inset, height - box_height - inset)))
 
 
@@ -665,7 +667,8 @@ def _measure_caption(
     size: int | None,
 ) -> tuple[Any, str, tuple[int, int, int, int]]:
     font = _load_caption_font(height, font_module, size=size)
-    wrap_w = min(width * 0.9, max(1, width - 2 * _BOX_PAD_X))
+    # Never wrap wider than the ink may reach (see _fit_caption_layout); narrow frames hit this.
+    wrap_w = min(width * 0.9, max(1, width - 2 * _edge_inset(width)))
     wrapped = "\n".join(_wrap_caption(text, font, draw, wrap_w))
     box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
     return font, wrapped, box
@@ -688,30 +691,34 @@ def _fit_caption_layout(
         font, wrapped, box = _measure_caption(
             width, height, text, draw, font_module, max(_MIN_AUTO_FONT_SIZE, round(height * 0.04))
         )
-    inset_y = _vertical_inset(height)
-    max_w, max_h = max(1, width - 2 * _BOX_PAD_X), max(1, height - 2 * inset_y)
+    # The ink may reach the edge inset; the pill's padding is cropped at the frame, not fitted.
+    max_w = max(1, width - 2 * _edge_inset(width))
+    max_h = max(1, height - 2 * _edge_inset(height))
     if _fits_box(box, max_w, max_h):
         return font, wrapped, box
     hi = (explicit_size if explicit_size is not None else int(getattr(font, "size", 14))) - 1
-    if hi < _MIN_FONT_SIZE:
-        return font, wrapped, box
-    lo = _MIN_FONT_SIZE
-    best: tuple[Any, str, tuple[int, int, int, int]] | None = None
-    smallest: tuple[Any, str, tuple[int, int, int, int]] | None = None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        cand = _measure_caption(width, height, text, draw, font_module, mid)
-        if mid == _MIN_FONT_SIZE:
-            smallest = cand
-        if _fits_box(cand[2], max_w, max_h):
-            best = cand
-            lo = mid + 1
-        else:
-            hi = mid - 1
+    measured: dict[int, tuple[Any, str, tuple[int, int, int, int]]] = {}
+
+    def largest_fit(lo: int, hi: int) -> tuple[Any, str, tuple[int, int, int, int]] | None:
+        best = None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            measured[mid] = _measure_caption(width, height, text, draw, font_module, mid)
+            if _fits_box(measured[mid][2], max_w, max_h):
+                best, lo = measured[mid], mid + 1
+            else:
+                hi = mid - 1
+        return best
+
+    # Search from the auto-size floor up first, so a caption that fits at 12 px or more gets the
+    # size it would get with no smaller sizes on offer; go below the floor only when none fits.
+    best = largest_fit(_MIN_AUTO_FONT_SIZE, hi) or largest_fit(
+        _MIN_FONT_SIZE, min(hi, _MIN_AUTO_FONT_SIZE - 1)
+    )
     if best is not None:
         return best
-    assert smallest is not None
-    return smallest
+    # Nothing fits even at 1 px: render the smallest measured layout (centred, clipped).
+    return measured.get(_MIN_FONT_SIZE, (font, wrapped, box))
 
 
 def _caption_overlay(
@@ -736,7 +743,7 @@ def _caption_overlay(
     local_y = frame_y - top
     overlay = Image.new("RGBA", (width, strip_h), (0, 0, 0, 0))
     draw = draw_module.Draw(overlay, "RGBA")
-    x = max(0, (width - box_w) // 2)
+    x = (width - box_w) // 2
     alpha = 180 if resolved.box_opacity is None else round(resolved.box_opacity * 255)
     if alpha > 0:
         pill_left = max(0, x - _BOX_PAD_X)

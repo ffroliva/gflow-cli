@@ -343,8 +343,11 @@ on the machine. By default, captions sit near the bottom (`--position bottom --m
 with auto-sized text and a translucent dark pill (`~0.7` opacity); long cues that
 previously overflowed the fixed 25% band now render in full without clipping. Use
 `--position top|middle`, `--margin PX` (distance in pixels from the anchored top/bottom
-edge to the text ink; values `0-7` clamp to `8 px`, and the background pill extends `6 px`
-beyond the text), `--font-size PX` (`1-1000`; disables 3-line auto-shrink, shrinking to the
+edge to the text ink; the ink stays at least `8 px` from the edge where the frame is tall
+enough, a margin larger than half the free height is reduced to it so `top` never sits below
+`bottom`, and the background pill extends `10 px` beyond the text horizontally and `6 px`
+vertically, cropped at the frame edge), `--font-size PX` (`1-1000`; disables 3-line
+auto-shrink, shrinking to the
 largest size fitting both frame width and height if needed), and `--box-opacity 0.0-1.0`
 (`0.0` removes the pill) to keep lower-thirds or on-screen content clear.
 

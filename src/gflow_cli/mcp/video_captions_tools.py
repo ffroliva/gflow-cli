@@ -94,11 +94,11 @@ async def gflow_video_captions(
     out_file: OutFileParam = None,
     profile: str | None = None,
     position: CaptionPositionParam = DEFAULT_CAPTION_STYLE.position,
-    margin: Annotated[int, Field(ge=0)] = DEFAULT_CAPTION_STYLE.margin,
-    font_size: Annotated[int | None, Field(ge=1, le=MAX_FONT_SIZE)] = (
+    margin: Annotated[int, Field(ge=0, strict=True)] = DEFAULT_CAPTION_STYLE.margin,
+    font_size: Annotated[int | None, Field(ge=1, le=MAX_FONT_SIZE, strict=True)] = (
         DEFAULT_CAPTION_STYLE.font_size
     ),
-    box_opacity: Annotated[float | None, Field(ge=0.0, le=1.0)] = (
+    box_opacity: Annotated[float | None, Field(ge=0.0, le=1.0, strict=True)] = (
         DEFAULT_CAPTION_STYLE.box_opacity
     ),
 ) -> dict[str, Any]:

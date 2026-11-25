@@ -1456,12 +1456,12 @@ def test_caption_overlay_shrinks_below_12px_when_needed(
 
     from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
 
-    fitted_layouts: list[tuple[int, int, int]] = []
+    fitted_layouts: list[tuple[int, tuple[int, int, int, int]]] = []
     real_fit = service._fit_caption_layout
 
     def record_fit(*args: Any, **kwargs: Any) -> Any:
         font, wrapped, box = real_fit(*args, **kwargs)
-        fitted_layouts.append((int(font.size), int(box[2] - box[0]), int(box[3] - box[1])))
+        fitted_layouts.append((int(font.size), box))
         return font, wrapped, box
 
     monkeypatch.setattr(service, "_fit_caption_layout", record_fit)
@@ -1474,10 +1474,12 @@ def test_caption_overlay_shrinks_below_12px_when_needed(
         ImageFont,
         style=style,
     )
-    fitted_size, box_w, box_h = fitted_layouts[-1]
+    fitted_size, box = fitted_layouts[-1]
+    box_w, box_h = int(box[2] - box[0]), int(box[3] - box[1])
     assert fitted_size < (explicit_size if explicit_size is not None else 12)
-    assert box_w <= width and box_h <= height
+    frame_x = (width - box_w) // 2
     frame_y = service._caption_frame_y(height, box_h, style)
+    assert 0 <= frame_x and frame_x + box_w <= width
     assert 0 <= frame_y and frame_y + box_h <= height
     pixels = overlay.load()
     visible = [
@@ -1614,6 +1616,86 @@ def test_caption_overlay_keeps_pill_inside_narrow_frames(
     assert y1 < overlay.height
     x_min, x_max = _ink_x_range(overlay)
     assert x0 <= x_min and x_max <= x1
+
+
+_URL_CUES = (
+    "Read more at https://example.com/docs/captions/placement-and-styling",
+    "See https://www.example.org/a/very/long/path/that/keeps/going today",
+)
+
+
+def _fits_frame_interior(width: int, height: int, text: str, size: int) -> bool:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    box = service._measure_caption(width, height, text, probe_draw, ImageFont, size)[2]
+    return (box[2] - box[0]) <= width - 16 and (box[3] - box[1]) <= height - 16
+
+
+@pytest.mark.parametrize(("width", "height", "requested"), [(200, 112, 24), (161, 90, 16)])
+@pytest.mark.parametrize("text", _URL_CUES)
+def test_fit_caption_layout_keeps_an_explicit_size_that_fits_the_frame(
+    width: int, height: int, requested: int, text: str
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    fitting = max(
+        k for k in range(1, requested + 1) if _fits_frame_interior(width, height, text, k)
+    )
+    font, _wrapped, _box = service._fit_caption_layout(
+        width, height, text, probe_draw, ImageFont, fitting
+    )
+    assert font.size == fitting
+
+
+@pytest.mark.parametrize(("width", "height", "requested"), [(200, 112, 24), (161, 90, 16)])
+@pytest.mark.parametrize("text", _URL_CUES)
+def test_fit_caption_layout_never_skips_a_larger_size_that_fits(
+    width: int, height: int, requested: int, text: str
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    # Every size up to `prefix` fits, so a binary search over the sizes cannot settle below it.
+    prefix = 0
+    while prefix < requested and _fits_frame_interior(width, height, text, prefix + 1):
+        prefix += 1
+    font, _wrapped, box = service._fit_caption_layout(
+        width, height, text, probe_draw, ImageFont, requested
+    )
+    assert font.size >= prefix
+    assert (box[2] - box[0]) <= width - 16 and (box[3] - box[1]) <= height - 16
+
+
+def test_caption_top_position_never_sits_below_bottom_when_margin_exceeds_free_height() -> None:
+    from gflow_cli.services.video_captions import CaptionStyle
+
+    height, box_h = 90, 50
+    top_y = service._caption_frame_y(height, box_h, CaptionStyle(position="top", margin=28))
+    bottom_y = service._caption_frame_y(height, box_h, CaptionStyle(position="bottom", margin=28))
+    assert top_y <= bottom_y
+    assert 0 <= top_y and bottom_y + box_h <= height
+
+
+def test_caption_overlay_centres_text_wider_than_the_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    width, box = 100, (0, 0, 300, 10)
+    font = service._load_caption_font(40, ImageFont, size=10)
+    monkeypatch.setattr(service, "_fit_caption_layout", lambda *_a, **_k: (font, "WIDE", box))
+    origins: list[tuple[int, int]] = []
+    real_text = ImageDraw.ImageDraw.multiline_text
+
+    def record_text(self: Any, xy: tuple[int, int], *args: Any, **kwargs: Any) -> Any:
+        origins.append(xy)
+        return real_text(self, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "multiline_text", record_text)
+    service._caption_overlay(width, 40, "WIDE", ImageDraw, ImageFont)
+    assert origins[0][0] == (width - box[2]) // 2
 
 
 def test_measure_caption_takes_width_before_height() -> None:
