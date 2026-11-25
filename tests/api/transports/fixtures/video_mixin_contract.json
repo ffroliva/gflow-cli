@@ -70,6 +70,7 @@
     "_wait_project_menu_open": "staticmethod (page: 'Page') -> 'bool' sha=4aa56bb9b24cca8d",
     "_wait_project_menu_populated": "staticmethod (page: 'Page') -> 'int' sha=e61f368c632998d5",
     "_wait_video_editor_ready": "staticmethod (page: 'Page') -> 'None' sha=8caf9a1c5340411e",
+    "edit_video": "function (self, *, request: 'EditVideoRequest', project_id: 'str', out_dir: 'Path | None' = None, poll_timeout_s: 'float' = 600.0, download: 'bool' = True, on_started: 'VideoStartedCallback | None' = None, on_checkpoint: 'GenerationCheckpointObserver | None' = None) -> 'VideoResult' sha=fb4ee5a125c0e123",
     "generate_video": "function (self, *, request: 'GenerateVideoRequest', project_id: 'str | None' = None, out_dir: 'Path | None' = None, poll_timeout_s: 'float' = 600.0, download: 'bool' = True, on_started: 'VideoStartedCallback | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'VideoResult' sha=360bf7bac59bbe03"
   },
   "module_names": {

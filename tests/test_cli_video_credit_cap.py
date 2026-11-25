@@ -163,15 +163,23 @@ def test_chain_resume_refuses_an_unresolved_billed_link(
     probe.close.assert_called_once()
 
 
-def test_migrated_extend_refuses_cap_before_confirmation_or_client_launch(
-    monkeypatch: pytest.MonkeyPatch,
+def test_migrated_extend_forwards_cap_and_exits_45_when_quote_exceeds_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from gflow_cli import cli_video
     from gflow_cli.cli import main
     from gflow_cli.config import Settings
+    from gflow_cli.errors import CreditCapExceededError
 
     client = MagicMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+    client.extend_video_migrated = AsyncMock(
+        side_effect=CreditCapExceededError(quoted=12, max_credits=4)
+    )
     monkeypatch.setattr(cli_video, "get_settings", lambda: Settings(flow_host="flow.google.com"))
+    monkeypatch.setattr(cli_video, "_resolve_profile", lambda _profile: "test")
+    monkeypatch.setattr(cli_video, "_make_provider_dir", lambda _profile: tmp_path)
     monkeypatch.setattr(cli_video, "FlowApiClient", lambda **_: client)
     result = CliRunner().invoke(
         main,
@@ -184,11 +192,11 @@ def test_migrated_extend_refuses_cap_before_confirmation_or_client_launch(
             "7d3d6bd9-a39f-4c2d-b772-146e73e539cf",
             "--max-credits",
             "4",
+            "--yes",
         ],
     )
     assert result.exit_code == 45, result.output
-    assert "Submit" not in result.output
-    client.assert_not_called()
+    assert client.extend_video_migrated.await_args.kwargs["max_credits"] == 4
 
 
 @pytest.mark.asyncio

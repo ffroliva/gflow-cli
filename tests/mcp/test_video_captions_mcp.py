@@ -211,3 +211,167 @@ async def test_mcp_refuses_explicit_out_file_under_cloud_storage_and_allows_defa
         assert plain_ok["status"] == "ok"
     finally:
         reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_mcp_captions_forwards_style_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.mcp import video_captions_tools as tools
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    reset_settings()
+    captured: dict[str, object] = {}
+
+    def fake_caption(file: str, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            source_file=Path(file),
+            output_file=kwargs["out_file"],
+            srt_file=kwargs["srt_path"],
+            duration_seconds=1.0,
+            total_frames=1,
+            frames_burned=1,
+            bytes=10,
+        )
+
+    monkeypatch.setattr(tools, "caption_video", fake_caption)
+    try:
+        res = await gflow_video_captions(
+            "clip.mp4",
+            srt=str(tmp_path / "a.srt"),
+            position="top",
+            margin=48,
+            font_size=28,
+            box_opacity=0.5,
+        )
+        assert res["status"] == "ok"
+        assert captured["position"] == "top"
+        assert captured["margin"] == 48
+        assert captured["font_size"] == 28
+        assert captured["box_opacity"] == 0.5
+    finally:
+        reset_settings()
+
+
+def test_mcp_captions_schema_exposes_style_bounds_and_matches_plugin_manifest() -> None:
+    import json
+
+    tool = server._tool_manager._tools["gflow_video_captions"]
+    props = tool.parameters["properties"]
+    assert props["position"]["enum"] == ["bottom", "top", "middle"]
+    assert props["position"]["default"] == "bottom"
+    assert props["margin"]["minimum"] == 0
+    assert props["margin"]["default"] == 28
+    font_int = next(item for item in props["font_size"]["anyOf"] if item.get("type") == "integer")
+    assert font_int["minimum"] == 1
+    assert font_int["maximum"] == 1000
+    opacity_num = next(
+        item for item in props["box_opacity"]["anyOf"] if item.get("type") == "number"
+    )
+    assert opacity_num["minimum"] == 0.0
+    assert opacity_num["maximum"] == 1.0
+
+    manifest_path = Path(__file__).resolve().parents[2] / "lhm.plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_entry = next(t for t in manifest["tools"] if t["name"] == "gflow_video_captions")
+    assert manifest_entry["inputSchema"] == tool.parameters
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("raw_position", "expected"), [("Top", "top"), (" MIDDLE ", "middle")])
+async def test_mcp_captions_accepts_case_insensitive_position_on_wire(
+    raw_position: str,
+    expected: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mcp import Client
+
+    from gflow_cli.mcp import video_captions_tools as tools
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    reset_settings()
+    captured: dict[str, object] = {}
+
+    def fake_caption(file: str, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(
+            source_file=Path(file),
+            output_file=kwargs["out_file"],
+            srt_file=kwargs["srt_path"],
+            duration_seconds=1.0,
+            total_frames=1,
+            frames_burned=1,
+            bytes=10,
+        )
+
+    monkeypatch.setattr(tools, "caption_video", fake_caption)
+    try:
+        async with Client(server, mode="2026-07-28") as client:
+            result = await client.call_tool(
+                "gflow_video_captions",
+                {"file": "clip.mp4", "srt": str(tmp_path / "a.srt"), "position": raw_position},
+            )
+        assert result.is_error is False
+        assert captured["position"] == expected
+    finally:
+        reset_settings()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        {"margin": -1},
+        {"font_size": 0},
+        {"font_size": 1001},
+        {"box_opacity": -0.1},
+        {"box_opacity": 1.1},
+        {"position": "left"},
+        {"margin": True},
+        {"font_size": True},
+        {"box_opacity": True},
+    ],
+)
+async def test_mcp_captions_rejects_out_of_bounds_style_on_wire(
+    bad_args: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mcp import Client
+
+    from gflow_cli.mcp import video_captions_tools as tools
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    reset_settings()
+    calls: list[object] = []
+    monkeypatch.setattr(tools, "caption_video", lambda *a, **k: calls.append((a, k)))
+    try:
+        async with Client(server, mode="2026-07-28") as client:
+            result = await client.call_tool(
+                "gflow_video_captions",
+                {"file": "clip.mp4", "srt": str(tmp_path / "a.srt"), **bad_args},
+            )
+        assert result.is_error is True
+        assert calls == []
+    finally:
+        reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_mcp_captions_invalid_style_returns_error_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / "out"))
+    reset_settings()
+    try:
+        err = await gflow_video_captions(
+            "clip.mp4",
+            srt=str(tmp_path / "a.srt"),
+            position="left",
+        )
+        assert err["status"] == "error"
+        assert err["error"]["charged"] == "no"
+    finally:
+        reset_settings()

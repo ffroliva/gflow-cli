@@ -43,6 +43,7 @@ from gflow_cli.storage import AnyPath, write_asset_async
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.api.dto import GenerationCheckpointObserver
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
 from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api._flow_session import JsonObject, _make_instance  # pyright: ignore[reportPrivateUsage]
@@ -379,7 +380,7 @@ class MediaEditSurface(GenerationSurface):
         scale: str = "1080p",
         out_path: Path,
     ) -> AnyPath:
-        """Upscale or export a platform-generated video to 1080p, 720p, or 270p GIF.
+        """Upscale or export a platform-generated video to 4k, 1080p, 720p, or 270p GIF.
 
         Drives the migrated Flow editor to export an upsampled 1080p Full HD video or
         animated GIF. There is no labs.google route for this, so
@@ -435,29 +436,43 @@ class MediaEditSurface(GenerationSurface):
     async def extend_video_migrated(  # noqa: PLR0913
         self,
         *,
-        media_id: str,
+        media_id: str | None = None,
+        source_video: Path | None = None,
         project_id: str,
         prompt: str,
-        aspect: str | None,
+        aspect: str | None = None,
+        duration: int | None = None,
+        reference_images: tuple[Path, ...] = (),
         out_path: Path,
         on_started: ExtendStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
         poll_timeout_s: float = 900.0,
         max_credits: int | None = None,
     ) -> tuple[ExtendOutcome, AnyPath | None]:
         """One extend segment through Flow's own UI on flow.google.com. Costs credits.
 
+        Extends either an existing Flow ``media_id`` in ``project_id`` or a local
+        ``source_video`` uploaded into it, with an optional ``duration`` (3-10 s), ``0-3``
+        ``reference_images``, and ``max_credits`` enforced against Flow's pre-submit quote.
+        The caller owns the project, so it is created only after the inputs are valid.
         The page mints and sends ``fZytfe`` itself; see
         :mod:`gflow_cli.api.transports.migrated_extend`. Returns the outcome and the
         written mp4 (``None`` when the generation did not finish).
         """
-        from gflow_cli.api.transports.migrated_extend import run_extend
-
-        enforce_credit_cap(
-            quoted=None,
-            max_credits=max_credits,
-            route="flow.google.com video extend",
+        from gflow_cli.api.transports.migrated_extend import (
+            require_migrated_host,
+            run_extend,
+            validate_extend_inputs,
         )
 
+        require_migrated_host(self.served_route(prefer_migrated=True))
+        await validate_extend_inputs(
+            media_id=media_id,
+            source_video=source_video,
+            duration=duration,
+            reference_images=reference_images,
+            max_credits=max_credits,
+        )
         try:
             page = await self._checkout_page()
             try:
@@ -465,10 +480,15 @@ class MediaEditSurface(GenerationSurface):
                     page,
                     project_id=project_id,
                     media_id=media_id,
+                    source_video=source_video,
                     prompt=prompt,
                     aspect=aspect,
+                    duration=duration,
+                    reference_images=reference_images,
+                    max_credits=max_credits,
                     poll_timeout_s=poll_timeout_s,
                     on_started=on_started,
+                    on_checkpoint=on_checkpoint,
                 )
             finally:
                 self._checkin_page(page)

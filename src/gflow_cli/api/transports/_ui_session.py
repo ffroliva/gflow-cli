@@ -12,9 +12,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from playwright.async_api import Page
 
-from gflow_cli.api.transports._common import flow_host_kind
 from gflow_cli.api.transports._ui_common import (
-    _PROJECT_URL_FRAGMENT,
     ONBOARDING_SELECTORS,
     _jitter_ms,
 )
@@ -97,37 +95,6 @@ class UiSessionMixin:
         self._output_dir = config.output_dir
         self._record_generation_request = config.record_generation_request
         self._account_locale = config.account_locale
-
-    @staticmethod
-    async def _check_logged_in(page: Page) -> bool:
-        """True if the page shows the authenticated Flow UI.
-
-        Gates (pattern G13):
-        - URL's host is one of Flow's own origins — ``labs.google`` or, since
-          #639, the migrated ``flow.google.com``. Locale-stable: /fx/pt/tools/flow,
-          /fx/es/tools/flow etc. all match, and so does the migrated /project/<id>.
-        - /project/<uuid> URLs short-circuit to True (editor already open).
-        - Otherwise reject if a top-level Sign-in CTA is visible.
-
-        The host is PARSED and matched exactly. This gate used to be the
-        substring test ``"labs.google" in page.url``, which any foreign URL
-        satisfies simply by carrying the string in a path or query.
-
-        A failure in the locator probe is treated as "no Sign-in button"
-        — the URL gate already established Flow context, and a transient
-        DOM error shouldn't force a re-auth loop.
-        """
-        if flow_host_kind(page.url) is None:
-            return False
-        if _PROJECT_URL_FRAGMENT in page.url:
-            return True
-        try:
-            signin_button = await page.locator(
-                "button:has-text('Sign in'), a:has-text('Sign in')",
-            ).count()
-        except Exception:
-            signin_button = 0
-        return signin_button == 0
 
     async def _bypass_onboarding(self, page: Page) -> None:
         """Click through cookie banners and 'Get Started' pages if they appear."""

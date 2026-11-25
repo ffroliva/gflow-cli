@@ -636,6 +636,31 @@ def _warn_tool_skipped(title: str, *, quiet: bool) -> None:
     )
 
 
+def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if value:
+        ctx.meta["no_max_credits"] = True
+
+
+#: ``--no-max-credits``: ignore ``GFLOW_CLI_MAX_CREDITS`` for one command.
+no_max_credits_option = click.option(
+    "--no-max-credits",
+    is_flag=True,
+    expose_value=False,
+    callback=_set_no_max_credits,
+    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
+)
+
+
+def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | None:
+    """``--max-credits``, else the configured cap unless ``--no-max-credits`` was given."""
+    from gflow_cli.api.credit_cap import resolve_max_credits as _resolve  # noqa: PLC0415
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.meta.get("no_max_credits"):
+        configured = None
+    return _resolve(cli_value, configured)
+
+
 def safe_path_text(path: Path) -> str:
     """Format a path for terminal display, avoiding absolute path leaks.
 
@@ -1015,3 +1040,68 @@ def _report_interrupt() -> None:
         _console.print(f"  credits spent: {spent}")
     if resume_id:
         _console.print(f"  resume with : --resume-from {resume_id}")
+
+
+def thinking_level_option(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Shared ``--thinking-level`` Click option for image generation commands."""
+    from gflow_cli.api.image import ThinkingLevel
+
+    return click.option(
+        "--thinking-level",
+        "thinking_level",
+        type=click.Choice([t.value for t in ThinkingLevel], case_sensitive=False),
+        default=None,
+        help=(
+            "Image thinking level in Flow's settings pane: 'low', 'medium', or 'high' "
+            "(when omitted, Flow's existing setting is left untouched). Single-prompt only."
+        ),
+    )(func)
+
+
+def validate_t2i_flags(
+    *,
+    is_multi_prompt: bool,
+    output_file: Path | None,
+    instructions: tuple[str, ...],
+    reference_entities: tuple[str, ...],
+    as_json: bool,
+    output_format: str,
+    ui_mode: str | None,
+    thinking_level: str | None,
+) -> None:
+    """Validate single-prompt-only and arm-conflict flags on ``gflow image t2i``."""
+    from gflow_cli.config import UiMode
+
+    if ui_mode == UiMode.CLASSIC.value and instructions:
+        raise click.UsageError(
+            "--ui-mode classic is incompatible with -i (instructions need the agentic UI)."
+        )
+    if not is_multi_prompt:
+        return
+    multi_only_errors = (
+        (
+            output_file is not None,
+            "--out-file is single-prompt only; remove the extra prompts or use --out for"
+            " directory output.",
+        ),
+        (bool(instructions), "--instruction is single-prompt only; remove the extra prompts."),
+        (
+            bool(reference_entities),
+            "--reference-entity is single-prompt only; remove the extra prompts.",
+        ),
+        (
+            as_json or output_format != OutputFormat.TABLE.value,
+            "--json is single-prompt only; remove the extra prompts.",
+        ),
+        (
+            ui_mode is not None,
+            "--ui-mode is single-prompt only; set GFLOW_CLI_UI_MODE for batch runs.",
+        ),
+        (
+            thinking_level is not None,
+            "--thinking-level is single-prompt only; remove the extra prompts.",
+        ),
+    )
+    for bad, msg in multi_only_errors:
+        if bad:
+            raise click.UsageError(msg)

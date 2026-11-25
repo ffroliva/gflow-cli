@@ -36,6 +36,8 @@ from rich.markup import escape
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    no_max_credits_option,
+    resolve_max_credits,
     run_with_handlers,
     spends_credits,
 )
@@ -45,7 +47,6 @@ from gflow_cli.api.credit_cap import (
     CreditBudget,
     mark_prior_work_billed,
     preserve_credit_cap_partials,
-    resolve_max_credits,
 )
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
@@ -179,24 +180,13 @@ def template(output: Path, force: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
-    if value:
-        ctx.meta["no_max_credits"] = True
-
-
 @spends_credits(True)
 @movie.command("run")
 @click.argument(
     "manifest_path", metavar="MANIFEST", type=click.Path(dir_okay=False, path_type=Path)
 )
 @click.option("--profile", default=None, help="Profile name (overrides default).")
-@click.option(
-    "--no-max-credits",
-    is_flag=True,
-    expose_value=False,
-    callback=_set_no_max_credits,
-    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
-)
+@no_max_credits_option
 @click.option(
     "--max-credits",
     type=click.IntRange(min=0),
@@ -267,10 +257,7 @@ def run(
         sys.exit(11)
 
     settings = get_settings()
-    effective_max_credits = resolve_max_credits(
-        max_credits,
-        None if click.get_current_context().meta.get("no_max_credits") else settings.max_credits,
-    )
+    effective_max_credits = resolve_max_credits(max_credits, settings.max_credits)
     out_dir = resolve_batch_output_dir(
         cli_override=out_dir_override,
         config_value=manifest.output_dir,

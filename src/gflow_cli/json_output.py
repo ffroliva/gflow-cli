@@ -2,9 +2,11 @@
 
 Pure module (no I/O beyond the single :func:`emit` ``click.echo``): every
 builder takes already-constructed domain objects and returns a JSON-native
-``dict``. Kept dependency-light (only :mod:`gflow_cli.errors` + typing) so it
-can be imported from both ``_cli_helpers`` (error path) and the command
-modules without an import cycle, and unit-tested without a browser/network.
+``dict``. Kept dependency-light (only :mod:`gflow_cli.errors` + typing at module
+level) so it can be imported from both ``_cli_helpers`` (error path) and the command
+modules without an import cycle, and unit-tested without a browser/network. Anything
+from :mod:`gflow_cli.api` is imported inside the builder that needs it: the package
+``__init__`` loads the client and Playwright.
 
 The shapes here are the stable contract a programmatic caller (e.g. a worker
 that shells out to ``gflow``) parses instead of scraping the Rich tables.
@@ -25,7 +27,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from gflow_cli.api.dto import GeneratedImage
-    from gflow_cli.api.video import GenerateVideoRequest, VideoResult
+    from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoResult
     from gflow_cli.services.doctor import DoctorReport
 
 
@@ -150,12 +152,14 @@ def image_result(
     images: list[GeneratedImage],
     saved_paths: list[Path],
     ref_count: int | None = None,
+    requested: int | None = None,
 ) -> dict[str, Any]:
     """Complete result for a single-prompt ``image t2i`` / ``image i2i`` run.
 
     Every field captured by :class:`gflow_cli.api.dto.GeneratedImage` is
     surfaced (nothing dropped); ``local_path`` is the on-disk PNG the CLI
     downloaded. ``ref_count`` is set only by i2i (None ⇒ key omitted).
+    ``requested`` adds ``warnings`` when Flow returned fewer images (#1489).
     """
     items: list[dict[str, Any]] = []
     for img, path in zip(images, saved_paths, strict=True):
@@ -184,6 +188,38 @@ def image_result(
     }
     if ref_count is not None:
         payload["ref_count"] = ref_count
+    if requested is not None:
+        from gflow_cli.api.image import images_missing_warning
+
+        if warnings := images_missing_warning(requested, len(items)):
+            payload["warnings"] = warnings
+    return payload
+
+
+def _clip_payload(
+    command: str, result: VideoResult, request_block: dict[str, Any], **ids: Any
+) -> dict[str, Any]:
+    """The result fields every one-clip video command shares, plus its ``request`` block."""
+    st = result.status
+    payload: dict[str, Any] = {
+        "status": "ok" if st.succeeded else "fail",
+        "command": command,
+        "media_id": st.media_id,
+        **ids,
+        "generation_status": st.status,
+        "succeeded": st.succeeded,
+        "local_path": str(result.local_path) if result.local_path is not None else None,
+        "failure_reasons": list(st.failure_reasons),
+        "error_message": st.error_message,
+        "request": request_block,
+    }
+    if result.quoted_credits is not None:
+        payload["quoted_credits"] = result.quoted_credits
+    if not st.succeeded:
+        # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
+        payload.update(charged="maybe", next_action="reconcile")
+        if st.media_id:
+            payload["operation_id"] = st.media_id
     return payload
 
 
@@ -201,17 +237,10 @@ def video_result(
     rather than faked. ``status`` is "ok"/"fail" mirroring ``succeeded``;
     ``generation_status`` is the raw ``MEDIA_GENERATION_STATUS_*`` wire value.
     """
-    st = result.status
-    payload: dict[str, Any] = {
-        "status": "ok" if st.succeeded else "fail",
-        "command": command,
-        "media_id": st.media_id,
-        "generation_status": st.status,
-        "succeeded": st.succeeded,
-        "local_path": str(result.local_path) if result.local_path is not None else None,
-        "failure_reasons": list(st.failure_reasons),
-        "error_message": st.error_message,
-        "request": {
+    return _clip_payload(
+        command,
+        result,
+        {
             "model": request.model.value if request.model is not None else None,
             "mode": request.mode.value,
             "aspect": request.aspect.value,
@@ -219,10 +248,28 @@ def video_result(
             "count": request.count,
             "seed": request.seed,
         },
-    }
-    if not st.succeeded:
-        # #1201: Flow took the submit, so the clip's outcome needs settling (#1159).
-        payload.update(charged="maybe", next_action="reconcile")
-        if st.media_id:
-            payload["operation_id"] = st.media_id
-    return payload
+    )
+
+
+def edit_video_result(
+    *,
+    command: str,
+    request: EditVideoRequest,
+    result: VideoResult,
+) -> dict[str, Any]:
+    """Complete result for a ``video edit`` run (the video shape plus project and workflow)."""
+    return _clip_payload(
+        command,
+        result,
+        {
+            "source_video": str(request.source_video) if request.source_video is not None else None,
+            "source_media_id": request.source_media_id,
+            "model": request.model.value,
+            "mode": "edit",
+            "aspect": request.aspect.value if request.aspect is not None else None,
+            "resolution": request.resolution,
+            "reference_count": len(request.reference_images),
+        },
+        project_id=result.project_id,
+        workflow_id=result.workflow_id,
+    )

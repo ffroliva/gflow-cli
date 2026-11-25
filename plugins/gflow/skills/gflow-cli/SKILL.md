@@ -96,7 +96,9 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # --reference-entity-name; #723). UUID references, an entity id without a name,
 # Imagen 4 (image4), image batch, and characters on t2v/i2v are refused there (exit 36);
 # local-file video r2v takes --reference-entity with --reference-entity-name (#723).
-# `gflow video extend` runs there one segment per call (--project required); -n > 1,
+# `gflow video extend` runs there one segment per call (accepts a Flow media UUID with
+# --project or a local video file with auto-created project, optional --duration 3..10,
+# up to 3 --ref images, and --max-credits pre-submit quote enforcement); -n > 1,
 # --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
 # i2i, i2v, r2v and character references exit 36 there, after up to
@@ -111,10 +113,11 @@ gflow video t2v "<prompt>" [--project ID] [--model ...] [--duration 3..15] [--re
 # Flow retires omni-flash, veo-fast and veo-quality on 2026-12-05 (`retires_on` in `gflow models --json`): use veo-lite or omni-1.2
 gflow video i2v --initial-frame <image|media-UUID> "<prompt>" [--end-frame <image>] [--out-dir DIR] [...same as t2v]  # UUID = in-project asset, no re-upload (#287; pair with --project); --end-frame caps omni-1.2-flash at 10s
 gflow video generate "<prompt>" [--initial-frame F | --ref IMG] [...]  # bridge: none -> t2v, frame -> i2v, --ref -> r2v; frame AND --ref = exit 2 (#1193)
-gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
+gflow video edit <file|media-UUID> "<prompt>" [--ref IMG ...] [--model omni-1.2|omni-flash] [--aspect 9:16|16:9] [--resolution 360p|720p] [--max-credits N] [--project ID] [--json]  # flow.google.com V2V edit (jIps6), 0-5 --ref (local file only) images, single clip; MCP: gflow_edit_video
+gflow video upscale <mediaId> --scale {4k|1080p|720p|270p} [--project ID] [--out DIR]  # 4k = Ultra 2160p (spends credits), 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
 gflow video assemble <clip|catalog-id>... --out-file <path.mp4> [--music FILE] [--voiceover FILE] [--clip-volume 0..1] [--music-volume 0..1] [--voiceover-volume 0..1] [--duck|--no-duck]  # local, credit-free, needs gflow-cli[chain]; normalizes to first clip's size and frame rate
 gflow video transcribe <file|media-UUID> [--out-file FILE.srt] [--language CODE] [--json]  # configured Whisper-compatible endpoint; no Flow credits
-gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
+gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--position bottom|top|middle] [--margin PX] [--font-size PX] [--box-opacity 0..1] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
 gflow media trash <media-UUID|asset-id> [--project ID] --yes [--json]  # moves a generated item to Flow's Trash; 0 credits; MCP: gflow_media_trash(confirm=true)
 gflow media restore <media-UUID|asset-id> [--project ID] [--json]      # brings it back; 0 credits; MCP: gflow_media_restore
 # `gflow video` has no `batch` subcommand — that stub never worked and was

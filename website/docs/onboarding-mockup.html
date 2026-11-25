@@ -13,7 +13,7 @@
       --gf-amber-dim: rgba(255, 176, 58, .13);
       --gf-ink: #ecebe5;
       --gf-muted: #8c939d;
-      --gf-faint: #5c636e;
+      --gf-faint: #7d848f;
       --gf-ground: #0e1014;
       --gf-surface: #161a21;
       --gf-hair: #262b34;
@@ -27,13 +27,14 @@
     [data-md-color-scheme="default"] {
       --gf-ink: #1b1d22;
       --gf-muted: #4a5058;
-      --gf-faint: #9aa0a7;
+      --gf-faint: #686e76;
       --gf-ground: #f6f3ec;
       --gf-surface: #fffefa;
       --gf-hair: #e3dfd5;
       --gf-code-bg: #0b0d12;
-      --gf-amber-dim: rgba(185, 116, 15, .10);
-      --gf-amber: #b9740f;
+      --gf-amber-dim: rgba(143, 90, 11, .10);
+      /* Darker than the brand amber so amber text meets WCAG AA (4.5:1) on paper. */
+      --gf-amber: #8f5a0b;
       --gf-green: #2d8b6f;
       --gf-red: #c9302c;
       --gf-yellow: #8a7024;
@@ -246,8 +247,8 @@
     .output .success { color: #4ec9b0; }
     .output .error { color: #f44747; }
     .output-label {
-      font-size: .68rem;
-      color: #5c636e;
+      font-size: .72rem;
+      color: #7d848f;
       letter-spacing: .06em;
       text-transform: uppercase;
       margin-bottom: 6px;
@@ -421,6 +422,73 @@
       color: var(--gf-faint);
     }
 
+    /* ── Deck motion: steps are dealt downward, the rail fills as you read ── */
+    html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+    .step::before {
+      z-index: 1;
+      transition: background-color .3s ease, box-shadow .3s ease;
+    }
+    .step::after {
+      content: "";
+      position: absolute;
+      left: -2px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--gf-amber);
+      transform: scaleY(var(--fill, 0));
+      transform-origin: top;
+    }
+    .step.done::after { --fill: 1; }
+    .motion .step:not(.done):not(.active)::before {
+      background: var(--gf-surface);
+      color: var(--gf-muted);
+      box-shadow: inset 0 0 0 2px var(--gf-hair);
+    }
+    .step:last-child::after { display: none; }
+    .motion .step > * {
+      opacity: 0;
+      transform: translateY(-28px);
+      clip-path: inset(0 0 100% 0);
+      transition:
+        opacity .45s ease,
+        transform .65s cubic-bezier(.16, 1, .3, 1),
+        clip-path .65s cubic-bezier(.16, 1, .3, 1);
+    }
+    .motion .step.in > * {
+      opacity: 1;
+      transform: none;
+      clip-path: inset(-24px);
+      transition-delay: calc(var(--i, 0) * 45ms);
+    }
+    .next-deck {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 4px;
+      padding: 6px 0;
+      font-family: var(--gf-mono);
+      font-size: .85rem;
+      color: var(--gf-amber);
+    }
+    .next-deck svg { transition: transform .2s cubic-bezier(.16, 1, .3, 1); }
+    .next-deck:hover svg, .next-deck:focus-visible svg { transform: translateY(3px); }
+    .next-deck:focus-visible { outline: 2px solid var(--gf-amber); outline-offset: 3px; border-radius: 4px; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .motion .step > *, .motion .step.in > * {
+        transform: none;
+        clip-path: none;
+        transition: opacity .2s ease;
+        transition-delay: 0s;
+      }
+      .next-deck svg { transition: none; }
+    }
+    /* A printout shows every step, scrolled to or not. */
+    @media print {
+      .motion .step > * { opacity: 1; transform: none; clip-path: none; transition: none; }
+    }
+
     /* ── Responsive ── */
     @media (max-width: 600px) {
       .container { padding: 32px 16px 60px; }
@@ -439,11 +507,11 @@
 
   <!-- ── Hero ── -->
   <h1>Get started with gflow-cli</h1>
-  <p class="subtitle">From install to your first AI-generated image in about 5 minutes. Or hand the whole thing to your AI assistant.</p>
+  <p class="subtitle">One package, two doors onto Google Flow: the <code>gflow</code> CLI in your terminal and an MCP server for your AI assistant. Install once, sign in once, then use either.</p>
 
   <div class="admonition">
     <div class="admonition-title">Before you begin</div>
-    gflow-cli is <strong>alpha and reverse-engineered — not affiliated with Google</strong>. It drives a headed browser on <em>your own</em> Google Flow session. It works with any Google account that has Flow access, and every generation bills your account. Not affiliated with Google.
+    gflow-cli is <strong>beta, reverse-engineered and not affiliated with Google</strong>. It drives a real Chrome session signed in to <em>your own</em> Google account, which needs Flow access. Video spends your Flow credits; images spend none, but count against a daily image quota.
   </div>
 
   <!-- ── Requirements check ── -->
@@ -453,6 +521,7 @@
     <span class="req-badge"><span class="check">✓</span> Google account with Flow access</span>
     <span class="req-badge"><span class="check">✓</span> Google Chrome installed</span>
     <span class="req-badge"><span class="check">✓</span> Display for one-time browser login</span>
+    <span class="req-badge"><span class="check">✓</span> Optional: an MCP client (Claude Code, Claude Desktop, Cursor, VS Code, Codex)</span>
   </div>
 
   <!-- ── Steps ── -->
@@ -506,12 +575,13 @@
       </div>
       <div class="output">
         <div class="output-label">Output</div>
-        <div>gflow, version 0.41.0</div>
+        <div>gflow, version 0.106.0</div>
       </div>
+      <a class="next-deck" href="#step-auth">Next: Authenticate <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg></a>
     </div>
 
     <!-- Step 2: Auth -->
-    <div class="step active">
+    <div class="step active" id="step-auth">
       <div class="step-label">Authenticate</div>
       <p class="step-desc">A one-time login opens a real Chrome window. Sign in with your Google account and keep going until the Flow editor loads — gflow closes the window for you and verifies the session automatically.</p>
 
@@ -543,15 +613,66 @@
       <p class="terminal-note">
         On first run, the profile is created as <code>default</code> then auto-renamed to your email's local-part (e.g. <code>your.name@gmail.com</code> → <code>your-name</code>). Single-account users never have to think about profiles. To use a custom name, pass <code>--profile myname</code>.
       </p>
+      <a class="next-deck" href="#step-mcp">Next: Connect your assistant <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg></a>
     </div>
 
-    <!-- Step 3: Generate -->
-    <div class="step">
-      <div class="step-label">Generate</div>
-      <p class="step-desc">The shortest happy path — one command, real output. Images are free; only Veo video costs credits.</p>
+    <!-- Step 3: MCP -->
+    <div class="step" id="step-mcp">
+      <div class="step-label">Connect your assistant</div>
+      <p class="step-desc">Register the MCP server with your client. It runs the same code as the CLI, on the same signed-in profile, so an assistant can generate, upscale and manage media for you.</p>
 
-      <!-- Image generation -->
-      <p>Generate a text-to-image with the <code>--tool creative-director</code> flag, which expands your prompt with Google's 5-component formula before any credits are spent.</p>
+      <p>Claude Code: install the plugin from inside Claude Code. It adds the MCP server and two skills, and ships disabled until you enable it.</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Claude Code</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">&gt;</span> <span class="cmd">/plugin marketplace add ffroliva/gflow-cli</span><br>
+<span class="prompt">&gt;</span> <span class="cmd">/plugin install gflow@gflow-cli</span>
+        </div>
+      </div>
+
+      <p>Claude Desktop, Cursor or VS Code: one command writes the server entry into the client's config.</p>
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="terminal-dot red"></span>
+          <span class="terminal-dot yellow"></span>
+          <span class="terminal-dot green"></span>
+          <span class="terminal-title">Terminal</span>
+          <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+        </div>
+        <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">gflow mcp setup</span><br>
+<span class="prompt">$</span> <span class="cmd">gflow mcp setup --target cursor</span><br>
+<span class="prompt">$</span> <span class="cmd">gflow mcp setup --target vscode</span>
+        </div>
+      </div>
+      <div class="output">
+        <div class="output-label">What happens</div>
+        <div>The gflow entry is merged into the client's config file.</div>
+        <div>Existing content is kept; the old file is backed up as &lt;name&gt;.gflow-backup.</div>
+        <div>An entry that is already there is left untouched.</div>
+        <div>Restart the client to load the server.</div>
+      </div>
+
+      <p class="terminal-note">
+        Any other MCP client: command <code>uvx</code>, arguments <code>gflow-cli mcp run</code>, or <code>gflow serve</code> for Streamable HTTP at <code>/mcp</code>.
+        To keep an assistant away from your credits, register <code>gflow mcp run --no-spend</code>: the tools that spend credits are never registered.
+        Full setup: <a href="MCP/">MCP server</a>.
+      </p>
+      <a class="next-deck" href="#step-generate">Next: Generate <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg></a>
+    </div>
+
+    <!-- Step 4: Generate -->
+    <div class="step" id="step-generate">
+      <div class="step-label">Generate</div>
+      <p class="step-desc">From the terminal, one command gives you a real file. From your assistant, ask in plain language and it picks the tool, model and aspect.</p>
+
+      <p>Make an image. <code>--tool creative-director</code> expands your prompt before anything is sent to Flow.</p>
       <div class="terminal">
         <div class="terminal-header">
           <span class="terminal-dot red"></span>
@@ -568,15 +689,10 @@
         <div class="output-label">Output</div>
         <div>Flow project created: project/abc123</div>
         <div>Generating images…</div>
-        <div><span class="success">✓</span> out/images/2026-07-20/8f3a1b2c_1.png</div>
+        <div><span class="success">✓</span> out/images/2026-11-23/8f3a1b2c_1.png</div>
       </div>
-      <p class="terminal-note">
-        Files are saved to the output directory automatically — by default <code>./out/images/</code>.
-        Route outputs to S3, MinIO, or GCS with <a href="EXTERNAL_STORAGE.md">external storage</a>.
-      </p>
 
-      <!-- Video from still -->
-      <p>Turn that still into an 8-second Veo clip. This step costs 1 Veo credit.</p>
+      <p>Make a short video. <code>--max-credits</code> caps what the run may spend: if Flow quotes more, gflow stops before submitting (exit 45).</p>
       <div class="terminal">
         <div class="terminal-header">
           <span class="terminal-dot red"></span>
@@ -586,32 +702,40 @@
           <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         </div>
         <div class="terminal-body">
-<span class="prompt">$</span> <span class="cmd">gflow video i2v out/images/2026-07-20/8f3a1b2c_1.png "slow cinematic push-in" --aspect 9:16</span>
+<span class="prompt">$</span> <span class="cmd">gflow video t2v "a paper boat drifting across a calm pond at dawn" --max-credits 10</span>
         </div>
       </div>
       <div class="output">
         <div class="output-label">Output</div>
-        <div>Generating video… (~60-90s)</div>
-        <div><span class="success">✓</span> out/videos/2026-07-20/9e4d7f2a.mp4</div>
+        <div>Generating video… (about a minute)</div>
+        <div><span class="success">✓</span> out/videos/2026-11-23/9e4d7f2a.mp4</div>
+      </div>
+
+      <p>Or ask your assistant:</p>
+      <div class="output">
+        <div class="output-label">Prompt</div>
+        <div>Make a 16:9 image of a lighthouse in a storm, then turn it into a short video. Spend at most 10 credits.</div>
       </div>
       <p class="terminal-note">
-        Video outputs land in <code>./out/videos/</code>.
+        Files land in <code>./out/images/</code> and <code>./out/videos/</code> by default.
+        Route outputs to S3, MinIO, or GCS with <a href="EXTERNAL_STORAGE/">external storage</a>.
       </p>
+      <a class="next-deck" href="#step-success">Next: Your first result <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 6l4.5 4.5L12.5 6"/></svg></a>
     </div>
 
-    <!-- Step 4: Success -->
-    <div class="step">
+    <!-- Step 5: Success -->
+    <div class="step" id="step-success">
       <div class="step-label">Success!</div>
       <div class="success-card">
         <div class="success-icon">🎬</div>
         <div class="success-title">Your first generation is ready</div>
         <div class="success-path">./out/images/YYYY-MM-DD/&lt;id&gt;_1.png</div>
-        <div class="success-detail">Files are saved automatically. Image generations are free — only Veo video costs credits.</div>
+        <div class="success-detail">Saved automatically and catalogued locally. Images spend no credits; video spends your Flow credits.</div>
         <div class="next-steps">
-          <a class="next-step" href="#">gflow video t2v "..."</a>
+          <a class="next-step" href="#">gflow video generate "..."</a>
           <a class="next-step" href="#">gflow character create</a>
-          <a class="next-step" href="#">gflow image batch</a>
-          <a class="next-step" href="#">gflow mcp run</a>
+          <a class="next-step" href="#">gflow mcp run --no-spend</a>
+          <a class="next-step" href="#">gflow docs</a>
         </div>
       </div>
     </div>
@@ -635,9 +759,19 @@
   <!-- Error: No profiles -->
   <div class="error-card">
     <div class="error-title">No profiles found (exit 2)</div>
-    <div class="error-detail">You ran a generation command before authenticating.</div>
+    <div class="error-detail">You ran a generation command before signing in, so no profile exists yet.</div>
     <div class="remediation">
       <strong>Fix:</strong> Run the one-time login first:<br>
+      <code>gflow auth login --browser chrome</code>
+    </div>
+  </div>
+
+  <!-- Error: No Flow session -->
+  <div class="error-card">
+    <div class="error-title">Authentication credential missing (exit 8)</div>
+    <div class="error-detail">The profile exists but has no usable Flow session: the account is signed in to Google but not to Flow, or the login did not finish.</div>
+    <div class="remediation">
+      <strong>Fix:</strong> Sign in again with the real-Chrome strategy:<br>
       <code>gflow auth login --browser chrome</code>
     </div>
   </div>
@@ -661,39 +795,13 @@
     </div>
   </div>
 
-  <!-- ── Let your assistant drive it ── -->
-  <h2>Let your assistant drive it</h2>
-  <p>Everything above, an agent can do for you. Start the MCP server and point Claude, Cursor, or Copilot at it.</p>
-  <div class="terminal">
-    <div class="terminal-header">
-      <span class="terminal-dot red"></span>
-      <span class="terminal-dot yellow"></span>
-      <span class="terminal-dot green"></span>
-      <span class="terminal-title">Terminal</span>
-      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-    </div>
-    <div class="terminal-body">
-<span class="prompt">$</span> <span class="cmd">gflow mcp run</span>
-    </div>
-  </div>
-  <div class="output">
-    <div class="output-label">Output</div>
-    <div>serving over stdio:</div>
-    <div>  • gflow_generate_image</div>
-    <div>  • gflow_generate_video</div>
-    <div>ready — your assistant can drive Flow.</div>
-  </div>
-  <p class="terminal-note">
-    Just ask in plain language — the agent picks the model, aspect, and prompt tooling. See <a href="agents.md">Agent-driven</a> for the full setup.
-  </p>
-
   <!-- ── Where to next ── -->
   <h2>Where to next</h2>
   <div class="req-badges">
-    <a class="req-badge" href="AUTHENTICATION.md">Authentication →</a>
-    <a class="req-badge" href="USER_GUIDE.md">User Guide (15 journeys) →</a>
-    <a class="req-badge" href="agents.md">Agent-driven (MCP) →</a>
-    <a class="req-badge" href="KNOWN_ISSUES.md">Known issues →</a>
+    <a class="req-badge" href="AUTHENTICATION/">Authentication →</a>
+    <a class="req-badge" href="USER_GUIDE/">User Guide (16 journeys) →</a>
+    <a class="req-badge" href="agents/">Agent-driven (MCP) →</a>
+    <a class="req-badge" href="KNOWN_ISSUES/">Known issues →</a>
   </div>
 
   <div class="footer">
@@ -718,12 +826,9 @@
 
   function copyCode(btn) {
     const terminal = btn.closest('.terminal');
-    const body = terminal.querySelector('.terminal-body');
-    // Copy only the command line(s) — lines starting with $
-    const lines = body.innerText.split('\n');
-    const commands = lines
-      .filter(l => l.trim().startsWith('$'))
-      .map(l => l.replace(/^\s*\$\s?/, '').trim());
+    // Copy only the commands, one per line, without their prompts.
+    const commands = [...terminal.querySelectorAll('.terminal-body .cmd')]
+      .map(cmd => cmd.textContent.trim());
     navigator.clipboard.writeText(commands.join('\n')).then(() => {
       btn.textContent = 'Copied!';
       setTimeout(() => btn.textContent = 'Copy', 1500);
@@ -732,6 +837,47 @@
 
   // Initialize theme icon
   document.querySelector('.theme-toggle').textContent = '☀️';
+
+  // Deck motion: each step is dealt in from above as it enters, and the step
+  // the reader is on drives the rail fill and the done/active markers. Without
+  // this script the steps stay visible with their static markers.
+  (function deckMotion() {
+    const steps = [...document.querySelectorAll('.step')];
+    if (!steps.length || !('IntersectionObserver' in window)) return;
+    document.documentElement.classList.add('motion');
+    steps.forEach(step => {
+      [...step.children].forEach((child, i) => child.style.setProperty('--i', Math.min(i, 5)));
+    });
+
+    const deal = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('in');
+        deal.unobserve(entry.target);
+      });
+    }, { rootMargin: '0px 0px -12% 0px' });
+    steps.forEach(step => deal.observe(step));
+
+    let queued = false;
+    function track() {
+      queued = false;
+      const anchor = window.innerHeight * 0.4;
+      let current = -1;
+      steps.forEach((step, i) => {
+        const r = step.getBoundingClientRect();
+        step.style.setProperty('--fill', Math.min(1, Math.max(0, (anchor - r.top) / r.height)));
+        if (r.top <= anchor) current = i;
+      });
+      steps.forEach((step, i) => {
+        step.classList.toggle('done', i < current);
+        step.classList.toggle('active', i === Math.max(current, 0));
+      });
+    }
+    const schedule = () => { if (!queued) { queued = true; requestAnimationFrame(track); } };
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    track();
+  })();
 </script>
 
 </body>

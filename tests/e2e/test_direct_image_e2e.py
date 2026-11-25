@@ -80,6 +80,7 @@ def test_three_landscape_images_come_from_one_direct_post(
     assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
     files = sorted(p for p in tmp_path.iterdir() if p.name.startswith("wide"))
     assert len(files) == 3, files
+    assert "client.images_missing" not in proc.stdout + (proc.stderr or "")  # #1489
     assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in files)
     assert _image_transports(e2e_env) == ["direct_http"] * 3
 
@@ -306,3 +307,131 @@ def test_a_run_row_referencing_an_earlier_row_goes_direct(
     )
     assert proc.returncode == 0, f"gflow run failed (exit {proc.returncode})"
     assert _image_transports(e2e_env) == ["direct_http", "direct_http"]
+
+
+def test_two_images_on_the_ui_transport_raise_no_missing_warning(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """#1489: a full reply read by the UI path has no ``warnings`` in ``--json``."""
+    proc = _t2i(e2e_env, tmp_path / "ui.jpg", "--model", "nano-pro", "-n", "2", "--json")
+    assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
+    data = json.loads(proc.stdout)
+    assert data["count"] == 2
+    assert "warnings" not in data
+    assert "client.images_missing" not in proc.stderr
+    assert _image_transports(e2e_env) == [None, None]
+
+
+def test_a_run_row_with_two_images_is_not_marked_short(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """#1489: a full ``gflow run`` row carries no "images returned" note."""
+    config = tmp_path / "run.json"
+    row = {"text": "a single red apple on a wooden table", "aspect_ratio": "1:1", "count": 2}
+    config.write_text(json.dumps({"transport": "direct_http", "prompts": [row]}), encoding="utf-8")
+    out = tmp_path / "run_out"
+    proc = subprocess.run(
+        [sys.executable, "-m", "gflow_cli", "run", "--config", str(config)]
+        + ["--output-dir", str(out)],
+        capture_output=True,
+        text=True,
+        check=False,
+        # A wide console, so the absent note cannot be hidden by Rich wrapping the row.
+        env=e2e_env | {"GFLOW_CLI_EXPERIMENTAL_TRANSPORTS": "1", "COLUMNS": "200"},
+    )
+    assert proc.returncode == 0, f"gflow run failed (exit {proc.returncode})"
+    assert len(list(out.iterdir())) == 2
+    assert "images returned" not in proc.stdout
+    assert "client.images_missing" not in proc.stderr
+
+
+def test_local_file_reference_with_count_two_goes_direct(
+    e2e_env: RedactedEnv, tmp_path: Path
+) -> None:
+    """#1455: local --ref with -n 2 uploads via maseQ and generates 2 images via direct_http."""
+    from PIL import Image
+
+    first = _t2i(e2e_env, tmp_path / "seed.jpg")  # only to obtain a project
+    assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
+        (project_id,) = db.execute("SELECT flow_project_id FROM assets").fetchone()
+    fresh = tmp_path / "fresh_n2.png"
+    Image.new("RGB", (512, 512), (40, 110, 180)).save(fresh)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "image",
+            "i2i",
+            "two sailboats on this blue sea",
+            "--ref",
+            str(fresh),
+            "--project",
+            project_id,
+            "-n",
+            "2",
+            "--out-file",
+            str(tmp_path / "boat_n2.jpg"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env | {"GFLOW_CLI_TRANSPORT": "direct_http"},
+    )
+    assert proc.returncode == 0, f"gflow image i2i failed (exit {proc.returncode})"
+    files = sorted(p for p in tmp_path.iterdir() if p.name.startswith("boat_n2"))
+    assert len(files) == 2, files
+    assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in files)
+    assert _image_transports(e2e_env)[-2:] == ["direct_http", "direct_http"]
+
+
+@pytest.mark.skipif(
+    os.environ.get("GFLOW_CLI_E2E_RUN_CHARACTER") != "1",
+    reason="creates a Flow character (one image generation, zero credits); opt in with "
+    "GFLOW_CLI_E2E_RUN_CHARACTER=1",
+)
+def test_named_character_with_count_two_goes_direct(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+    """#1455: --reference-entity ID --reference-entity-name NAME with -n 2 goes direct."""
+    first = _t2i(e2e_env, tmp_path / "face_n2.jpg")
+    assert first.returncode == 0, f"gflow image t2i failed (exit {first.returncode})"
+    with sqlite3.connect(e2e_env["GFLOW_CLI_DB_PATH"]) as db:
+        (project_id,) = db.execute("SELECT flow_project_id FROM assets").fetchone()
+    made = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "gflow_cli",
+            "character",
+            "create",
+            "--project",
+            project_id,
+            "--name",
+            "Lookout",
+            "--image",
+            str(_saved(tmp_path / "face_n2.jpg")),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env,
+    )
+    assert made.returncode == 0, f"gflow character create failed (exit {made.returncode})"
+    entity_id = made.stdout.split("Character created:", 1)[1].split()[0]
+    proc = _t2i(
+        e2e_env,
+        tmp_path / "pier_n2.jpg",
+        "--project",
+        project_id,
+        "--reference-entity",
+        entity_id,
+        "--reference-entity-name",
+        "Lookout",
+        "-n",
+        "2",
+    )
+    assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
+    files = sorted(p for p in tmp_path.iterdir() if p.name.startswith("pier_n2"))
+    assert len(files) == 2, files
+    assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in files)
+    assert _image_transports(e2e_env)[-2:] == ["direct_http", "direct_http"]

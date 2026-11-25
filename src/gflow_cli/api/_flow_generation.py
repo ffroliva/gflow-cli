@@ -27,6 +27,7 @@ from gflow_cli.api.dto import (
     GenerationCheckpoint,
     GenerationCheckpointObserver,
 )
+from gflow_cli.api.image import IMAGES_MISSING_HINT
 from gflow_cli.api.model_catalog import warn_if_retiring
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import (
@@ -34,6 +35,7 @@ from gflow_cli.api.transports._common import (
 )
 from gflow_cli.api.transports.base import (
     VideoCapableTransport,
+    VideoEditCapableTransport,
 )
 from gflow_cli.api.video import (
     VideoStatus,
@@ -59,6 +61,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import (
+        EditVideoRequest,
         GenerateVideoRequest,
         VideoResult,
         VideoStarted,
@@ -570,6 +573,14 @@ class GenerationSurface(WorkspaceSurface):
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        if len(images) < req.count:
+            # #1489: these exist and may be billed, so the run keeps them instead of failing.
+            logger.warning(
+                "client.images_missing",
+                requested=req.count,
+                returned=len(images),
+                hint=IMAGES_MISSING_HINT,
+            )
         # getattr: a caller-owned transport may return image objects without the field.
         direct = any(getattr(img, "transport", None) == "direct_http" for img in images)
         telemetry.note_transport("direct" if direct else "ui")
@@ -807,3 +818,44 @@ class GenerationSurface(WorkspaceSurface):
 
         except Exception as e:
             await self._raise_with_incident(e, phase="video_generation")
+
+    async def edit_video(  # noqa: PLR0913
+        self,
+        *,
+        req: EditVideoRequest,
+        project_id: str,
+        out_dir: Path | None = None,
+        poll_timeout_s: float = 600.0,
+        download: bool = True,
+        on_started: VideoStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
+    ) -> VideoResult:
+        """One video-to-video edit through Flow's own UI on flow.google.com. Costs credits.
+
+        The caller owns the project, so it is created only after the inputs are valid
+        (:func:`~gflow_cli.api.transports.migrated_video_edit.validate_edit_inputs`).
+        """
+        from gflow_cli.api.transports.migrated_video_edit import (  # noqa: PLC0415
+            validate_edit_inputs,
+        )
+
+        if self.transport is None:
+            msg = "FlowApiClient.transport is None - call edit_video inside 'async with client'"
+            raise RuntimeError(msg)
+        if not isinstance(self.transport, VideoEditCapableTransport):
+            msg = f"transport {type(self.transport).__name__} does not support video editing"
+            raise RuntimeError(msg)
+        await validate_edit_inputs(req)
+        warn_if_retiring(req.model, today=_today())
+        try:
+            return await self.transport.edit_video(
+                request=req,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
+                on_checkpoint=on_checkpoint,
+            )
+        except Exception as e:
+            await self._raise_with_incident(e, phase="video_edit")

@@ -45,3 +45,29 @@ async def test_mcp_generate_image_writes_to_out_file(
     assert files[0].parent == out_dir.resolve(), files[0]
     assert files[0].stem == "mcp_out_file", files[0]
     assert files[0].is_file(), files[0]
+
+
+async def test_mcp_generate_image_count_returns_all_files(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1469: gflow_generate_image with count=2 returns two distinct generated image files."""
+    profile = os.environ.get("GFLOW_CLI_E2E_PROFILE", "").strip()
+    if not profile:
+        pytest.skip("GFLOW_CLI_E2E_PROFILE must name a logged-in profile")
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(out_dir))
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(tmp_path / "e2e.db"))
+    get_settings.cache_clear()
+
+    result: dict[str, Any] = await tools.gflow_generate_image(
+        prompt=_PROMPT, aspect="1:1", count=2, profile=profile, out_file="mcp_count.png", wait=True
+    )
+
+    assert result.get("status") == "completed", f"MCP image generation failed: {result}"
+    files = [Path(f) for f in result.get("files", [])]
+    assert len(files) == 2, result
+    assert len(set(files)) == 2, files
+    assert "warnings" not in result, result  # #1489
+    assert all(
+        f.parent == out_dir.resolve() and f.is_file() and f.stat().st_size > 0 for f in files
+    )

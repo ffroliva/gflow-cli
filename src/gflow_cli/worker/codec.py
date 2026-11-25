@@ -32,15 +32,23 @@ from gflow_cli.api.image import (
     AgentInstruction,
     GenerateImageRequest,
     ImageRef,
+    ThinkingLevel,
+    images_missing_warning,
     recorded_in_project,
 )
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
+from gflow_cli.api.video import (
+    EDIT_DEFAULT_MODEL,
+    EditVideoRequest,
+    GenerateVideoRequest,
+    VideoModel,
+)
 from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
+from gflow_cli.api.video_extend import MigratedExtendRequest
 from gflow_cli.config import UiMode
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import QueueSchemaError
@@ -52,15 +60,21 @@ __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "DecodedPayload",
     "build_image_request",
+    "build_video_edit_request",
+    "build_video_extend_request",
     "build_video_request",
     "decode_payload",
     "encode_payload",
-    "retirement_warnings",
+    "task_warnings",
 ]
 
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
-_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES
+_VIDEO_EXTEND_TASK_TYPES = frozenset({"extend"})
+_VIDEO_EDIT_TASK_TYPES = frozenset({"edit"})
+_KNOWN_TASK_TYPES = (
+    _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES | _VIDEO_EXTEND_TASK_TYPES | _VIDEO_EDIT_TASK_TYPES
+)
 
 # The only version this codec writes. 0 (an absent key) is read-only legacy
 # compatibility — nothing ever deliberately encodes as V0.
@@ -85,7 +99,7 @@ class DecodedPayload:
 
     schema_version: int
     task_type: str
-    request: GenerateImageRequest | GenerateVideoRequest
+    request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest | EditVideoRequest
     fields: dict[str, Any]
 
 
@@ -113,11 +127,17 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
 
     try:
-        request: GenerateImageRequest | GenerateVideoRequest = (
-            build_image_request(fields)
-            if task_type in _IMAGE_TASK_TYPES
-            else build_video_request(fields)
+        request: (
+            GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest | EditVideoRequest
         )
+        if task_type in _IMAGE_TASK_TYPES:
+            request = build_image_request(fields)
+        elif task_type in _VIDEO_EXTEND_TASK_TYPES:
+            request = build_video_extend_request(fields)
+        elif task_type in _VIDEO_EDIT_TASK_TYPES:
+            request = build_video_edit_request(fields)
+        else:
+            request = build_video_request(fields)
     except (KeyError, ValueError, TypeError) as exc:
         detail = redact_error_detail(f"{task_type} payload rejected: {exc}")
         raise QueueSchemaError(detail, route=_CODEC_ROUTE) from exc
@@ -232,27 +252,60 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
         count=count,
         instructions=_parse_agent_instructions(payload.get("instructions")),
         ui_mode=UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None,
+        thinking_level=(
+            ThinkingLevel.from_cli(payload["thinking_level"])
+            if payload.get("thinking_level")
+            else None
+        ),
     )
 
 
-def retirement_warnings(task: QueueTask) -> dict[str, Any]:
-    """#1375: ``{"warnings": [...]}`` for a video task on a model Flow is retiring, else ``{}``.
+def task_warnings(task: QueueTask) -> dict[str, Any]:
+    """``{"warnings": [...]}`` for the MCP reply of ``task``, else ``{}``."""
+    warnings = [*_retirement_warnings(task), *_missing_image_warnings(task)]
+    return {"warnings": warnings} if warnings else {}
+
+
+def _missing_image_warnings(task: QueueTask) -> list[dict[str, Any]]:
+    """#1489: an image task whose checkpoint names fewer images than it asked for.
+
+    Counted from the checkpoint, not the saved files: those resolve through the catalog,
+    which falls back to one asset for an unlinked task.
+    """
+    if task.task_type not in _IMAGE_TASK_TYPES:
+        return []
+    requested: object = task.payload.get("count", 1)
+    checkpoint: object = task.checkpoint
+    # isinstance: a hand-edited row; the reply must still go out
+    if not isinstance(checkpoint, dict) or type(requested) is not int:
+        return []
+    media_ids: object = cast("dict[str, object]", checkpoint).get("media_ids")
+    if not isinstance(media_ids, list) or not media_ids:
+        return []
+    return images_missing_warning(requested, len(cast("list[object]", media_ids)))
+
+
+def _retirement_warnings(task: QueueTask) -> list[dict[str, Any]]:
+    """#1375: the warning for a video task on a model Flow is retiring, else ``[]``.
 
     Read from the queued payload's ``model``, the value the worker generated with, so the MCP
     ``wait=true`` reply and ``tasks/get`` say the same thing.
     """
-    alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
+    alias = (
+        task.payload.get("model")
+        if task.task_type in (_VIDEO_TASK_TYPES | _VIDEO_EDIT_TASK_TYPES)
+        else None
+    )
     if not isinstance(alias, str):  # absent, or a hand-edited row; the reply must still go out
-        return {}
+        return []
     try:
         model = VideoModel.from_cli(alias) if alias else None
     except ValueError:  # a row an older gflow queued; the reply must still go out
-        return {}
+        return []
     when = retires_on(model) if model else None
     if model is None or when is None:
-        return {}
-    warning = {"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}
-    return {"warnings": [warning]}
+        return []
+    return [{"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}]
 
 
 def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
@@ -347,4 +400,86 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         reference_audio=reference_audio,
         ui_mode=ui_mode,
         max_credits=max_credits,
+    )
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is not None and not isinstance(value, str):
+        msg = f"{key} must be a string"
+        raise TypeError(msg)
+    return value
+
+
+def _optional_int(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        msg = f"{key} must be an integer"
+        raise TypeError(msg)
+    return value
+
+
+def build_video_extend_request(payload: dict[str, Any]) -> MigratedExtendRequest:
+    """Map an ``extend`` queue payload dict onto :class:`MigratedExtendRequest`.
+
+    Every wrong type is a ``TypeError``/``ValueError`` here, so :func:`decode_payload`
+    reports it as :class:`QueueSchemaError` (exit 30) rather than failing later.
+    """
+    prompt = payload["prompt"]
+    if not isinstance(prompt, str):
+        msg = "prompt must be a string"
+        raise TypeError(msg)
+    for key in ("project_id", "project_name", "output_file"):
+        _optional_str(payload, key)
+    source_video = _optional_str(payload, "source_video")
+    raw_refs = payload.get("reference_images", [])
+    if not isinstance(raw_refs, list) or not all(
+        isinstance(p, str) for p in cast("list[Any]", raw_refs)
+    ):
+        msg = "reference_images must be a list of paths"
+        raise TypeError(msg)
+    return MigratedExtendRequest(
+        prompt=prompt,
+        source_video=Path(source_video) if source_video else None,
+        source_media_id=_optional_str(payload, "source_media_id"),
+        duration=_optional_int(payload, "duration"),
+        reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
+        aspect=_optional_str(payload, "aspect"),
+        max_credits=_optional_int(payload, "max_credits"),
+    )
+
+
+def build_video_edit_request(payload: dict[str, Any]) -> EditVideoRequest:
+    """Map an ``edit`` queue payload dict onto :class:`EditVideoRequest`.
+
+    Every wrong type is a ``TypeError``/``ValueError`` here, so :func:`decode_payload`
+    reports it as :class:`QueueSchemaError` (exit 30) rather than failing later.
+    """
+    prompt = payload["prompt"]
+    if not isinstance(prompt, str):
+        msg = "prompt must be a string"
+        raise TypeError(msg)
+    for key in ("project_id", "project_name", "output_file"):
+        _optional_str(payload, key)
+    source_video = _optional_str(payload, "source_video")
+    aspect_val = _optional_str(payload, "aspect")
+    model_val = _optional_str(payload, "model")
+    raw_max_credits = _optional_int(payload, "max_credits")
+    if raw_max_credits is not None and raw_max_credits < 0:
+        raise ValueError("max_credits must be a non-negative integer")
+    raw_refs = payload.get("reference_images", [])
+    if not isinstance(raw_refs, list) or not all(
+        isinstance(p, str) for p in cast("list[Any]", raw_refs)
+    ):
+        msg = "reference_images must be a list of paths"
+        raise TypeError(msg)
+    return EditVideoRequest(
+        prompt=prompt,
+        source_video=Path(source_video) if source_video else None,
+        source_media_id=_optional_str(payload, "source_media_id"),
+        reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
+        model=VideoModel.from_cli(model_val) or EDIT_DEFAULT_MODEL,
+        aspect=VideoAspect.from_cli(aspect_val) if aspect_val else None,
+        resolution=_optional_str(payload, "resolution"),
+        max_credits=raw_max_credits,
     )

@@ -5,7 +5,7 @@ Extracted from cli_video.py to keep the module below file length and complexity 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,13 +15,14 @@ from rich.console import Console
 from rich.markup import escape
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import OutputFormat
+from gflow_cli._cli_helpers import OutputFormat, safe_path_text
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 
 if TYPE_CHECKING:
     from gflow_cli.api.video import VideoResult
     from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.storage import AnyPath
 
 _logger = structlog.get_logger(__name__)
 
@@ -36,6 +37,7 @@ __all__ = [
     "_print_chain_plan",
     "_print_extend_plan",
     "_record_migrated_extend",
+    "_relocate_and_record_completed_video",
     "_report_migrated_extend",
 ]
 
@@ -44,44 +46,74 @@ _EXTEND_SEGMENT_SECONDS = 8
 _EXTEND_CONTENT_SECONDS = 7
 
 
-def _emit_video_result(
+def _relocate_and_record_completed_video(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    request: Any,
+    result: VideoResult,
+    output_file: Path | None,
+    on_error: Callable[[DataStoreError, VideoResult], None],
+    cloud_info_fn: Callable[[Path], Any] | None = None,
+) -> VideoResult:
+    """Relocate ``result.local_path`` to ``output_file`` and persist the completed catalog row."""
+    from gflow_cli.paths import relocate_video_output
+    from gflow_cli.storage import cloud_info_from_path
+
+    resolve_cloud = cloud_info_fn or cloud_info_from_path
+    relocated = relocate_video_output(result, output_file)
+    try:
+        recorder.record_completed_video(
+            profile_name=profile_name,
+            _profile_dir=profile_dir,
+            request=request,
+            result=relocated,
+            cloud_storage_info=(
+                resolve_cloud(relocated.local_path) if relocated.local_path is not None else None
+            ),
+        )
+    except DataStoreError as exc:
+        on_error(exc, relocated)
+    return relocated
+
+
+def _emit_video_result(  # noqa: PLR0913
     command: str,
     request: Any,
     result: VideoResult,
     output_format: str,
     is_json: bool,
     console: Console,
+    *,
+    noun: str = "Video generation",
+    build: Callable[..., dict[str, Any]] = json_output.video_result,
 ) -> None:
-    """Emit video generation result according to format (id, json, or human table)."""
+    """Emit a one-clip video result according to format (id, json, or human table)."""
+    st = result.status
+    reasons = ", ".join(st.failure_reasons) or st.error_message or "unknown reason"
     if output_format == OutputFormat.ID.value:
-        if not result.status.succeeded:
-            reasons = (
-                ", ".join(result.status.failure_reasons)
-                or result.status.error_message
-                or "unknown reason"
-            )
-            Console(stderr=True).print(f"[red]Video generation failed:[/red] {escape(reasons)}")
+        if not st.succeeded:
+            Console(stderr=True).print(f"[red]{noun} failed:[/red] {escape(reasons)}")
             raise SystemExit(1)
-        if result.status.media_id:
-            click.echo(result.status.media_id)
+        if st.media_id:
+            click.echo(st.media_id)
         return
 
     if is_json or output_format == OutputFormat.JSON.value:
-        json_output.emit(json_output.video_result(command=command, request=request, result=result))
-        if not result.status.succeeded:
+        json_output.emit(build(command=command, request=request, result=result))
+        if not st.succeeded:
             raise SystemExit(1)
         return
 
-    if not result.status.succeeded:
-        reasons = (
-            ", ".join(result.status.failure_reasons)
-            or result.status.error_message
-            or "unknown reason"
-        )
-        console.print(f"[red]Video generation failed:[/red] {escape(reasons)}")
+    if not st.succeeded:
+        console.print(f"[red]{noun} failed:[/red] {escape(reasons)}")
         raise SystemExit(1)
 
-    console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
+    local = result.local_path
+    # Escaped: a path may contain Rich markup such as "[red]".
+    saved = safe_path_text(local) if isinstance(local, Path) else str(local)
+    console.print(f"[bold green]Saved:[/bold green] {escape(saved)}")
 
 
 def _emit_chain_result(
@@ -247,8 +279,9 @@ def _migrated_extend_payload(
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
+    effective_source_id = outcome.source_media_id or media_id
     added, billed = _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
-    if record.media_id == media_id:
+    if record.media_id == effective_source_id:
         added = billed = migrated_extend.extend_key_seconds(outcome.model_key)
     return {
         "status": "ok" if ok else "fail",
@@ -268,6 +301,8 @@ def _migrated_extend_payload(
         "segments_requested": 1,
         "segments_completed": 1 if ok else 0,
         "media_ids": [record.media_id],
+        # The pre-submit quote, not a final charge: Flow reports no spend on this host.
+        "quoted_credits": outcome.quoted_credits,
         "credits_spent": None,
         "seconds_added": added if ok else 0,
         "seconds_billed": billed,
@@ -288,7 +323,7 @@ def _migrated_extend_payload(
 
 def _record_migrated_extend(  # noqa: PLR0913
     recorder: OperationRecorder | None,
-    target: Path | None,
+    target: AnyPath | None,
     *,
     profile_name: str,
     profile_dir: Path | None,
@@ -296,57 +331,25 @@ def _record_migrated_extend(  # noqa: PLR0913
     project_id: str | None,
     outcome: migrated_extend.ExtendOutcome,
 ) -> None:
-    """Record completed migrated extend (in-place or new-id) to catalog (#1184, #1299)."""
+    """Catalog a migrated extend; a catalog failure never fails the paid run."""
     if recorder is None:
         return
     try:
-        from gflow_cli.storage import cloud_info_from_path
-
-        cloud_info = cloud_info_from_path(target) if target is not None else None
-        if outcome.record.media_id == media_id:
-            if target is not None:
-                recorder.record_extended_in_place(
-                    profile_name,
-                    media_id,
-                    outcome.record.workflow_id,
-                    outcome.model_key,
-                    local_path=target,
-                    cloud_storage_info=cloud_info,
-                )
-        else:
-            from gflow_cli.api.video import VideoResult, VideoStatus
-
-            if target is not None:
-                status = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
-            else:
-                status = (
-                    "MEDIA_GENERATION_STATUS_SUCCESSFUL"
-                    if outcome.record.is_done
-                    else "MEDIA_GENERATION_STATUS_FAILED"
-                )
-            recorder.record_completed_video(
-                profile_name=profile_name,
-                _profile_dir=profile_dir or Path(),
-                result=VideoResult(
-                    status=VideoStatus(
-                        media_id=outcome.record.media_id,
-                        status=status,
-                    ),
-                    local_path=target,
-                    project_id=project_id,
-                    workflow_id=outcome.record.workflow_id,
-                ),
-                cloud_storage_info=cloud_info,
-                model=outcome.model_key,
-                aspect_ratio=outcome.aspect,
-            )
+        recorder.record_migrated_extend(
+            target,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            media_id=outcome.source_media_id or media_id,
+            project_id=project_id,
+            outcome=outcome,
+        )
     except DataStoreError as exc:
         _logger.warning("extend_record_failed", error_class=type(exc).__name__)
 
 
 def _report_migrated_extend(  # noqa: PLR0913
     outcome: migrated_extend.ExtendOutcome,
-    target: Path | None,
+    target: AnyPath | None,
     *,
     profile_name: str,
     media_id: str,
@@ -425,13 +428,15 @@ def _print_chain_plan(
         c.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
 
 
-def _print_extend_plan(
+def _print_extend_plan(  # noqa: PLR0913
     *,
     media_id: str,
     prompt: str,
     aspect: str,
     segments: int,
     migrated: bool = False,
+    duration: int | None = None,
+    ref_count: int = 0,
     max_credits: int | None = None,
     console: Console | None = None,
 ) -> None:
@@ -441,15 +446,22 @@ def _print_extend_plan(
     c.print(f"  source clip : {media_id}")
     c.print(f"  prompt      : {prompt}")
     c.print(f"  aspect      : {aspect}")
+    if duration is not None:
+        c.print(f"  duration    : {duration}s")
+    if ref_count:
+        c.print(f"  references  : {ref_count} image(s)")
     if max_credits is not None:
         c.print(f"  max credits : {max_credits}")
     if migrated:
         c.print(
-            "  cost        : spends credits — flow.google.com does not report the price "
-            "before submitting; compare `gflow credits user` before and after"
+            "  cost        : spends credits — flow.google.com checks Flow's pre-submit "
+            "credit quote when --max-credits is set"
         )
-        c.print("  length      : set by the key; measured 2026-11-08, the Omni key grows")
-        c.print("                the source clip in place by ~4s (Veo: a separate ~7s clip)")
+        c.print("  length      : --duration (3-10s), else Flow's current setting; measured")
+        c.print(
+            "                2026-11-08, the Omni key grows the source clip in place "
+            "(Veo: a separate ~7s clip)"
+        )
         return
     footage = segments * _EXTEND_CONTENT_SECONDS
     billed = segments * _EXTEND_SEGMENT_SECONDS

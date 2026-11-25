@@ -43,17 +43,21 @@ from gflow_cli._cli_helpers import (
     safe_path_text,
     slugify_project_name,
     spends_credits,
+    thinking_level_option,
     tool_option,
+    validate_t2i_flags,
 )
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
 from gflow_cli.api.image import (
+    IMAGES_MISSING_HINT,
     AgentInstruction,
     Aspect,
     GenerateImageRequest,
     ImageRef,
     Model,
+    ThinkingLevel,
     recorded_in_project,
     reference_cap_for,
 )
@@ -253,22 +257,29 @@ def _classify_ref(ref: str) -> ImageRef | Path:
     ``_run_i2i`` can split UUID refs (wire) from local paths (UI-attached)
     without duplicating the UUID regex check.
 
+    A path that resolves to a folder is refused the same way: ``""`` and ``.``
+    resolve to the current folder, which ``strict=True`` accepts.
+
     Raises:
-        click.UsageError: if *ref* is neither a UUID nor an existing path.
+        click.UsageError: if *ref* is neither a UUID nor an existing file.
     """
     if is_media_uuid(ref):
         return ImageRef(name=ref)
+    hint = (
+        "Pass either a local image path or a 32-char hex UUID with hyphens "
+        "(from a prior `gflow image upload`)."
+    )
     try:
-        return Path(ref).resolve(strict=True)
-    except FileNotFoundError as exc:
-        msg = (
-            f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. "
-            "Pass either a local image path or a 32-char hex UUID with hyphens "
-            "(from a prior `gflow image upload`)."
-        )
+        resolved = Path(ref).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:  # also bad syntax, NUL, symlink loop
+        msg = f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. {hint}"
         raise click.UsageError(
             msg,
         ) from exc
+    if not resolved.is_file():
+        msg = f"--ref {ref!r} is not a file. {hint}"
+        raise click.UsageError(msg)
+    return resolved
 
 
 def _enrich_uuid_refs(
@@ -821,6 +832,7 @@ _ui_mode_option = click.option(
     help="Custom agent instruction to add or enable (only in agentic mode).",
 )
 @_ui_mode_option
+@thinking_level_option
 def t2i(  # NOSONAR
     prompts: tuple[str, ...],
     prompts_file: Path | None,
@@ -828,6 +840,7 @@ def t2i(  # NOSONAR
     continue_on_error: bool,
     jitter_spec: str | None,
     ui_mode: str | None,
+    thinking_level: str | None,
     model: str,
     aspect: str,
     count: int,
@@ -847,40 +860,16 @@ def t2i(  # NOSONAR
     """Generate image(s) from one or more text prompts."""
     is_multi_prompt = len(prompts) > 1 or prompts_file is not None or read_stdin
     _validate_t2i_input(prompts, prompts_file, read_stdin)
-
-    if is_multi_prompt and output_file is not None:
-        msg = (
-            "--out-file is single-prompt only; remove the extra prompts or use --out for"
-            " directory output."
-        )
-        raise click.UsageError(msg)
-
-    if is_multi_prompt and instructions:
-        msg = "--instruction is single-prompt only; remove the extra prompts."
-        raise click.UsageError(msg)
-
-    if is_multi_prompt and reference_entities:
-        # The batch runner does not attach entities. Loop t2i one prompt at a time
-        # (with --project) if every frame needs the same characters.
-        msg = "--reference-entity is single-prompt only; remove the extra prompts."
-        raise click.UsageError(msg)
-
-    if is_multi_prompt and (as_json or output_format != OutputFormat.TABLE.value):
-        # --json is single-prompt only — the batch summary shape is rich-table
-        # specific and a worker shells out one prompt at a time anyway.
-        msg = "--json is single-prompt only; remove the extra prompts."
-        raise click.UsageError(msg)
-
-    if is_multi_prompt and ui_mode is not None:
-        # The batch path is env-controlled (GFLOW_CLI_UI_MODE); a per-command
-        # arm override isn't threaded through the batch runner.
-        msg = "--ui-mode is single-prompt only; set GFLOW_CLI_UI_MODE for batch runs."
-        raise click.UsageError(msg)
-
-    if ui_mode == UiMode.CLASSIC.value and instructions:
-        # Agent instructions are agentic-only; requiring classic contradicts them.
-        msg = "--ui-mode classic is incompatible with -i (instructions need the agentic UI)."
-        raise click.UsageError(msg)
+    validate_t2i_flags(
+        is_multi_prompt=is_multi_prompt,
+        output_file=output_file,
+        instructions=instructions,
+        reference_entities=reference_entities,
+        as_json=as_json,
+        output_format=output_format,
+        ui_mode=ui_mode,
+        thinking_level=thinking_level,
+    )
 
     if not is_multi_prompt:
         if not prompts:
@@ -912,6 +901,7 @@ def t2i(  # NOSONAR
                         else None
                     ),
                     ui_mode=UiMode(ui_mode) if ui_mode else None,
+                    thinking_level=ThinkingLevel.from_cli(thinking_level),
                 ),
                 count=count,
                 out=out,
@@ -1120,16 +1110,18 @@ async def _download_images(
     output_root: Path,
     output_file: Path | None = None,
     saved_paths: list[Path] | None = None,
+    requested: int = 1,
 ) -> list[Path]:
     """Download each generated image to its resolved target path.
 
     Appends to ``saved_paths`` when given, so the caller keeps the files written
-    before a failure (#1035).
+    before a failure (#1035). ``requested`` picks the naming: a run that asked for
+    several images keeps numbered names even when fewer came back (#1489).
     """
     saved_paths = [] if saved_paths is None else saved_paths
     for i, img in enumerate(images, start=1):
         if output_file is not None:
-            if len(images) == 1:
+            if requested == 1:
                 target = output_file
             else:
                 target = numbered_path(output_file, i)
@@ -1184,7 +1176,13 @@ async def _generate_verify_download(
     saved_paths: list[Path] = []
     try:
         await _download_images(
-            client, images, out, output_root, output_file=output_file, saved_paths=saved_paths
+            client,
+            images,
+            out,
+            output_root,
+            output_file=output_file,
+            saved_paths=saved_paths,
+            requested=count,
         )
     except BaseException:  # Ctrl-C mid-download must keep the ids too
         undownloaded.extend(
@@ -1365,10 +1363,12 @@ async def _run_t2i(
                         model=req.model.value,
                         images=images,
                         saved_paths=saved_paths,
+                        requested=count,
                     ),
                 )
             else:
                 _print_t2i_summary(images, saved_paths)
+                _print_missing_images_note(count, len(images))
 
             _record_generated_images_safe(
                 recorder,
@@ -1400,6 +1400,12 @@ async def _run_t2i(
         raise
     finally:
         recorder.close()
+
+
+def _print_missing_images_note(requested: int, returned: int) -> None:
+    """#1489: one line under the table when Flow returned fewer images than requested."""
+    if returned < requested:
+        console.print(f"{returned} of {requested} images returned. {IMAGES_MISSING_HINT}")
 
 
 def _print_t2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
@@ -1611,6 +1617,7 @@ class _I2IParams:
     tool: AppliedTool | None = None
     instructions: tuple[AgentInstruction, ...] | None = None
     ui_mode: UiMode | None = None
+    thinking_level: ThinkingLevel | None = None
 
 
 @spends_credits(True)
@@ -1702,6 +1709,7 @@ class _I2IParams:
     help="Custom agent instruction to add or enable (only in agentic mode).",
 )
 @_ui_mode_option
+@thinking_level_option
 def i2i(  # NOSONAR
     prompt: str,
     refs: tuple[str, ...],
@@ -1720,6 +1728,7 @@ def i2i(  # NOSONAR
     as_json: bool,
     instructions: tuple[str, ...],
     ui_mode: str | None,
+    thinking_level: str | None,
     output_format: str = "table",
 ) -> None:
     """Generate image(s) from PROMPT + reference image(s) (image-to-image)."""
@@ -1761,6 +1770,7 @@ def i2i(  # NOSONAR
             tuple(AgentInstruction(text=i) for i in instructions) if instructions else None
         ),
         ui_mode=UiMode(ui_mode) if ui_mode else None,
+        thinking_level=ThinkingLevel.from_cli(thinking_level),
     )
     is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
@@ -1852,6 +1862,7 @@ async def _run_i2i(
                 tool=params.tool,
                 instructions=params.instructions,
                 ui_mode=params.ui_mode,
+                thinking_level=params.thinking_level,
             )
 
             # Resolve @-mentions (entities → reference_entities, media → refs) and
@@ -1923,10 +1934,12 @@ async def _run_i2i(
                         images=images,
                         saved_paths=saved_paths,
                         ref_count=n_refs,
+                        requested=count,
                     ),
                 )
             else:
                 _print_i2i_summary(images, saved_paths)
+                _print_missing_images_note(count, len(images))
 
             _record_generated_images_safe(
                 recorder,

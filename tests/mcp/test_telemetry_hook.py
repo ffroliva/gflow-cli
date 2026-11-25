@@ -223,6 +223,16 @@ async def test_known_client_name_is_counted_and_unknown_becomes_other(
 
 
 @pytest.mark.asyncio
+async def test_openai_http_calls_are_counted_under_their_own_client(tmp_path: Path) -> None:
+    token = tools.telemetry_client.set("openai-http")
+    try:
+        await _success()  # no MCP session: the OpenAI route calls the tool directly
+    finally:
+        tools.telemetry_client.reset(token)
+    assert any(row[1:4] == ("mcp", "client", "openai-http") for row in _rows(tmp_path))
+
+
+@pytest.mark.asyncio
 async def test_missing_client_info_is_not_an_error(
     tmp_path: Path,
 ) -> None:
@@ -243,3 +253,28 @@ def test_registered_tool_receives_sdk_context_without_schema_change(mcp_server: 
     tool = mcp_server._tool_manager._tools["gflow_list_tools"]
     assert tool.context_kwarg == "ctx"
     assert "ctx" not in tool.parameters["properties"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "recorded"),
+    [("authenticated", "0"), ("no_session", "error"), ("profile_unavailable", "error")],
+)
+async def test_auth_status_records_an_unverified_session_as_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, outcome: str, recorded: str
+) -> None:
+    """#1464: the probe's own outcome is the envelope status, and telemetry reads it."""
+    from gflow_cli.auth.verification import FlowSessionOutcome, FlowSessionStatus
+
+    async def probe(profile_dir: Path, *, source: str = "chrome") -> FlowSessionStatus:
+        return FlowSessionStatus(
+            outcome=FlowSessionOutcome(outcome), user_email=None, source=source
+        )
+
+    monkeypatch.setattr(tools, "_resolve_and_validate_profile", lambda p: "denon")
+    monkeypatch.setattr(tools.verification, "verify_flow_profile", probe)
+    result = await tools.gflow_auth_status(ctx=_context())
+
+    assert result["status"] == outcome
+    keys = {row[3] for row in _rows(tmp_path) if row[1:3] == ("mcp", "exit")}
+    assert keys == {f"gflow_auth_status {recorded}"}

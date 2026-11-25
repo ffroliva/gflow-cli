@@ -262,3 +262,44 @@ def test_doctor_strips_control_chars_from_output(
     assert result.exit_code == 33, result.output
     assert "\x1b" not in result.output
     assert "\x07" not in result.output
+
+
+_ABSENT_DB_INFO_CHECKS = frozenset(
+    {
+        "catalog.display_name_missing",
+        "catalog.local_file_missing",
+        "catalog.sha256_null",
+        "db.migration_drift",
+        "db.wal_state",
+        "operations.stuck_started",
+        "queue.stuck_processing",
+    }
+)
+
+
+@pytest.mark.usefixtures("healthy_doctor_env")
+@pytest.mark.parametrize("flags", [[], ["--json"]], ids=["text", "json"])
+def test_doctor_absent_db_exits_0_text_and_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    flags: list[str],
+) -> None:
+    db = tmp_path / "fresh" / "gflow.db"
+    _use_db(monkeypatch, db)
+    result = CliRunner().invoke(main, ["doctor", *flags])
+    assert result.exit_code == 0, result.output
+    if flags == ["--json"]:
+        payload = json.loads(result.output)
+        assert payload["overall_status"] == "ok"
+        entries = {entry["check"]: entry for entry in payload["checks"]}
+        assert set(entries) == set(CHECK_IDS)
+        for check_id in _ABSENT_DB_INFO_CHECKS:
+            assert entries[check_id]["severity"] == "info"
+    else:
+        assert "Overall: ok" in result.output
+        assert "[INFO]" in result.output
+        assert "[FAIL]" not in result.output
+        for check_id in CHECK_IDS:
+            assert check_id in result.output
+    assert not db.exists()
+    assert not db.parent.exists()

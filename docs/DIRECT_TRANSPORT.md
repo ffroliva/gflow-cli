@@ -35,12 +35,12 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |
 | Count 1 to 4 | yes | live generations: 2, 3 and 4 entries in one request returned 2, 3 and 4 images |
-| One ref made in this run: a `gflow run` row's `"ref": "batch:N"`, one image | yes | a live `gflow run` |
-| One `--ref ./photo.png` (a local file not yet in the catalog), one image | yes | uploaded by one direct `maseQ` request (reCAPTCHA action `UPLOAD_IMAGE`), then generated directly; a live generation |
-| One `--reference-entity` with its `--reference-entity-name` | yes | a live generation |
-| One `@Name` mention of a character in the project | yes, when exactly one character has that name (trimmed, case-insensitive, as the UI picker matches) | the id is read from the project; a live generation |
+| One ref made in this run: a `gflow run` row's `"ref": "batch:N"`, count 1 to 4 | yes | a live `gflow run` (count 1) and live ref generations (2, 3 and 4 entries returned 2, 3 and 4 images) |
+| One `--ref ./photo.png` (a local file not yet in the catalog), count 1 to 4 | yes | uploaded by one direct `maseQ` request (reCAPTCHA action `UPLOAD_IMAGE`), then generated directly; live generations: 2, 3 and 4 entries returned 2, 3 and 4 images |
+| One `--reference-entity` with its `--reference-entity-name`, count 1 to 4 | yes | live generations: 2, 3 and 4 entries returned 2, 3 and 4 images |
+| One `@Name` mention of a character in the project, count 1 to 4 | yes, when exactly one character has that name (trimmed, case-insensitive, as the UI picker matches) | the id is read from the project; live count 1 and 2 generations (and shares the resolved entity frame measured at count 3 and 4) |
 | Any other model (`nano-pro`, `nano2-lite`, `imagen4`) | no | wire name not captured |
-| Several refs, several characters, a ref plus a character, or a ref or character with count 2-4 | no | not captured |
+| Several refs, several characters, or a ref plus a character | no | not captured |
 | A mention whose name matches no character, or several | no | the UI picker decides |
 | Agent-mode instructions, or `--ui-mode agentic` | no | not captured |
 | A configured proxy (gflow's, the environment's or the OS's) | no | the browser and the request could leave by different routes |
@@ -55,6 +55,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Flow answers a redirect, HTTP 401 or HTTP 403 | no: it was sent once and refused | the request is submitted a second time, through `ui_automation`'s own page |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
+| The reply holds fewer images than requested | no | the returned images are saved and the run succeeds with a `client.images_missing` warning, as when the UI path reads Flow's reply ([USAGE](USAGE.md#json-output---json)) |
 | A `--ref` found in the local catalog (a media id, or a file used before) | yes: the selector routes it before any request | the request runs on `ui_automation`; the catalog may be stale, and the UI path proves the image still exists before it submits, refusing at $0 |
 
 A sent request is never resent on the direct transport: only a redirect, HTTP 401 or HTTP 403, which Flow refused without making anything, is submitted again, once, through `ui_automation`. Every rejected reply drops the cached session token, so a
@@ -88,4 +89,4 @@ a median of 18.6 s from mint to reply, the warm UI transport 20.7 s. Flow's own 
 time dominates both. The case for the transport is that it does not depend on the
 composer's DOM, so selector changes and UI locale do not affect it.
 
-Evidence: [`docs/superpowers/spikes/2026-11-22-direct-image-gate0.md`](superpowers/spikes/2026-11-22-direct-image-gate0.md).
+Evidence: [`docs/superpowers/spikes/2026-11-22-direct-image-gate0.md`](superpowers/spikes/2026-11-22-direct-image-gate0.md); counts 2 to 4 with one reference or character: [`docs/superpowers/spikes/2026-11-25-direct-image-multi-count-ref-character.md`](superpowers/spikes/2026-11-25-direct-image-multi-count-ref-character.md).

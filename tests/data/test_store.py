@@ -8,13 +8,26 @@ without ever calling ``apply_migrations``.
 
 from __future__ import annotations
 
+import gc
+import os
 import sqlite3
+import stat
+import subprocess
+import sys
+import threading
+import warnings
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
+from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
-from gflow_cli.data.store import DataStore, inspect_schema
-from gflow_cli.errors import DataStoreError
+from gflow_cli import winsec
+from gflow_cli.data import store as store_module
+from gflow_cli.data.store import DataStore, Migration, _secure_store_files, inspect_schema
+from gflow_cli.errors import DataMigrationError, DataStoreError
 
 
 def _new_db(tmp_path: Path) -> Path:
@@ -158,3 +171,426 @@ def test_inspect_schema_never_migrates(tmp_path: Path) -> None:
 def test_inspect_schema_missing_db_raises_datastore_error(tmp_path: Path) -> None:
     with pytest.raises(DataStoreError):
         inspect_schema(tmp_path / "absent.db")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_open_creates_db_and_dir_owner_only(tmp_path: Path) -> None:
+    """gflow.db and its parent directory are owner-only (issue #1437)."""
+    db = tmp_path / "data" / "gflow.db"
+    old_umask = os.umask(0o022)
+    try:
+        with DataStore.open(db):
+            pass
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(db.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(db.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+@pytest.mark.parametrize("loose", [0o644, 0o640])
+@pytest.mark.parametrize("dir_mode", [0o755, 0o2770, 0o1777])
+def test_open_tightens_existing_files_but_not_the_directory(
+    tmp_path: Path, dir_mode: int, loose: int
+) -> None:
+    """GFLOW_CLI_DB_PATH may name a directory gflow does not own (issue #1437)."""
+    parent = tmp_path / "data"
+    parent.mkdir()
+    db = parent / "gflow.db"
+    with DataStore.open(db) as live:
+        live.conn.execute("CREATE TABLE keep (x)")
+        files = [db, parent / "gflow.db-wal", parent / "gflow.db-shm"]
+        for file in files:
+            file.chmod(loose)
+        parent.chmod(dir_mode)
+        with DataStore.open(db) as reopened:
+            assert [stat.S_IMODE(f.stat().st_mode) for f in files] == [0o600] * 3
+            reopened.conn.execute("SELECT * FROM keep").fetchall()
+    assert stat.S_IMODE(parent.stat().st_mode) == dir_mode
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_files_are_owner_only_before_sqlite_connects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = sqlite3.connect
+    seen: list[int] = []
+
+    def connect(path: Path, **kwargs: Any) -> sqlite3.Connection:
+        seen.append(stat.S_IMODE(path.stat().st_mode))
+        return real(path, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    db = tmp_path / "gflow.db"
+    with DataStore.open(db):
+        pass
+    db.chmod(0o644)
+    with DataStore.open(db):
+        pass
+    assert seen == [0o600, 0o600]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_open_survives_a_failed_chmod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db = tmp_path / "gflow.db"
+    db.touch()
+    db.chmod(0o644)
+
+    def refuse(target: str, mode: int) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(os, "chmod", refuse)
+    with capture_logs() as logs, DataStore.open(db):
+        pass
+    assert [entry["event"] for entry in logs] == ["data_store_chmod_failed"]
+
+    fresh = tmp_path / "fresh.db"
+    with DataStore.open(fresh):
+        assert stat.S_IMODE(fresh.stat().st_mode) == 0o600  # created so, not chmodded
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_open_secures_the_target_of_a_symlinked_db(tmp_path: Path) -> None:
+    target = tmp_path / "real" / "target.db"
+    target.parent.mkdir()
+    link = tmp_path / "gflow.db"
+    link.symlink_to(target)
+    files = [target, target.with_name("target.db-wal"), target.with_name("target.db-shm")]
+    old_umask = os.umask(0o022)
+    try:
+        with DataStore.open(link):
+            assert [stat.S_IMODE(f.stat().st_mode) for f in files] == [0o600] * 3
+            for file in files:
+                file.chmod(0o644)
+            with DataStore.open(link):
+                assert [stat.S_IMODE(f.stat().st_mode) for f in files] == [0o600] * 3
+    finally:
+        os.umask(old_umask)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_open_never_changes_something_that_is_not_the_database(tmp_path: Path) -> None:
+    other = tmp_path / "other.txt"
+    other.touch()
+    other.chmod(0o644)
+    (tmp_path / "gflow.db-shm").symlink_to(other)
+    with suppress(DataStoreError), DataStore.open(tmp_path / "gflow.db"):
+        pass
+    assert stat.S_IMODE(other.stat().st_mode) == 0o644
+
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    folder.chmod(0o2775)
+    sibling = tmp_path / "folder-wal"
+    sibling.touch()
+    sibling.chmod(0o644)
+    with pytest.raises(DataStoreError):
+        DataStore.open(folder)
+    assert stat.S_IMODE(folder.stat().st_mode) == 0o2775
+    assert stat.S_IMODE(sibling.stat().st_mode) == 0o644
+
+
+def test_open_on_a_blank_path_is_a_data_store_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(DataStoreError):
+        DataStore.open(Path())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits")
+def test_a_second_open_keeps_the_first_connections_locks(tmp_path: Path) -> None:
+    db = tmp_path / "gflow.db"
+    outside = (
+        "import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); "
+        "c.execute('SELECT * FROM keep').fetchall(); c.close()"
+    )
+    with DataStore.open(db) as first:
+        first.conn.execute("CREATE TABLE keep (x)")
+        with DataStore.open(db):
+            subprocess.run([sys.executable, "-c", outside, str(db)], check=True)  # noqa: S603
+            # The outside close deletes the WAL only when it sees no lock of ours.
+            assert (tmp_path / "gflow.db-wal").exists()
+
+
+def test_another_thread_waits_until_the_new_file_is_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On POSIX, closing any descriptor of a file drops the locks of the whole process."""
+    db = tmp_path / "gflow.db"
+    close = os.close
+    others: list[threading.Thread] = []
+    waited: list[bool] = []
+
+    def slow_close(fd: int) -> None:
+        if not others:
+            others.append(threading.Thread(target=_secure_store_files, args=(db,)))
+            others[0].start()
+            others[0].join(1)
+            waited.append(others[0].is_alive())
+        close(fd)
+
+    monkeypatch.setattr(os, "close", slow_close)
+    _secure_store_files(db)
+    others[0].join()
+    assert waited == [True]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_a_recreated_db_is_restricted_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = subprocess.run
+    hardened: list[str] = []
+
+    def run(args: list[str], **kwargs: Any) -> Any:
+        if "/inheritance:r" in args:
+            hardened.append(args[1])
+        return real(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    db = tmp_path / "gflow.db"
+    for _ in range(2):
+        with DataStore.open(db):
+            pass
+        with DataStore.open(db):
+            pass
+        db.unlink()
+    assert len(hardened) == 2
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_restricts_the_db_but_not_its_neighbours(tmp_path: Path) -> None:
+    icacls = os.path.join(os.environ["SystemRoot"], "System32", "icacls.exe")
+
+    def acl(path: Path) -> list[str]:
+        done = subprocess.run([icacls, str(path)], check=True, capture_output=True)  # noqa: S603
+        text = done.stdout.decode("ascii", errors="replace").replace(str(path), "")
+        return [line.strip() for line in text.splitlines() if ":(" in line]
+
+    subprocess.run(  # noqa: S603
+        [icacls, str(tmp_path), "/grant", "*S-1-1-0:(OI)(CI)R"], check=True, capture_output=True
+    )
+    neighbour = tmp_path / "sub" / "report.txt"
+    neighbour.parent.mkdir()
+    neighbour.touch()
+    before = [acl(tmp_path), acl(neighbour)]
+    db = tmp_path / "gflow.db"
+    db.touch()  # an existing database
+    with DataStore.open(db):
+        pass
+    assert [acl(tmp_path), acl(neighbour)] == before
+    assert len(acl(db)) == 1
+    whoami = os.path.join(os.environ["SystemRoot"], "System32", "whoami.exe")
+    me = subprocess.run([whoami], check=True, capture_output=True).stdout  # noqa: S603
+    user = me.decode("ascii", errors="replace").strip().lower()
+    assert acl(db)[0].lower() == f"{user}:(f)"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["gflow.db", "sub"]
+    with DataStore.open(tmp_path / "new" / "gflow.db"):
+        pass
+    (tmp_path / "plain").mkdir()
+    assert acl(tmp_path / "new") == acl(tmp_path / "plain")
+    with pytest.raises(DataStoreError):
+        DataStore.open(tmp_path / "plain")
+    assert acl(tmp_path / "plain") == acl(tmp_path / "new")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_survives_a_failed_acl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse() -> str:
+        raise OSError
+
+    monkeypatch.setattr(winsec, "_current_user_sid", refuse)
+    with capture_logs() as logs, DataStore.open(tmp_path / "gflow.db"):
+        pass
+    assert [entry["event"] for entry in logs] == ["file_acl_failed"]
+
+
+def test_harden_file_once_does_not_retry_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+
+    def fail() -> str:
+        calls.append(1)
+        raise OSError
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(winsec, "_current_user_sid", fail)
+    for _ in range(3):
+        assert winsec.harden_file_once(str(tmp_path / "once.db")) is False
+    assert calls == [1]
+
+
+def _clear_tracebacks(exc: BaseException) -> None:
+    exc.__traceback__ = None
+    if exc.__cause__ is not None:
+        exc.__cause__.__traceback__ = None
+    if exc.__context__ is not None:
+        exc.__context__.__traceback__ = None
+
+
+def _assert_closed_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    db: Path,
+    call: Callable[[], object],
+    expected: type[BaseException],
+) -> BaseException:
+    real_connect = sqlite3.connect
+    opened: list[sqlite3.Connection] = []
+
+    def track_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always", ResourceWarning)
+        try:
+            with monkeypatch.context() as patched:
+                patched.setattr(sqlite3, "connect", track_connect)
+                with pytest.raises(expected) as exc_info:
+                    call()
+            assert len(opened) == 1
+            conn_repr = repr(opened[0])
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                opened[0].execute("SELECT 1")
+            if db.is_file():
+                moved = db.with_name(f"{db.name}.moved")
+                db.rename(moved)
+                moved.replace(db)
+            caught = exc_info.value
+            del exc_info
+            _clear_tracebacks(caught)
+            opened.clear()
+            gc.collect()
+            leaks = [
+                str(w.message)
+                for w in recorded
+                if issubclass(w.category, ResourceWarning) and conn_repr in str(w.message)
+            ]
+            assert leaks == []
+            return caught
+        finally:
+            opened.clear()
+            recorded.clear()
+            gc.collect()
+
+
+def test_open_closes_connection_when_pragma_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "corrupt.db"
+    db.write_bytes(b"not a sqlite database" * 4)
+    exc = _assert_closed_on_failure(monkeypatch, db, lambda: DataStore.open(db), DataStoreError)
+    assert isinstance(exc, DataStoreError)
+    assert exc.route == "data.open"
+    assert isinstance(exc.__cause__, sqlite3.DatabaseError)
+    db.unlink()
+    with DataStore.open(db):
+        pass
+
+
+def test_open_closes_connection_when_migration_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    newer_db = tmp_path / "newer.db"
+    conn = sqlite3.connect(newer_db)
+    try:
+        conn.execute(
+            "CREATE TABLE schema_migrations(version TEXT PRIMARY KEY, filename TEXT, "
+            "checksum TEXT, applied_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO schema_migrations(version, filename, checksum, applied_at) "
+            "VALUES ('9999', '9999_future.sql', 'abc', '2026-05-24T00:00:00Z')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    _assert_closed_on_failure(
+        monkeypatch, newer_db, lambda: DataStore.open(newer_db), DataMigrationError
+    )
+    newer_db.unlink()
+    with DataStore.open(newer_db):
+        pass
+
+    drift_db = tmp_path / "drift.db"
+    with DataStore.open(drift_db):
+        pass
+    drift_conn = sqlite3.connect(drift_db)
+    try:
+        drift_conn.execute("UPDATE schema_migrations SET checksum='bad' WHERE version='0001'")
+        drift_conn.commit()
+    finally:
+        drift_conn.close()
+    _assert_closed_on_failure(
+        monkeypatch, drift_db, lambda: DataStore.open(drift_db), DataMigrationError
+    )
+    drift_db.unlink()
+    with DataStore.open(drift_db):
+        pass
+
+
+def test_open_closes_connection_when_migration_sql_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bad_migration.db"
+    base = store_module._load_migrations()
+    bad = Migration(
+        version="9999",
+        version_number=9999,
+        filename="9999_bad.sql",
+        sql="CREATE TABLE leak_probe(x); INSERT INTO no_such_table VALUES (1);",
+        checksum="0" * 64,
+    )
+    monkeypatch.setattr(store_module, "_load_migrations", lambda: [*base, bad])
+    exc = _assert_closed_on_failure(monkeypatch, db, lambda: DataStore.open(db), DataStoreError)
+    assert isinstance(exc, DataStoreError)
+    assert exc.route == "data.transaction"
+    probe = sqlite3.connect(db)
+    try:
+        row = probe.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='leak_probe'"
+        ).fetchone()
+    finally:
+        probe.close()
+    assert row is None
+
+
+def test_open_closes_connection_on_post_connect_oserror_and_base_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def raise_oserror() -> list[Migration]:
+        raise OSError("io fault")
+
+    def raise_interrupt() -> list[Migration]:
+        raise KeyboardInterrupt
+
+    db_os = tmp_path / "oserror.db"
+    with monkeypatch.context() as patched:
+        patched.setattr(store_module, "_load_migrations", raise_oserror)
+        exc = _assert_closed_on_failure(
+            monkeypatch, db_os, lambda: DataStore.open(db_os), DataStoreError
+        )
+    assert isinstance(exc, DataStoreError)
+    assert exc.route == "data.open"
+    assert isinstance(exc.__cause__, OSError)
+
+    db_int = tmp_path / "interrupt.db"
+    with monkeypatch.context() as patched:
+        patched.setattr(store_module, "_load_migrations", raise_interrupt)
+        _assert_closed_on_failure(
+            monkeypatch, db_int, lambda: DataStore.open(db_int), KeyboardInterrupt
+        )
+
+    ro_db = _new_db(tmp_path)
+
+    def fail_init(self: DataStore, conn: sqlite3.Connection, path: Path) -> None:
+        raise KeyboardInterrupt
+
+    with monkeypatch.context() as patched:
+        patched.setattr(DataStore, "__init__", fail_init)
+        _assert_closed_on_failure(
+            monkeypatch, ro_db, lambda: DataStore.open_readonly(ro_db), KeyboardInterrupt
+        )

@@ -21,6 +21,9 @@ from gflow_cli._cli_helpers import (
     spends_credits,
 )
 from gflow_cli.services.video_captions import (
+    CAPTION_POSITIONS,
+    DEFAULT_CAPTION_STYLE,
+    MAX_FONT_SIZE,
     caption_video,
     reject_explicit_out_file_under_cloud_storage,
     result_payload,
@@ -97,6 +100,35 @@ def transcribe(
 )
 @out_file_option(help="Explicit output .mp4 file path (defaults to <name>-captions.mp4).")
 @click.option("--profile", default=None, help="Profile name when FILE is a catalog media UUID.")
+@click.option(
+    "--position",
+    type=click.Choice(CAPTION_POSITIONS, case_sensitive=False),
+    default=DEFAULT_CAPTION_STYLE.position,
+    show_default=True,
+    help="Vertical caption placement inside the frame.",
+)
+@click.option(
+    "--margin",
+    type=click.IntRange(min=0),
+    default=DEFAULT_CAPTION_STYLE.margin,
+    show_default=True,
+    help=(
+        "Distance in pixels from the top/bottom edge to the text: at least 8 where the "
+        "frame allows, at most half the free height."
+    ),
+)
+@click.option(
+    "--font-size",
+    type=click.IntRange(min=1, max=MAX_FONT_SIZE),
+    default=DEFAULT_CAPTION_STYLE.font_size,
+    help=f"Explicit caption font size in pixels (1-{MAX_FONT_SIZE}; overrides auto-sizing).",
+)
+@click.option(
+    "--box-opacity",
+    type=click.FloatRange(min=0.0, max=1.0),
+    default=DEFAULT_CAPTION_STYLE.box_opacity,
+    help="Background pill opacity from 0.0 (none) to 1.0 (solid; default ~0.7).",
+)
 @output_format_option(has_out_file=True)
 def captions(
     file: str,
@@ -104,6 +136,10 @@ def captions(
     language: str | None,
     output_file: Path | None,
     profile: str | None,
+    position: str,
+    margin: int,
+    font_size: int | None,
+    box_opacity: float | None,
     as_json: bool,
     output_format: str = "table",
 ) -> None:
@@ -119,6 +155,10 @@ def captions(
             out_file=output_file,
             language=language,
             profile=profile,
+            position=position,
+            margin=margin,
+            font_size=font_size,
+            box_opacity=box_opacity,
         )
         _emit(result, as_json=is_json, output_format=output_format)
 

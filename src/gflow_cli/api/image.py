@@ -40,7 +40,10 @@ __all__ = [
     "AgentInstruction",
     "Model",
     "ProjectBrief",
+    "ThinkingLevel",
     "build_agent_brief_cards",
+    "IMAGES_MISSING_HINT",
+    "images_missing_warning",
     "_build_batch_generate_images_body",
 ]
 
@@ -52,6 +55,19 @@ _WireList = list[object]
 _CLIENT_TOOL = "PINHOLE"
 _RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
 _IMAGE_INPUT_TYPE_REFERENCE = "IMAGE_INPUT_TYPE_REFERENCE"
+
+
+IMAGES_MISSING_HINT = (
+    "Flow returned fewer images than requested. The returned images are kept; "
+    "check the project in Flow before requesting the rest."
+)
+
+
+def images_missing_warning(requested: int, returned: int) -> list[dict[str, Any]]:
+    """#1489: the ``warnings`` entry for a reply with fewer images than requested, else ``[]``."""
+    if returned >= requested:
+        return []
+    return [{"type": "images_missing", "requested": requested, "returned": returned}]
 
 
 class Aspect(StrEnum):
@@ -120,6 +136,50 @@ class Model(StrEnum):
                 msg,
             )
         return _MODEL_FROM_CLI[key]
+
+
+class ThinkingLevel(StrEnum):
+    """Image thinking-level tier in Flow's settings pane (Low / Medium / High)."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+    @classmethod
+    def from_cli(cls, cli: str | None) -> ThinkingLevel | None:
+        if cli is None:
+            return None
+        key = cli.strip().lower()
+        if key not in _THINKING_LEVEL_FROM_CLI:
+            msg = f"Unknown thinking level {cli!r}; choose from {sorted({t.value for t in cls})}"
+            raise ValueError(msg)
+        return _THINKING_LEVEL_FROM_CLI[key]
+
+    def radio_index(self, option_count: int) -> int:
+        """Map this level to its locale-invariant left-to-right radio index."""
+        if option_count == 3:
+            return {
+                ThinkingLevel.LOW: 0,
+                ThinkingLevel.MEDIUM: 1,
+                ThinkingLevel.HIGH: 2,
+            }[self]
+        if option_count == 2:
+            if self is ThinkingLevel.MEDIUM:
+                msg = "Flow's 2-option thinking-level toggle offers only low and high (not medium)"
+                raise ValueError(msg)
+            return 0 if self is ThinkingLevel.LOW else 1
+        msg = f"Unexpected thinking-level toggle option count: {option_count}"
+        raise ValueError(msg)
+
+
+_THINKING_LEVEL_FROM_CLI: Mapping[str, ThinkingLevel] = MappingProxyType(
+    {
+        "low": ThinkingLevel.LOW,
+        "minimal": ThinkingLevel.LOW,
+        "medium": ThinkingLevel.MEDIUM,
+        "high": ThinkingLevel.HIGH,
+    },
+)
 
 
 # Module-level immutable alias maps — built once, not per-call.
@@ -491,6 +551,8 @@ class GenerateImageRequest:
     # Requested Flow UI arm (#299) from --ui-mode; None → resolve from
     # GFLOW_CLI_UI_MODE / default at the transport. Not sent on the wire.
     ui_mode: UiMode | None = None
+    # Requested Flow image thinking level (None → leave Flow's toggle untouched).
+    thinking_level: ThinkingLevel | None = None
 
     def __post_init__(self) -> None:
         if not self.prompt or not self.prompt.strip():

@@ -28,21 +28,32 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from gflow_cli.errors import ExtendUnavailableError
 
 __all__ = [
+    "EXTEND_MAX_DURATION",
+    "EXTEND_MIN_DURATION",
     "FRAME_WINDOW_END",
     "FRAME_WINDOW_START",
-    "ExtendVideoRequest",
+    "MAX_EXTEND_REFERENCE_IMAGES",
     "ExtendStarted",
+    "ExtendVideoRequest",
+    "MigratedExtendRequest",
     "account_credits",
     "account_service_tier",
     "extract_video_models",
     "resolve_extend_model",
     "workflow_id_for_media",
 ]
+
+#: Hard wire cap measured on flow.google.com ``fZytfe`` ``entry[8]`` (2026-11-24).
+MAX_EXTEND_REFERENCE_IMAGES = 3
+#: Extend duration slider range measured on flow.google.com Omni extend (2026-11-24).
+EXTEND_MIN_DURATION = 3
+EXTEND_MAX_DURATION = 10
 
 # Wire constants — not settings. They belong beside the request they serve, in the
 # same spirit as `image_upscale.DEFAULT_PAYGATE_TIER`, and are not user-tunable.
@@ -311,3 +322,50 @@ class ExtendVideoRequest:
             "requests": [request],
             "useV2ModelConfig": True,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class MigratedExtendRequest:
+    """Validated request DTO for single-segment ``flow.google.com`` video extend."""
+
+    prompt: str
+    source_video: Path | None = None
+    source_media_id: str | None = None
+    duration: int | None = None
+    reference_images: tuple[Path, ...] = ()
+    aspect: str | None = None
+    max_credits: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            msg = "prompt must not be empty — extend requires text input"
+            raise ValueError(msg)
+        if bool(self.source_video is not None) == bool(self.source_media_id is not None):
+            msg = "provide exactly one of source_video or source_media_id"
+            raise ValueError(msg)
+        if self.source_media_id is not None and not _UUID_RE.match(self.source_media_id):
+            msg = f"source_media_id must be a UUID, got {self.source_media_id!r}"
+            raise ValueError(msg)
+        if self.duration is not None and (
+            isinstance(self.duration, bool)
+            or not (EXTEND_MIN_DURATION <= self.duration <= EXTEND_MAX_DURATION)
+        ):
+            msg = (
+                f"duration must be an integer between {EXTEND_MIN_DURATION} and "
+                f"{EXTEND_MAX_DURATION} seconds, got {self.duration!r}"
+            )
+            raise ValueError(msg)
+        if len(self.reference_images) > MAX_EXTEND_REFERENCE_IMAGES:
+            msg = (
+                f"extend accepts at most {MAX_EXTEND_REFERENCE_IMAGES} reference images "
+                f"(got {len(self.reference_images)})"
+            )
+            raise ValueError(msg)
+        if self.aspect is not None and self.aspect.lower() not in _ASPECT_WIRE:
+            msg = f"unsupported aspect {self.aspect!r} for extend"
+            raise ValueError(msg)
+        if self.max_credits is not None and (
+            isinstance(self.max_credits, bool) or self.max_credits < 0
+        ):
+            msg = f"max_credits must be a non-negative integer, got {self.max_credits!r}"
+            raise ValueError(msg)

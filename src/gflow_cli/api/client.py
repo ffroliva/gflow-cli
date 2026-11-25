@@ -54,6 +54,7 @@ from gflow_cli.api._flow_session import (
 )
 from gflow_cli.api._flow_workspace import MAX_CONCAT_B64_LEN as MAX_CONCAT_B64_LEN
 from gflow_cli.api._flow_workspace import MAX_IMAGE_BYTES as MAX_IMAGE_BYTES
+from gflow_cli.api._flow_workspace import MAX_VIDEO_BYTES as MAX_VIDEO_BYTES
 from gflow_cli.api._flow_workspace import (
     _default_project_title as _default_project_title,  # pyright: ignore[reportPrivateUsage]
 )
@@ -61,9 +62,13 @@ from gflow_cli.api._flow_workspace import (
     _is_supported_image_header as _is_supported_image_header,  # pyright: ignore[reportPrivateUsage]
 )
 from gflow_cli.api._flow_workspace import (
+    _is_supported_video_header as _is_supported_video_header,  # pyright: ignore[reportPrivateUsage]
+)
+from gflow_cli.api._flow_workspace import (
     _unwrap_trpc as _unwrap_trpc,  # pyright: ignore[reportPrivateUsage]
 )
 from gflow_cli.api._flow_workspace import validate_image_file as validate_image_file
+from gflow_cli.api._flow_workspace import validate_video_file as validate_video_file
 from gflow_cli.api.transports import (
     STANDALONE_ONLY_TRANSPORTS,
     make_transport,

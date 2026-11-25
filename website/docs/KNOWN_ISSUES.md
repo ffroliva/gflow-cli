@@ -332,7 +332,7 @@ error, no timeout, indefinitely. Reinstalling with the locked version fixed it
 on the first try.
 
 **Mitigation (two layers):**
-1. **Upper-bounded dependency.** `playwright>=1.59.0,<1.60.0` — an unpinned
+1. **Upper-bounded dependency.** `playwright>=1.61.0,<1.62.0` — an unpinned
    install can no longer reach an untested minor. Raising it is a deliberate
    act requiring a live-verified generation; offline tests and CI's
    `resolve-drift` job (import-only) cannot see a driver-behaviour regression.
@@ -344,7 +344,7 @@ on the first try.
    Nothing is submitted, so no credit is spent.
 
 **Workaround:** install from a local checkout with the lock carried explicitly —
-`uv tool install --force --with playwright==1.59.0 .` — and check what you have
+`uv tool install --force --with playwright==1.61.0 .` — and check what you have
 with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
 Installs from PyPI are unaffected.
 

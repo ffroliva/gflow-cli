@@ -1002,10 +1002,10 @@ def test_caption_video_burns_frames_and_keeps_audio(
     overlays = 0
     original_overlay = service._caption_overlay
 
-    def count_overlay(*args: Any) -> Any:
+    def count_overlay(*args: Any, **kwargs: Any) -> Any:
         nonlocal overlays
         overlays += 1
-        return original_overlay(*args)
+        return original_overlay(*args, **kwargs)
 
     monkeypatch.setattr(service, "_caption_overlay", count_overlay)
     srt = tmp_path / "sample.srt"
@@ -1218,3 +1218,576 @@ def test_caption_and_transcribe_accept_transcriber_port(
     )
     assert rendered.srt_file.read_text(encoding="utf-8").startswith("1\n00:00:00,200")
     assert rendered.output_file.is_file()
+
+
+# ---------------------------------------------------------------------------
+# Caption position & style (#1432)
+# ---------------------------------------------------------------------------
+
+
+def _ink_y_range(overlay: Any, top: int) -> tuple[int, int]:
+    pixels = overlay.load()
+    ys = [
+        top + y
+        for y in range(overlay.height)
+        for x in range(overlay.width)
+        if pixels[x, y][3] == 255 and min(pixels[x, y][:3]) > 128
+    ]
+    assert ys
+    return min(ys), max(ys)
+
+
+def _ink_x_range(overlay: Any) -> tuple[int, int]:
+    pixels = overlay.load()
+    xs = [
+        x
+        for y in range(overlay.height)
+        for x in range(overlay.width)
+        if pixels[x, y][3] == 255 and min(pixels[x, y][:3]) > 128
+    ]
+    assert xs
+    return min(xs), max(xs)
+
+
+def test_caption_overlay_supports_top_middle_and_custom_margin() -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    width, height = 640, 360
+    bottom_ov, bottom_top = _caption_overlay(
+        width, height, "Hello", ImageDraw, ImageFont, style=CaptionStyle(position="bottom")
+    )
+    raised_ov, raised_top = _caption_overlay(
+        width,
+        height,
+        "Hello",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(position="bottom", margin=80),
+    )
+    top_ov, top_top = _caption_overlay(
+        width, height, "Hello", ImageDraw, ImageFont, style=CaptionStyle(position="top", margin=40)
+    )
+    mid_ov, mid_top = _caption_overlay(
+        width, height, "Hello", ImageDraw, ImageFont, style=CaptionStyle(position="middle")
+    )
+
+    b_min, b_max = _ink_y_range(bottom_ov, bottom_top)
+    r_min, r_max = _ink_y_range(raised_ov, raised_top)
+    t_min, t_max = _ink_y_range(top_ov, top_top)
+    m_min, m_max = _ink_y_range(mid_ov, mid_top)
+
+    assert r_max < b_max
+    assert (height - r_max) - (height - b_max) >= 40
+    assert t_min < 60 and t_max < m_min
+    assert b_min > m_max
+    assert abs(((m_min + m_max) / 2) - (height / 2)) <= 6
+
+    clamped_ov, clamped_top = _caption_overlay(
+        width,
+        height,
+        "Hello",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(position="bottom", margin=9999),
+    )
+    c_min, c_max = _ink_y_range(clamped_ov, clamped_top)
+    assert c_min >= 8 and c_max <= height - 8
+
+
+def test_caption_overlay_explicit_font_size_skips_auto_shrink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle
+
+    loaded_sizes: list[int] = []
+    real_load = service._load_caption_font
+
+    def record_load(h: int, font_module: Any = None, *, size: int | None = None) -> Any:
+        font = real_load(h, font_module, size=size)
+        loaded_sizes.append(font.size)
+        return font
+
+    monkeypatch.setattr(service, "_load_caption_font", record_load)
+    service._caption_overlay(
+        1280,
+        720,
+        "one\ntwo\nthree\nfour",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(font_size=24),
+    )
+    assert loaded_sizes == [24]
+
+
+def test_caption_overlay_box_opacity_controls_pill_alpha() -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    none_ov, _ = _caption_overlay(
+        640, 360, "Hello", ImageDraw, ImageFont, style=CaptionStyle(box_opacity=0.0)
+    )
+    none_visible = [
+        none_ov.getpixel((x, y))
+        for y in range(none_ov.height)
+        for x in range(none_ov.width)
+        if none_ov.getpixel((x, y))[3] > 0
+    ]
+    assert none_visible
+    assert all(px[:3] == (255, 255, 255) for px in none_visible)
+
+    default_ov, _ = _caption_overlay(640, 360, "Hello", ImageDraw, ImageFont)
+    assert any(
+        default_ov.getpixel((x, y)) == (0, 0, 0, 180)
+        for y in range(default_ov.height)
+        for x in range(default_ov.width)
+    )
+
+    solid_ov, _ = _caption_overlay(
+        640, 360, "Hello", ImageDraw, ImageFont, style=CaptionStyle(box_opacity=1.0)
+    )
+    solid_black = [
+        (x, y)
+        for y in range(solid_ov.height)
+        for x in range(solid_ov.width)
+        if solid_ov.getpixel((x, y)) == (0, 0, 0, 255)
+    ]
+    assert solid_black
+
+
+def test_caption_overlay_shrinks_oversized_explicit_font_size_to_fit_frame() -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    height = 180
+    overlay, top = _caption_overlay(
+        320,
+        height,
+        "Line one\nLine two\nLine three",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(font_size=200),
+    )
+    y_min, y_max = _ink_y_range(overlay, top)
+    assert y_min >= 8 and y_max <= height - 8
+
+
+def test_caption_overlay_default_long_cue_fits_without_band_clipping() -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import _caption_overlay
+
+    long_cue = ("word " * 79 + "word")[:399]
+    height = 1920
+    overlay, top = _caption_overlay(1080, height, long_cue, ImageDraw, ImageFont)
+    y_min, y_max = _ink_y_range(overlay, top)
+    assert y_min >= 8 and y_max <= height - 8
+
+
+def test_caption_overlay_larger_font_size_never_renders_smaller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle
+
+    rendered_sizes: list[int] = []
+    real_fit = service._fit_caption_layout
+
+    def record_fit(*args: Any, **kwargs: Any) -> Any:
+        font, wrapped, box = real_fit(*args, **kwargs)
+        rendered_sizes.append(int(font.size))
+        return font, wrapped, box
+
+    monkeypatch.setattr(service, "_fit_caption_layout", record_fit)
+    for requested in (100, 200, 300, 400, 600, 1000):
+        service._caption_overlay(
+            1280,
+            720,
+            "Hello world",
+            ImageDraw,
+            ImageFont,
+            style=CaptionStyle(font_size=requested),
+        )
+    assert rendered_sizes[0] == 100
+    assert all(a <= b for a, b in zip(rendered_sizes, rendered_sizes[1:], strict=False))
+
+
+def test_caption_overlay_shrinks_wide_single_glyph_to_fit_frame_width() -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    width, height = 320, 720
+    overlay, top = _caption_overlay(
+        width,
+        height,
+        "W",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(font_size=400),
+    )
+    x_min, x_max = _ink_x_range(overlay)
+    y_min, y_max = _ink_y_range(overlay, top)
+    assert x_min >= 8 and x_max <= width - 8
+    assert y_min >= 8 and y_max <= height - 8
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "explicit_size"),
+    [
+        (60, 32, 10),
+        (60, 32, None),
+        (80, 40, 20),
+    ],
+)
+def test_caption_overlay_shrinks_below_12px_when_needed(
+    width: int,
+    height: int,
+    explicit_size: int | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    fitted_layouts: list[tuple[int, tuple[int, int, int, int]]] = []
+    real_fit = service._fit_caption_layout
+
+    def record_fit(*args: Any, **kwargs: Any) -> Any:
+        font, wrapped, box = real_fit(*args, **kwargs)
+        fitted_layouts.append((int(font.size), box))
+        return font, wrapped, box
+
+    monkeypatch.setattr(service, "_fit_caption_layout", record_fit)
+    style = CaptionStyle(font_size=explicit_size, box_opacity=0.0)
+    overlay, top = _caption_overlay(
+        width,
+        height,
+        "Hello\nworld\ncaptions\nline4",
+        ImageDraw,
+        ImageFont,
+        style=style,
+    )
+    fitted_size, box = fitted_layouts[-1]
+    box_w, box_h = int(box[2] - box[0]), int(box[3] - box[1])
+    assert fitted_size < (explicit_size if explicit_size is not None else 12)
+    frame_x = (width - box_w) // 2
+    frame_y = service._caption_frame_y(height, box_h, style)
+    assert 0 <= frame_x and frame_x + box_w <= width
+    assert 0 <= frame_y and frame_y + box_h <= height
+    pixels = overlay.load()
+    visible = [
+        (x, top + y)
+        for y in range(overlay.height)
+        for x in range(overlay.width)
+        if pixels[x, y][3] > 0
+    ]
+    assert visible
+    assert all(0 <= x < width and 0 <= y < height for x, y in visible)
+
+
+@pytest.mark.parametrize("height", [8, 4, 2])
+@pytest.mark.parametrize("position", ["bottom", "top", "middle"])
+def test_caption_overlay_keeps_text_and_pill_inside_short_frames(
+    height: int,
+    position: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    width = 160
+    fitted_boxes: list[tuple[int, int]] = []
+    real_fit = service._fit_caption_layout
+
+    def record_fit(*args: Any, **kwargs: Any) -> Any:
+        font, wrapped, box = real_fit(*args, **kwargs)
+        fitted_boxes.append((int(box[2] - box[0]), int(box[3] - box[1])))
+        return font, wrapped, box
+
+    monkeypatch.setattr(service, "_fit_caption_layout", record_fit)
+    text_only_ov, _ = _caption_overlay(
+        width,
+        height,
+        "Hi",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(position=position, box_opacity=0.0),
+    )
+    box_w, box_h = fitted_boxes[-1]
+    frame_y = service._caption_frame_y(height, box_h, CaptionStyle(position=position))
+    assert box_w <= width and box_h <= height
+    assert 0 <= frame_y and frame_y + box_h <= height
+    text_px = text_only_ov.load()
+    assert any(
+        text_px[x, y][3] > 0 for y in range(text_only_ov.height) for x in range(text_only_ov.width)
+    )
+
+    recorded_rects: list[tuple[int, int, int, int]] = []
+    orig_rr = ImageDraw.ImageDraw.rounded_rectangle
+
+    def record_rr(self: Any, xy: tuple[int, int, int, int], *args: Any, **kwargs: Any) -> Any:
+        recorded_rects.append(xy)
+        return orig_rr(self, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "rounded_rectangle", record_rr)
+    pill_ov, _ = _caption_overlay(
+        width,
+        height,
+        "Hi",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(position=position),
+    )
+    assert len(recorded_rects) == 1
+    x0, y0, x1, y1 = recorded_rects[0]
+    assert 0 <= x0 <= x1 < width
+    assert 0 <= y0 <= y1 < pill_ov.height
+
+
+def test_fit_caption_layout_never_measures_same_size_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    measured_sizes: list[int | None] = []
+    real_measure = service._measure_caption
+
+    def spy_measure(
+        width: int,
+        height: int,
+        text: str,
+        draw: Any,
+        font_module: Any,
+        size: int | None,
+    ) -> Any:
+        measured_sizes.append(size)
+        return real_measure(width, height, text, draw, font_module, size)
+
+    monkeypatch.setattr(service, "_measure_caption", spy_measure)
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    for explicit in (14, 13, 12, None):
+        measured_sizes.clear()
+        service._fit_caption_layout(
+            80, 40, "Wide\ncaption\ntext\nhere", probe_draw, ImageFont, explicit
+        )
+        assert len(measured_sizes) == len(set(measured_sizes)), (
+            f"duplicate sizes for explicit={explicit}: {measured_sizes}"
+        )
+
+
+@pytest.mark.parametrize("width", [160, 120, 180])
+def test_caption_overlay_keeps_pill_inside_narrow_frames(
+    width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import _caption_overlay
+
+    recorded_rects: list[tuple[int, int, int, int]] = []
+    orig_rr = ImageDraw.ImageDraw.rounded_rectangle
+
+    def record_rr(self: Any, xy: tuple[int, int, int, int], *args: Any, **kwargs: Any) -> Any:
+        recorded_rects.append(xy)
+        return orig_rr(self, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "rounded_rectangle", record_rr)
+
+    height = 90
+    overlay, _top = _caption_overlay(
+        width,
+        height,
+        "Narrow frame caption with several words that fill width",
+        ImageDraw,
+        ImageFont,
+    )
+    assert len(recorded_rects) == 1
+    x0, y0, x1, y1 = recorded_rects[0]
+    assert x0 >= 0
+    assert y0 >= 0
+    assert x1 < width
+    assert y1 < overlay.height
+    x_min, x_max = _ink_x_range(overlay)
+    assert x0 <= x_min and x_max <= x1
+
+
+_URL_CUES = (
+    "Read more at https://example.com/docs/captions/placement-and-styling",
+    "See https://www.example.org/a/very/long/path/that/keeps/going today",
+)
+
+
+def _fits_frame_interior(width: int, height: int, text: str, size: int) -> bool:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    box = service._measure_caption(width, height, text, probe_draw, ImageFont, size)[2]
+    return (box[2] - box[0]) <= width - 16 and (box[3] - box[1]) <= height - 16
+
+
+@pytest.mark.parametrize(("width", "height", "requested"), [(200, 112, 24), (161, 90, 16)])
+@pytest.mark.parametrize("text", _URL_CUES)
+def test_fit_caption_layout_keeps_an_explicit_size_that_fits_the_frame(
+    width: int, height: int, requested: int, text: str
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    fitting = max(
+        k for k in range(1, requested + 1) if _fits_frame_interior(width, height, text, k)
+    )
+    font, _wrapped, _box = service._fit_caption_layout(
+        width, height, text, probe_draw, ImageFont, fitting
+    )
+    assert font.size == fitting
+
+
+@pytest.mark.parametrize(("width", "height", "requested"), [(200, 112, 24), (161, 90, 16)])
+@pytest.mark.parametrize("text", _URL_CUES)
+def test_fit_caption_layout_never_skips_a_larger_size_that_fits(
+    width: int, height: int, requested: int, text: str
+) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    # Every size up to `prefix` fits, so a binary search over the sizes cannot settle below it.
+    prefix = 0
+    while prefix < requested and _fits_frame_interior(width, height, text, prefix + 1):
+        prefix += 1
+    font, _wrapped, box = service._fit_caption_layout(
+        width, height, text, probe_draw, ImageFont, requested
+    )
+    assert font.size >= prefix
+    assert (box[2] - box[0]) <= width - 16 and (box[3] - box[1]) <= height - 16
+
+
+def test_caption_top_position_never_sits_below_bottom_when_margin_exceeds_free_height() -> None:
+    from gflow_cli.services.video_captions import CaptionStyle
+
+    height, box_h = 90, 50
+    top_y = service._caption_frame_y(height, box_h, CaptionStyle(position="top", margin=28))
+    bottom_y = service._caption_frame_y(height, box_h, CaptionStyle(position="bottom", margin=28))
+    assert top_y <= bottom_y
+    assert 0 <= top_y and bottom_y + box_h <= height
+
+
+def test_caption_overlay_centres_text_wider_than_the_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    width, box = 100, (0, 0, 300, 10)
+    font = service._load_caption_font(40, ImageFont, size=10)
+    monkeypatch.setattr(service, "_fit_caption_layout", lambda *_a, **_k: (font, "WIDE", box))
+    origins: list[tuple[int, int]] = []
+    real_text = ImageDraw.ImageDraw.multiline_text
+
+    def record_text(self: Any, xy: tuple[int, int], *args: Any, **kwargs: Any) -> Any:
+        origins.append(xy)
+        return real_text(self, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "multiline_text", record_text)
+    service._caption_overlay(width, 40, "WIDE", ImageDraw, ImageFont)
+    assert origins[0][0] == (width - box[2]) // 2
+
+
+def test_measure_caption_takes_width_before_height() -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    probe_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    _font, wrapped, _box = service._measure_caption(
+        200, 720, "one two three four five six seven", probe_draw, ImageFont, 24
+    )
+    assert "\n" in wrapped
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"position": "left"},
+        {"position": 123},
+        {"margin": -1},
+        {"margin": 28.5},
+        {"margin": True},
+        {"font_size": 0},
+        {"font_size": 24.5},
+        {"font_size": True},
+        {"font_size": 1001},
+        {"font_size": 50000},
+        {"box_opacity": -0.1},
+        {"box_opacity": 1.1},
+        {"box_opacity": True},
+        {"box_opacity": "0.5"},
+        {"box_opacity": float("nan")},
+    ],
+)
+def test_caption_video_rejects_invalid_style_before_io(
+    monkeypatch: pytest.MonkeyPatch,
+    kwargs: dict[str, Any],
+) -> None:
+    def fail_resolve(*_args: Any, **_kwargs: Any) -> Path:
+        raise AssertionError("resolve_video_source must not be called for invalid style")
+
+    monkeypatch.setattr(service, "resolve_video_source", fail_resolve)
+    with pytest.raises(ConfigurationError, match="Invalid caption") as caught:
+        caption_video("missing.mp4", **kwargs)
+    assert caught.value.charged == "no"
+
+
+@pytest.mark.parametrize("raw_position", ["top", "Top", "TOP"])
+def test_cli_captions_forwards_style_options(
+    raw_position: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from click.testing import CliRunner
+
+    from gflow_cli.cli import main
+    from gflow_cli.services.video_captions import CaptionsResult
+
+    captured: dict[str, Any] = {}
+
+    def fake_caption_video(file: str, **kwargs: Any) -> CaptionsResult:
+        captured["file"] = file
+        captured.update(kwargs)
+        return CaptionsResult(
+            source_file=Path(file),
+            output_file=tmp_path / "out.mp4",
+            srt_file=tmp_path / "in.srt",
+            duration_seconds=1.0,
+            total_frames=10,
+            frames_burned=5,
+            bytes=100,
+        )
+
+    monkeypatch.setattr("gflow_cli.cli_video_captions.caption_video", fake_caption_video)
+    result = CliRunner().invoke(
+        main,
+        [
+            "video",
+            "captions",
+            "clip.mp4",
+            "--srt",
+            "in.srt",
+            "--position",
+            raw_position,
+            "--margin",
+            "48",
+            "--font-size",
+            "28",
+            "--box-opacity",
+            "0.5",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["position"] == "top"
+    assert captured["margin"] == 48
+    assert captured["font_size"] == 28
+    assert captured["box_opacity"] == 0.5

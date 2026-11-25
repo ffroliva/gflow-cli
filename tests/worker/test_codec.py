@@ -157,3 +157,32 @@ def test_unknown_version_error_is_stable_rfc9457_shape() -> None:
     assert problem["type"] == "https://gflow-cli.dev/errors/queue-schema"
     assert problem["title"]
     assert EXIT_CODE_MAP[QueueSchemaError] == 30
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"aspect": 16},
+        {"source_media_id": 7},
+        {"source_video": ["a.mp4"]},
+        {"duration": "5"},
+        {"duration": True},
+        {"max_credits": 1.5},
+        {"reference_images": "ref.png"},
+        {"reference_images": [3]},
+        {"project_id": 1},
+        {"output_file": {"p": 1}},
+    ],
+    ids=lambda d: next(iter(d)),
+)
+def test_an_extend_payload_with_a_wrong_type_is_a_queue_schema_error(
+    bad: dict[str, object],
+) -> None:
+    """Exit 30 at decode, never an AttributeError deep in the worker."""
+    payload = {"prompt": "go", "source_video": "clip.mp4", **bad}
+    if "source_media_id" in bad:
+        payload.pop("source_video")
+    with pytest.raises(QueueSchemaError) as caught:
+        decode_payload("extend", payload)
+    assert EXIT_CODE_MAP[QueueSchemaError] == 30
+    assert "extend payload rejected" in str(caught.value)

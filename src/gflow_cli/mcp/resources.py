@@ -46,9 +46,10 @@ async def mcp_guide() -> str:
         return """\
 # gflow-cli MCP Agent Guide (no-spend mode)
 
-This server runs in NO-SPEND mode: the credit-spending generate tools
-(`gflow_generate_image`, `gflow_generate_video`) are NOT registered and any
-call to them fails as an unknown tool. Do not attempt generation; tell the
+This server runs in NO-SPEND mode: the credit-spending tools
+(`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`,
+`gflow_extend_video`, `gflow_edit_video`) are NOT registered and any
+call to them fails as an unknown tool. Do not attempt generation or paid upscaling; tell the
 user to restart the server without --no-spend / GFLOW_MCP_NO_SPEND to enable
 it.
 
@@ -91,6 +92,18 @@ Generate videos using Google's Veo model.
 - **Modes:** t2v (text-to-video), i2v (image-to-video), r2v (reference-to-video)
 - **Aspects:** 9:16 (portrait), 16:9 (landscape)
 - **Note:** i2v requires `initial_frame`; r2v requires `reference_images`
+
+### gflow_extend_video
+Continue an existing video (local video file or Flow clip UUID) by one segment on `flow.google.com`.
+- **Duration:** optional `3-10` seconds (omitted: Flow's current setting is kept;
+  the result reports the length sent)
+- **References:** optional `0-3` `reference_images`
+- **Credit cap:** `max_credits` checks Flow's pre-submit quote before submitting
+
+### gflow_edit_video
+Edit a local video file or existing Flow clip media UUID using a text prompt on
+`flow.google.com` (Omni models only, single-clip output). Up to 5 `reference_images` with a
+local file; with a media UUID they are refused (exit 11, not ported yet).
 
 ### gflow_auth_status
 Credit-free, non-interactive Flow session probe — call it before a generate

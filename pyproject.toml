@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.106.0"
+version = "0.107.0"
 description = "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude, Cursor, Codex or the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -291,6 +291,7 @@ dev = [
     "detect-secrets>=1.5.0",
     "jsonschema>=4",
     "numpy>=1.24",
+    "openai>=3.59.0",
     "pillow>=13.0.0",
     "pyright>=1.1.409",
     "pytest-asyncio>=1.3.0",

@@ -213,7 +213,7 @@ class ImageRecordingMixin(RecorderCore):
         cloud_storage_infos: list[CloudStorageInfo | None] | None = None,
         project_created: bool = True,
         status: OperationStatus = OperationStatus.SUCCEEDED,
-    ) -> None:
+    ) -> str:
         """Record a generation and its output images.
 
         ``status=STARTED`` is the #1035 download-failure path: Flow returned the
@@ -296,3 +296,4 @@ class ImageRecordingMixin(RecorderCore):
                 flow_project_id=project.project_id,
                 cloud_info=cloud_info,
             )
+        return op_id

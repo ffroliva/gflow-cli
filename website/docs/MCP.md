@@ -83,8 +83,11 @@ Both Click CLI (`src/gflow_cli/cli.py`) and MCP Server (`src/gflow_cli/mcp/`) ar
 
 `gflow_video_transcribe(file, out_file, language, profile)` transcribes a local video or
 catalog UUID to timed SRT using the configured OpenAI-compatible `/audio/transcriptions`
-route. `gflow_video_captions(file, srt, language, out_file, profile)` burns an authored SRT
-into a local clip or transcribes first when `srt` is omitted. Both tools are direct,
+route. `gflow_video_captions(file, srt, language, out_file, profile, position, margin, font_size, box_opacity)` burns an authored SRT
+into a local clip or transcribes first when `srt` is omitted (`position`: `'bottom'`/`'top'`/`'middle'`, `margin` px from edge, explicit `font_size` px, `box_opacity` `0.0`–`1.0`). The input schema declares those bounds
+(`margin >= 0`, `font_size` `1`–`1000`, `box_opacity` `0.0`–`1.0`), and a value outside them, or a boolean, is refused by
+the protocol's argument validation with `isError: true` and a plain validation message rather
+than a problem-details envelope; nothing is rendered or spent. Both tools are direct,
 credit-free calls; output files stay inside `GFLOW_CLI_OUTPUT_DIR`. The Google Gemini default
 is refused before audio is sent. Configure an OpenAI, Groq, or local Whisper-compatible URL.
 
@@ -96,18 +99,21 @@ is sent to the selected provider, Edge Read Aloud or Gemini; Gemini uses the sep
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
+* `gflow_extend_video(source, prompt, duration, reference_images, aspect, max_credits, profile, project, project_name, out_file, wait)`: Worker-queued single-segment video extend on `flow.google.com`. `source` accepts either a local video path (`.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi`, auto-creating a project if `project` is omitted) or an existing Flow clip UUID (requires `project` or a catalogued clip). Supports optional `duration` (`3-10` seconds; omitted, Flow's current setting is kept and the result reports the length sent), `0-3` `reference_images` (local image paths or catalogued UUIDs in caller order), optional `aspect` (`9:16`/`16:9` verification), and `max_credits` pre-submit quote cap. Gated by `--no-spend`; `out_file` must resolve inside the configured output directory.
 * `gflow_video_assemble(clips, out_file, music, voiceover, clip_volume, music_volume, voiceover_volume, duck, profile)`: Direct, credit-free local processing; joins local files or catalog video IDs with verified local copies, optionally mixes local music and voiceover audio files, and returns the same result fields as `gflow video assemble --json`. Ducking lowers music and clip audio while voiceover is present by default. `out_file` must be inside the configured output directory, uses the first clip's size and frame rate, and refuses existing files (an empty file left by an interrupted run is cleared once older than 60 s). It runs in-process on a background thread, not through the worker queue.
   Example: `{"clips":["clip-a.mp4","clip-b.mp4"],"out_file":"assembled.mp4","music":"score.wav","voiceover":"narration.wav","duck":true}`. `out_file` is relative to the configured output directory; music and voiceover are local audio paths.
 
-`gflow_generate_video` adds `max_credits: int | null = null` as a per-command cap. The worker checks
+`gflow_generate_video` and `gflow_edit_video` add `max_credits: int | null = null` as a per-command cap. The worker checks
 Flow's own pre-submit quote and returns `CreditCapExceededError` (exit 45, `charged: no`) if
 the quote is missing or above the cap; queued payloads preserve the parameter. It defaults to
 the `GFLOW_CLI_MAX_CREDITS` setting when omitted.
 An omitted parameter cannot clear that environment default for one MCP call.
 
-* `gflow_generate_image(prompt, model, aspect, count, reference_images, reference_entities, reference_entity_names, tools, profile, project, project_name, instructions, ui_mode, out_file, wait)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `out_file` sets an explicit destination file path (mirrors CLI `--out-file`; legacy `output` removed in #1158). There is no `seed` parameter: Flow picks the seed and the image request cannot carry one (removed in [#1013](https://github.com/ffroliva/gflow-cli/issues/1013), as the CLI's `--seed` was in v0.8.0). A completed result reports the catalogued seed under `seed`: the seed Flow chose on the classic image paths, `0` on the agentic / agent-only arms (which observe none), `null` if none was recorded — the MCP twin of `gflow image t2i --json`'s `images[].seed`. `instructions` is an optional list of ephemeral agent-instruction strings (agentic cohort only). `reference_images` switches to i2i and accepts **either a local file path or a generated image's Flow media UUID**. A UUID reference is attached by **selecting the already-existing asset in Flow's reference picker — no duplicate copy is uploaded** (locating the tile by the media id in its thumbnail URL, and searching the recorded display name to surface it when needed); gflow falls back to uploading the asset's on-disk local file only when it can't be located in place (e.g. it lives in a different project's picker). `project` generates into an existing Flow project id (mirrors CLI `--project`; when omitted, [`GFLOW_CLI_PROJECT`](CONFIGURATION.md#gflow_cli_project) is used unless `project_name` asks for a new project, #1039) — pass the reference's project to keep it selectable in place. `ui_mode` selects the Flow UI arm (`auto`/`classic`/`agentic`, mirroring CLI `--ui-mode`, matched case-insensitively). Since [#595](https://github.com/ffroliva/gflow-cli/issues/595) `auto` means "no arm was asked for" and **resolves to `classic`** — the arm that can satisfy an image request — so an account in Flow's agentic cohort aborts pre-submit (exit-28 equivalent envelope, zero credits) instead of failing mid-run with selector drift or video bytes; the agentic arm is bound only when named. Passing `instructions` forces `agentic` automatically, so `ui_mode="classic"` + `instructions` is a hard conflict rather than a silent drop. An unknown value returns a 400 problem-details envelope. See [CONFIGURATION § GFLOW_CLI_UI_MODE](CONFIGURATION.md#gflow_cli_ui_mode).
-  `model` is `nano2` (Nano Banana 2.1 on flow.google.com; `nano2.1` also accepted), `nano2-lite` (Nano Banana 2 Lite), `nano-pro` (Nano Banana Pro) or `image4` (Imagen 4, no longer in Flow's menu); other aliases are accepted too. On migrated `flow.google.com` accounts, T2I and local-file I2I are supported with Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspects (16:9, 4:3, 1:1, 3:4, 9:16) and count 1–4; the page owns reCAPTCHA and the `ogiZ0b` submit. `@Name` character mentions in the prompt are attached through the composer's `@` picker and verified as character chips before submit (#723). `reference_entities` must be paired with `reference_entity_names` there (an id alone is refused, exit 36); a `reference_images` UUID is referenced in place when the catalog records it in the same `project` (#995), and a local `reference_images` file is uploaded into the project once and mentioned in place on later calls with the same file, like the CLI's `--ref` ([#772](https://github.com/ffroliva/gflow-cli/issues/772)); an output path gflow cannot write ends in the exit-11-equivalent envelope, with the image still in the Flow project ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)); other UUID references, instructions and Imagen 4 remain pre-submit refusals there. An agent-only composer (see below) takes T2I only. The queued (`wait=false`) and blocking (`wait=true`) calls use the same typed payload and worker path.
+* `gflow_generate_image(prompt, model, aspect, count, reference_images, reference_entities, reference_entity_names, tools, profile, project, project_name, instructions, ui_mode, thinking_level, out_file, wait)`: Triggers text-to-image / image-to-image (Imagen / Nano Banana). `thinking_level` (`low`/`medium`/`high`, matched case-insensitively, mirroring CLI `--thinking-level`) binds Flow's image thinking-level toggle in the settings pane (omitting leaves Flow's existing setting untouched). `out_file` sets an explicit destination file path (mirrors CLI `--out-file`; legacy `output` removed in #1158). There is no `seed` parameter: Flow picks the seed and the image request cannot carry one (removed in [#1013](https://github.com/ffroliva/gflow-cli/issues/1013), as the CLI's `--seed` was in v0.8.0). A completed result reports the catalogued seed under `seed`: the seed Flow chose on the classic image paths, `0` on the agentic / agent-only arms (which observe none), `null` if none was recorded — the MCP twin of `gflow image t2i --json`'s `images[].seed`. `instructions` is an optional list of ephemeral agent-instruction strings (agentic cohort only). `reference_images` switches to i2i and accepts **either a local file path or a generated image's Flow media UUID**. A UUID reference is attached by **selecting the already-existing asset in Flow's reference picker — no duplicate copy is uploaded** (locating the tile by the media id in its thumbnail URL, and searching the recorded display name to surface it when needed); gflow falls back to uploading the asset's on-disk local file only when it can't be located in place (e.g. it lives in a different project's picker). `project` generates into an existing Flow project id (mirrors CLI `--project`; when omitted, [`GFLOW_CLI_PROJECT`](CONFIGURATION.md#gflow_cli_project) is used unless `project_name` asks for a new project, #1039) — pass the reference's project to keep it selectable in place. `ui_mode` selects the Flow UI arm (`auto`/`classic`/`agentic`, mirroring CLI `--ui-mode`, matched case-insensitively). Since [#595](https://github.com/ffroliva/gflow-cli/issues/595) `auto` means "no arm was asked for" and **resolves to `classic`** — the arm that can satisfy an image request — so an account in Flow's agentic cohort aborts pre-submit (exit-28 equivalent envelope, zero credits) instead of failing mid-run with selector drift or video bytes; the agentic arm is bound only when named. Passing `instructions` forces `agentic` automatically, so `ui_mode="classic"` + `instructions` is a hard conflict rather than a silent drop. An unknown value returns a 400 problem-details envelope. See [CONFIGURATION § GFLOW_CLI_UI_MODE](CONFIGURATION.md#gflow_cli_ui_mode).
+  `model` is `nano2` (Nano Banana 2.1 on flow.google.com; `nano2.1` also accepted), `nano2-lite` (Nano Banana 2 Lite), `nano-pro` (Nano Banana Pro) or `image4` (Imagen 4, no longer in Flow's menu); other aliases are accepted too. On migrated `flow.google.com` accounts, T2I and local-file I2I are supported with Nano Banana 2.1 (`nano2`, #958) / 2 Lite / Pro, all five aspects (16:9, 4:3, 1:1, 3:4, 9:16) and count 1–4; the page owns reCAPTCHA and the `ogiZ0b` submit. `@Name` character mentions in the prompt are attached through the composer's `@` picker and verified as character chips before submit (#723). `reference_entities` must be paired with `reference_entity_names` there (an id alone is refused, exit 36); a `reference_images` UUID is referenced in place when the catalog records it in the same `project` (#995), and a local `reference_images` file is uploaded into the project once and mentioned in place on later calls with the same file, like the CLI's `--ref` ([#772](https://github.com/ffroliva/gflow-cli/issues/772)); an output path gflow cannot write ends in the exit-11-equivalent envelope, with the image still in the Flow project ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091)); other UUID references, instructions and Imagen 4 remain pre-submit refusals there. An agent-only composer (see below) takes T2I only. When Flow returns fewer images than `count`, the reply is still `completed`, `files` lists the images produced, and the `warnings` list includes the object `{"type": "images_missing", "requested": 4, "returned": 3}` (a `failed` reply carries it too when the images came back short before the failure) ([#1489](https://github.com/ffroliva/gflow-cli/issues/1489)). A path that reads the images off the page (Agent mode, an agent-only composer, or a lost reply) fails instead when some are missing. The queued (`wait=false`) and blocking (`wait=true`) calls use the same typed payload and worker path.
 * `gflow_generate_video(prompt, mode, aspect, initial_frame, end_frame, reference_images, reference_entities, reference_entity_names, model, duration, resolution, count, tools, profile, project, project_name, ui_mode, out_file, max_credits, wait)`: Triggers vertical or landscape video generation (Veo). `out_file` sets an explicit destination file path (mirrors CLI `--out-file`; legacy `output` removed in #1158). `mode` is `t2v`/`i2v`/`r2v`; `model` (`veo_lite`/`veo_fast`/`veo_quality`/`omni_flash`/`omni_1_2_flash`, aliases accepted), `duration` (seconds — 4/6/8 for Veo 3.1, 4/6/8/10 for omni_flash, every integer 3–15 for omni_1_2_flash, at most 10 with an `end_frame`; with no `model`, 4/6/8/10), `resolution` ('360p' or '720p', supported on the Omni models; on any other model, or on the labs editor, the job fails pre-submit with the exit-11-equivalent envelope and no credits spent). **Whether Flow renders a duration control at all is account/cohort-dependent**: on an account that renders none, the job is accepted here and fails in the worker pre-submit (exit 23 equivalent on the labs driver, exit 11 equivalent on the migrated `flow.google.com` host — now the default t2v route, #650 — no credits spent either way) rather than being rejected up front — see [KNOWN_ISSUES](https://github.com/ffroliva/gflow-cli/blob/main/KNOWN_ISSUES.md) (#451/#288/#630), and `count` mirror the CLI `gflow video` flags — an omitted `model` lets the transport apply its i2v veo-lite default (issue #125), and every model — `omni_flash` included — accepts i2v with a start frame and with an end frame (wire-verified 2026-09-02, issue #626); `i2v` requires `initial_frame`, `r2v` requires `reference_images` **or** `reference_entities`; `project` generates into an existing Flow project id (mirrors CLI `--project`; when omitted, [`GFLOW_CLI_PROJECT`](CONFIGURATION.md#gflow_cli_project) is used unless `project_name` asks for a new project, #1039); on an account Google has moved to `flow.google.com` (`GFLOW_CLI_FLOW_HOST`, read from the server/daemon environment, not per call — see [CONFIGURATION § GFLOW_CLI_FLOW_HOST](CONFIGURATION.md#gflow_cli_flow_host)) omitting `project` creates one there first (#864); there, on the classic migrated composer (an agent-only one takes text-to-video only — see below), the ported modes are text-to-video; image-to-video with a **local** `initial_frame`, optionally with a **local** `end_frame` (start+end interpolation, #639) (the file is uploaded through the editor and bound on the Start chip by display name — it stays in the Flow project like any upload, under a **run-unique** name: `hero.png` is listed as `hero-a1b2c3d4.png`, so a re-run cannot bind an earlier upload — [#792](https://github.com/ffroliva/gflow-cli/issues/792)); and reference-to-video with local `reference_images` (each file is uploaded the same way — run-unique name included — and attached as an `@` mention of *that* name in the prompt; `duration` there accepts every integer from `3` through `15` with explicit `model="omni_1_2_flash"` (set through its duration slider; Google AI plans are required above `10`) and `4/6/8/10` with explicit `omni_flash`; Veo or an unspecified model accepts only `8`, because measured shorter Veo requests dropped the references and billed text-to-video, so any other value returns the exit-11-equivalent envelope. An omitted r2v duration still pins `8` to avoid inheriting the editor's previous setting). A Flow media UUID as `initial_frame` or `end_frame`, a character on `t2v` or `i2v`, and `reference_entities` without paired `reference_entity_names` return the exit-36-equivalent envelope; `r2v` takes a saved character when each `reference_entities` id is paired with its `reference_entity_names` entry, with or without local `reference_images` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)); a **local-file** `end_frame` is ported (#639). `initial_frame`, `end_frame`, and `reference_images` each accept **either a local file path or the Flow image UUID of a generated asset** — pass a generated image's id straight in to chain image→video, and gflow attaches it for you. Since v0.58.0 (#529) the CLI and MCP surfaces are unified for i2v frames: the UUID keeps its identity and is enriched with the catalog's recorded display name plus an integrity-verified local fallback, so the transport prefers **selecting the exact asset in the project's media picker** (no duplicate upload) and re-uploads the recorded local file only when the tile is unreachable — and only if its byte count/SHA-256 still match. A UUID that isn't in your local asset catalog is rejected up front with a clear "Reference Not Found" error; a catalogued asset with neither a display name nor a verified local file gives a "Reference Not Usable" error (re-generate it or pass a local path). `r2v` UUID refs are resolved to the recorded local file for upload. `ui_mode` selects the Flow UI arm (#299 PR-A, mirroring CLI `--ui-mode`) and **applies to every mode of this tool, including `r2v`** — unlike the CLI, where `video r2v`/`chain` have no flag and follow the env-only path. On labs and the classic migrated composer, video generation has **only a classic driver**, so `auto` ≡ `classic`: both verify the classic editor pre-submit and abort before spending credits if it is unreachable. `ui_mode="agentic"` is rejected with a 400 problem-details envelope, because no agentic video driver exists yet. (An agent-only migrated composer is routed before this check: text-to-video runs through its chat agent under `ui_mode` `auto` or `classic` — `"agentic"` is still rejected with the 400 above, before any browser work — and other video forms return the exit-36-equivalent envelope before anything is clicked.) Values are matched case-insensitively. (MCP tools return envelopes, never process exit codes — the CLI equivalents of these aborts are exit 28 and exit 2 respectively.) See [CONFIGURATION § GFLOW_CLI_UI_MODE](CONFIGURATION.md#gflow_cli_ui_mode). On a model Flow is retiring, the reply (the `wait=true` result and the queued task's `tasks/get` result alike) also carries `"warnings": [{"type": "model_retiring", "model": "<name>", "retires_on": "<ISO date>"}]` ([#1375](https://github.com/ffroliva/gflow-cli/issues/1375)); the job still runs, and once Flow's menu stops offering the model it fails before submit, charged nothing.
+
+* `gflow_edit_video(source, prompt, reference_images, model, aspect, resolution, max_credits, tools, profile, project, project_name, out_file, wait)`: Edits a local video file (`.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi`, up to 1 GB) or an existing Flow clip media UUID on `flow.google.com` (`jIps6`, Omni models only, default `omni-1.2`, single-clip output) with `0–5` optional `reference_images` (local paths or catalog image UUIDs resolved to local files) for a local source file. With a media UUID source, `reference_images` are refused before the queue (exit 11, `charged: no`): references are not ported to editing an existing clip yet; download the clip with `gflow data download MEDIA_ID --out DIR` and pass the file. `max_credits` enforces Flow's pre-submit credit quote (refusing missing or over-cap quotes at zero spend). Local files support optional `aspect` (`16:9`/`9:16`) and `resolution` (`360p`/`720p`); existing Flow media UUIDs need a project (`project`, else the catalog's record, else `GFLOW_CLI_PROJECT`, the CLI's resolution) and keep source aspect at `720p`. The worker refuses a missing or unsupported file (exit 11), `GFLOW_CLI_FLOW_HOST=labs.google` (exit 36) and a mistyped queued payload (`QueueSchemaError`, exit 30) before it creates a project, all `charged: no`. `out_file` must stay inside the configured output directory. Gated by `--no-spend` with the other credit-spending tools.
 
 > **Attaching a saved character (the identity axis).** Three routes reach Flow's
 > `referenceEntities` wire and they dedupe against each other: an `@Name` mention inside
@@ -123,7 +129,9 @@ An omitted parameter cannot clear that environment default for one MCP call.
 > `tools/list` says what follows. With `wait=true` the tool runs the job **inside the
 > call**, so the call stays open for the whole generation — minutes for a video — which
 > can outlast an MCP client's tool timeout. Raise the client's tool timeout, or use
-> `wait=false`. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
+> `wait=false`. If the job has not finished when a `wait=true` call returns, the reply has
+> `status: "failed"` plus `task_status: "pending"` or `"processing"`: the job is unfinished,
+> not failed, and its `task_id` can still be read back later. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
 > at once and runs the job in the background of the same server process, one job at a
 > time per profile within that server. Read it back with the SEP-2663 Tasks extension
 > (`io.modelcontextprotocol/tasks`): poll `tasks/get`. While the job runs it answers
@@ -159,7 +167,7 @@ An omitted parameter cannot clear that environment default for one MCP call.
 > because gflow keeps task rows with no expiry.
 
 
-* `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`; a `verification_error` outcome (HTTP 503, `retryable: true`) means a network/endpoint problem, which re-login does not fix, and a `profile_marker_missing` outcome (HTTP 409, `retryable: false`, #796) means the profile lost its `.gflow_browser_strategy` marker so its cookies cannot be read — a retry does not help, and neither does a plain `gflow auth login`; re-run `gflow auth login --browser chrome` for that profile. A `cookie_store_unreadable` outcome (HTTP 409, `retryable: false`, #796) means the profile's Chrome cookie database is corrupt or unreadable — a local file fault, not the network; close any Chrome window using that profile, then re-run `gflow auth login` for it. A `profile_unavailable` outcome (HTTP 409, `retryable: true`, #1400) means the headless Chrome cookie read could not run; `detail` names the error class. It is local, not the network; close any Chrome window using that profile and retry. A profile another gflow process or a Chrome window holds returns the `profile-locked` error (`next_action: wait`) with that holder's remediation. Any other unauthenticated outcome is a dead session (HTTP 401). Call it before a generation tool to fail fast on dead auth, before a long blocking generation call. Every session result also carries `wire: {status, build}` ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)): the health of the direct, browser-free credits read, probed first with one GET and one POST to flow.google.com; nothing is sent while `GFLOW_CLI_WIRE_READS` is off, while any proxy is configured, or inside a throttle window. `status` is `accepted`, or the reason credit reads fall back to the browser (`signed_out_shell`, `http_401`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable`, `unexpected`); `build` is Flow's build label, else `null`. It never changes the session `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the tool returns `status: "throttled"` with a retryable 429 `error` carrying `retry_after` seconds. `store_unreadable` means the profile's cookies could not be read (Chrome has it open, it has no saved session, or the read did not finish within 5 s). `gflow doctor` reports the same probe for the default profile as its `auth.wire_read` check (doctor itself has no MCP twin, #542). Login/logout remain CLI-only (genuinely interactive).
+* `gflow_auth_status(profile)`: Credit-free, non-interactive Flow session probe (#497) — wraps the same fail-closed `verify_flow_profile` check as `gflow auth status`. Returns `{"status": "authenticated", "profile", "user_email"}` or a problem-details error with a `remediation_hint`, and only `authenticated` has `isError: false` ([#1464](https://github.com/ffroliva/gflow-cli/issues/1464)); a `verification_error` outcome (HTTP 503, `retryable: true`) means a network/endpoint problem, which re-login does not fix, and a `profile_marker_missing` outcome (HTTP 409, `retryable: false`, #796) means the profile lost its `.gflow_browser_strategy` marker so its cookies cannot be read — a retry does not help, and neither does a plain `gflow auth login`; re-run `gflow auth login --browser chrome` for that profile. A `cookie_store_unreadable` outcome (HTTP 409, `retryable: false`, #796) means the profile's Chrome cookie database is corrupt or unreadable — a local file fault, not the network; close any Chrome window using that profile, then re-run `gflow auth login` for it. A `profile_unavailable` outcome (HTTP 409, `retryable: true`, #1400) means the headless Chrome cookie read could not run; `detail` names the error class. It is local, not the network; close any Chrome window using that profile and retry. A profile another gflow process or a Chrome window holds returns the `profile-locked` error (`next_action: wait`) with that holder's remediation. Any other unauthenticated outcome is a dead session (HTTP 401). Call it before a generation tool to fail fast on dead auth, before a long blocking generation call. Every session result also carries `wire: {status, build}` ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)): the health of the direct, browser-free credits read, probed first with one GET and one POST to flow.google.com; nothing is sent while `GFLOW_CLI_WIRE_READS` is off, while any proxy is configured, or inside a throttle window. `status` is `accepted`, or the reason credit reads fall back to the browser (`signed_out_shell`, `http_401`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable`, `unexpected`); `build` is Flow's build label, else `null`. It never changes the session `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the tool returns `status: "throttled"` with a retryable 429 `error` carrying `retry_after` seconds. `store_unreadable` means the profile's cookies could not be read (Chrome has it open, it has no saved session, or the read did not finish within 5 s). `gflow doctor` reports the same probe for the default profile as its `auth.wire_read` check (doctor itself has no MCP twin, #542). Login/logout remain CLI-only (genuinely interactive).
 * `gflow_get_credits(profile, all_profiles, refresh)`: Current Flow balance query; spends no credits. With `all_profiles=true`, inspects every saved profile sequentially and preserves successful balances plus `total_credits` when another profile fails. The balance is the number flow.google.com itself loads, which is the one Flow's account menu shows (#795). It is read directly, with no browser, when Flow accepts the profile's saved session; otherwise it is read in the profile's browser, one browser launch per profile (#1229; when the direct read runs, and how to turn it off with `GFLOW_CLI_WIRE_READS=0`: [CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)). When Flow throttles the account (HTTP 429/503) the read for that profile fails with the rate-limit or network error rather than falling back to the browser, which would send the same requests. The tier fields (`sku`, `service_tier`, `user_paygate_tier`, `subscription_credits`) are always `null`. With `refresh=true`, a profile that lands on a sign-in page is renewed in a headless browser and read again: one more Chrome launch per such profile, no credits. This is the MCP twin of `gflow credits user|list --refresh`. It runs the same renewal as `gflow auth renew`, but only for a profile whose credits read lands on a sign-in page. `auth renew` itself has no MCP tool; see the exemption in `tests/mcp/test_cli_parity.py`. Without `refresh` the call is read-only; with it, an expired profile's saved cookies are rewritten. This tool spends no credits and returns no cookies, bearer tokens, or browser API keys. The balance funds Veo video generation; image generation uses separate per-model daily quotas. A page that loads but never fetches the balance is a `FlowAppError` (exit 31), never an auth error.
 * `gflow_character_list(project, profile)`: Lists a project's saved Flow CHARACTER entities with their **entity ids** — read-only, spends no credits, drives a browser session. On `flow.google.com`, returns each character's `entity_id`, `display_name`, `voice`, `personality`, `workflow_ids`, and `thumbnail_media_id` ([#875](https://github.com/ffroliva/gflow-cli/issues/875), [#987](https://github.com/ffroliva/gflow-cli/pull/987)). This is how an agent discovers what it can attach: pass `entity_id` in `reference_entities` paired with `display_name` at the same position in `reference_entity_names` (for image generation and video r2v on `flow.google.com`). On `flow.google.com`, `@Name` mention resolution keeps the pre-#987 character read (`migrated_read=False`), so an image `@Name` behaves as it did before — when the character source fails and no media asset matches, it attaches the first whitespace-delimited word after `@` by name through the composer's `@` picker — while video `@Name` is not supported there yet (exit 29, mention index unavailable); video r2v takes `reference_entities` plus `reference_entity_names`. An empty list means the project genuinely has none.
 * `gflow_character_show(project, entity_id, name, profile)`: Shows one character by id or exact display name (exactly one selector required), returning its `entity_id`, `display_name`, `voice`, `personality`, `workflow_ids`, and `thumbnail_media_id` on `flow.google.com` ([#875](https://github.com/ffroliva/gflow-cli/issues/875), [#987](https://github.com/ffroliva/gflow-cli/pull/987)). An ambiguous name is refused rather than resolved arbitrarily — which is the reason to prefer the id. Read-only; drives a browser session.
@@ -169,7 +177,7 @@ An omitted parameter cannot clear that environment default for one MCP call.
 * `gflow_usage_stats(weeks)`: Summarize local gflow-cli usage statistics over the last N weeks (default 12, range 1..53). Returns command invocation counts across surfaces from local telemetry (or null when telemetry is off) and generation counts by command, model, status, and month from the local catalog. Its `telemetry` block includes `state`, `switch`, `upload` (`enabled` and `reason`), and the current report (#1164). The tool reads local data and spends no credits; like other MCP calls, its telemetry hook may start a separate weekly upload when eligible. MCP does not expose telemetry `on` or `off`; those controls are CLI-only by design.
 * `gflow_download_media(media_id, out_dir, profile)`: Fetches an already-generated asset from Flow by its media ID and writes it to disk — the recovery path for a generation that was billed but whose download failed. Spends no credits. The bytes are verified against the size Flow reports before the file is written, and the catalog's `local_files` row is updated. Returns `path`, `bytes`, `media_id`, `workflow_id`, `project_id` and `profile`. The transfer retries a dropped connection internally ([#895](https://github.com/ffroliva/gflow-cli/issues/895)), so a failure marked `retryable` means pause and call again — not immediately, and not in a tight loop: each call opens a browser under a per-profile lease, and a second concurrent call fails on that lease instead (exit 11).
 * `gflow_upscale_image(media_id, scale, project, out_dir, profile)`: Upscales an already-generated image to 2K or 4K. `scale` is `2k` or `4k` (4K requires Ultra; Pro accounts support 2K). A scale the download menu does not list is exit 22 (`upscale-unavailable`), naming the listed scales. Spends no credits.
-* `gflow_upscale_video(media_id, scale, project, out_dir, profile)`: Upscales or exports an already-generated video to 1080p Full HD, downloads it at 720p (the original, or for a clip with a smaller original Flow's 720p upscale), or exports a 270p animated GIF. `scale` is `1080p`, `720p`, or `270p`. Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p); a scale the clip's download menu does not list returns `UpscaleUnavailableError` (exit 22) naming the listed scales (#1338). Driven on `flow.google.com` only; measured free (1 observation, 2026-10-07).
+* `gflow_upscale_video(media_id, scale, project, out_dir, profile)`: Upscales or exports an already-generated video to 4K Ultra (spends credits), 1080p Full HD, downloads it at 720p (the original, or for a clip with a smaller original Flow's 720p upscale), or exports a 270p animated GIF. `scale` is `4k`, `1080p`, `720p`, or `270p`. Flow decides which scales each clip offers (a Veo 3.1 Lite clip lists no 1080p; `4k` requires Flow Ultra); a scale the clip's download menu does not list returns `UpscaleUnavailableError` (exit 22) naming the listed scales (#1338). Driven on `flow.google.com` only; 1080p was measured free (2026-10-07) while 4K spends credits (measured 50 credits on Omni 1.2 Flash, 2026-11-23).
 * `gflow_list_tools()`: Lists the prompt tools (name/title/description/category) accepted by the generate tools' `tools` param. Each `tools` item is `{"name": <slug>, "options": {...}}`, e.g. `[{"name": "creative-director"}]`.
 * `gflow_list_models()`: The image and video model catalog, the same object as `gflow models --json` ([#883](https://github.com/ffroliva/gflow-cli/issues/883)); each model entry is what `gflow models show <id> --json` prints ([#1196](https://github.com/ffroliva/gflow-cli/issues/1196)): per model `name`, `label` (image: Flow's menu name), the CLI's `--model` `aliases` (the generate tools accept each of them as `model`, plus wider spellings such as `narwhal` or `veo_lite`), `ref_cap`, `default` (image), and `max_duration`, `durations` (video: the clip lengths `duration` accepts for that model) and `retires_on` (video: the ISO date Flow retires the model, or `null`; [#1375](https://github.com/ffroliva/gflow-cli/issues/1375)). `aspects` and video `tiers` sit on each section (`image` / `video`), not on the per-model entry, so `models show --json` does not carry them. Built from the same enums the generate tools use, so every alias it lists is accepted back. Static: no profile, no browser, no spend.
 * `gflow_instructions_list(project, profile)`: Lists a project's persistent Agent-Mode instruction cards (live server brief; credits-free).
@@ -204,10 +212,24 @@ We analyzed whether a terminal-driven CLI guided by a text skill (e.g., `skills/
 | **Output Fragility** | Ephemeral `stdout`/`stderr` log outputs are fragile to format adjustments, progress bars, and ANSI colors. | Strictly structured JSON payloads containing explicit metadata and absolute output file URIs. |
 | **Process Lifecycle**| High process startup overhead (Python import latency) on every individual execution. | Warm daemon process. Retains active caching of database metadata. |
 | **Concurrency** | A second concurrent process against the same profile is rejected immediately by the cross-process `ProfileLease` with `ProfileLockedError` (exit code 11) — a clean fail-fast, never a crash, never a wait. Different profiles run fully in parallel. | Calls on one profile inside one server run one at a time — a second call waits for the first instead of failing. A profile held by a *different* process (a CLI run, another server) is waited out for up to 180 s (`GFLOW_CLI_LEASE_WAIT_SECONDS`, which a value you set yourself overrides) before `ProfileLockedError`; different profiles still run fully in parallel. |
-| **Error Handling** | Agent must scan logs for strings or parse exit codes to check status. | Strongly-typed JSON-RPC errors with mapped codes and clear remediation. A queued failure carries `exit_code` (in the server's active mode, `GFLOW_CLI_EXIT_CODES`, #1202) and `exit_code_legacy`. |
+| **Error Handling** | Agent must scan logs for strings or parse exit codes to check status. | A failed call is a tool result, not a JSON-RPC error: its `structuredContent` is a typed error envelope with mapped codes and clear remediation (an `invalid_tools` envelope carries a plain-string `error`, #1478), and a plain call whose envelope has a failure status (`error`, `failed`, `rate_limited`, `invalid_tools`, or an unverified `gflow_auth_status`; see [Error envelope](#error-envelope)) sets `isError: true`. A queued failure carries `exit_code` (in the server's active mode, `GFLOW_CLI_EXIT_CODES`, #1202) and `exit_code_legacy`. |
 | **Transport Safety** | Volatile console printing. | Stdout is strictly isolated for JSON-RPC; all logs and warnings route to stderr. |
 
 ### Error envelope
+
+A failed tool call is a tool result, not a JSON-RPC error. A plain (not
+task-augmented) `tools/call` whose envelope has a failure status (`error`, `failed`,
+`rate_limited` or `invalid_tools`, and every `gflow_auth_status` status but
+`authenticated`, `throttled` included) comes back with **`isError: true`**, and
+`structuredContent` carries the same envelope
+([#1453](https://github.com/ffroliva/gflow-cli/issues/1453),
+[#1464](https://github.com/ffroliva/gflow-cli/issues/1464)); a successful call has
+`isError: false`. These are the statuses the tool-use telemetry counts as failures,
+so a `wait=true` generation that ends `failed` reads `isError: true`, as the same job
+does on `tasks/get`. Other statuses keep `isError: false`, including `pending`, so
+read `status` as well. A `wait=false` job reports its own flag: its
+finished result on `tasks/get` has `isError: true` unless the job completed (see
+[Tools](#tools-executable-actions)).
 
 MCP tool failures return a structured error object built from the same RFC 9457
 Problem Details as the CLI, plus a **`retryable`** boolean. `retryable: true`
@@ -371,7 +393,7 @@ Use this if you installed `gflow-cli` globally (e.g. via `uv tool install gflow-
 ##### Option A2: Read-only server
 
 Use this when the agent must never be able to spend credits (#496). The two
-credit-spending tools (`gflow_generate_image`, `gflow_generate_video`) are then
+credit-spending tools (`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video`, `gflow_edit_video`) are then
 **never registered**, so they do not appear in `tools/list` at all — invisible
 rather than refused. Every read-only tool stays available.
 
@@ -432,7 +454,7 @@ For decoupled clients, local web interfaces, or multi-process frontends, run the
 ```bash
 gflow serve --port 8000 --host 127.0.0.1 --profile default
 
-# Read-only daemon — the two credit-spending tools are never registered (#496):
+# Read-only daemon — the credit-spending tools are never registered (#496):
 gflow serve --port 8000 --host 127.0.0.1 --profile default --no-spend
 ```
 This serves the MCP server over **Streamable HTTP**, the current spec transport:
@@ -468,15 +490,144 @@ A missing header, a non-`Bearer` scheme, or a wrong token is answered `401` with
 `WWW-Authenticate: Bearer` — on `/mcp` and on both halves of the deprecated SSE
 surface (`/sse`, `/messages/`). The comparison is constant-time
 (`hmac.compare_digest`), and auth is the outermost layer, so an unauthenticated
-caller learns nothing about the transport's DNS-rebinding allow-list.
+caller learns nothing about the transport's DNS-rebinding allow-list. The same
+token guards the OpenAI-compatible route below.
 
 Non-loopback binds (e.g. `--host 0.0.0.0`) **require** the token — `gflow serve`
 refuses to start without one (exit 11). A loopback bind with no token stays
 unauthenticated, which is the local single-user default.
 
+### OpenAI-compatible image endpoint
+
+`gflow serve` (either transport) also answers `POST /v1/images/generations` in the
+OpenAI Images schema ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)), so
+OpenAI SDK code can generate Flow images by changing its base URL:
+
+```python
+import base64
+
+from openai import OpenAI
+
+# max_retries=0: the route keeps generating after a client disconnect, so an SDK retry on
+# a timeout or proxy error can bill a second generation.
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="<GFLOW_DAEMON_TOKEN or any string>",
+    max_retries=0,
+)
+image = client.images.generate(prompt="a paper boat", size="1792x1024", n=1)
+png_bytes = base64.b64decode(image.data[0].b64_json)
+```
+
+It is the `gflow_generate_image` tool behind another door: the same profile resolution,
+rate limit (429 when the bucket is empty) and `GFLOW_MCP_NO_SPEND` (403 `no_spend`).
+Without `GFLOW_CLI_PROJECT` set on the daemon, every request creates
+a new Flow project, as the tool does when it is given no `project`. The account is the
+daemon's: `gflow serve --profile <name>` pins it (it sets `GFLOW_CLI_PROFILE` for the
+server process, as `gflow mcp run --profile` does), otherwise the default profile is used.
+
+The route refuses up front, before any quota is spent:
+
+- **A prompt with an `@`-mention and no pinned project.** gflow reads `@Name` as a Flow
+  character name, and names resolve inside a project, so `"a logo for @acme"` is 400
+  `param: "prompt"` unless the daemon sets `GFLOW_CLI_PROJECT`; with a pinned project,
+  mentions resolve as they do on the CLI. An `@` inside a word (`user@example.com`) is
+  not a mention.
+- **Cloud storage.** With `GFLOW_CLI_STORAGE_URI` set to `s3://` or `gs://`, outputs have
+  no local file to read back, so every request is 500 `server_misconfigured` naming the
+  setting.
+
+| Field | Accepted |
+|---|---|
+| `prompt` | required, non-empty |
+| `model` | Google Flow image models only: `nano2` (default), `nano2-lite`, `nano-pro`, `image4` and their aliases; anything else, OpenAI's own names included, is 400 |
+| `n` | 1–4 |
+| `size` | `WIDTHxHEIGHT` → the nearest of Flow's aspects (`1:1`, `9:16`, `16:9`, `4:3`, `3:4`); an aspect string itself; `auto` or absent → `1:1` |
+| `response_format` | `b64_json` only (the default here; OpenAI's default `url` is 400 — gflow does not host files) |
+| `stream` | absent, `null`, `false` or `0`; `true` is 400 (streaming is not supported), any other value is 400 (not a boolean) |
+| `quality`, `style`, `user`, `background`, `output_format` | ignored |
+
+An explicit JSON `null` counts as an absent field. Video is not exposed yet. Flow can
+return fewer images than `n`; the response is then still 200 with the images produced
+(they are billed), and the `x-gflow-images-returned` header, present on every 200,
+carries the count, so `data` stays in OpenAI's schema.
+
+**Contract decision — Flow models only.** The endpoint is a facade over Google Flow, not
+an OpenAI emulator: it speaks OpenAI's request and response schema, but the images come
+from Flow's models. A request naming an OpenAI model (`gpt-image-1`, `dall-e-3`, …) is
+refused with 400 `param: "model"` and a message listing the accepted Flow model names, rather than
+silently substituting one. A caller that keeps OpenAI's model name gets an error that
+says what to send instead, and a generation is never billed under a model it did not
+name.
+
+**Request checks.** Every request must be a `POST` (405 otherwise) with
+`Content-Type: application/json` (415) and a body of at most 4 MiB, the MCP SDK's own
+request-body cap, whether the length is declared or the body is chunked (413). With no token
+configured, the route also refuses a non-loopback `Host` (421, DNS rebinding) and a
+non-loopback `Origin` (403): a web page in the user's browser can send a `text/plain`
+POST without a CORS preflight, and these checks keep it from starting a generation.
+With a token, a browser cannot attach the `Authorization` header cross-site.
+
+**Errors.** gflow's RFC 9457 problem details stay the source of truth; the route
+translates them at the edge into OpenAI's error object, which the OpenAI SDKs parse into
+their exception classes:
+
+```json
+{"error": {"message": "...", "type": "server_error", "param": null, "code": "generation_timeout",
+           "gflow_type": "https://gflow-cli.dev/errors/transport-timeout", "charged": "maybe",
+           "retryable": false, "next_action": "reconcile", "task_id": "..."}}
+```
+
+`gflow_type`, `exit_code`, `charged`, `retryable`, `next_action`, `operation_id`,
+`retry_after` and `task_id` are gflow's facts, present when known; OpenAI clients ignore keys they do not
+know. The mapping (`src/gflow_cli/mcp/openai_errors.py`):
+
+| gflow problem | HTTP | `type` | `code` |
+|---|---|---|---|
+| `content-policy` | 400 | `invalid_request_error` | `content_policy_violation` |
+| `bad-parameter`, `reference-not-found` | 400 | `invalid_request_error` | `invalid_value` |
+| `rate-limit`, a 429, `status: rate_limited` | 429 | `rate_limit_error` | `rate_limit_exceeded` |
+| `insufficient-credits` | 429 | `rate_limit_error` | `insufficient_quota` |
+| `auth-expired`, `auth-missing`, `aisandbox-auth`, `auth-browser-rejected`, any other 401/403 from Flow | 502 | `server_error` | `upstream_auth_failed` |
+| `waf-rejection`, `recaptcha-mint` | 502 | `server_error` | `upstream_rejected` |
+| any other 4xx from Flow | 502 | `server_error` | `upstream_error` |
+| `no-profile`, `no-default-profile`, `configuration`, `profile-access`, `profile-engine-downgrade`, `browser-engine-unavailable`, and a `bad-parameter` about the profile or `GFLOW_CLI_PROJECT` | 500 | `server_error` | `server_misconfigured` |
+| `transport-timeout`, a task `wait=true` left `pending`/`processing` (`task_status`) | 504 | `server_error` | `generation_timeout` |
+| any 5xx, or no usable status | the 5xx, else 500 | `server_error` | `generation_failed` |
+
+A 401 or 403 from Flow concerns the daemon's saved Google session, so it becomes a 502
+whose message says to run `gflow auth renew`; passing it through would make an OpenAI
+client treat its daemon token as invalid. A WAF or reCAPTCHA refusal is Flow rejecting
+the daemon's request, not an expired session, so its 502 does not suggest a renewal. A
+4xx from Flow answers the daemon's request, never the caller's, so only the route's own
+parameter validation and gflow's `bad-parameter` produce a 400. A missing profile, an
+ambiguous default profile or a `GFLOW_CLI_PROJECT` that belongs to another profile is a
+fault in the daemon's configuration: a 500 whose message names it, which the caller cannot
+fix by changing the request. The message is the problem's `detail`, else its `message`,
+else its `title`, else `Generation failed.`. The refusals made before the tool runs use
+the same object and carry `charged: "no"` (400s also `gflow_type` `bad-parameter`):
+400 `invalid_value` with `param`, 401 `authentication_error`/`invalid_api_key` (a missing
+or wrong daemon token), 403 `permission_error` (`no_spend`, `invalid_origin`), 405
+`method_not_allowed`, 413 `request_too_large`, 415 `unsupported_media_type`, 421
+`invalid_host` and 500 `server_misconfigured` (cloud storage). Two failures come after a
+generation Flow reported as finished and carry `charged: "yes"`: 502 `no_output` (no file)
+and 500 `output_unreadable` (the file could not be read; the path and the OS error are
+logged on the server, not returned).
+
+**Retries.** The OpenAI SDKs retry 429 and 5xx responses twice by default, and a retried
+generation is a second generation. Every error response therefore carries
+`x-should-retry: false`, which the SDKs obey, except the local rate-limit refusal
+(`status: rate_limited`): it is answered before anything runs and the bucket refills on
+its own. That refusal carries `retry-after: 20`, one refill of the bucket. Any other 429
+carries `retry-after` only when the problem has a `retry_after` (a Flow quota names its
+own wait); `insufficient_quota` and a Flow 429 without one carry none, and neither is
+retried by the SDK. These requests are counted in telemetry under the client name
+`openai-http`, apart from MCP clients' tool calls.
+
 > **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
 > surface are built as internal foundation but are **not yet wired into**
-> `gflow serve` — it currently runs the MCP/SSE server only. See the
+> `gflow serve` — it currently runs the MCP server (Streamable HTTP or SSE) and the
+> OpenAI-compatible image route above. See the
 > [CHANGELOG](../CHANGELOG.md) for the roadmap.
 
 > **Settings reach the server through its environment, not your shell's `.env`.** An MCP
@@ -508,7 +659,7 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
    This prevents crashes caused by non-ASCII prompt strings on Windows.
 4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). It limits call rate, not spend. Spend is bounded per call by `max_credits` on `gflow_generate_video` (or the server's `GFLOW_CLI_MAX_CREDITS` default), which refuses before submit when Flow's quote is unreadable or exceeds the cap (exit 45, #1355), and `--no-spend` (item 6) removes the credit-spending tools altogether. There is no per-session or daily cap (#495).
 5. **CLI-MCP Parameter Symmetry:** Two CI layers guard the surfaces against drift: `tests/mcp/test_cli_parity.py` forces an explicit MCP decision (mapped tool or stated exemption) for every CLI leaf command, and `tests/mcp/test_server.py::TestCliMcpParameterSymmetry` compares CLI Click parameters against registered tool signatures for the two generate tools. Parameter-level comparison does not yet cover the other tools.
-6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending generate tools — `gflow_generate_image` and `gflow_generate_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
+6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending tools — `gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video` and `gflow_edit_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
 
 ---
 
