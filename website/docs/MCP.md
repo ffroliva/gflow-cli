@@ -123,7 +123,9 @@ An omitted parameter cannot clear that environment default for one MCP call.
 > `tools/list` says what follows. With `wait=true` the tool runs the job **inside the
 > call**, so the call stays open for the whole generation — minutes for a video — which
 > can outlast an MCP client's tool timeout. Raise the client's tool timeout, or use
-> `wait=false`. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
+> `wait=false`. If the job has not finished when a `wait=true` call returns, the reply has
+> `status: "failed"` plus `task_status: "pending"` or `"processing"`: the job is unfinished,
+> not failed, and its `task_id` can still be read back later. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
 > at once and runs the job in the background of the same server process, one job at a
 > time per profile within that server. Read it back with the SEP-2663 Tasks extension
 > (`io.modelcontextprotocol/tasks`): poll `tasks/get`. While the job runs it answers
