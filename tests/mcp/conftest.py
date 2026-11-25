@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 import gflow_cli.mcp.audio_tools  # noqa: F401
@@ -20,6 +24,7 @@ import gflow_cli.mcp.prompts
 import gflow_cli.mcp.resources
 import gflow_cli.mcp.tools  # noqa: F401
 import gflow_cli.mcp.video_captions_tools  # noqa: F401
+from tests.mcp.openai_fakes import PNG, FakeTool
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +37,34 @@ def _fresh_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     tools = gflow_cli.mcp.tools
     monkeypatch.setattr(tools, "_rate_limiter", tools._TokenBucket())  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.fixture
+def png_files(tmp_path: Path) -> list[str]:
+    """Two distinct PNG files, as a finished image generation leaves them."""
+    paths = []
+    for i in range(2):
+        p = tmp_path / f"img{i}.png"
+        p.write_bytes(PNG + bytes([i]))
+        paths.append(str(p))
+    return paths
+
+
+@pytest.fixture
+def set_image_tool(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, Any]], FakeTool]:
+    """Replace ``gflow_generate_image`` with a :class:`FakeTool` answering a given result.
+
+    Also clears an operator's ``GFLOW_MCP_NO_SPEND``, which would turn every route test
+    into a 403.
+    """
+    monkeypatch.delenv("GFLOW_MCP_NO_SPEND", raising=False)
+
+    def _set(result: dict[str, Any]) -> FakeTool:
+        fake = FakeTool(result)
+        monkeypatch.setattr(gflow_cli.mcp.tools, "gflow_generate_image", fake)
+        return fake
+
+    return _set
 
 
 @pytest.fixture()

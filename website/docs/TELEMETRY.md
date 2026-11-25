@@ -31,7 +31,7 @@ counts.
 | `commands`, `flags`, `exits`, `durations` | Counts by `cli` or `mcp` surface and command. Flags are names only. Exit counts use exit-code names such as `0` or `11`; duration buckets are `<10s`, `<1m`, `<5m`, or `5m+`. |
 | `transitions` | Counts of command pairs, such as `image t2i -> video i2v`, when the next command starts within 30 minutes. |
 | `models`, `modes`, `aspects`, `outcomes` | Generation values read from the local catalog; unknown enum values become `other`. |
-| `mcp_clients` | Known names from MCP `clientInfo`; unknown names become `other`. |
+| `mcp_clients` | Known names from MCP `clientInfo`; unknown names become `other`. `openai-http` marks requests to `gflow serve`'s OpenAI-compatible image route, which carry no `clientInfo`. |
 | `crashes` | Counts of code-only crash fingerprints by surface. A fingerprint contains exception class names, up to three gflow-cli function names, and a third-party package marker where relevant. |
 | `engines` | Counts of generation, project and catalog commands and queued jobs that selected a browser engine, by engine: `playwright`, `patchright`, or `other`. A run is counted when the engine is selected, so a launch that then fails (a missing patchright install, a locked profile) still counts, which is what sizes an engine-specific failure. `gflow auth` commands and runs that launch no browser are not counted. |
 | `hosts` | For the same runs, the Flow site that served them, as observed from the page address when a generation is routed: `labs` (labs.google), `flow` (flow.google.com), or `unknown` when the run routed no generation (for example a credits, project or character read, or a run that failed first). It records which site served a run and says nothing about what that site supports. |

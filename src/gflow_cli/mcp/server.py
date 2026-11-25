@@ -25,11 +25,12 @@ from mcp.server.mcpserver.context import Context
 from mcp.types import CallToolResult, InputRequiredResult
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from gflow_cli import __version__
 from gflow_cli.config import get_settings, reset_settings
+from gflow_cli.mcp import openai_errors
 from gflow_cli.mcp import tasks_extension as tasks_module
 from gflow_cli.mcp.envelope_status import is_failure
 from gflow_cli.mcp.tasks_extension import TasksExtension
@@ -285,11 +286,19 @@ class _BearerAuthMiddleware:
         if scheme.lower() != "bearer" or not hmac.compare_digest(
             presented.encode("utf-8"), self._expected
         ):
-            response = PlainTextResponse(
-                "Unauthorized",
-                status_code=401,
-                headers={"WWW-Authenticate": 'Bearer realm="gflow"'},
+            challenge = {"WWW-Authenticate": 'Bearer realm="gflow"'}
+            response: Response = PlainTextResponse(
+                "Unauthorized", status_code=401, headers=challenge
             )
+            if scope["path"].startswith("/v1/"):  # OpenAI clients parse their own error body
+                response = openai_errors.error_response(
+                    401,
+                    "Missing or invalid daemon token (Authorization: Bearer <token>).",
+                    type_="authentication_error",
+                    code="invalid_api_key",
+                    extra={"charged": "no"},
+                    headers=challenge,
+                )
             await response(scope, receive, send)
             return
         await self._app(scope, receive, send)
@@ -325,6 +334,11 @@ def build_app(
         if transport == "http"
         else server.sse_app(host=host)
     )
+    # OpenAI-compatible /v1/images/generations (#1365). Behind the same auth layer as
+    # the transport below; it checks Host and Origin itself when there is no token.
+    from gflow_cli.mcp import openai_api
+
+    app.router.routes.extend(openai_api.routes(token=token))
     if token is not None:
         # Added LAST on purpose: ``add_middleware`` inserts at index 0, so the
         # last layer added is the outermost one. Auth must answer before the
