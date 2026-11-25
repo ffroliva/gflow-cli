@@ -8,6 +8,7 @@ request bodies (round 1, A2/A3).
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1401,3 +1402,113 @@ def test_the_click_time_bounding_prompt_adoption_is_taken_before_the_billed_clic
 
     source = inspect.getsource(SubmitObserveMixin.submit_and_observe)
     assert source.index("clicked_at = time.time()") < source.index("named=SUBMIT_BUTTON")
+
+
+class _UploadPage:
+    """The toolbar uploader's surface: ``scenario`` runs when the file is handed over."""
+
+    URL = "https://aisandbox-pa.googleapis.com/upload/v1/flow/upload/video/abc"
+
+    def __init__(self, scenario: Any) -> None:
+        self.scenario, self.dialogs, self.clicks = scenario, 0, []
+        self.listeners: dict[str, list[Any]] = {}
+        self.files: Any = None
+
+    def on(self, event: str, fn: Any) -> None:
+        self.listeners.setdefault(event, []).append(fn)
+
+    def remove_listener(self, event: str, fn: Any) -> None:
+        self.listeners[event].remove(fn)
+
+    def locator(self, selector: str) -> Any:
+        page = self
+
+        class _Loc:
+            first = property(lambda self: self)
+
+            async def count(self) -> int:
+                return page.dialogs if "dialog" in selector else 1
+
+            async def click(self, **_kw: Any) -> None:
+                page.clicks.append(selector)
+
+            async def wait_for(self, **_kw: Any) -> None:
+                return None
+
+        return _Loc()
+
+    def expect_file_chooser(self, **_kw: Any) -> Any:
+        page = self
+
+        class _Chooser:
+            async def set_files(self, files: Any) -> None:
+                page.files = files
+                await page.scenario(page)
+
+        class _Info:
+            async def __aenter__(self) -> Any:
+                return self
+
+            async def __aexit__(self, *_a: object) -> None:
+                return None
+
+            @property
+            def value(self) -> Any:
+                async def chooser() -> _Chooser:
+                    return _Chooser()
+
+                return chooser()
+
+        return _Info()
+
+    async def fire(self, *, status: int | None = None, body: str = "", sent: bool = False) -> None:
+        if sent:
+            for fn in list(self.listeners.get("request", [])):
+                fn(SimpleNamespace(url=self.URL))
+        if status is not None:
+            resp = SimpleNamespace(url=self.URL, status=status, text=lambda: _coro(body))
+            for fn in list(self.listeners.get("response", [])):
+                await fn(resp)
+
+
+async def _coro(value: Any) -> Any:
+    return value
+
+
+@pytest.mark.asyncio
+async def test_video_upload_detects_the_rights_dialog_and_never_accepts_it(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Flow's one-time "rights to use this video" dialog, with nothing sent, is exit 27
+    naming the video remediation; gflow clicks only the toolbar add and upload entries."""
+    from gflow_cli.api.transports import _mc_upload_video as uv
+    from gflow_cli.errors import MediaUploadRejectedError
+
+    monkeypatch.setattr(uv, "VIDEO_UPLOAD_BASE_S", 0.05)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+
+    async def rights_dialog(page: _UploadPage) -> None:
+        page.dialogs += 1
+
+    page = _UploadPage(rights_dialog)
+    with pytest.raises(MediaUploadRejectedError, match="upload-terms") as caught:
+        await uv.upload_video(page, PID, clip)  # type: ignore[arg-type]
+    assert "upload any video by hand" in (caught.value.remediation_hint or "")
+    assert len(page.clicks) == 2  # toolbar add, then its upload entry: no dialog button
+    assert str(page.files).endswith(".mp4")  # a staged path, never the bytes in memory
+
+
+@pytest.mark.asyncio
+async def test_video_upload_waits_past_the_empty_first_reply(tmp_path: Any) -> None:
+    from gflow_cli.api.transports import _mc_upload_video as uv
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+
+    async def resumable(page: _UploadPage) -> None:
+        await page.fire(sent=True, status=200, body="")  # the resumable start: no JSON yet
+        reply = {"mediaId": UPLOADED_WF, "media": {"workflowId": UPLOADED_MEDIA}}
+        await page.fire(status=200, body=json.dumps(reply))
+
+    assert await uv.upload_video(_UploadPage(resumable), PID, clip) == UPLOADED_MEDIA  # type: ignore[arg-type]
