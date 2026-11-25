@@ -84,8 +84,8 @@ def _assert_top_caption_pixels(source: Path, output: Path) -> None:
     bottom_diffs: list[float] = []
     for index, (before, after) in enumerate(zip(source_frames, output_frames, strict=True)):
         if 0.2 <= index / fps <= 1.0:
-            b_arr = before.to_ndarray().astype(float)
-            a_arr = after.to_ndarray().astype(float)
+            b_arr = before.to_ndarray(format="rgb24").astype(float)
+            a_arr = after.to_ndarray(format="rgb24").astype(float)
             mid_y = b_arr.shape[0] // 2
             top_diffs.append(float(np.mean(np.abs(b_arr[:mid_y] - a_arr[:mid_y]))))
             bottom_diffs.append(float(np.mean(np.abs(b_arr[mid_y:] - a_arr[mid_y:]))))
