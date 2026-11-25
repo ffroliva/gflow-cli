@@ -176,6 +176,7 @@ async def test_a_lost_status_poll_settles_the_run_from_the_live_listing_1484(
     from gflow_cli.api.transports._mc_common import LISTING_RPC
     from gflow_cli.api.transports.batchexecute import generation_record
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.exceptions import WireFormatError
 
     profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
     row = _catalog_video(profile)
@@ -188,7 +189,10 @@ async def test_a_lost_status_poll_settles_the_run_from_the_live_listing_1484(
         setup = await observe.read_project_listing(page, row.project_id, budget_s=60.0)
         if setup is None:
             pytest.skip("Flow did not answer the project listing; nothing to recover from")
-        first = generation_record(LISTING_RPC, setup, media_id=row.media_id)
+        try:
+            first = generation_record(LISTING_RPC, setup, media_id=row.media_id)
+        except WireFormatError:
+            pytest.skip(f"catalogued clip {row.media_id} is not in its project listing")
         if not first.is_done:
             pytest.skip(f"catalogued clip {row.media_id} is not done in its listing")
         loop = asyncio.get_running_loop()

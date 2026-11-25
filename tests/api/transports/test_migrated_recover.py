@@ -439,3 +439,36 @@ async def test_recover_clip_refuses_an_unsafe_media_id_before_any_page_work(
     with pytest.raises(ValueError, match="Unsafe"):
         await recover_clip(page, project_id="p", media_id="../escape", out_dir=tmp_path)
     assert list(tmp_path.iterdir()) == []
+
+
+class _UnreadableFor(_Unreadable):
+    """A lost `as29s` body whose request names ``media_id``."""
+
+    def __init__(self, media_id: str) -> None:
+        self.request = type("Req", (), {"post_data": f'[["as29s","[\\"{media_id}\\"]"]]'})()
+
+
+@pytest.mark.asyncio
+async def test_a_reload_that_times_out_is_the_typed_no_url_error_1484(tmp_path: Path) -> None:
+    """A late reload gets only what is left of the wait; its timeout must keep the typed
+    error and its remediation, not surface as a raw Playwright error."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    class _ReloadTimesOut(_SlowPage):
+        reload_timeouts_ms: list[float]
+
+        async def goto(self, url: str, **kw: Any) -> None:
+            if self.gotos:
+                self.gotos.append(url)
+                self.reload_timeouts_ms.append(kw["timeout"])
+                raise PlaywrightTimeoutError("page.goto: Timeout 12ms exceeded")
+            await super().goto(url, **kw)
+            for handler in list(self._handlers):
+                await handler(_UnreadableFor(MEDIA_ID))
+
+    page = _ReloadTimesOut(reply_after_s=None)
+    page.reload_timeouts_ms = []
+    with pytest.raises(WireFormatError, match=r"no signed media URL .* after 2 load\(s\)"):
+        await _recover(page, tmp_path, wait_s=0.3)
+    # The reload spends only what is left of the wait, never a fresh navigation timeout.
+    assert len(page.reload_timeouts_ms) == 1 and 0 < page.reload_timeouts_ms[0] <= 300

@@ -367,6 +367,8 @@ class SubmitObserveMixin(MentionMixin):
                 _accept(rid, rec)
 
         def _accept(rid: str, rec: GenerationRecord) -> None:
+            if rid == LISTING_RPC:  # its URL is an unsigned lh3 rendition (#948)
+                rec = replace(rec, video_url=None)
             workflow["id"] = rec.workflow_id
             log.info(
                 "migrated.video_adopted_from_listing"
@@ -995,7 +997,16 @@ class _ListingRecovery:
         return bool(self.project_id) and self.reads < LISTING_REREADS_MAX
 
     async def read_if_due(self, deadline: float) -> None:
-        if time.monotonic() - self.last_read >= LISTING_REREAD_INTERVAL_S:
+        """Read once the interval since the last read is up, unless a readable poll comes
+        first; the last read is kept for the poll deadline."""
+        if self.reads >= LISTING_REREADS_MAX - 1:
+            return
+        # Flow sends no poll after the terminal one, so a loss inside the interval waits
+        # it out rather than leaving the finished clip to the deadline read.
+        due_in = LISTING_REREAD_INTERVAL_S - (time.monotonic() - self.last_read)
+        watch = self.status_watch
+        await watch.wait_until(watch.seen, min(due_in, deadline - time.monotonic()))
+        if not watch.seen.is_set():
             await self.read(min(LISTING_READ_BUDGET_S, deadline - time.monotonic()))
 
     async def read(self, budget_s: float) -> None:

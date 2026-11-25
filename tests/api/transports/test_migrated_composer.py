@@ -2224,7 +2224,8 @@ async def test_with_no_status_match_the_listing_in_a_second_tab_adopts_1112(
     rec, started = await _observe_lost(
         [(_batch_url("jwpduf"), LOST_BODY)], poll_timeout_s=2.0, tab=tab
     )
-    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url == VIDEO_URL
+    # The listing's URL is not kept (#948): the download takes the clip route.
+    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url is None
     assert len(started) == 1
     assert tab.gotos == [mc.MIGRATED_PROJECT_URL.format(project_id=PROJ)] and tab.closed
 
@@ -5085,7 +5086,7 @@ async def test_repeated_lost_polls_re_read_the_listing_a_bounded_number_of_times
         await MigratedComposer().submit_and_observe(
             page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
         )
-    assert len(tabs) <= 2  # one within the interval, one final read at the deadline
+    assert len(tabs) == 2  # one within the interval, one final read at the deadline
 
 
 async def test_the_default_fake_page_cannot_open_a_listing_tab() -> None:
@@ -5094,3 +5095,72 @@ async def test_the_default_fake_page_cannot_open_a_listing_tab() -> None:
 
     with pytest.raises(PlaywrightError):
         await FakePage().context.new_page()
+
+
+def _clip_done_after(page: FakePage, done_at_s: float) -> list[float]:
+    """Each listing read reports the clip running until ``done_at_s`` after the call."""
+    from types import SimpleNamespace
+
+    start = time.monotonic()
+    reads: list[float] = []
+
+    async def new_page() -> ListingTab:
+        reads.append(time.monotonic() - start)
+        status = 3 if reads[-1] >= done_at_s else 2
+        return ListingTab(_listing(_ours(status)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    return reads
+
+
+async def test_early_losses_leave_the_deadline_read_for_the_finished_clip_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losses while the clip still runs must not spend every listing read: the read at
+    the poll deadline is the last chance for a billed clip whose terminal poll was lost."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 5, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
+    reads = _clip_done_after(page, done_at_s=0.45)
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS
+    assert len(reads) == _mc_submit_observe.LISTING_REREADS_MAX
+
+
+async def test_a_loss_inside_the_read_interval_reads_once_the_interval_is_up_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flow sends no poll after the terminal one: a loss inside the interval must still be
+    followed by a read when the interval ends, not only at the poll deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.3)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.1)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
+    reads = _clip_done_after(page, done_at_s=0.15)
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done
+    assert time.monotonic() - started < 1.5, "read only at the poll deadline"
+    assert len(reads) == 2
+
+
+async def test_a_clip_adopted_from_the_listing_carries_no_listing_url_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adoption path after a lost submit reply has the same unsigned lh3 URL (#948)."""
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    lh3 = "https://lh3.googleusercontent.com/unsigned"
+    rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, lh3))))
+    assert rec.is_done and rec.video_url is None

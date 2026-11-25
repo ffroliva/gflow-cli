@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
+from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.transports._common import get_signed_media, retry_the_recovery_hint
 from gflow_cli.api.transports.batchexecute import generation_record, parse_frames
@@ -100,6 +101,7 @@ class _As29sWatch:
         try:
             text = await response.text()
         except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+            # Any lost as29s counts: its request does not name the clip (live e2e, #1484).
             if "as29s" in url and load == self.attempt:
                 self.unreadable_on = load
             return
@@ -136,11 +138,18 @@ async def _await_signed_record(
                 media_id=media_id,
                 attempt=watch.attempt,
             )
-            await page.goto(
-                _clip_url(project_id, media_id),
-                wait_until="domcontentloaded",
-                timeout=nav_timeout_s * 1000,
-            )
+            try:
+                await page.goto(
+                    _clip_url(project_id, media_id),
+                    wait_until="domcontentloaded",
+                    timeout=nav_timeout_s * 1000,
+                )
+            except PlaywrightError:
+                if deadline is None:
+                    raise
+                # A reload only has what is left of the wait; running out is "no URL".
+                log.warning("migrated.recover_reload_failed", attempt=watch.attempt)
+                break
             if deadline is None:
                 deadline = loop.time() + wait_s
             # A healthy load keeps the whole remaining budget: re-opening the route would
