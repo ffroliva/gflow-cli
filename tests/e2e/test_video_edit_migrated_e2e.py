@@ -34,6 +34,7 @@ from typing import Any
 import pytest
 
 from gflow_cli.api.transports import migrated_composer
+from gflow_cli.api.transports import migrated_extend as mx
 from gflow_cli.api.transports import migrated_video_edit as ve
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
@@ -52,7 +53,7 @@ _SUBMIT_WAIT_S = 60.0
 
 def _decoded_edits(request: Any) -> list[Any]:
     body = migrated_composer.request_body(request)
-    return ve._decode_rpc_frames(ve.EDIT_SUBMIT_RPC, body)  # noqa: SLF001
+    return mx._decode_rpc_frames(ve.EDIT_SUBMIT_RPC, body)  # noqa: SLF001
 
 
 async def _live_page(
@@ -206,7 +207,7 @@ async def test_e2e_edit_request_targets_the_source_and_carries_the_ref_at_zero_c
     entry = ve._at(captured[0], 0, 0)  # noqa: SLF001
     assert ve._at(entry, 0, 1) == seen["workflow"], (entry, seen)  # noqa: SLF001
     assert "_edit" in str(ve._at(entry, 2)), entry  # noqa: SLF001
-    assert ve._extract_reference_ids(entry) == set(seen["refs"]), (entry, seen)  # noqa: SLF001
+    assert mx._extract_reference_ids(entry) == list(seen["refs"]), (entry, seen)  # noqa: SLF001
     assert len(seen["refs"]) == 1, seen
 
 

@@ -358,34 +358,52 @@ async def _clear_editor_prompt(page: Page, selector: str) -> None:
     await page.wait_for_timeout(400)
 
 
-def _option_text_pattern(query: str) -> re.Pattern[str]:
-    """*query* as a whole name: ``clip`` must not match ``clip-2`` or ``clip.mp4``."""
-    return re.compile(rf"(?<![\w.-]){re.escape(query)}(?![\w.-])")
+_EXTENSION = re.compile(r"\.[a-z0-9]{2,4}$", re.IGNORECASE)
+
+
+def _bare_name(name: str) -> str:
+    """*name* compared case-insensitively, without a file extension."""
+    return _EXTENSION.sub("", name.strip()).casefold()
+
+
+def _names_option(query: str, text: str) -> bool:
+    """Whether a picker option's visible *text* names *query*.
+
+    Either side may carry a file extension, and the text may hold other words around the
+    name (the 2026-11-25 live run attached nothing under an exact-name match); the
+    run-unique tag in *query* keeps one upload from naming another.
+    """
+    wanted = _bare_name(query)
+    return any(_bare_name(word) == wanted for word in text.split())
 
 
 async def _try_commit_picker_option(
-    page: Page, *, query: str, chip_selector: str, expect_count: int
+    page: Page, *, query: str, chip_selector: str, expect_count: int, offered: list[str]
 ) -> tuple[bool, bool]:
-    """Click the one picker option named *query*: ``(committed, still_processing)``.
+    """Click the one picker option naming *query*: ``(committed, still_processing)``.
 
+    ``offered`` receives the options' visible texts, for the timeout message.
     ``still_processing`` is True when the asset is listed but the picker's confirm button
     is still disabled (Flow is still processing an upload). No Enter is pressed: in the
-    edit prompt boxes Enter can submit the edit. Two options with the name are refused.
+    edit prompt boxes Enter can submit the edit. Two options naming it are refused.
     """
-    options = page.locator(f"{OVERLAY} {PICKER_OPTION}").filter(
-        has_text=_option_text_pattern(query)
-    )
-    count = await options.count()
-    if count > 1:
+    options = page.locator(f"{OVERLAY} {PICKER_OPTION}")
+    texts = [" ".join(t.split()) for t in await options.all_text_contents()]
+    offered[:] = texts
+    hits = [i for i, text in enumerate(texts) if _names_option(query, text)]
+    if len(hits) > 1:
         raise ReferenceNotFoundError(
             detail=(
-                f"migrated host: the @ picker lists {count} assets named {query!r} — "
+                f"migrated host: the @ picker lists {len(hits)} assets named {query!r} — "
                 "refusing to guess before submit"
             ),
         )
-    if not count or not await options.first.is_visible():
+    if not hits:
         return False, False
-    await options.first.click(timeout=4000)
+    option = options.nth(hits[0])
+    if not await option.is_visible():
+        return False, False
+    await option.click(timeout=4000)
     await page.wait_for_timeout(500)
     if await page.locator(chip_selector).count() >= expect_count:
         return True, False
@@ -417,6 +435,7 @@ async def _attach_by_click(  # noqa: PLR0913
     loop = asyncio.get_running_loop()
     deadline = loop.time() + VIDEO_INGEST_READY_BUDGET_S
     attempt = 0
+    offered: list[str] = []
     while True:
         attempt += 1
         await _caret_to_end(page, composer_selector)
@@ -425,7 +444,11 @@ async def _attach_by_click(  # noqa: PLR0913
         await page.keyboard.type(query, delay=60)
         await page.wait_for_timeout(2000)
         committed, still_processing = await _try_commit_picker_option(
-            page, query=query, chip_selector=chip_selector, expect_count=expect_count
+            page,
+            query=query,
+            chip_selector=chip_selector,
+            expect_count=expect_count,
+            offered=offered,
         )
         if committed:
             await page.keyboard.type(" ", delay=60)
@@ -443,10 +466,17 @@ async def _attach_by_click(  # noqa: PLR0913
                 detail=(
                     f"migrated host: the {what} uploaded as media {media_id} ({query!r}) did "
                     f"not attach as a chip within {VIDEO_INGEST_READY_BUDGET_S:.0f}s "
-                    f"(still_processing={still_processing}) — refusing before submit"
+                    f"(still_processing={still_processing}); the picker offered: "
+                    f"{_offered_text(offered)} — refusing before submit"
                 ),
             )
         await asyncio.sleep(_VIDEO_INGEST_POLL_S)
+
+
+def _offered_text(offered: list[str]) -> str:
+    shown = [text if len(text) <= 60 else f"{text[:57]}..." for text in offered[:5]]
+    more = f" (+{len(offered) - 5} more)" if len(offered) > 5 else ""
+    return (", ".join(repr(t) for t in shown) or "<nothing>") + more
 
 
 async def _stable_quote(read: Callable[[], Awaitable[int | None]]) -> int | None:

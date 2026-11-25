@@ -476,12 +476,13 @@ class _ClipEditorPage(_Page):
             return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
         if sel.endswith(edit_mod.PICKER_OPTION):
             option = MagicMock(
-                count=AsyncMock(return_value=1),
                 is_visible=AsyncMock(return_value=True),
                 click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", page.chips + 1)),
             )
-            option.first = option
-            return MagicMock(filter=MagicMock(return_value=option))
+            return MagicMock(
+                all_text_contents=AsyncMock(return_value=["ref-aaaaaaaa image"]),
+                nth=MagicMock(return_value=option),
+            )
         return super().locator(sel)
 
 
@@ -531,19 +532,16 @@ class _PickerPage:
     def locator(self, sel: str) -> Any:
         page = self
         if sel.endswith(edit_mod.PICKER_OPTION):
-
-            def filtered(*, has_text: Any) -> Any:
-                listed = page.names if page.polls >= page.listed_from else []
-                hits = [n for n in listed if has_text.search(n)]
-                option = MagicMock(
-                    count=AsyncMock(return_value=len(hits)),
-                    is_visible=AsyncMock(return_value=True),
-                    click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", 1)),
-                )
-                option.first = option
-                return option
-
-            return MagicMock(filter=filtered)
+            option = MagicMock(
+                is_visible=AsyncMock(return_value=True),
+                click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", 1)),
+            )
+            return MagicMock(
+                all_text_contents=AsyncMock(
+                    side_effect=lambda: page.names if page.polls >= page.listed_from else []
+                ),
+                nth=MagicMock(return_value=option),
+            )
         if sel == "chip":
             return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
         loc = MagicMock(count=AsyncMock(return_value=0), click=AsyncMock())
@@ -580,15 +578,42 @@ async def test_an_upload_never_listed_times_out_naming_its_media_id(clock: _Cloc
     assert clock.now >= edit_mod.VIDEO_INGEST_READY_BUDGET_S - 30
 
 
+@pytest.mark.parametrize(
+    ("query", "option"),
+    [
+        ("ref-215ca6ac.png", "ref-215ca6ac.png"),
+        ("ref-215ca6ac.png", "ref-215ca6ac"),  # the option drops the extension
+        ("source-11628e4b", "source-11628e4b.mp4"),  # the option adds one
+        ("source-11628e4b", "Video source-11628e4b 0:08"),  # other words around it
+        ("Ref-215CA6AC.PNG", "ref-215ca6ac.png"),  # case-insensitive
+    ],
+)
+def test_an_option_names_the_upload_with_or_without_its_extension(query: str, option: str) -> None:
+    assert edit_mod._names_option(query, option)
+
+
+@pytest.mark.parametrize("option", ["ref-215ca6ac-2.png", "xref-215ca6ac.png", "ref-215ca6"])
+def test_an_option_naming_another_upload_does_not_match(option: str) -> None:
+    assert not edit_mod._names_option("ref-215ca6ac.png", option)
+
+
+@pytest.mark.asyncio
+async def test_a_timeout_lists_what_the_picker_offered(clock: _Clock) -> None:
+    page = _PickerPage(["other-1.png", "x" * 80], listed_from=0)
+    with pytest.raises(ReferenceNotFoundError, match="offered: 'other-1.png'") as info:
+        await _attach(page, "ref-215ca6ac.png")
+    assert "..." in info.value.detail
+
+
 @pytest.mark.asyncio
 async def test_the_picker_option_is_matched_as_a_whole_name(clock: _Clock) -> None:
     # "clip" must not bind "clip-2" (another upload whose name it prefixes).
-    page = _PickerPage(["clip-2", "clip.mp4"], listed_from=0)
+    page = _PickerPage(["clip-2", "clips.mp4"], listed_from=0)
     with pytest.raises(ReferenceNotFoundError):
         await _attach(page, "clip")
     assert page.chips == 0
     # Two assets with exactly the name: ambiguous, refused rather than guessed.
-    page = _PickerPage(["clip", "clip"], listed_from=0)
+    page = _PickerPage(["clip", "clip.mp4"], listed_from=0)
     with pytest.raises(ReferenceNotFoundError, match="lists 2 assets"):
         await _attach(page, "clip")
 
