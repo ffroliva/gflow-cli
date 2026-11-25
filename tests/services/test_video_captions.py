@@ -1456,24 +1456,29 @@ def test_caption_overlay_shrinks_below_12px_when_needed(
 
     from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
 
-    fitted_sizes: list[int] = []
+    fitted_layouts: list[tuple[int, int, int]] = []
     real_fit = service._fit_caption_layout
 
     def record_fit(*args: Any, **kwargs: Any) -> Any:
         font, wrapped, box = real_fit(*args, **kwargs)
-        fitted_sizes.append(int(font.size))
+        fitted_layouts.append((int(font.size), int(box[2] - box[0]), int(box[3] - box[1])))
         return font, wrapped, box
 
     monkeypatch.setattr(service, "_fit_caption_layout", record_fit)
+    style = CaptionStyle(font_size=explicit_size, box_opacity=0.0)
     overlay, top = _caption_overlay(
         width,
         height,
         "Hello\nworld\ncaptions\nline4",
         ImageDraw,
         ImageFont,
-        style=CaptionStyle(font_size=explicit_size, box_opacity=0.0),
+        style=style,
     )
-    assert fitted_sizes[-1] < (explicit_size if explicit_size is not None else 12)
+    fitted_size, box_w, box_h = fitted_layouts[-1]
+    assert fitted_size < (explicit_size if explicit_size is not None else 12)
+    assert box_w <= width and box_h <= height
+    frame_y = service._caption_frame_y(height, box_h, style)
+    assert 0 <= frame_y and frame_y + box_h <= height
     pixels = overlay.load()
     visible = [
         (x, top + y)
@@ -1483,6 +1488,66 @@ def test_caption_overlay_shrinks_below_12px_when_needed(
     ]
     assert visible
     assert all(0 <= x < width and 0 <= y < height for x, y in visible)
+
+
+@pytest.mark.parametrize("height", [8, 4, 2])
+@pytest.mark.parametrize("position", ["bottom", "top", "middle"])
+def test_caption_overlay_keeps_text_and_pill_inside_short_frames(
+    height: int,
+    position: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    width = 160
+    fitted_boxes: list[tuple[int, int]] = []
+    real_fit = service._fit_caption_layout
+
+    def record_fit(*args: Any, **kwargs: Any) -> Any:
+        font, wrapped, box = real_fit(*args, **kwargs)
+        fitted_boxes.append((int(box[2] - box[0]), int(box[3] - box[1])))
+        return font, wrapped, box
+
+    monkeypatch.setattr(service, "_fit_caption_layout", record_fit)
+    text_only_ov, _ = _caption_overlay(
+        width,
+        height,
+        "Hi",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(position=position, box_opacity=0.0),
+    )
+    box_w, box_h = fitted_boxes[-1]
+    frame_y = service._caption_frame_y(height, box_h, CaptionStyle(position=position))
+    assert box_w <= width and box_h <= height
+    assert 0 <= frame_y and frame_y + box_h <= height
+    text_px = text_only_ov.load()
+    assert any(
+        text_px[x, y][3] > 0 for y in range(text_only_ov.height) for x in range(text_only_ov.width)
+    )
+
+    recorded_rects: list[tuple[int, int, int, int]] = []
+    orig_rr = ImageDraw.ImageDraw.rounded_rectangle
+
+    def record_rr(self: Any, xy: tuple[int, int, int, int], *args: Any, **kwargs: Any) -> Any:
+        recorded_rects.append(xy)
+        return orig_rr(self, xy, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "rounded_rectangle", record_rr)
+    pill_ov, _ = _caption_overlay(
+        width,
+        height,
+        "Hi",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(position=position),
+    )
+    assert len(recorded_rects) == 1
+    x0, y0, x1, y1 = recorded_rects[0]
+    assert 0 <= x0 <= x1 < width
+    assert 0 <= y0 <= y1 < pill_ov.height
 
 
 def test_fit_caption_layout_never_measures_same_size_twice(

@@ -70,6 +70,7 @@ _CAPTION_POSITIONS = frozenset(CAPTION_POSITIONS)
 MAX_FONT_SIZE = 1000
 _MIN_AUTO_FONT_SIZE = 12
 _MIN_FONT_SIZE = 1
+_MIN_EDGE_Y = 8
 _BOX_PAD_X = 10
 _BOX_PAD_Y = 6
 
@@ -640,6 +641,10 @@ def _draw_caption(
     )
 
 
+def _vertical_inset(height: int) -> int:
+    return min(_MIN_EDGE_Y, max(0, (height - 1) // 2))
+
+
 def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
     if style.position == "top":
         raw_y = style.margin
@@ -647,7 +652,8 @@ def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
         raw_y = (height - box_height) // 2
     else:
         raw_y = height - box_height - style.margin
-    return max(8, min(raw_y, max(8, height - box_height - 8)))
+    inset = min(_vertical_inset(height), max(0, (height - box_height) // 2))
+    return max(inset, min(raw_y, max(inset, height - box_height - inset)))
 
 
 def _measure_caption(
@@ -682,7 +688,8 @@ def _fit_caption_layout(
         font, wrapped, box = _measure_caption(
             width, height, text, draw, font_module, max(_MIN_AUTO_FONT_SIZE, round(height * 0.04))
         )
-    max_w, max_h = max(1, width - 2 * _BOX_PAD_X), max(1, height - 16)
+    inset_y = _vertical_inset(height)
+    max_w, max_h = max(1, width - 2 * _BOX_PAD_X), max(1, height - 2 * inset_y)
     if _fits_box(box, max_w, max_h):
         return font, wrapped, box
     hi = (explicit_size if explicit_size is not None else int(getattr(font, "size", 14))) - 1
