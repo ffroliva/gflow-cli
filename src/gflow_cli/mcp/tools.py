@@ -53,6 +53,7 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.auth_status_errors import auth_status_error
+from gflow_cli.mcp.envelope_status import outcome_of
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -326,20 +327,6 @@ KNOWN_MCP_CLIENTS = frozenset(
 def client_key(name: str | None) -> str:
     """Keep known MCP client names; group every other supplied name together."""
     return name if name in KNOWN_MCP_CLIENTS else "other"
-
-
-def outcome_of(result: dict[str, Any]) -> str:
-    """Return the stable telemetry outcome for an MCP result envelope."""
-    status = result.get("status")
-    if status == "pending":
-        return "queued"
-    if status in {"error", "failed", "rate_limited", "invalid_tools"}:
-        error = result.get("error")
-        code: Any = result.get("exit_code")
-        if code is None and isinstance(error, dict):
-            code = cast(dict[str, Any], error).get("exit_code")
-        return str(code) if code is not None else "error"
-    return "0"
 
 
 def _resolve_and_validate_profile(profile: str) -> str | dict[str, Any]:
@@ -2181,7 +2168,8 @@ async def gflow_usage_stats(weeks: int = 12) -> dict[str, Any]:
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
         "BEFORE a generation tool to fail fast on expired auth, before a long "
-        "blocking generation call. Never starts an interactive login flow. May boot a "
+        "blocking generation call. The result has isError true unless `status` is "
+        "`authenticated`. Never starts an interactive login flow. May boot a "
         "short-lived headless browser, which on flow.google.com is the usual path, and "
         "may take up to ~2 min on a slow network. Every session result also carries "
         "`wire: {status, build}`, the health of the direct (browser-free) credits read, "
