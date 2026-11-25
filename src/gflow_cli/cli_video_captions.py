@@ -106,20 +106,20 @@ def transcribe(
 )
 @click.option(
     "--margin",
-    type=int,
+    type=click.IntRange(min=0),
     default=28,
     show_default=True,
-    help="Edge distance in pixels for top/bottom placement.",
+    help="Edge distance in pixels for top/bottom placement (values 0-7 clamp to 8).",
 )
 @click.option(
     "--font-size",
-    type=int,
+    type=click.IntRange(min=1, max=1000),
     default=None,
-    help="Explicit caption font size in pixels (overrides auto-sizing).",
+    help="Explicit caption font size in pixels (1-1000; overrides auto-sizing).",
 )
 @click.option(
     "--box-opacity",
-    type=float,
+    type=click.FloatRange(min=0.0, max=1.0),
     default=None,
     help="Background pill opacity from 0.0 (none) to 1.0 (solid; default ~0.7).",
 )

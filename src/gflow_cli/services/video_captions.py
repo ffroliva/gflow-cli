@@ -66,6 +66,8 @@ class CaptionsResult:
 
 CaptionPosition = Literal["bottom", "top", "middle"]
 _CAPTION_POSITIONS = frozenset({"bottom", "top", "middle"})
+_MAX_FONT_SIZE = 1000
+_MIN_FIT_FONT_SIZE = 12
 
 
 @dataclass(frozen=True)
@@ -96,11 +98,16 @@ def _validate_caption_style(
             charged="no",
             remediation_hint="Pass --margin with a pixel value >= 0.",
         )
-    if font_size is not None and (isinstance(font_size, bool) or font_size <= 0):
+    if font_size is not None and (
+        isinstance(font_size, bool) or font_size <= 0 or font_size > _MAX_FONT_SIZE
+    ):
         raise ConfigurationError(
-            detail=f"Invalid caption font size {font_size!r}; expected a positive integer.",
+            detail=(
+                f"Invalid caption font size {font_size!r}; "
+                f"expected an integer between 1 and {_MAX_FONT_SIZE}."
+            ),
             charged="no",
-            remediation_hint="Pass --font-size with a positive pixel size.",
+            remediation_hint=f"Pass --font-size between 1 and {_MAX_FONT_SIZE}.",
         )
     if box_opacity is not None and (
         isinstance(box_opacity, bool)
@@ -587,14 +594,8 @@ def _render_video(
             if text:
                 burned += 1
                 if text not in overlays:
-                    overlays[text] = (
-                        _caption_overlay(
-                            frame.width, frame.height, text, draw_module, font_module, style
-                        )
-                        if style is not None and style != CaptionStyle()
-                        else _caption_overlay(
-                            frame.width, frame.height, text, draw_module, font_module
-                        )
+                    overlays[text] = _caption_overlay(
+                        frame.width, frame.height, text, draw_module, font_module, style
                     )
                 frame = _draw_caption(av, frame, text, draw_module, font_module, overlays[text])
             for packet in encoded.encode(frame):
@@ -638,6 +639,20 @@ def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
     return max(8, min(raw_y, max(8, height - box_height - 8)))
 
 
+def _measure_caption(
+    height: int,
+    width: int,
+    text: str,
+    draw: Any,
+    font_module: Any,
+    size: int | None,
+) -> tuple[Any, str, tuple[int, int, int, int]]:
+    font = _load_caption_font(height, font_module, size=size)
+    wrapped = "\n".join(_wrap_caption(text, font, draw, width * 0.9))
+    box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
+    return font, wrapped, box
+
+
 def _fit_caption_layout(
     width: int,
     height: int,
@@ -646,23 +661,29 @@ def _fit_caption_layout(
     font_module: Any,
     explicit_size: int | None,
 ) -> tuple[Any, str, tuple[int, int, int, int]]:
-    font = _load_caption_font(height, font_module, size=explicit_size)
-    current_size = explicit_size if explicit_size is not None else int(getattr(font, "size", 14))
-    lines = _wrap_caption(text, font, draw, width * 0.9)
-    if explicit_size is None and len(lines) > 3:
-        current_size = max(12, round(height * 0.04))
-        font = _load_caption_font(height, font_module, size=current_size)
-        lines = _wrap_caption(text, font, draw, width * 0.9)
-    wrapped = "\n".join(lines)
-    box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
-    max_box_h = max(1, height - 16)
-    while box[3] - box[1] > max_box_h and current_size > 12:
-        scaled = int(current_size * max_box_h / (box[3] - box[1]))
-        current_size = max(12, min(current_size - 1, scaled))
-        font = _load_caption_font(height, font_module, size=current_size)
-        wrapped = "\n".join(_wrap_caption(text, font, draw, width * 0.9))
-        box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
-    return font, wrapped, box
+    font, wrapped, box = _measure_caption(height, width, text, draw, font_module, explicit_size)
+    if explicit_size is None and len(wrapped.split("\n")) > 3:
+        font, wrapped, box = _measure_caption(
+            height, width, text, draw, font_module, max(_MIN_FIT_FONT_SIZE, round(height * 0.04))
+        )
+    max_w, max_h = max(1, width - 16), max(1, height - 16)
+    if (box[2] - box[0]) <= max_w and (box[3] - box[1]) <= max_h:
+        return font, wrapped, box
+    hi = (explicit_size if explicit_size is not None else int(getattr(font, "size", 14))) - 1
+    if hi < _MIN_FIT_FONT_SIZE:
+        return font, wrapped, box
+    lo = _MIN_FIT_FONT_SIZE
+    best = _measure_caption(height, width, text, draw, font_module, lo)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cand = _measure_caption(height, width, text, draw, font_module, mid)
+        cbox = cand[2]
+        if (cbox[2] - cbox[0]) <= max_w and (cbox[3] - cbox[1]) <= max_h:
+            best = cand
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
 
 
 def _caption_overlay(

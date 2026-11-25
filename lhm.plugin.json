@@ -1305,6 +1305,11 @@
           },
           "position": {
             "default": "bottom",
+            "enum": [
+              "bottom",
+              "top",
+              "middle"
+            ],
             "title": "Position",
             "type": "string"
           },

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.mcp import tools as common
@@ -81,7 +81,7 @@ async def gflow_video_captions(
     language: str | None = None,
     out_file: OutFileParam = None,
     profile: str | None = None,
-    position: str = "bottom",
+    position: Literal["bottom", "top", "middle"] = "bottom",
     margin: int = 28,
     font_size: int | None = None,
     box_opacity: float | None = None,

@@ -339,11 +339,14 @@ gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language COD
 first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
 burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. It
 chooses a system font with broad glyph coverage; CJK coverage depends on fonts installed
-on the machine. By default, captions sit in the bottom band (`--position bottom --margin 28`)
-with auto-sized text and a translucent dark pill (`~0.7` opacity); use `--position top|middle`,
-`--margin PX` (distance from the anchored edge for `top`/`bottom`), `--font-size PX` (disables
-3-line auto-shrink, shrinking only if the text block would exceed frame height), and
-`--box-opacity 0.0-1.0` (`0.0` removes the pill) to keep lower-thirds or on-screen content clear.
+on the machine. By default, captions sit near the bottom (`--position bottom --margin 28`)
+with auto-sized text and a translucent dark pill (`~0.7` opacity); long cues that
+previously overflowed the fixed 25% band now render in full without clipping. Use
+`--position top|middle`, `--margin PX` (distance in pixels from the anchored top/bottom
+edge to the text ink; values `0-7` clamp to `8 px`, and the background pill extends `6 px`
+beyond the text), `--font-size PX` (`1-1000`; disables 3-line auto-shrink, shrinking to the
+largest size fitting both frame width and height if needed), and `--box-opacity 0.0-1.0`
+(`0.0` removes the pill) to keep lower-thirds or on-screen content clear.
 
 Transcription sends only extracted 16 kHz mono WAV audio to the configured
 `GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional

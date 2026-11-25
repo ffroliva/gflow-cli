@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`gflow video captions` and `gflow_video_captions` support caption placement and styling ([#1432](https://github.com/ffroliva/gflow-cli/issues/1432)).** Added `--position bottom|top|middle` (default `bottom`), `--margin PX` (default `28`), `--font-size PX` (explicit pixel size, skipping auto-sizing), and `--box-opacity 0.0-1.0` (pill background opacity; `0.0` omits the pill, default keeps `~0.7` opacity). Defaults preserve existing output unchanged.
+- **`gflow video captions` and `gflow_video_captions` support caption placement and styling ([#1432](https://github.com/ffroliva/gflow-cli/issues/1432)).** Added `--position bottom|top|middle` (default `bottom`), `--margin PX` (default `28`, clamped to `>= 8 px` from the edge to the text ink), `--font-size PX` (`1-1000`, skipping 3-line auto-shrink and fitting within frame width and height), and `--box-opacity 0.0-1.0` (`0.0` omits the pill, default keeps `~0.7` opacity). Normal cues keep the same default layout, while long default-style cues that previously overflowed the fixed 25% band now render in full without clipping.
 
 ### Changed
 
