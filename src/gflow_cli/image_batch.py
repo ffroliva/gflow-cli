@@ -1536,6 +1536,8 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     for outcome in outcomes:
         if outcome.status == "ok":
             detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
+            if len(outcome.saved_paths) < outcome.prompt.count:  # #1489
+                detail += f" · {len(outcome.saved_paths)} of {outcome.prompt.count} images returned"
             status_str = "[green]OK[/green]"
         elif outcome.status == "resumed":
             detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)

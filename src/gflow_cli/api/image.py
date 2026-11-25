@@ -42,6 +42,7 @@ __all__ = [
     "ProjectBrief",
     "ThinkingLevel",
     "build_agent_brief_cards",
+    "images_missing_warning",
     "_build_batch_generate_images_body",
 ]
 
@@ -53,6 +54,13 @@ _WireList = list[object]
 _CLIENT_TOOL = "PINHOLE"
 _RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
 _IMAGE_INPUT_TYPE_REFERENCE = "IMAGE_INPUT_TYPE_REFERENCE"
+
+
+def images_missing_warning(requested: int, returned: int) -> list[dict[str, Any]]:
+    """#1489: the ``warnings`` entry for a reply with fewer images than requested, else ``[]``."""
+    if returned >= requested:
+        return []
+    return [{"type": "images_missing", "requested": requested, "returned": returned}]
 
 
 class Aspect(StrEnum):

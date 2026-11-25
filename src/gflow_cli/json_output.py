@@ -150,12 +150,14 @@ def image_result(
     images: list[GeneratedImage],
     saved_paths: list[Path],
     ref_count: int | None = None,
+    requested: int | None = None,
 ) -> dict[str, Any]:
     """Complete result for a single-prompt ``image t2i`` / ``image i2i`` run.
 
     Every field captured by :class:`gflow_cli.api.dto.GeneratedImage` is
     surfaced (nothing dropped); ``local_path`` is the on-disk PNG the CLI
     downloaded. ``ref_count`` is set only by i2i (None ⇒ key omitted).
+    ``requested`` adds ``warnings`` when Flow returned fewer images (#1489).
     """
     items: list[dict[str, Any]] = []
     for img, path in zip(images, saved_paths, strict=True):
@@ -184,6 +186,11 @@ def image_result(
     }
     if ref_count is not None:
         payload["ref_count"] = ref_count
+    if requested is not None:
+        from gflow_cli.api.image import images_missing_warning
+
+        if warnings := images_missing_warning(requested, len(items)):
+            payload["warnings"] = warnings
     return payload
 
 

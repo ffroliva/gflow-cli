@@ -80,6 +80,7 @@ def test_three_landscape_images_come_from_one_direct_post(
     assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
     files = sorted(p for p in tmp_path.iterdir() if p.name.startswith("wide"))
     assert len(files) == 3, files
+    assert "client.images_missing" not in proc.stdout + (proc.stderr or "")  # #1489
     assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in files)
     assert _image_transports(e2e_env) == ["direct_http"] * 3
 

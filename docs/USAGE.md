@@ -2438,7 +2438,14 @@ use. When set:
 - `image t2i/i2i` emits the complete `GeneratedImage` result (`media_name`,
   `workflow_id`, `seed`, `prompt`, `model_name_type`, `aspect_ratio`,
   `dimensions`, `fife_url`, `is_signed_url`) plus the on-disk `local_path`;
-  `ref_count` is included on `i2i`. Single-prompt only — `--json` rejects
+  `ref_count` is included on `i2i`. When Flow returns fewer images than `--count`,
+  the returned ones are saved, the exit code is 0, a `client.images_missing` warning
+  is logged on stderr, and the object carries
+  `"warnings": [{"type": "images_missing", "requested": 4, "returned": 3}]`
+  (no `warnings` key otherwise). A multi-prompt run marks the row
+  `3 of 4 images returned`. Runs that read the images off the page instead of
+  Flow's reply (Agent mode, an agent-only composer, a lost reply) fail when some
+  are missing. Single-prompt only — `--json` rejects
   multi-prompt batches with a Click usage error.
   **`model_name_type` is `null` when Flow served the account from
   `flow.google.com`** — that host's reply carries no model field, and gflow

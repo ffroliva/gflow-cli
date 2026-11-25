@@ -33,6 +33,7 @@ from gflow_cli.api.image import (
     GenerateImageRequest,
     ImageRef,
     ThinkingLevel,
+    images_missing_warning,
     recorded_in_project,
 )
 from gflow_cli.api.image import Aspect as ImageAspect
@@ -58,7 +59,7 @@ __all__ = [
     "build_video_request",
     "decode_payload",
     "encode_payload",
-    "retirement_warnings",
+    "task_warnings",
 ]
 
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})
@@ -246,24 +247,42 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
     )
 
 
-def retirement_warnings(task: QueueTask) -> dict[str, Any]:
-    """#1375: ``{"warnings": [...]}`` for a video task on a model Flow is retiring, else ``{}``.
+def task_warnings(task: QueueTask) -> dict[str, Any]:
+    """``{"warnings": [...]}`` for the MCP reply of ``task``, else ``{}``."""
+    warnings = [*_retirement_warnings(task), *_missing_image_warnings(task)]
+    return {"warnings": warnings} if warnings else {}
+
+
+def _missing_image_warnings(task: QueueTask) -> list[dict[str, Any]]:
+    """#1489: an image task whose checkpoint names fewer images than it asked for.
+
+    Counted from the checkpoint, not the saved files: those resolve through the catalog,
+    which falls back to one asset for an unlinked task.
+    """
+    requested = task.payload.get("count", 1)
+    media_ids = (task.checkpoint or {}).get("media_ids")
+    if task.task_type not in _IMAGE_TASK_TYPES or not isinstance(requested, int) or not media_ids:
+        return []
+    return images_missing_warning(requested, len(media_ids))
+
+
+def _retirement_warnings(task: QueueTask) -> list[dict[str, Any]]:
+    """#1375: the warning for a video task on a model Flow is retiring, else ``[]``.
 
     Read from the queued payload's ``model``, the value the worker generated with, so the MCP
     ``wait=true`` reply and ``tasks/get`` say the same thing.
     """
     alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
     if not isinstance(alias, str):  # absent, or a hand-edited row; the reply must still go out
-        return {}
+        return []
     try:
         model = VideoModel.from_cli(alias) if alias else None
     except ValueError:  # a row an older gflow queued; the reply must still go out
-        return {}
+        return []
     when = retires_on(model) if model else None
     if model is None or when is None:
-        return {}
-    warning = {"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}
-    return {"warnings": [warning]}
+        return []
+    return [{"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}]
 
 
 def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:

@@ -408,6 +408,35 @@ class TestImageJsonOutput:
         assert data["ref_count"] == 1
         assert data["images"][0]["media_name"] == "m1"
 
+    @pytest.mark.parametrize(
+        "args",
+        [["t2i", "a cat"], ["i2i", "a cat", "--ref", "11111111-1111-1111-1111-111111111111"]],
+    )
+    def test_json_warns_when_images_are_missing(
+        self, runner: CliRunner, tmp_path: Path, args: list[str]
+    ) -> None:
+        """#1489: one image for -n 2 exits 0 and says so."""
+        import json as _json
+
+        client = _make_t2i_client(images=[_make_generated_image(media_name="m1")])
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", return_value=client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            from gflow_cli.cli import main
+
+            result = runner.invoke(
+                main,
+                ["image", *args, "-n", "2", "--json", "--out", str(tmp_path / "out")],
+                catch_exceptions=False,
+            )
+
+        assert result.exit_code == 0, result.output
+        assert _json.loads(result.output)["warnings"] == [
+            {"type": "images_missing", "requested": 2, "returned": 1}
+        ]
+
 
 class TestImageI2I:
     def test_i2i_attaches_local_ref_paths(self, runner: CliRunner, tmp_path: Path) -> None:

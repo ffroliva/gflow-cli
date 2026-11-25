@@ -385,6 +385,8 @@ class TestGenerateImageWired:
         assert result["status"] == "completed"
         assert len(result["files"]) == 2
         assert len(set(result["files"])) == 2
+        # #1489: the reply says an image is missing.
+        assert result["warnings"] == [{"type": "images_missing", "requested": 3, "returned": 2}]
 
     def test_task_payload_falls_back_to_single_asset_without_operation_link(
         self, temp_db: DataStore, tmp_path: Path

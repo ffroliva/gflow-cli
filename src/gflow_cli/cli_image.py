@@ -1354,6 +1354,7 @@ async def _run_t2i(
                         model=req.model.value,
                         images=images,
                         saved_paths=saved_paths,
+                        requested=count,
                     ),
                 )
             else:
@@ -1917,6 +1918,7 @@ async def _run_i2i(
                         images=images,
                         saved_paths=saved_paths,
                         ref_count=n_refs,
+                        requested=count,
                     ),
                 )
             else:
