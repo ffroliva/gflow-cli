@@ -426,6 +426,7 @@ class VideoRecordingMixin(RecorderCore):
             None,
             None,
         ),
+        asset_id: str | None = None,
     ) -> None:
         """Insert a terminal video operation when on_started failed or was skipped.
 
@@ -457,9 +458,11 @@ class VideoRecordingMixin(RecorderCore):
                 expanded_prompt=expanded_prompt,
             ),
         )
-        asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
-        if asset_lookup is not None:
-            repo.link_operation_asset(op_id, asset_lookup.id, OperationAssetRole.OUTPUT, 0)
+        if asset_id is None:  # a caller that has not just written the asset row
+            asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+            asset_id = asset_lookup.id if asset_lookup is not None else None
+        if asset_id is not None:
+            repo.link_operation_asset(op_id, asset_id, OperationAssetRole.OUTPUT, 0)
         metadata = self._generation_metadata(request)
         if metadata:
             repo.set_operation_metadata(op_id, metadata)
@@ -473,11 +476,17 @@ class VideoRecordingMixin(RecorderCore):
         local_path: Path | None,
         cloud_storage_info: CloudStorageInfo | None,
         supersede_existing: bool = False,
+        asset_id: str | None = None,
     ) -> None:
-        """Upsert the local-file row for a downloaded (or cloud-stored) video."""
-        asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
-        if asset_lookup is None:
-            return
+        """Upsert the local-file row for a downloaded (or cloud-stored) video.
+
+        ``asset_id`` is the row the caller has just written; without it the row is read.
+        """
+        if asset_id is None:
+            asset_lookup = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
+            if asset_lookup is None:
+                return
+            asset_id = asset_lookup.id
         is_cloud = cloud_storage_info is not None
         media_type = (
             mimetypes.guess_type(local_path.name)[0] if local_path is not None else "video/mp4"
@@ -491,7 +500,7 @@ class VideoRecordingMixin(RecorderCore):
             LocalFileRecord(
                 id=_new_id(),
                 profile_name=profile_name,
-                asset_id=asset_lookup.id,
+                asset_id=asset_id,
                 path=resolved_path,
                 media_type=media_type,
                 bytes=file_bytes,
@@ -580,8 +589,8 @@ class VideoRecordingMixin(RecorderCore):
         request: _VideoRequest | None,
         model: str | None,
         aspect_ratio: str | None,
-    ) -> None:
-        """Upsert the completed video asset or update status for extend in-place."""
+    ) -> str:
+        """Upsert the completed video asset or update status for extend in-place; its id."""
         existing_asset = repo.get_asset_by_flow_media_id(profile_name, flow_media_id)
         # An edit Flow wrote in place is the source clip's row: its aspect, length and seed
         # stay as recorded (the edit request carries none of them); only the status moves.
@@ -594,7 +603,7 @@ class VideoRecordingMixin(RecorderCore):
                 result.status.status,
                 workflow_id=result.workflow_id,
             )
-            return
+            return existing_asset.id
 
         record = self._build_completed_video_asset(
             profile_name=profile_name,
@@ -606,6 +615,7 @@ class VideoRecordingMixin(RecorderCore):
             aspect_ratio=aspect_ratio,
         )
         repo.upsert_asset(record)
+        return record.id
 
     def _persist_completed_video_operation(
         self,
@@ -615,6 +625,7 @@ class VideoRecordingMixin(RecorderCore):
         flow_media_id: str,
         request: _VideoRequest,
         result: VideoResult,
+        asset_id: str,
     ) -> None:
         """Update the STARTED operation to terminal SUCCEEDED/FAILED, or insert fallback."""
         terminal = self._resolve_video_terminal_outcome(result.status)
@@ -641,6 +652,7 @@ class VideoRecordingMixin(RecorderCore):
             request=request,
             result=result,
             terminal=terminal,
+            asset_id=asset_id,
         )
 
     def record_completed_video(
@@ -658,7 +670,8 @@ class VideoRecordingMixin(RecorderCore):
         repo = self.repository
         flow_media_id = result.status.media_id
 
-        self._persist_completed_video_asset(
+        # One read of the asset row per completion: its id is passed down, not re-read.
+        asset_id = self._persist_completed_video_asset(
             repo=repo,
             profile_name=profile_name,
             flow_media_id=flow_media_id,
@@ -675,6 +688,7 @@ class VideoRecordingMixin(RecorderCore):
                 flow_media_id=flow_media_id,
                 request=request,
                 result=result,
+                asset_id=asset_id,
             )
 
         if result.local_path is not None or cloud_storage_info is not None:
@@ -686,6 +700,7 @@ class VideoRecordingMixin(RecorderCore):
                 local_path=result.local_path,
                 cloud_storage_info=cloud_storage_info,
                 supersede_existing=in_place_edit,
+                asset_id=asset_id,
             )
 
     def record_failed_operation(
