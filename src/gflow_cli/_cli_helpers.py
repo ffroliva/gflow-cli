@@ -636,6 +636,31 @@ def _warn_tool_skipped(title: str, *, quiet: bool) -> None:
     )
 
 
+def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
+    if value:
+        ctx.meta["no_max_credits"] = True
+
+
+#: ``--no-max-credits``: ignore ``GFLOW_CLI_MAX_CREDITS`` for one command.
+no_max_credits_option = click.option(
+    "--no-max-credits",
+    is_flag=True,
+    expose_value=False,
+    callback=_set_no_max_credits,
+    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
+)
+
+
+def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | None:
+    """``--max-credits``, else the configured cap unless ``--no-max-credits`` was given."""
+    from gflow_cli.api.credit_cap import resolve_max_credits as _resolve  # noqa: PLC0415
+
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.meta.get("no_max_credits"):
+        configured = None
+    return _resolve(cli_value, configured)
+
+
 def safe_path_text(path: Path) -> str:
     """Format a path for terminal display, avoiding absolute path leaks.
 

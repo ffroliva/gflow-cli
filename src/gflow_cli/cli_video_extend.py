@@ -92,8 +92,9 @@ def resolve_extend_project(
     project_name: str | None,
     profile_name: str,
     media_id: str | None,
+    command: str = "extend",
 ) -> str | None:
-    """The project an extend runs in, for the CLI and the MCP twin alike.
+    """The project an extend (or a video edit) runs in, for the CLI and the MCP twin alike.
 
     ``--project``; else, for a Flow media id, the project the catalog records for it;
     else :func:`default_project` (the ``GFLOW_CLI_PROJECT`` pin). ``None`` means a new
@@ -106,20 +107,22 @@ def resolve_extend_project(
     resolved = default_project(project_id, project_name, profile_name)
     if resolved is None and media_id is not None:
         msg = (
-            "--project is required: extend must know which project owns the source clip "
+            f"--project is required: {command} must know which project owns the source clip "
             "(it is not in the local catalog)"
         )
         raise ConfigurationError(msg)
     return resolved
 
 
-def refuse_unported_extend(refusal: Exception, is_json: bool, output_format: str) -> None:
+def refuse_unported_extend(
+    refusal: Exception, is_json: bool, output_format: str, cli_command: str = _EXTEND_COMMAND
+) -> None:
     async def _refuse() -> None:
         raise refusal
 
     run_with_handlers(
         _refuse,
-        cli_command=_EXTEND_COMMAND,
+        cli_command=cli_command,
         as_json=is_json,
         output_format=output_format,
     )

@@ -1,4 +1,4 @@
-"""Toolbar local video upload for ``flow.google.com`` (video extend).
+"""Toolbar local video upload for ``flow.google.com`` (video extend and video edit).
 
 The same toolbar ``+ -> upload`` chooser as an image upload (:func:`toolbar_upload`), fed
 the file's own path (so a clip of up to 1 GB is never loaded into memory), and observed for
@@ -9,7 +9,13 @@ this video" dialog is never accepted for the user.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import os
+import shutil
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -17,11 +23,14 @@ import structlog
 
 from gflow_cli.api.transports._mc_common import (
     UUID_RE,
+    _unique_display_name,  # pyright: ignore[reportPrivateUsage]
     toolbar_upload,
 )
 from gflow_cli.errors import MediaUploadRejectedError
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from playwright.async_api import Page
 
 log = structlog.get_logger(__name__)
@@ -39,8 +48,8 @@ def video_upload_timeout_s(size_bytes: int) -> float:
     return VIDEO_UPLOAD_BASE_S + size_bytes / VIDEO_UPLOAD_BYTES_PER_S
 
 
-def _parse_upload_reply(raw: str, *, project_id: str) -> str | None:
-    """The clip's media id (``batchexecute`` coordinates) from Flow's upload JSON.
+def _parse_upload_reply(raw: str, *, project_id: str) -> tuple[str, str] | None:
+    """``(media id, workflow id)`` (``batchexecute`` coordinates) from Flow's upload JSON.
 
     Measured live 2026-11-24: Flow's REST upload reply names the two UUIDs opposite to
     ``batchexecute`` (``Zzl0ze`` / ``fZytfe``): REST ``media.workflowId`` is ``Zzl0ze``
@@ -66,7 +75,7 @@ def _parse_upload_reply(raw: str, *, project_id: str) -> str | None:
         return None
     if not isinstance(rec0_workflow_id, str) or not UUID_RE.fullmatch(rec0_workflow_id):
         return None
-    return rec2_media_id
+    return rec2_media_id, rec0_workflow_id
 
 
 async def _read_video_reply(response: Any) -> tuple[int, str | None] | None:
@@ -87,11 +96,61 @@ async def _read_video_reply(response: Any) -> tuple[int, str | None] | None:
     return (status, raw) if raw.strip().startswith("{") else None
 
 
+@dataclass(frozen=True, slots=True)
+class UploadedVideo:
+    """A clip uploaded in this run: its ids and the name Flow lists it under."""
+
+    media_id: str
+    workflow_id: str
+    #: The ``@`` picker query for the clip: Flow lists an uploaded video by file stem.
+    query_name: str
+
+
 async def upload_video(page: Page, project_id: str, video_path: Path) -> str:
     """Upload a validated *video_path* into *project_id*; return the clip's media id."""
-    route = "flow:upload/video"
     # The real path: the clip is found again by the id its upload reply names, never by
     # a display name, so it needs no run-unique copy (a copy across drives costs 1 GB).
+    media_id, _ = await _upload(page, project_id, video_path)
+    return media_id
+
+
+@contextlib.asynccontextmanager
+async def _run_unique_name(video_path: Path) -> AsyncGenerator[Path]:
+    """*video_path* under a run-unique name, for a clip found again by name in the picker.
+
+    A hard link in a private folder next to the source costs nothing and stays on the same
+    volume; where the volume has no hard links, a copy there. If neither is possible (a
+    read-only folder, a full disk) the file is sent under its own name, with a warning: an
+    earlier upload of the same name then makes the picker ambiguous, which is refused.
+    """
+    tmp_dir: Path | None = None
+    send = video_path
+    try:  # one finally for the folder: an interrupted copy (Ctrl-C) leaves nothing behind
+        try:
+            tmp_dir = Path(tempfile.mkdtemp(prefix=".gflow-upload-", dir=video_path.parent))
+            target = tmp_dir / _unique_display_name(video_path)
+            try:
+                os.link(video_path, target)
+            except OSError:
+                await asyncio.to_thread(shutil.copyfile, video_path, target)
+            send = target
+        except OSError as exc:
+            log.warning("migrated.video_upload_plain_name", error=type(exc).__name__)
+        yield send
+    finally:
+        if tmp_dir is not None:
+            await asyncio.to_thread(shutil.rmtree, tmp_dir, True)
+
+
+async def upload_video_for_mention(page: Page, project_id: str, video_path: Path) -> UploadedVideo:
+    """Upload a validated *video_path* that the composer will ``@``-mention by name."""
+    async with _run_unique_name(video_path) as send:
+        media_id, workflow_id = await _upload(page, project_id, send)
+    return UploadedVideo(media_id=media_id, workflow_id=workflow_id, query_name=send.stem)
+
+
+async def _upload(page: Page, project_id: str, video_path: Path) -> tuple[str, str]:
+    route = "flow:upload/video"
     status, raw = await toolbar_upload(
         page,
         str(video_path),
@@ -114,12 +173,12 @@ async def upload_video(page: Page, project_id: str, video_path: Path) -> str:
             status=status,
             route=route,
         )
-    media_id = _parse_upload_reply(raw or "", project_id=project_id)
-    if media_id is None:
+    ids = _parse_upload_reply(raw or "", project_id=project_id)
+    if ids is None:
         raise MediaUploadRejectedError(
             detail="migrated host: Flow video upload answered 200 without mediaId/workflowId",
             status=status,
             route=route,
         )
-    log.info("migrated.video_uploaded", media_id=media_id, status=status)
-    return media_id
+    log.info("migrated.video_uploaded", media_id=ids[0], status=status)
+    return ids

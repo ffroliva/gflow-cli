@@ -30,11 +30,11 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
-    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest
     from gflow_cli.tools.invocation import AppliedTool
 
-    # Both generation requests carry the tool-provenance fields the recorder reads.
-    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
+    # All generation/edit requests carry the tool-provenance fields the recorder reads.
+    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest | EditVideoRequest
 
 
 def _new_id() -> str:
@@ -249,10 +249,15 @@ class RecorderCore:
         tool_meta = self._tool_metadata(request.tool)
         if tool_meta is not None:
             metadata["tool"] = tool_meta
-        if request.reference_entities:
-            metadata["entity_ids"] = list(request.reference_entities)
-        if request.reference_entity_names:
-            metadata["entity_names"] = list(request.reference_entity_names)
+        entity_ids = getattr(request, "reference_entities", ())
+        if entity_ids:
+            metadata["entity_ids"] = list(entity_ids)
+        entity_names = getattr(request, "reference_entity_names", ())
+        if entity_names:
+            metadata["entity_names"] = list(entity_names)
+        source_media_id = getattr(request, "source_media_id", None)
+        if source_media_id:
+            metadata["source_media_id"] = source_media_id
         # #913: a generation made from another image keeps that image's media id here
         # too, so the lineage survives even when the parent's asset row is missing (its
         # download failed, so there is no local file to record it with).

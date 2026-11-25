@@ -793,7 +793,7 @@ def _resolve_ref_local_path(
 # existing tile to select. Image task types DO surface generated media in the
 # reference picker, so their refs are enriched (not rewritten) and attached by
 # selecting the existing asset — see _enrich_image_refs.
-_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v", "extend"})
+_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v", "extend", "edit"})
 
 
 def _enrich_image_refs(

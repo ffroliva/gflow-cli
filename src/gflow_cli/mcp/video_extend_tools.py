@@ -88,6 +88,7 @@ def _resolve_extend_project(
     project_name: str | None,
     resolved_profile: str,
     source_frag: dict[str, str],
+    verb: str = "Extending",
 ) -> tuple[str | None, dict[str, Any] | None]:
     """The CLI's project resolution (:func:`resolve_extend_project`), as an envelope."""
     try:
@@ -102,7 +103,7 @@ def _resolve_extend_project(
     except ConfigurationError:
         return None, common._bad_param(  # pyright: ignore[reportPrivateUsage]
             "Missing Project",
-            "Extending an existing Flow media UUID requires 'project' "
+            f"{verb} an existing Flow media UUID requires 'project' "
             "(not found in the local catalog).",
         )
     return resolved, None

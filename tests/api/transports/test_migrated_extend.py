@@ -886,7 +886,7 @@ def test_upload_video_reply_normalizes_swapped_rest_uuids() -> None:
             "media": {"name": UPLOADED_WF, "workflowId": UPLOADED_MEDIA},
         }
     )
-    assert _parse_upload_reply(raw, project_id=PID) == UPLOADED_MEDIA
+    assert _parse_upload_reply(raw, project_id=PID) == (UPLOADED_MEDIA, UPLOADED_WF)
 
 
 @pytest.mark.asyncio

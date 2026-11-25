@@ -5,7 +5,7 @@ Extracted from cli_video.py to keep the module below file length and complexity 
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from gflow_cli import json_output
-from gflow_cli._cli_helpers import OutputFormat
+from gflow_cli._cli_helpers import OutputFormat, safe_path_text
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 
@@ -37,6 +37,7 @@ __all__ = [
     "_print_chain_plan",
     "_print_extend_plan",
     "_record_migrated_extend",
+    "_relocate_and_record_completed_video",
     "_report_migrated_extend",
 ]
 
@@ -45,44 +46,74 @@ _EXTEND_SEGMENT_SECONDS = 8
 _EXTEND_CONTENT_SECONDS = 7
 
 
-def _emit_video_result(
+def _relocate_and_record_completed_video(
+    recorder: OperationRecorder,
+    *,
+    profile_name: str,
+    profile_dir: Path,
+    request: Any,
+    result: VideoResult,
+    output_file: Path | None,
+    on_error: Callable[[DataStoreError, VideoResult], None],
+    cloud_info_fn: Callable[[Path], Any] | None = None,
+) -> VideoResult:
+    """Relocate ``result.local_path`` to ``output_file`` and persist the completed catalog row."""
+    from gflow_cli.paths import relocate_video_output
+    from gflow_cli.storage import cloud_info_from_path
+
+    resolve_cloud = cloud_info_fn or cloud_info_from_path
+    relocated = relocate_video_output(result, output_file)
+    try:
+        recorder.record_completed_video(
+            profile_name=profile_name,
+            _profile_dir=profile_dir,
+            request=request,
+            result=relocated,
+            cloud_storage_info=(
+                resolve_cloud(relocated.local_path) if relocated.local_path is not None else None
+            ),
+        )
+    except DataStoreError as exc:
+        on_error(exc, relocated)
+    return relocated
+
+
+def _emit_video_result(  # noqa: PLR0913
     command: str,
     request: Any,
     result: VideoResult,
     output_format: str,
     is_json: bool,
     console: Console,
+    *,
+    noun: str = "Video generation",
+    build: Callable[..., dict[str, Any]] = json_output.video_result,
 ) -> None:
-    """Emit video generation result according to format (id, json, or human table)."""
+    """Emit a one-clip video result according to format (id, json, or human table)."""
+    st = result.status
+    reasons = ", ".join(st.failure_reasons) or st.error_message or "unknown reason"
     if output_format == OutputFormat.ID.value:
-        if not result.status.succeeded:
-            reasons = (
-                ", ".join(result.status.failure_reasons)
-                or result.status.error_message
-                or "unknown reason"
-            )
-            Console(stderr=True).print(f"[red]Video generation failed:[/red] {escape(reasons)}")
+        if not st.succeeded:
+            Console(stderr=True).print(f"[red]{noun} failed:[/red] {escape(reasons)}")
             raise SystemExit(1)
-        if result.status.media_id:
-            click.echo(result.status.media_id)
+        if st.media_id:
+            click.echo(st.media_id)
         return
 
     if is_json or output_format == OutputFormat.JSON.value:
-        json_output.emit(json_output.video_result(command=command, request=request, result=result))
-        if not result.status.succeeded:
+        json_output.emit(build(command=command, request=request, result=result))
+        if not st.succeeded:
             raise SystemExit(1)
         return
 
-    if not result.status.succeeded:
-        reasons = (
-            ", ".join(result.status.failure_reasons)
-            or result.status.error_message
-            or "unknown reason"
-        )
-        console.print(f"[red]Video generation failed:[/red] {escape(reasons)}")
+    if not st.succeeded:
+        console.print(f"[red]{noun} failed:[/red] {escape(reasons)}")
         raise SystemExit(1)
 
-    console.print(f"[bold green]Saved:[/bold green] {result.local_path}")
+    local = result.local_path
+    # Escaped: a path may contain Rich markup such as "[red]".
+    saved = safe_path_text(local) if isinstance(local, Path) else str(local)
+    console.print(f"[bold green]Saved:[/bold green] {escape(saved)}")
 
 
 def _emit_chain_result(

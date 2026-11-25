@@ -18,12 +18,12 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage, ProjectInfo
     from gflow_cli.api.image import GenerateImageRequest
-    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest
     from gflow_cli.config import Settings
     from gflow_cli.errors import DataIntegrityError
 
-    # Both generation requests carry the tool-provenance fields the recorder reads.
-    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest
+    # All generation/edit requests carry the tool-provenance fields the recorder reads.
+    _ToolableRequest = GenerateImageRequest | GenerateVideoRequest | EditVideoRequest
 
 
 from gflow_cli.data._recorder_core import (

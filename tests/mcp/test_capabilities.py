@@ -46,6 +46,7 @@ COMMAND_CAPABILITY: dict[str, str | None] = {
     "video r2v": _VIDEO,
     "video generate": _VIDEO,  # bridge to t2v/i2v/r2v (#1193)
     "video chain": _VIDEO,
+    "video edit": _VIDEO,
     "video extend": _VIDEO,
     "video transcribe": None,
     "video captions": None,
