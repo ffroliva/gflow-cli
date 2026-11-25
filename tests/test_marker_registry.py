@@ -151,7 +151,8 @@ def _duration_without_omni_flash(source: str) -> list[int]:
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.List):
             args = {e.value for e in node.elts if isinstance(e, ast.Constant)}
-            if "--duration" in args and not args & _OMNI_ALIASES:
+            # `video extend --duration` sets the Extend popover's slider, for any model.
+            if "--duration" in args and "extend" not in args and not args & _OMNI_ALIASES:
                 bad.append(node.lineno)
     return bad
 
@@ -281,3 +282,12 @@ def test_hook_works_with_windows_paths() -> None:
     assert any("e2e" in c for c in calls), (
         f"Hook must add e2e marker for Windows path {path}; calls: {calls}"
     )
+
+
+def test_extend_duration_is_not_held_to_the_omni_flash_rule() -> None:
+    """`video extend --duration` drives the Extend popover's own slider, whatever the model."""
+    src = (
+        'a = ["video", "extend", "x.mp4", "p", "--duration", "5"]\n'
+        'b = ["video", "t2v", "p", "--duration", "5"]\n'
+    )
+    assert _duration_without_omni_flash(src) == [2]
