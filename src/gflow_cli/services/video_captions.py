@@ -638,6 +638,33 @@ def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
     return max(8, min(raw_y, max(8, height - box_height - 8)))
 
 
+def _fit_caption_layout(
+    width: int,
+    height: int,
+    text: str,
+    draw: Any,
+    font_module: Any,
+    explicit_size: int | None,
+) -> tuple[Any, str, tuple[int, int, int, int]]:
+    font = _load_caption_font(height, font_module, size=explicit_size)
+    current_size = explicit_size if explicit_size is not None else int(getattr(font, "size", 14))
+    lines = _wrap_caption(text, font, draw, width * 0.9)
+    if explicit_size is None and len(lines) > 3:
+        current_size = max(12, round(height * 0.04))
+        font = _load_caption_font(height, font_module, size=current_size)
+        lines = _wrap_caption(text, font, draw, width * 0.9)
+    wrapped = "\n".join(lines)
+    box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
+    max_box_h = max(1, height - 16)
+    while box[3] - box[1] > max_box_h and current_size > 12:
+        scaled = int(current_size * max_box_h / (box[3] - box[1]))
+        current_size = max(12, min(current_size - 1, scaled))
+        font = _load_caption_font(height, font_module, size=current_size)
+        wrapped = "\n".join(_wrap_caption(text, font, draw, width * 0.9))
+        box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
+    return font, wrapped, box
+
+
 def _caption_overlay(
     width: int,
     height: int,
@@ -647,16 +674,12 @@ def _caption_overlay(
     style: CaptionStyle | None = None,
 ) -> tuple[Any, int]:
     resolved = style or CaptionStyle()
-    font = _load_caption_font(height, font_module, size=resolved.font_size)
     from PIL import Image
 
     probe_draw = draw_module.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
-    lines = _wrap_caption(text, font, probe_draw, width * 0.9)
-    if resolved.font_size is None and len(lines) > 3:
-        font = _load_caption_font(height, font_module, size=max(12, round(height * 0.04)))
-        lines = _wrap_caption(text, font, probe_draw, width * 0.9)
-    wrapped = "\n".join(lines)
-    box = probe_draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
+    font, wrapped, box = _fit_caption_layout(
+        width, height, text, probe_draw, font_module, resolved.font_size
+    )
     box_w, box_h = box[2] - box[0], box[3] - box[1]
     frame_y = _caption_frame_y(height, box_h, resolved)
     strip_h = min(height, box_h + 24)

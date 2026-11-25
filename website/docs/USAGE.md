@@ -342,8 +342,8 @@ chooses a system font with broad glyph coverage; CJK coverage depends on fonts i
 on the machine. By default, captions sit in the bottom band (`--position bottom --margin 28`)
 with auto-sized text and a translucent dark pill (`~0.7` opacity); use `--position top|middle`,
 `--margin PX` (distance from the anchored edge for `top`/`bottom`), `--font-size PX` (disables
-auto-sizing), and `--box-opacity 0.0-1.0` (`0.0` removes the pill) to keep lower-thirds or
-on-screen content clear.
+3-line auto-shrink, shrinking only if the text block would exceed frame height), and
+`--box-opacity 0.0-1.0` (`0.0` removes the pill) to keep lower-thirds or on-screen content clear.
 
 Transcription sends only extracted 16 kHz mono WAV audio to the configured
 `GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional

@@ -1347,6 +1347,24 @@ def test_caption_overlay_box_opacity_controls_pill_alpha() -> None:
     assert solid_black
 
 
+def test_caption_overlay_shrinks_oversized_explicit_font_size_to_fit_frame() -> None:
+    from PIL import ImageDraw, ImageFont
+
+    from gflow_cli.services.video_captions import CaptionStyle, _caption_overlay
+
+    height = 180
+    overlay, top = _caption_overlay(
+        320,
+        height,
+        "Line one\nLine two\nLine three",
+        ImageDraw,
+        ImageFont,
+        style=CaptionStyle(font_size=200),
+    )
+    y_min, y_max = _ink_y_range(overlay, top)
+    assert y_min >= 8 and y_max <= height - 8
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -1359,9 +1377,14 @@ def test_caption_overlay_box_opacity_controls_pill_alpha() -> None:
     ],
 )
 def test_caption_video_rejects_invalid_style_before_io(
+    monkeypatch: pytest.MonkeyPatch,
     kwargs: dict[str, Any],
 ) -> None:
-    with pytest.raises(ConfigurationError) as caught:
+    def fail_resolve(*_args: Any, **_kwargs: Any) -> Path:
+        raise AssertionError("resolve_video_source must not be called for invalid style")
+
+    monkeypatch.setattr(service, "resolve_video_source", fail_resolve)
+    with pytest.raises(ConfigurationError, match="Invalid caption") as caught:
         caption_video("missing.mp4", **kwargs)
     assert caught.value.charged == "no"
 
