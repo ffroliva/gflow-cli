@@ -39,7 +39,7 @@ The Flow web UI is designed for interactive use. gflow-cli adds a terminal surfa
 - **`gflow instructions`** — persistent, credit-free brief cards that steer look and tone across generations.
 - **Asset reuse by UUID** — reference an already-generated still in a video without re-uploading it.
 - **`--ui-mode`** — fails fast, *before* spending credits, when Flow's UI cohort isn't what the command needs.
-- **`GFLOW_CLI_JITTER_RANGE`** — configurable pacing so batch runs stay within Flow's rate limits.
+- **`GFLOW_CLI_JITTER_RANGE`** — configurable pacing so batch runs pace their requests to reduce rate limiting.
 - **`movie.toml`** — direct a multi-scene sequence from one manifest.
 
 ## Requirements

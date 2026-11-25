@@ -32,7 +32,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 | **Image models** | Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4 |
 | **Works with** | Claude Code (plugin), Claude Desktop, Cursor, VS Code, Codex, any MCP client, shell scripts and CI |
 | **Cost** | Free and MIT-licensed. Video bills your own Flow credits; images spend no credits (they count against a daily image quota) |
-| **Maturity** | Releases are listed in the [changelog](https://github.com/ffroliva/gflow-cli/blob/develop/CHANGELOG.md); every release since v0.54.0 is live-verified against real Google Flow before it ships |
+| **Maturity** | Releases are listed in the [changelog](https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md); every release since v0.54.0 is live-verified against real Google Flow before it ships |
 
 ## What can gflow-cli do?
 
@@ -165,7 +165,7 @@ Compared from each project's own README on 2026-11-25. "—" means that README d
 | Video, image, start/end frames, references | Yes | Yes | Yes | Text- and image-to-video, text-to-image | Yes | Yes |
 | Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
 | Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
-| Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | Image 2K; video upscale not ported |
+| Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | Image 2K/4K export; video upscale not ported |
 | OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | Yes | — | — |
 | Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | Yes | — | — |
 | Spend lockout for agents (`--no-spend`) | Yes | — | — | — | — | — |
@@ -273,7 +273,7 @@ Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ff
 
 These keep the labs driver until they are ported: other UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
 
-**What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers. It also needs a reCAPTCHA token that the project cannot create in a headless browser. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
+**What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers. Billed video submits also need a reCAPTCHA token that the project cannot create in a headless browser. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
 
 **How you can help:** if you have driven `aisandbox-pa.googleapis.com` from outside a real Chrome session, or you understand Google's anti-bot stack here, please open an issue. A working REST transport would enable serverless deployments and true horizontal concurrency. Details: [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation).
 
