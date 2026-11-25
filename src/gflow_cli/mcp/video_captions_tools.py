@@ -4,18 +4,30 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any
+
+from pydantic import BeforeValidator, Field
 
 from gflow_cli.api.video import is_media_uuid
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.server import server
 from gflow_cli.services.video_captions import (
+    DEFAULT_CAPTION_STYLE,
+    MAX_FONT_SIZE,
+    CaptionPosition,
     caption_video,
     reject_explicit_out_file_under_cloud_storage,
     result_payload,
     transcribe_video,
 )
+
+
+def _normalize_caption_position(value: Any) -> Any:
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+CaptionPositionParam = Annotated[CaptionPosition, BeforeValidator(_normalize_caption_position)]
 
 
 def _profile(file: str, profile: str | None) -> str | None | dict[str, Any]:
@@ -81,10 +93,14 @@ async def gflow_video_captions(
     language: str | None = None,
     out_file: OutFileParam = None,
     profile: str | None = None,
-    position: Literal["bottom", "top", "middle"] = "bottom",
-    margin: int = 28,
-    font_size: int | None = None,
-    box_opacity: float | None = None,
+    position: CaptionPositionParam = DEFAULT_CAPTION_STYLE.position,
+    margin: Annotated[int, Field(ge=0)] = DEFAULT_CAPTION_STYLE.margin,
+    font_size: Annotated[int | None, Field(ge=1, le=MAX_FONT_SIZE)] = (
+        DEFAULT_CAPTION_STYLE.font_size
+    ),
+    box_opacity: Annotated[float | None, Field(ge=0.0, le=1.0)] = (
+        DEFAULT_CAPTION_STYLE.box_opacity
+    ),
 ) -> dict[str, Any]:
     """Burn SRT captions into FILE, optionally transcribing first."""
     resolved_profile = _profile(file, profile)

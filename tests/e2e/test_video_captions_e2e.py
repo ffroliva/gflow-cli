@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pytest
@@ -55,42 +56,39 @@ def _narration_clip(path: Path) -> None:
             output.mux(packet)
 
 
-def _assert_caption_pixels(source: Path, output: Path) -> None:
+def _assert_caption_pixels(
+    source: Path, output: Path, *, region: Literal["all", "top"] = "all"
+) -> None:
     av = pytest.importorskip("av")
     with av.open(str(source)) as original, av.open(str(output)) as rendered:
         fps = float(original.streams.video[0].average_rate or 10)
         source_frames = list(original.decode(video=0))
         output_frames = list(rendered.decode(video=0))
     assert len(source_frames) == len(output_frames)
-    caption_diffs: list[float] = []
-    plain_diffs: list[float] = []
+    primary_diffs: list[float] = []
+    other_diffs: list[float] = []
     for index, (before, after) in enumerate(zip(source_frames, output_frames, strict=True)):
-        diff = float(
-            np.mean(np.abs(before.to_ndarray().astype(float) - after.to_ndarray().astype(float)))
-        )
-        (caption_diffs if 0.2 <= index / fps <= 1.0 else plain_diffs).append(diff)
-    assert caption_diffs and max(caption_diffs) > 1
-    assert not plain_diffs or max(plain_diffs) < 2
-
-
-def _assert_top_caption_pixels(source: Path, output: Path) -> None:
-    av = pytest.importorskip("av")
-    with av.open(str(source)) as original, av.open(str(output)) as rendered:
-        fps = float(original.streams.video[0].average_rate or 10)
-        source_frames = list(original.decode(video=0))
-        output_frames = list(rendered.decode(video=0))
-    assert len(source_frames) == len(output_frames)
-    top_diffs: list[float] = []
-    bottom_diffs: list[float] = []
-    for index, (before, after) in enumerate(zip(source_frames, output_frames, strict=True)):
-        if 0.2 <= index / fps <= 1.0:
+        active = 0.2 <= index / fps <= 1.0
+        if region == "top":
+            if not active:
+                continue
             b_arr = before.to_ndarray(format="rgb24").astype(float)
             a_arr = after.to_ndarray(format="rgb24").astype(float)
             mid_y = b_arr.shape[0] // 2
-            top_diffs.append(float(np.mean(np.abs(b_arr[:mid_y] - a_arr[:mid_y]))))
-            bottom_diffs.append(float(np.mean(np.abs(b_arr[mid_y:] - a_arr[mid_y:]))))
-    assert top_diffs and max(top_diffs) > 1
-    assert bottom_diffs and max(bottom_diffs) < 2
+            primary_diffs.append(float(np.mean(np.abs(b_arr[:mid_y] - a_arr[:mid_y]))))
+            other_diffs.append(float(np.mean(np.abs(b_arr[mid_y:] - a_arr[mid_y:]))))
+        else:
+            diff = float(
+                np.mean(
+                    np.abs(
+                        before.to_ndarray(format="rgb24").astype(float)
+                        - after.to_ndarray(format="rgb24").astype(float)
+                    )
+                )
+            )
+            (primary_diffs if active else other_diffs).append(diff)
+    assert primary_diffs and max(primary_diffs) > 1
+    assert not other_diffs or max(other_diffs) < 2
 
 
 @dataclass(frozen=True)
@@ -243,7 +241,7 @@ def test_installed_cli_burns_styled_top_caption(
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["frames_burned"] > 0
-    _assert_top_caption_pixels(clip, output)
+    _assert_caption_pixels(clip, output, region="top")
 
 
 @pytest.mark.asyncio
@@ -268,7 +266,7 @@ async def test_mcp_tool_burns_styled_top_caption(
     reset_settings()
     assert result["status"] == "ok", result
     assert result["frames_burned"] > 0
-    _assert_top_caption_pixels(clip, Path(result["output_file"]))
+    _assert_caption_pixels(clip, Path(result["output_file"]), region="top")
 
 
 @pytest.mark.asyncio

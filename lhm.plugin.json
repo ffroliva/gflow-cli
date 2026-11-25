@@ -1315,12 +1315,15 @@
           },
           "margin": {
             "default": 28,
+            "minimum": 0,
             "title": "Margin",
             "type": "integer"
           },
           "font_size": {
             "anyOf": [
               {
+                "maximum": 1000,
+                "minimum": 1,
                 "type": "integer"
               },
               {
@@ -1333,6 +1336,8 @@
           "box_opacity": {
             "anyOf": [
               {
+                "maximum": 1.0,
+                "minimum": 0.0,
                 "type": "number"
               },
               {

@@ -12,7 +12,7 @@ import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, get_args
 
 import structlog
 
@@ -65,9 +65,13 @@ class CaptionsResult:
 
 
 CaptionPosition = Literal["bottom", "top", "middle"]
-_CAPTION_POSITIONS = frozenset({"bottom", "top", "middle"})
-_MAX_FONT_SIZE = 1000
-_MIN_FIT_FONT_SIZE = 12
+CAPTION_POSITIONS: tuple[CaptionPosition, ...] = get_args(CaptionPosition)
+_CAPTION_POSITIONS = frozenset(CAPTION_POSITIONS)
+MAX_FONT_SIZE = 1000
+_MIN_AUTO_FONT_SIZE = 12
+_MIN_FONT_SIZE = 1
+_BOX_PAD_X = 10
+_BOX_PAD_Y = 6
 
 
 @dataclass(frozen=True)
@@ -78,39 +82,46 @@ class CaptionStyle:
     box_opacity: float | None = None
 
 
+DEFAULT_CAPTION_STYLE = CaptionStyle()
+
+
 def _validate_caption_style(
     *,
-    position: str,
-    margin: int,
-    font_size: int | None,
-    box_opacity: float | None,
+    position: object,
+    margin: object,
+    font_size: object,
+    box_opacity: object,
 ) -> CaptionStyle:
-    normalized = position.strip().lower()
-    if normalized not in _CAPTION_POSITIONS:
+    normalized = position.strip().lower() if isinstance(position, str) else ""
+    if not isinstance(position, str) or normalized not in _CAPTION_POSITIONS:
         raise ConfigurationError(
             detail=f"Invalid caption position {position!r}; expected bottom, top, or middle.",
             charged="no",
             remediation_hint="Pass --position bottom, top, or middle.",
         )
-    if isinstance(margin, bool) or margin < 0:
+    if isinstance(margin, bool) or not isinstance(margin, int) or margin < 0:
         raise ConfigurationError(
             detail=f"Invalid caption margin {margin!r}; expected a non-negative integer.",
             charged="no",
             remediation_hint="Pass --margin with a pixel value >= 0.",
         )
     if font_size is not None and (
-        isinstance(font_size, bool) or font_size <= 0 or font_size > _MAX_FONT_SIZE
+        isinstance(font_size, bool)
+        or not isinstance(font_size, int)
+        or font_size <= 0
+        or font_size > MAX_FONT_SIZE
     ):
         raise ConfigurationError(
             detail=(
                 f"Invalid caption font size {font_size!r}; "
-                f"expected an integer between 1 and {_MAX_FONT_SIZE}."
+                f"expected an integer between 1 and {MAX_FONT_SIZE}."
             ),
             charged="no",
-            remediation_hint=f"Pass --font-size between 1 and {_MAX_FONT_SIZE}.",
+            remediation_hint=f"Pass --font-size between 1 and {MAX_FONT_SIZE}.",
         )
     if box_opacity is not None and (
         isinstance(box_opacity, bool)
+        or not isinstance(box_opacity, (int, float))
         or not math.isfinite(box_opacity)
         or not 0.0 <= box_opacity <= 1.0
     ):
@@ -122,10 +133,10 @@ def _validate_caption_style(
             remediation_hint="Pass --box-opacity between 0.0 and 1.0.",
         )
     return CaptionStyle(
-        position=cast("CaptionPosition", normalized),
+        position=normalized,
         margin=margin,
         font_size=font_size,
-        box_opacity=box_opacity,
+        box_opacity=float(box_opacity) if box_opacity is not None else None,
     )
 
 
@@ -468,10 +479,10 @@ def caption_video(
     language: str | None = None,
     profile: str | None = None,
     transcriber: Transcriber | None = None,
-    position: str = "bottom",
-    margin: int = 28,
-    font_size: int | None = None,
-    box_opacity: float | None = None,
+    position: str = DEFAULT_CAPTION_STYLE.position,
+    margin: int = DEFAULT_CAPTION_STYLE.margin,
+    font_size: int | None = DEFAULT_CAPTION_STYLE.font_size,
+    box_opacity: float | None = DEFAULT_CAPTION_STYLE.box_opacity,
 ) -> CaptionsResult:
     style = _validate_caption_style(
         position=position,
@@ -640,17 +651,22 @@ def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
 
 
 def _measure_caption(
-    height: int,
     width: int,
+    height: int,
     text: str,
     draw: Any,
     font_module: Any,
     size: int | None,
 ) -> tuple[Any, str, tuple[int, int, int, int]]:
     font = _load_caption_font(height, font_module, size=size)
-    wrapped = "\n".join(_wrap_caption(text, font, draw, width * 0.9))
+    wrap_w = min(width * 0.9, max(1, width - 2 * _BOX_PAD_X))
+    wrapped = "\n".join(_wrap_caption(text, font, draw, wrap_w))
     box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
     return font, wrapped, box
+
+
+def _fits_box(box: tuple[int, int, int, int], max_w: int, max_h: int) -> bool:
+    return (box[2] - box[0]) <= max_w and (box[3] - box[1]) <= max_h
 
 
 def _fit_caption_layout(
@@ -661,29 +677,34 @@ def _fit_caption_layout(
     font_module: Any,
     explicit_size: int | None,
 ) -> tuple[Any, str, tuple[int, int, int, int]]:
-    font, wrapped, box = _measure_caption(height, width, text, draw, font_module, explicit_size)
+    font, wrapped, box = _measure_caption(width, height, text, draw, font_module, explicit_size)
     if explicit_size is None and len(wrapped.split("\n")) > 3:
         font, wrapped, box = _measure_caption(
-            height, width, text, draw, font_module, max(_MIN_FIT_FONT_SIZE, round(height * 0.04))
+            width, height, text, draw, font_module, max(_MIN_AUTO_FONT_SIZE, round(height * 0.04))
         )
-    max_w, max_h = max(1, width - 16), max(1, height - 16)
-    if (box[2] - box[0]) <= max_w and (box[3] - box[1]) <= max_h:
+    max_w, max_h = max(1, width - 2 * _BOX_PAD_X), max(1, height - 16)
+    if _fits_box(box, max_w, max_h):
         return font, wrapped, box
     hi = (explicit_size if explicit_size is not None else int(getattr(font, "size", 14))) - 1
-    if hi < _MIN_FIT_FONT_SIZE:
+    if hi < _MIN_FONT_SIZE:
         return font, wrapped, box
-    lo = _MIN_FIT_FONT_SIZE
-    best = _measure_caption(height, width, text, draw, font_module, lo)
+    lo = _MIN_FONT_SIZE
+    best: tuple[Any, str, tuple[int, int, int, int]] | None = None
+    smallest: tuple[Any, str, tuple[int, int, int, int]] | None = None
     while lo <= hi:
         mid = (lo + hi) // 2
-        cand = _measure_caption(height, width, text, draw, font_module, mid)
-        cbox = cand[2]
-        if (cbox[2] - cbox[0]) <= max_w and (cbox[3] - cbox[1]) <= max_h:
+        cand = _measure_caption(width, height, text, draw, font_module, mid)
+        if mid == _MIN_FONT_SIZE:
+            smallest = cand
+        if _fits_box(cand[2], max_w, max_h):
             best = cand
             lo = mid + 1
         else:
             hi = mid - 1
-    return best
+    if best is not None:
+        return best
+    assert smallest is not None
+    return smallest
 
 
 def _caption_overlay(
@@ -694,7 +715,7 @@ def _caption_overlay(
     font_module: Any,
     style: CaptionStyle | None = None,
 ) -> tuple[Any, int]:
-    resolved = style or CaptionStyle()
+    resolved = style or DEFAULT_CAPTION_STYLE
     from PIL import Image
 
     probe_draw = draw_module.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
@@ -708,11 +729,15 @@ def _caption_overlay(
     local_y = frame_y - top
     overlay = Image.new("RGBA", (width, strip_h), (0, 0, 0, 0))
     draw = draw_module.Draw(overlay, "RGBA")
-    x = max(8, (width - box_w) // 2)
+    x = max(0, (width - box_w) // 2)
     alpha = 180 if resolved.box_opacity is None else round(resolved.box_opacity * 255)
     if alpha > 0:
+        pill_left = max(0, x - _BOX_PAD_X)
+        pill_top = max(0, local_y - _BOX_PAD_Y)
+        pill_right = max(pill_left, min(width - 1, x + box_w + _BOX_PAD_X))
+        pill_bottom = max(pill_top, min(strip_h - 1, local_y + box_h + _BOX_PAD_Y))
         draw.rounded_rectangle(
-            (x - 10, local_y - 6, x + box_w + 10, local_y + box_h + 6),
+            (pill_left, pill_top, pill_right, pill_bottom),
             8,
             fill=(0, 0, 0, alpha),
         )
