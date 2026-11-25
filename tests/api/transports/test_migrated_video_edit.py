@@ -474,7 +474,7 @@ class _ClipEditorPage(_Page):
         page = self
         if sel == edit_mod.CLIP_EDITOR_MENTION_CHIP:
             return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
-        if sel.endswith(edit_mod.PICKER_OPTION):
+        if sel == edit_mod.ASSET_BROWSER_OPTION:
             option = MagicMock(
                 is_visible=AsyncMock(return_value=True),
                 click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", page.chips + 1)),
@@ -590,6 +590,7 @@ async def test_an_upload_never_listed_times_out_naming_its_media_id(clock: _Cloc
         ("source-5e66c86f", "source-5e66c86fVideo"),
         ("ref-d56d9d65.png", "ref-d56d9d65Image"),
         ("ref-d56d9d65.png", "ref-d56d9d65.png Image"),
+        ("ref-d56d9d65.png", "ref-d56d9d65.pngImage"),  # the clip editor's asset browser
     ],
 )
 def test_an_option_names_the_upload_with_or_without_its_extension(query: str, option: str) -> None:
@@ -646,3 +647,120 @@ async def test_a_selected_model_the_trigger_does_not_confirm_is_refused(
     page = MagicMock(keyboard=MagicMock(press=AsyncMock()), wait_for_timeout=AsyncMock())
     with pytest.raises(UiSelectorDriftError, match="shows model"):
         await edit_mod._select_clip_editor_model(page, VideoModel.OMNI_1_2_FLASH)
+
+
+# --- the clip editor's asset browser (spike 2026-11-25) -----------------------------
+
+
+class _AssetBrowserPage:
+    """The clip editor's ``@``: Flow's asset browser, filtered by what was typed.
+
+    Items are ``flow-add-menu-asset-list button[role=option].asset-item`` with the text
+    ``<name>Image``; a click selects one, and the detail pane's add button attaches it.
+    """
+
+    def __init__(self, names: list[str], *, listed_from: int = 0) -> None:
+        self.names = names
+        self.listed_from = listed_from
+        self.polls = 0
+        self.typed = ""
+        self.selected: int | None = None
+        self.chips = 0
+        self.keyboard = MagicMock(type=AsyncMock(side_effect=self._typed), press=AsyncMock())
+
+    async def _typed(self, text: str, **_kw: Any) -> None:
+        if text == "@":
+            self.polls += 1
+            self.typed = ""
+        elif text.strip():
+            self.typed = text
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
+
+    async def evaluate(self, *_a: Any) -> None:
+        return None
+
+    def _listed(self) -> list[str]:
+        if self.polls < self.listed_from:
+            return []
+        return [f"{n}Image" for n in self.names if n.casefold().startswith(self.typed.casefold())]
+
+    def locator(self, sel: str) -> Any:
+        page = self
+        if sel == edit_mod.ASSET_BROWSER_OPTION:
+
+            def nth(i: int) -> Any:
+                return MagicMock(
+                    is_visible=AsyncMock(return_value=True),
+                    click=AsyncMock(side_effect=lambda **_k: setattr(page, "selected", i)),
+                )
+
+            return MagicMock(
+                all_text_contents=AsyncMock(side_effect=page._listed),
+                nth=MagicMock(side_effect=nth),
+            )
+        if sel == edit_mod.ASSET_BROWSER_ADD:
+
+            async def add(**_k: Any) -> None:
+                page.chips += page.selected is not None
+
+            button = MagicMock(
+                count=AsyncMock(return_value=1),
+                is_visible=AsyncMock(return_value=True),
+                is_disabled=AsyncMock(return_value=False),
+                click=AsyncMock(side_effect=add),
+            )
+            button.first = button
+            return button
+        if sel == "chip":
+            return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
+        loc = MagicMock(count=AsyncMock(return_value=0), click=AsyncMock())
+        loc.first = loc
+        return loc
+
+
+async def _attach_in_clip_editor(page: _AssetBrowserPage, query: str) -> None:
+    await edit_mod._attach_by_click(
+        page,  # type: ignore[arg-type]
+        composer_selector="box",
+        chip_selector="chip",
+        query=query,
+        media_id=_REF1,
+        expect_count=1,
+        what="reference image",
+        picker=edit_mod.CLIP_EDITOR_ASSET_BROWSER,
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_clip_editor_attaches_through_the_asset_browser(clock: _Clock) -> None:
+    page = _AssetBrowserPage(["ref-1cbf2bef.png", "ref-d56d9d65.png"])
+    await _attach_in_clip_editor(page, "ref-d56d9d65.png")
+    assert page.chips == 1
+    assert page.selected == 0  # the one item the typed name left in the list
+    assert page.typed == "ref-d56d9d65"  # the name without its extension filters the list
+
+
+@pytest.mark.asyncio
+async def test_the_asset_browser_is_polled_until_the_upload_is_listed(clock: _Clock) -> None:
+    page = _AssetBrowserPage(["ref-d56d9d65.png"], listed_from=4)
+    await _attach_in_clip_editor(page, "ref-d56d9d65.png")
+    assert page.chips == 1
+    assert page.polls == 4
+
+
+@pytest.mark.asyncio
+async def test_two_items_with_the_name_in_the_asset_browser_are_refused(clock: _Clock) -> None:
+    page = _AssetBrowserPage(["ref-d56d9d65.png", "ref-d56d9d65.jpg"])
+    with pytest.raises(ReferenceNotFoundError, match="lists 2 assets"):
+        await _attach_in_clip_editor(page, "ref-d56d9d65.png")
+    assert page.chips == 0
+
+
+@pytest.mark.asyncio
+async def test_an_asset_browser_timeout_lists_the_items_offered(clock: _Clock) -> None:
+    page = _AssetBrowserPage(["other-11112222.png"])
+    page.typed = ""
+    with pytest.raises(ReferenceNotFoundError, match="the picker offered"):
+        await _attach_in_clip_editor(page, "ref-d56d9d65.png")

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -359,7 +360,7 @@ async def _clear_editor_prompt(page: Page, selector: str) -> None:
 
 
 _EXTENSION = re.compile(r"\.[a-z0-9]{2,4}$", re.IGNORECASE)
-_EXTENSION_PREFIX = re.compile(r"\.[a-z0-9]{2,4}(?![0-9a-z_-])", re.IGNORECASE)
+_EXTENSION_PREFIX = re.compile(r"\.[a-z0-9]{2,4}(?=$|[^0-9a-z_-]|video|image)", re.IGNORECASE)
 
 
 def _bare_name(name: str) -> str:
@@ -393,8 +394,47 @@ def _names_option(query: str, text: str) -> bool:
     return False
 
 
-async def _try_commit_picker_option(
-    page: Page, *, query: str, chip_selector: str, expect_count: int, offered: list[str]
+@dataclass(frozen=True, slots=True)
+class _Picker:
+    """Where an ``@`` lists the project's assets, and how a listed one is added."""
+
+    option: str
+    add: str
+    #: Type the name without its extension (the asset browser filters on it).
+    bare_query: bool
+
+
+#: The main composer's ``@`` mention picker.
+COMPOSER_PICKER = _Picker(option=f"{OVERLAY} {PICKER_OPTION}", add=PICKER_CONFIRM, bare_query=False)
+#: The clip editor's ``@`` opens Flow's asset browser, not the mention picker
+#: (docs/superpowers/spikes/2026-11-25-clip-editor-references-asset-browser.md).
+ASSET_BROWSER_OPTION = "flow-add-menu-asset-list button[role='option'].asset-item"
+ASSET_BROWSER_ADD = "flow-add-menu-detail-pane button.detail-add-to-prompt-btn"
+CLIP_EDITOR_ASSET_BROWSER = _Picker(
+    option=ASSET_BROWSER_OPTION, add=ASSET_BROWSER_ADD, bare_query=True
+)
+#: How long a listed asset's add button may stay disabled before the attempt is retried.
+_ADD_ENABLED_BUDGET_S = 5.0
+
+
+async def _wait_enabled(button: Any) -> bool:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _ADD_ENABLED_BUDGET_S
+    while await button.is_disabled():
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(0.5)
+    return True
+
+
+async def _try_commit_picker_option(  # noqa: PLR0913
+    page: Page,
+    *,
+    query: str,
+    chip_selector: str,
+    expect_count: int,
+    offered: list[str],
+    picker: _Picker = COMPOSER_PICKER,
 ) -> tuple[bool, bool]:
     """Click the one picker option naming *query*: ``(committed, still_processing)``.
 
@@ -403,7 +443,7 @@ async def _try_commit_picker_option(
     is still disabled (Flow is still processing an upload). No Enter is pressed: in the
     edit prompt boxes Enter can submit the edit. Two options naming it are refused.
     """
-    options = page.locator(f"{OVERLAY} {PICKER_OPTION}")
+    options = page.locator(picker.option)
     texts = [" ".join(t.split()) for t in await options.all_text_contents()]
     offered[:] = texts
     hits = [i for i, text in enumerate(texts) if _names_option(query, text)]
@@ -423,9 +463,9 @@ async def _try_commit_picker_option(
     await page.wait_for_timeout(500)
     if await page.locator(chip_selector).count() >= expect_count:
         return True, False
-    confirm = page.locator(PICKER_CONFIRM).first
+    confirm = page.locator(picker.add).first
     if await confirm.count() and await confirm.is_visible():
-        if await confirm.is_disabled():
+        if not await _wait_enabled(confirm):
             return False, True
         await confirm.click(timeout=4000)
         await page.wait_for_timeout(700)
@@ -441,6 +481,7 @@ async def _attach_by_click(  # noqa: PLR0913
     media_id: str,
     expect_count: int,
     what: str,
+    picker: _Picker = COMPOSER_PICKER,
 ) -> None:
     """Attach an asset uploaded in this run via ``@<query>``, by clicking its option.
 
@@ -457,7 +498,8 @@ async def _attach_by_click(  # noqa: PLR0913
         await _caret_to_end(page, composer_selector)
         await page.keyboard.type("@", delay=100)
         await page.wait_for_timeout(1500)
-        await page.keyboard.type(query, delay=60)
+        typed = _EXTENSION.sub("", query.strip()) if picker.bare_query else query
+        await page.keyboard.type(typed, delay=60)
         await page.wait_for_timeout(2000)
         committed, still_processing = await _try_commit_picker_option(
             page,
@@ -465,6 +507,7 @@ async def _attach_by_click(  # noqa: PLR0913
             chip_selector=chip_selector,
             expect_count=expect_count,
             offered=offered,
+            picker=picker,
         )
         if committed:
             await page.keyboard.type(" ", delay=60)
@@ -689,7 +732,8 @@ async def _prepare_clip_editor_edit(
     model = request.model
     await _select_clip_editor_model(page, model)
     await _clear_editor_prompt(page, CLIP_EDITOR_PROMPT)
-    # By click, never Enter: in the edit prompt boxes Enter can submit the edit.
+    # By click in the asset browser the clip editor's @ opens, never by Enter (which can
+    # submit the edit there).
     for idx, (ref_id, name) in enumerate(refs, start=1):
         await _attach_by_click(
             page,
@@ -699,6 +743,7 @@ async def _prepare_clip_editor_edit(
             media_id=ref_id,
             expect_count=idx,
             what="reference image",
+            picker=CLIP_EDITOR_ASSET_BROWSER,
         )
     await _caret_to_end(page, CLIP_EDITOR_PROMPT)
     await page.keyboard.insert_text(request.prompt)
