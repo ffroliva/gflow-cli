@@ -247,6 +247,8 @@ def _check_aspect(
                 "Drop --aspect when editing an existing Flow media UUID, or pass a local video "
                 "file to change output aspect in the main composer."
             ),
+            retryable=False,
+            next_action="fix_input",
         )
     return WireFormatError(
         detail=(
@@ -384,38 +386,32 @@ async def _clear_editor_prompt(page: Page, selector: str) -> None:
 
 
 _EXTENSION = re.compile(r"\.[a-z0-9]{2,4}$", re.IGNORECASE)
-_EXTENSION_PREFIX = re.compile(r"\.[a-z0-9]{2,4}(?=$|[^0-9a-z_-]|video|image)", re.IGNORECASE)
 
 
 def _bare_name(name: str) -> str:
     """*name* compared case-insensitively, without a file extension."""
-    return _EXTENSION.sub("", name.strip()).casefold()
+    return _EXTENSION.sub("", " ".join(name.split())).casefold()
 
 
-#: What may follow the name in an option's word: nothing, a character that cannot continue
-#: the run-unique token, or a media-type label run on without a separator (live
-#: 2026-11-25: ``source-5e66c86fVideo``).
-_AFTER_NAME = re.compile(r"(?:(?:video|image)(?![0-9a-z_-])|(?![0-9a-z_-]))", re.IGNORECASE)
+#: After the run-unique tag (``-<8 hex>``) comes a translated media-type label or an
+#: extension, neither read: only a ninth hex digit would make it another upload's tag.
+_HEX = frozenset("0123456789abcdef")
 
 
 def _names_option(query: str, text: str) -> bool:
-    """Whether a picker option's visible *text* names *query*.
+    """Whether a picker option's visible *text* names the upload *query*.
 
-    True when a word of *text* starts with the name (casefolded, any file extension
-    stripped from *query* and skipped in the word) and what follows is accepted by
-    :data:`_AFTER_NAME`. The run-unique tag in *query* keeps one upload from naming
-    another, so ``source-5e66c86f0Video`` does not name ``source-5e66c86f``.
+    The text must start with the name through its run-unique tag (casefolded, any file
+    extension stripped from *query*, whitespace normalised so a space in a file name
+    survives), and the next character must not be a hex digit. Whatever follows, a
+    media-type label in any language (``Video``, ``Vídeo``, ``Imagem``) or an extension,
+    is ignored (AGENTS.md § Locale-Invariance). Live 2026-11-25: ``source-5e66c86fVideo``.
     """
     wanted = _bare_name(query)
-    for word in text.casefold().split():
-        if not word.startswith(wanted):
-            continue
-        rest = word[len(wanted) :]
-        if (ext := _EXTENSION_PREFIX.match(rest)) is not None:
-            rest = rest[ext.end() :]
-        if _AFTER_NAME.match(rest):
-            return True
-    return False
+    seen = " ".join(text.split()).casefold()
+    if not wanted or not seen.startswith(wanted):
+        return False
+    return seen[len(wanted) : len(wanted) + 1] not in _HEX
 
 
 #: How long a listed asset's add button may stay disabled before the attempt is retried.
@@ -447,7 +443,8 @@ async def _try_commit_picker_option(  # noqa: PLR0913
     is still disabled (Flow is still processing an upload). No Enter is pressed: in the
     edit prompt boxes Enter can submit the edit. Two options naming it are refused.
     """
-    options = page.locator(f"{OVERLAY} {PICKER_OPTION}")
+    # Visible only: a pane left by an earlier attempt can still be in the DOM.
+    options = page.locator(f"{OVERLAY} {PICKER_OPTION}:visible")
     texts = [" ".join(t.split()) for t in await options.all_text_contents()]
     offered[:] = texts
     hits = [i for i, text in enumerate(texts) if _names_option(query, text)]
@@ -515,6 +512,7 @@ async def _attach_by_click(  # noqa: PLR0913
             return
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
+        await _remove_typed_query(page, composer_selector, "@" + query)
         log.info(
             "migrated_video_edit.mention_retry",
             what=what,
@@ -644,6 +642,41 @@ async def _select_clip_editor_model(page: Page, model: VideoModel) -> None:
         )
 
 
+#: The prompt box's own text: everything but the attached chips.
+_PROMPT_TEXT_JS = r"""([sel, chips]) => {
+  const box = document.querySelector(sel);
+  if (!box) return null;
+  const copy = box.cloneNode(true);
+  copy.querySelectorAll(chips).forEach(n => n.remove());
+  return copy.textContent;
+}"""
+_CHIP_SELECTORS = f"{MENTION_CHIP}, button.chip-container"
+
+
+async def _prompt_text(page: Page, selector: str) -> str:
+    text = await page.evaluate(_PROMPT_TEXT_JS, [selector, _CHIP_SELECTORS])
+    return " ".join(str(text or "").split())
+
+
+async def _remove_typed_query(page: Page, selector: str, typed: str) -> None:
+    """Delete a missed ``@query`` the picker left as plain text at the end of the box."""
+    if (await _prompt_text(page, selector)).endswith(" ".join(typed.split())):
+        for _ in typed:
+            await page.keyboard.press("Backspace")
+
+
+async def _require_prompt(page: Page, selector: str, prompt: str) -> None:
+    """Refuse before the click unless the prompt box holds exactly *prompt* (chips aside)."""
+    held = await _prompt_text(page, selector)
+    if held != " ".join(prompt.split()):
+        raise UiSelectorDriftError(
+            detail=(
+                f"migrated host: the prompt box holds {held[:80]!r}, not the edit prompt "
+                "— refusing before submit (host=migrated)"
+            ),
+        )
+
+
 async def _require_chips(page: Page, *, selector: str, count: int, what: str) -> None:
     if await page.locator(selector).count() != count:
         raise ReferenceNotFoundError(
@@ -702,7 +735,9 @@ async def _prepare_local_edit(
             expect_count=idx,
             what="reference image",
         )
+    await _caret_to_end(page, MAIN_COMPOSER_SELECTOR)
     await composer.send_prompt(page, request.prompt, append=True)
+    await _require_prompt(page, MAIN_COMPOSER_SELECTOR, request.prompt)
     # Flow locks the duration to the attached clip: price the request as it will be sent.
     quoted = await _apply_main_edit_settings(
         composer, page, request, quote=request.max_credits is not None
@@ -732,6 +767,7 @@ async def _prepare_clip_editor_edit(
     await _clear_editor_prompt(page, CLIP_EDITOR_PROMPT)
     await _caret_to_end(page, CLIP_EDITOR_PROMPT)
     await page.keyboard.insert_text(request.prompt)
+    await _require_prompt(page, CLIP_EDITOR_PROMPT, request.prompt)
     # After the model is confirmed and the prompt typed, with every menu closed: the quote
     # prices the request as it will be sent.
     quoted = (

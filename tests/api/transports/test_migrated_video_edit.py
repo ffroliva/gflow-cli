@@ -29,6 +29,7 @@ _MID = "22222222-2222-2222-2222-222222222222"
 _WF = "33333333-3333-3333-3333-333333333333"
 _REF1 = "44444444-4444-4444-4444-444444444444"
 ORIGINAL_STABLE_QUOTE = edit_mod._stable_quote
+ORIGINAL_REQUIRE_PROMPT = edit_mod._require_prompt
 
 _MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
@@ -153,6 +154,7 @@ def composer(monkeypatch: pytest.MonkeyPatch, files: dict[str, Path]) -> MagicMo
     monkeypatch.setattr(edit_mod, "_anchor", AsyncMock())
     monkeypatch.setattr(edit_mod, "_select_clip_editor_model", AsyncMock())
     monkeypatch.setattr(edit_mod, "_stable_quote", AsyncMock(return_value=9))
+    monkeypatch.setattr(edit_mod, "_require_prompt", AsyncMock())
     return fake
 
 
@@ -449,6 +451,7 @@ class _PickerPage:
         self.listed_from = listed_from
         self.polls = 0
         self.chips = 0
+        self.hidden: list[str] = []
         self.keyboard = MagicMock(type=AsyncMock(side_effect=self._typed), press=AsyncMock())
 
     async def _typed(self, text: str, **_kw: Any) -> None:
@@ -463,16 +466,19 @@ class _PickerPage:
 
     def locator(self, sel: str) -> Any:
         page = self
-        if sel.endswith(edit_mod.PICKER_OPTION):
+        if edit_mod.PICKER_OPTION in sel:
             option = MagicMock(
                 is_visible=AsyncMock(return_value=True),
                 click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", 1)),
             )
+            visible_only = sel.endswith(":visible")
+
+            def texts() -> list[str]:
+                listed = page.names if page.polls >= page.listed_from else []
+                return listed if visible_only else [*page.hidden, *listed]
+
             return MagicMock(
-                all_text_contents=AsyncMock(
-                    side_effect=lambda: page.names if page.polls >= page.listed_from else []
-                ),
-                nth=MagicMock(return_value=option),
+                all_text_contents=AsyncMock(side_effect=texts), nth=MagicMock(return_value=option)
             )
         if sel == "chip":
             return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
@@ -516,7 +522,14 @@ async def test_an_upload_never_listed_times_out_naming_its_media_id(clock: _Cloc
         ("ref-215ca6ac.png", "ref-215ca6ac.png"),
         ("ref-215ca6ac.png", "ref-215ca6ac"),  # the option drops the extension
         ("source-11628e4b", "source-11628e4b.mp4"),  # the option adds one
-        ("source-11628e4b", "Video source-11628e4b 0:08"),  # other words around it
+        ("source-11628e4b", "source-11628e4b Video 0:08"),  # other words after it
+        # Portuguese labels (AGENTS.md locale-invariance): nothing after the tag is read.
+        ("source-5e66c86f", "source-5e66c86fVídeo"),
+        ("ref-d56d9d65.png", "ref-d56d9d65.pngImagem"),
+        ("ref-d56d9d65.png", "ref-d56d9d65Imagem"),
+        # A space in the user's file name survives into the run-unique display name.
+        ("Screen Recording-1a2b3c4d.mp4", "Screen Recording-1a2b3c4dVideo"),
+        ("Screen Recording-1a2b3c4d", "screen recording-1a2b3c4d.mp4 Vídeo"),
         ("Ref-215CA6AC.PNG", "ref-215ca6ac.png"),  # case-insensitive
         # Live 2026-11-25: the name and a media-type label run together in the option text.
         ("source-5e66c86f", "source-5e66c86fVideo"),
@@ -531,13 +544,13 @@ def test_an_option_names_the_upload_with_or_without_its_extension(query: str, op
 
 @pytest.mark.parametrize(
     "option",
-    ["ref-215ca6ac-2.png", "xref-215ca6ac.png", "ref-215ca6", "ref-215ca6ac0Image"],
+    ["xref-215ca6ac.png", "ref-215ca6", "ref-215ca6ac0Image", "ref-215ca6acfImagem"],
 )
 def test_an_option_naming_another_upload_does_not_match(option: str) -> None:
     assert not edit_mod._names_option("ref-215ca6ac.png", option)
 
 
-@pytest.mark.parametrize("option", ["source-5e66c86f0Video", "source-5e66c86fVideos"])
+@pytest.mark.parametrize("option", ["source-5e66c86f0Video", "source-5e66c86faVídeo"])
 def test_a_longer_token_before_the_label_does_not_match(option: str) -> None:
     assert not edit_mod._names_option("source-5e66c86f", option)
 
@@ -552,10 +565,10 @@ async def test_a_timeout_lists_what_the_picker_offered(clock: _Clock) -> None:
 
 @pytest.mark.asyncio
 async def test_the_picker_option_is_matched_as_a_whole_name(clock: _Clock) -> None:
-    # "clip" must not bind "clip-2" (another upload whose name it prefixes).
-    page = _PickerPage(["clip-2", "clips.mp4"], listed_from=0)
-    with pytest.raises(ReferenceNotFoundError):
-        await _attach(page, "clip")
+    # The match ends at the run-unique tag: a longer tag is another upload.
+    page = _PickerPage(["clip-1a2b3c4d5Video", "clip-1a2b3c4e.mp4"], listed_from=0)
+    with pytest.raises(ReferenceNotFoundError, match="did not attach"):
+        await _attach(page, "clip-1a2b3c4d")
     assert page.chips == 0
     # Two assets with exactly the name: ambiguous, refused rather than guessed.
     page = _PickerPage(["clip", "clip.mp4"], listed_from=0)
@@ -595,3 +608,71 @@ async def test_references_on_an_existing_clip_are_refused_before_anything(
     composer.upload.assert_not_called()
     composer.ensure_editor_for.assert_not_called()
     edit_mod._source_clip.assert_not_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_only_options_visible_in_the_open_pane_are_counted(clock: _Clock) -> None:
+    """A hidden pane left by an earlier attempt must not make the name look ambiguous."""
+    page = _PickerPage(["ref-d56d9d65.png"], listed_from=0)
+    page.hidden = ["ref-d56d9d65.png"]  # the same option, still in a detached pane
+    await _attach(page, "ref-d56d9d65.png")
+    assert page.chips == 1
+
+
+# --- the prompt box text, before the click (review 2026-11-25) ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_box_that_does_not_hold_the_prompt_is_refused(
+    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(edit_mod, "_require_prompt", ORIGINAL_REQUIRE_PROMPT)
+    monkeypatch.setattr(edit_mod, "_prompt_text", AsyncMock(return_value="@ref-d56 golden glow"))
+    with pytest.raises(UiSelectorDriftError, match="prompt box") as info:
+        await _run(EditVideoRequest(prompt="golden glow", source_video=files["clip"]))
+    assert info.value.charged == "no"
+    composer.submit_and_observe.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_box_is_checked_on_the_clip_editor_path_too(
+    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(edit_mod, "_require_prompt", ORIGINAL_REQUIRE_PROMPT)
+    monkeypatch.setattr(edit_mod, "_prompt_text", AsyncMock(return_value=""))
+    with pytest.raises(UiSelectorDriftError, match="prompt box"):
+        await _run(EditVideoRequest(prompt="add snow", source_media_id=_MID))
+    composer.submit_and_observe.assert_not_called()
+
+
+def test_an_aspect_the_clip_does_not_have_is_not_retryable() -> None:
+    err = edit_mod.edit_request_problem(
+        "jIps6",
+        _entry_body([], aspect=2),
+        workflow_id=_WF,
+        expected_aspect=Aspect.PORTRAIT,
+        clip_editor=True,
+    )
+    assert isinstance(err, FlowHostMigratedError)
+    assert err.retryable is False
+    assert err.next_action != "retry"
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_box_holding_the_prompt_passes() -> None:
+    page = MagicMock(evaluate=AsyncMock(return_value="  golden\n glow "))
+    await ORIGINAL_REQUIRE_PROMPT(page, "box", "golden glow")
+
+
+@pytest.mark.asyncio
+async def test_a_missed_query_left_as_text_is_removed(clock: _Clock) -> None:
+    page = MagicMock(
+        evaluate=AsyncMock(return_value="keep this @ref-d56d9d65.png"),
+        keyboard=MagicMock(press=AsyncMock()),
+    )
+    await edit_mod._remove_typed_query(page, "box", "@ref-d56d9d65.png")
+    assert page.keyboard.press.await_count == len("@ref-d56d9d65.png")
+    page.keyboard.press.reset_mock()
+    page.evaluate = AsyncMock(return_value="nothing typed")
+    await edit_mod._remove_typed_query(page, "box", "@ref-d56d9d65.png")
+    page.keyboard.press.assert_not_called()

@@ -125,17 +125,17 @@ async def _run_unique_name(video_path: Path) -> AsyncGenerator[Path]:
     """
     tmp_dir: Path | None = None
     send = video_path
-    try:
-        tmp_dir = Path(tempfile.mkdtemp(prefix=".gflow-upload-", dir=video_path.parent))
-        target = tmp_dir / _unique_display_name(video_path)
+    try:  # one finally for the folder: an interrupted copy (Ctrl-C) leaves nothing behind
         try:
-            os.link(video_path, target)
-        except OSError:
-            await asyncio.to_thread(shutil.copyfile, video_path, target)
-        send = target
-    except OSError as exc:
-        log.warning("migrated.video_upload_plain_name", error=type(exc).__name__)
-    try:
+            tmp_dir = Path(tempfile.mkdtemp(prefix=".gflow-upload-", dir=video_path.parent))
+            target = tmp_dir / _unique_display_name(video_path)
+            try:
+                os.link(video_path, target)
+            except OSError:
+                await asyncio.to_thread(shutil.copyfile, video_path, target)
+            send = target
+        except OSError as exc:
+            log.warning("migrated.video_upload_plain_name", error=type(exc).__name__)
         yield send
     finally:
         if tmp_dir is not None:

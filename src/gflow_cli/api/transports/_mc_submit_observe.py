@@ -60,6 +60,7 @@ from gflow_cli.api.transports.batchexecute import (
 )
 from gflow_cli.api.video import VideoStarted
 from gflow_cli.errors import (
+    FlowHostMigratedError,
     GFlowError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -96,7 +97,11 @@ async def _aborted_by_check(
     await route.abort()
     log.warning("migrated.request_refused_before_send", rpc=rpcid)
     if not route_error.done():
-        verdict.charged, verdict.next_action, verdict.retryable = "no", "retry", True
+        verdict.charged = "no"
+        # A host refusal (exit 36: e.g. an aspect the source clip does not have) is not
+        # changed by a re-run; every other refused request is retried as before.
+        if not isinstance(verdict, FlowHostMigratedError):
+            verdict.next_action, verdict.retryable = "retry", True
         route_error.set_result(verdict)
     return True
 
