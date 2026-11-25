@@ -43,17 +43,21 @@ add-media controls, and every `batchexecute` rpcid. The capture stays in
 
 ## Verdict
 
-The clip editor takes image references through the asset browser that its `@` opens, not
-through the composer's mention picker. The uploaded image was listed, so the upload and the
-ingest wait were not at fault: the attach looked for options in the wrong widget, and typed
-the full name with its extension, which the browser's filter is not shown to accept. The
-pre-registered reading "images are listed under `@`" applies.
+The mechanism was observed: the clip editor's `@` opens Flow's asset browser, which lists the
+project's images, filters them by what is typed, and attaches the selected one with the
+detail pane's add button. The pre-registered reading "images are listed under `@`" applies to
+an image uploaded in an earlier session.
 
-The clip-editor path now types `@` plus the name without its extension, waits within the
-ingest budget for exactly one `flow-add-menu-asset-list button[role=option].asset-item`
-naming the upload (the name, optionally followed by a media-type label), clicks it, clicks
-`flow-add-menu-detail-pane button.detail-add-to-prompt-btn` once it is enabled, and verifies
-the chip in the prompt box. Zero matches keep waiting; two are refused.
+A follow-up run (`--upload-fresh`) did not observe an image uploaded in the same page session
+in that list: the end-to-end attach of a fresh upload timed out with nothing offered, and the
+hardened spike's last run could not reach the clip editor at all (the prompt box never
+rendered, even after a reload). Whether the browser lists a fresh upload is unmeasured.
+
+Decision: editing an existing clip with reference images is refused before any upload,
+project or browser (exit 11, `charged: no`) on the CLI, the MCP tool and the worker, until
+the fresh-upload listing is measured. The remediation is to download the clip
+(`gflow data download MEDIA_ID --out DIR`) and edit the local file with `--ref`, which runs
+in the main composer. The clip-editor reference-attach code was removed.
 
 ## Not measured
 
@@ -61,5 +65,6 @@ the chip in the prompt box. Zero matches keep waiting; two are refused.
   run-unique file name, but only one locale was observed.
 - What the `add` button in `flow-add-menu` opens.
 - Whether the detail pane's add button is ever disabled for a freshly processed image.
-- Whether the browser's filter accepts the full name with its extension.
+- Whether the browser's filter accepts the full name, with or without its extension.
+- Whether the browser lists an image uploaded in the same page session.
 - A second run, a second profile, and the main composer's `@` (not probed here).

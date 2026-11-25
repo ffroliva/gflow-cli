@@ -321,3 +321,77 @@ def test_an_edit_payload_without_a_model_decodes_to_the_default() -> None:
     decoded = codec.decode_payload("edit", {"prompt": "go", "source_video": "clip.mp4"})
     assert isinstance(decoded.request, EditVideoRequest)
     assert decoded.request.model is EDIT_DEFAULT_MODEL
+
+
+@pytest.mark.asyncio
+async def test_mcp_refuses_references_on_an_existing_clip_before_the_queue(
+    tmp_path: Path,
+) -> None:
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(_PNG_BYTES)
+    run_mock = AsyncMock()
+    with patch.object(common, "_run_generation_task", run_mock):
+        res = await edit_tools.gflow_edit_video(
+            source=_MID, prompt="add snow", project=_PID, reference_images=[str(ref)]
+        )
+    assert res["status"] == "error"
+    assert res["error"]["type"] == "https://gflow-cli.dev/errors/configuration"  # exit 11
+    assert res["error"]["charged"] == "no"
+    assert "not ported" in res["error"]["detail"]
+    run_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_worker_refuses_references_on_an_existing_clip_before_a_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "gflow.db"
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(_PNG_BYTES)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "home"))
+    reset_settings()
+    opened: list[str] = []
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            opened.append("client")
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+    try:
+        with DataStore.open(db_path) as store:
+            DataRepository(store).upsert_profile("p1", tmp_path / "home" / "profile_p1")
+            QueueRepository(store).enqueue_task(
+                task_id="edit-refs",
+                profile_name="p1",
+                task_type="edit",
+                payload={
+                    "schema_version": 1,
+                    "prompt": "snow",
+                    "source_media_id": _MID,
+                    "project_id": _PID,
+                    "reference_images": [str(ref)],
+                },
+            )
+        worker = FlowWorker("p1", str(db_path))
+        try:
+            task = worker.repo.claim_task("edit-refs", "worker:test")
+            assert task is not None
+            with patch("gflow_cli.worker.daemon.FlowApiClient", _Client):
+                await worker.process_task(task)
+            done = worker.repo.get_task("edit-refs")
+            assert done is not None
+            assert done.status == "failed"
+            assert done.error is not None
+            assert done.error["exit_code"] == 11
+            assert done.error["charged"] == "no"
+            assert opened == []  # no browser, no project
+        finally:
+            worker.close()
+    finally:
+        reset_settings()

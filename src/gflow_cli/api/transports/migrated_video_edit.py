@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -68,9 +67,6 @@ from gflow_cli.api.transports.migrated_extend import (
     validate_upload_files,
 )
 from gflow_cli.api.transports.migrated_extend import (
-    EXTEND_MENTION_CHIP as CLIP_EDITOR_MENTION_CHIP,
-)
-from gflow_cli.api.transports.migrated_extend import (
     EXTEND_PROMPT as CLIP_EDITOR_PROMPT,
 )
 from gflow_cli.api.transports.migrated_extend import (
@@ -96,6 +92,7 @@ from gflow_cli.errors import (
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from playwright.async_api import Page
 
@@ -136,12 +133,39 @@ _CAP_ROUTE = "flow.google.com video edit"
 # --- input validation ----------------------------------------------------------
 
 
+def refuse_references_on_existing_clip(
+    source_media_id: str | None, reference_images: tuple[Path, ...] | list[str]
+) -> None:
+    """Exit 11 (charged ``no``) for reference images with a clip already in the project.
+
+    The clip editor's ``@`` opens an asset browser whose listing of a fresh upload is not
+    measured yet (docs/superpowers/spikes/2026-11-25-clip-editor-references-asset-browser.md),
+    so this combination is refused before any upload, project or browser.
+    """
+    if source_media_id is None or not reference_images:
+        return
+    raise ConfigurationError(
+        detail=(
+            "reference images are not ported to editing an existing clip yet: "
+            f"media {source_media_id} would be edited in Flow's clip editor, where gflow "
+            "cannot attach a reference yet"
+        ),
+        remediation_hint=(
+            f"Download the clip first (`gflow data download {source_media_id} --out DIR`), "
+            "then pass the downloaded file as SOURCE with your --ref images. Nothing was "
+            "uploaded or charged."
+        ),
+    )
+
+
 async def validate_edit_inputs(request: EditVideoRequest) -> None:
     """Refuse (nothing charged) an edit Flow must not be sent, before any project exists.
 
     Exit 36 for an option the clip editor does not offer, exit 11 for a local file that
-    cannot be uploaded. Called at each edge (CLI, worker) and again at the client entry.
+    cannot be uploaded or for references with an existing clip. Called at each edge (CLI,
+    worker) and again at the client entry.
     """
+    refuse_references_on_existing_clip(request.source_media_id, request.reference_images)
     if request.source_media_id is not None and request.resolution == "360p":
         raise FlowHostMigratedError(
             detail=(
@@ -394,25 +418,6 @@ def _names_option(query: str, text: str) -> bool:
     return False
 
 
-@dataclass(frozen=True, slots=True)
-class _Picker:
-    """Where an ``@`` lists the project's assets, and how a listed one is added."""
-
-    option: str
-    add: str
-    #: Type the name without its extension (the asset browser filters on it).
-    bare_query: bool
-
-
-#: The main composer's ``@`` mention picker.
-COMPOSER_PICKER = _Picker(option=f"{OVERLAY} {PICKER_OPTION}", add=PICKER_CONFIRM, bare_query=False)
-#: The clip editor's ``@`` opens Flow's asset browser, not the mention picker
-#: (docs/superpowers/spikes/2026-11-25-clip-editor-references-asset-browser.md).
-ASSET_BROWSER_OPTION = "flow-add-menu-asset-list button[role='option'].asset-item"
-ASSET_BROWSER_ADD = "flow-add-menu-detail-pane button.detail-add-to-prompt-btn"
-CLIP_EDITOR_ASSET_BROWSER = _Picker(
-    option=ASSET_BROWSER_OPTION, add=ASSET_BROWSER_ADD, bare_query=True
-)
 #: How long a listed asset's add button may stay disabled before the attempt is retried.
 _ADD_ENABLED_BUDGET_S = 5.0
 
@@ -434,7 +439,6 @@ async def _try_commit_picker_option(  # noqa: PLR0913
     chip_selector: str,
     expect_count: int,
     offered: list[str],
-    picker: _Picker = COMPOSER_PICKER,
 ) -> tuple[bool, bool]:
     """Click the one picker option naming *query*: ``(committed, still_processing)``.
 
@@ -443,7 +447,7 @@ async def _try_commit_picker_option(  # noqa: PLR0913
     is still disabled (Flow is still processing an upload). No Enter is pressed: in the
     edit prompt boxes Enter can submit the edit. Two options naming it are refused.
     """
-    options = page.locator(picker.option)
+    options = page.locator(f"{OVERLAY} {PICKER_OPTION}")
     texts = [" ".join(t.split()) for t in await options.all_text_contents()]
     offered[:] = texts
     hits = [i for i, text in enumerate(texts) if _names_option(query, text)]
@@ -463,7 +467,7 @@ async def _try_commit_picker_option(  # noqa: PLR0913
     await page.wait_for_timeout(500)
     if await page.locator(chip_selector).count() >= expect_count:
         return True, False
-    confirm = page.locator(picker.add).first
+    confirm = page.locator(PICKER_CONFIRM).first
     if await confirm.count() and await confirm.is_visible():
         if not await _wait_enabled(confirm):
             return False, True
@@ -481,7 +485,6 @@ async def _attach_by_click(  # noqa: PLR0913
     media_id: str,
     expect_count: int,
     what: str,
-    picker: _Picker = COMPOSER_PICKER,
 ) -> None:
     """Attach an asset uploaded in this run via ``@<query>``, by clicking its option.
 
@@ -498,8 +501,7 @@ async def _attach_by_click(  # noqa: PLR0913
         await _caret_to_end(page, composer_selector)
         await page.keyboard.type("@", delay=100)
         await page.wait_for_timeout(1500)
-        typed = _EXTENSION.sub("", query.strip()) if picker.bare_query else query
-        await page.keyboard.type(typed, delay=60)
+        await page.keyboard.type(query, delay=60)
         await page.wait_for_timeout(2000)
         committed, still_processing = await _try_commit_picker_option(
             page,
@@ -507,7 +509,6 @@ async def _attach_by_click(  # noqa: PLR0913
             chip_selector=chip_selector,
             expect_count=expect_count,
             offered=offered,
-            picker=picker,
         )
         if committed:
             await page.keyboard.type(" ", delay=60)
@@ -719,10 +720,7 @@ async def _prepare_clip_editor_edit(
 ) -> _Prepared:
     media_id = request.source_media_id
     assert media_id is not None
-    refs: list[tuple[str, str]] = []
-    if request.reference_images:
-        await _require_classic_composer(composer, page, project_id)
-        refs = [await composer.upload(page, project_id, ref) for ref in request.reference_images]
+    # References are refused upstream (refuse_references_on_existing_clip).
     clip = await _source_clip(page, project_id=project_id, media_id=media_id)
     workflow_id = require_video_source(
         clip, media_id=media_id, project_id=project_id, action="video edit needs a video source"
@@ -732,33 +730,17 @@ async def _prepare_clip_editor_edit(
     model = request.model
     await _select_clip_editor_model(page, model)
     await _clear_editor_prompt(page, CLIP_EDITOR_PROMPT)
-    # By click in the asset browser the clip editor's @ opens, never by Enter (which can
-    # submit the edit there).
-    for idx, (ref_id, name) in enumerate(refs, start=1):
-        await _attach_by_click(
-            page,
-            composer_selector=CLIP_EDITOR_PROMPT,
-            chip_selector=CLIP_EDITOR_MENTION_CHIP,
-            query=name,
-            media_id=ref_id,
-            expect_count=idx,
-            what="reference image",
-            picker=CLIP_EDITOR_ASSET_BROWSER,
-        )
     await _caret_to_end(page, CLIP_EDITOR_PROMPT)
     await page.keyboard.insert_text(request.prompt)
-    # After the model is confirmed, the references attached and the prompt typed, with
-    # every menu closed: the quote prices the request as it will be sent.
+    # After the model is confirmed and the prompt typed, with every menu closed: the quote
+    # prices the request as it will be sent.
     quoted = (
         await _stable_quote(lambda: _read_label(page, CLIP_EDITOR_CREDIT_LABEL))
         if request.max_credits is not None
         else None
     )
     quoted = enforce_credit_cap(quoted=quoted, max_credits=request.max_credits, route=_CAP_ROUTE)
-    await _require_chips(
-        page, selector=CLIP_EDITOR_MENTION_CHIP, count=len(refs), what="reference image"
-    )
-    return workflow_id, tuple(ref_id for ref_id, _ in refs), quoted
+    return workflow_id, (), quoted
 
 
 # --- submit -----------------------------------------------------------------
@@ -896,5 +878,6 @@ __all__ = [
     "batch_edit_request_problem",
     "edit_request_problem",
     "run_video_edit",
+    "refuse_references_on_existing_clip",
     "validate_edit_inputs",
 ]

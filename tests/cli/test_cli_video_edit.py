@@ -249,3 +249,20 @@ def test_an_empty_prompt_is_a_usage_error(tmp_path: Path) -> None:
     res = CliRunner().invoke(main, ["video", "edit", str(clip), "   "])
     assert res.exit_code == 2
     assert "PROMPT" in res.output
+
+
+def test_references_on_an_existing_clip_are_exit_11_before_any_browser(
+    tmp_path: Path, client: type[_RecordingClient]
+) -> None:
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(_PNG_BYTES)
+    res = CliRunner().invoke(
+        main,
+        ["video", "edit", _MID, "add snow", "--project", _PID, "--ref", str(ref), "--json"],
+    )
+    assert res.exit_code == 11, res.output
+    error = json.loads(res.stdout)["error"]
+    assert error["charged"] == "no"
+    assert "not ported" in error["detail"]
+    assert client.created == []
+    assert client.edits == []

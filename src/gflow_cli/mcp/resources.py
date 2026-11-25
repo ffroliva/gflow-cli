@@ -101,8 +101,9 @@ Continue an existing video (local video file or Flow clip UUID) by one segment o
 - **Credit cap:** `max_credits` checks Flow's pre-submit quote before submitting
 
 ### gflow_edit_video
-Edit a local video file or existing Flow clip media UUID using a text prompt and 0-5
-`reference_images` on `flow.google.com` (Omni models only, single-clip output).
+Edit a local video file or existing Flow clip media UUID using a text prompt on
+`flow.google.com` (Omni models only, single-clip output). Up to 5 `reference_images` with a
+local file; with a media UUID they are refused (exit 11, not ported yet).
 
 ### gflow_auth_status
 Credit-free, non-interactive Flow session probe — call it before a generate

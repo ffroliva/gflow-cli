@@ -1119,7 +1119,8 @@ gflow video r2v "a continuous scene" --ref scene.png \
 
 Video-to-video editing on `flow.google.com` (RPC `jIps6`, Omni models only, default `omni-1.2`,
 single-clip output). Accepts either a local video file (`.mp4`, `.m4v`, `.mov`, `.3gp`, `.avi`,
-up to 1 GB) or an existing Flow clip media UUID, plus 0–5 `--ref` local reference images.
+up to 1 GB) or an existing Flow clip media UUID, plus 0–5 `--ref` local reference images
+with a local file.
 
 ```text
 gflow video edit SOURCE PROMPT [--ref IMG ...] [--model {omni-1.2|omni-1.2-flash|omni-flash}] \
@@ -1148,7 +1149,7 @@ video" dialog is never accepted for you: accept it once by hand in Flow.
 | Flag | Meaning |
 |---|---|
 | `SOURCE` | A Flow media UUID (a clip in the project) or a local `.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi` file of up to 1 GB |
-| `--ref PATH` | Local reference image, repeatable, up to 5, attached in order (Flow drops references past 5 on `jIps6`) |
+| `--ref PATH` | Local file SOURCE only: local reference image, repeatable, up to 5, attached in order (Flow drops references past 5 on `jIps6`). With a media UUID, `--ref` exits 11 (not ported yet); run `gflow data download MEDIA_ID --out DIR` and pass the downloaded file as SOURCE |
 | `--model` | `omni-1.2` (default), `omni-1.2-flash` or `omni-flash`; Flow edits with Omni models only |
 | `--aspect 9:16\|16:9` | Local file only: output aspect; omitted, Flow's current setting is kept. A clip is edited in its own aspect; a different `--aspect` exits 36 before the submit |
 | `--resolution 360p\|720p` | Omitted, Flow's current setting is kept. `360p` needs a local file (the clip editor has no 360p toggle, exit 36 before any click) |
@@ -1162,7 +1163,7 @@ video" dialog is never accepted for you: accept it once by hand in Flow.
 Refusals that cost nothing, all before any project is created or anything is uploaded: a
 `SOURCE` that is neither a media UUID nor an existing file, or a missing `--ref` (exit 2, a
 usage error), a file that is not a supported video or image or is over the size limit
-(exit 11), a media UUID with no known project (exit 11), and `GFLOW_CLI_FLOW_HOST=labs.google` (exit 36: video
+(exit 11), a media UUID with no known project (exit 11), `--ref` with a media UUID (exit 11), and `GFLOW_CLI_FLOW_HOST=labs.google` (exit 36: video
 edit runs on `flow.google.com` only). While the edit is prepared, any submit the page sends is
 aborted, and the submitted `jIps6` is checked against the request (source workflow, model,
 resolution, aspect and reference set) before Flow sees it. The MCP twin is

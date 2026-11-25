@@ -171,7 +171,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
 | `charged` field on every error | **Yes** | — | — | — | — | — |
 | Per-call credit cap | Yes (`--max-credits`, read from Flow's own quote) | Yes (`max_credits`) | — | — | — | — |
-| Video-to-video edit | Yes (`video edit`, flow.google.com; local file or clip, up to 5 references) | Yes | Yes | — | — | — |
+| Video-to-video edit | Yes (`video edit`, flow.google.com; local file with up to 5 references, or a clip) | Yes | Yes | — | — | — |
 | Narration audio | Yes (audio narrate: edge-tts or Gemini voices) | Yes | — | — | — | Yes |
 | Captions | Yes (`video captions`, `.srt` export) | Yes | — | — | — | — |
 | Join clips | Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`) | Yes, with music and voiceover | — | — | Yes (scene) | Yes, with music and narration |

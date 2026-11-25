@@ -29,7 +29,6 @@ _MID = "22222222-2222-2222-2222-222222222222"
 _WF = "33333333-3333-3333-3333-333333333333"
 _REF1 = "44444444-4444-4444-4444-444444444444"
 ORIGINAL_STABLE_QUOTE = edit_mod._stable_quote
-ORIGINAL_ATTACH_BY_CLICK = edit_mod._attach_by_click
 
 _MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 _PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
@@ -133,7 +132,9 @@ def composer(monkeypatch: pytest.MonkeyPatch, files: dict[str, Path]) -> MagicMo
     fake._mention_by_name = AsyncMock()
 
     async def submit(_page: Any, **kwargs: Any) -> GenerationRecord:
-        assert kwargs["request_check"]("jIps6", _edit_body()) is None
+        # The edit request the page sends carries exactly the references this run attached.
+        body = _edit_body(refs=tuple(kwargs["adopt_ids"]))
+        assert kwargs["request_check"]("jIps6", body) is None
         kwargs["on_started"](VideoStarted(media_id=_MID, project_id=_PID, workflow_id="w"))
         return _done_record()
 
@@ -226,7 +227,6 @@ async def test_clip_editor_edit_completes(files: dict[str, Path], composer: Magi
         EditVideoRequest(
             prompt="add snow",
             source_media_id=_MID,
-            reference_images=(files["ref"],),
             max_credits=12,
         )
     )
@@ -375,9 +375,7 @@ async def test_a_quote_that_keeps_changing_or_is_unreadable_is_none(clock: _Cloc
 
 @pytest.mark.asyncio
 async def test_no_quote_is_read_without_a_cap(files: dict[str, Path], composer: MagicMock) -> None:
-    res = await _run(
-        EditVideoRequest(prompt="g", source_media_id=_MID, reference_images=(files["ref"],))
-    )
+    res = await _run(EditVideoRequest(prompt="g", source_media_id=_MID))
     assert res.quoted_credits is None
     edit_mod._stable_quote.assert_not_called()  # type: ignore[attr-defined]
 
@@ -395,11 +393,7 @@ async def test_the_clip_editor_quote_is_read_from_the_prompt_box_with_menus_clos
     monkeypatch.setattr(edit_mod, "_read_label", label)
     monkeypatch.setattr(edit_mod, "_stable_quote", ORIGINAL_STABLE_QUOTE)
     monkeypatch.setattr(edit_mod, "QUOTE_SETTLE_S", 0.0)
-    res = await _run(
-        EditVideoRequest(
-            prompt="g", source_media_id=_MID, reference_images=(files["ref"],), max_credits=9
-        )
-    )
+    res = await _run(EditVideoRequest(prompt="g", source_media_id=_MID, max_credits=9))
     assert res.quoted_credits == 7
     assert set(read) == {edit_mod.CLIP_EDITOR_CREDIT_LABEL}
 
@@ -445,68 +439,6 @@ def test_every_other_billed_submit_is_refused(rpcid: str) -> None:
 
 
 # --- the clip editor's own controls (live e2e on 2026-11-25: no jIps6 left the page) ---------
-
-
-class _ClipEditorPage(_Page):
-    """A clip editor whose prompt box submits the edit on Enter, as a composer does.
-
-    An option click in the ``@`` picker commits a chip; Enter sends ``jIps6`` through the
-    page's routes (the pre-submit hold while preparing).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.chips = 0
-        self.pressed: list[str] = []
-        self.keyboard.press = AsyncMock(side_effect=self._press)
-
-    async def _press(self, key: str) -> None:
-        self.pressed.append(key)
-        if key == "Enter":
-            route = MagicMock(abort=AsyncMock(), fallback=AsyncMock())
-            request = MagicMock(
-                url="https://flow.google.com/_/batchexecute?rpcids=jIps6", post_data=_edit_body()
-            )
-            for handler in list(self.routes):
-                await handler(route, request)
-
-    def locator(self, sel: str) -> Any:
-        page = self
-        if sel == edit_mod.CLIP_EDITOR_MENTION_CHIP:
-            return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
-        if sel == edit_mod.ASSET_BROWSER_OPTION:
-            option = MagicMock(
-                is_visible=AsyncMock(return_value=True),
-                click=AsyncMock(side_effect=lambda **_k: setattr(page, "chips", page.chips + 1)),
-            )
-            return MagicMock(
-                all_text_contents=AsyncMock(return_value=["ref-aaaaaaaa image"]),
-                nth=MagicMock(return_value=option),
-            )
-        return super().locator(sel)
-
-
-@pytest.mark.asyncio
-async def test_clip_editor_references_are_committed_by_click_never_by_enter(
-    files: dict[str, Path], composer: MagicMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Enter in the edit prompt box submits: the hold aborted that jIps6, so the checked
-    submit never left the page and the run failed as an early submit."""
-
-    async def shared_mention(page: Any, *_a: Any, **_k: Any) -> None:
-        await page.keyboard.press("Enter")  # the shared @-mention commits with Enter
-
-    composer._mention_by_name = AsyncMock(side_effect=shared_mention)
-    monkeypatch.setattr(edit_mod, "_attach_by_click", ORIGINAL_ATTACH_BY_CLICK)
-    page = _ClipEditorPage()
-    res = await _run(
-        EditVideoRequest(prompt="add snow", source_media_id=_MID, reference_images=(files["ref"],)),
-        page=page,
-    )
-    assert res.status.succeeded is True
-    assert "Enter" not in page.pressed
-    assert page.chips == 1
-    composer.submit_and_observe.assert_awaited_once()
 
 
 class _PickerPage:
@@ -649,118 +581,17 @@ async def test_a_selected_model_the_trigger_does_not_confirm_is_refused(
         await edit_mod._select_clip_editor_model(page, VideoModel.OMNI_1_2_FLASH)
 
 
-# --- the clip editor's asset browser (spike 2026-11-25) -----------------------------
-
-
-class _AssetBrowserPage:
-    """The clip editor's ``@``: Flow's asset browser, filtered by what was typed.
-
-    Items are ``flow-add-menu-asset-list button[role=option].asset-item`` with the text
-    ``<name>Image``; a click selects one, and the detail pane's add button attaches it.
-    """
-
-    def __init__(self, names: list[str], *, listed_from: int = 0) -> None:
-        self.names = names
-        self.listed_from = listed_from
-        self.polls = 0
-        self.typed = ""
-        self.selected: int | None = None
-        self.chips = 0
-        self.keyboard = MagicMock(type=AsyncMock(side_effect=self._typed), press=AsyncMock())
-
-    async def _typed(self, text: str, **_kw: Any) -> None:
-        if text == "@":
-            self.polls += 1
-            self.typed = ""
-        elif text.strip():
-            self.typed = text
-
-    async def wait_for_timeout(self, _ms: int) -> None:
-        return None
-
-    async def evaluate(self, *_a: Any) -> None:
-        return None
-
-    def _listed(self) -> list[str]:
-        if self.polls < self.listed_from:
-            return []
-        return [f"{n}Image" for n in self.names if n.casefold().startswith(self.typed.casefold())]
-
-    def locator(self, sel: str) -> Any:
-        page = self
-        if sel == edit_mod.ASSET_BROWSER_OPTION:
-
-            def nth(i: int) -> Any:
-                return MagicMock(
-                    is_visible=AsyncMock(return_value=True),
-                    click=AsyncMock(side_effect=lambda **_k: setattr(page, "selected", i)),
-                )
-
-            return MagicMock(
-                all_text_contents=AsyncMock(side_effect=page._listed),
-                nth=MagicMock(side_effect=nth),
-            )
-        if sel == edit_mod.ASSET_BROWSER_ADD:
-
-            async def add(**_k: Any) -> None:
-                page.chips += page.selected is not None
-
-            button = MagicMock(
-                count=AsyncMock(return_value=1),
-                is_visible=AsyncMock(return_value=True),
-                is_disabled=AsyncMock(return_value=False),
-                click=AsyncMock(side_effect=add),
-            )
-            button.first = button
-            return button
-        if sel == "chip":
-            return MagicMock(count=AsyncMock(side_effect=lambda: page.chips))
-        loc = MagicMock(count=AsyncMock(return_value=0), click=AsyncMock())
-        loc.first = loc
-        return loc
-
-
-async def _attach_in_clip_editor(page: _AssetBrowserPage, query: str) -> None:
-    await edit_mod._attach_by_click(
-        page,  # type: ignore[arg-type]
-        composer_selector="box",
-        chip_selector="chip",
-        query=query,
-        media_id=_REF1,
-        expect_count=1,
-        what="reference image",
-        picker=edit_mod.CLIP_EDITOR_ASSET_BROWSER,
-    )
-
-
 @pytest.mark.asyncio
-async def test_the_clip_editor_attaches_through_the_asset_browser(clock: _Clock) -> None:
-    page = _AssetBrowserPage(["ref-1cbf2bef.png", "ref-d56d9d65.png"])
-    await _attach_in_clip_editor(page, "ref-d56d9d65.png")
-    assert page.chips == 1
-    assert page.selected == 0  # the one item the typed name left in the list
-    assert page.typed == "ref-d56d9d65"  # the name without its extension filters the list
-
-
-@pytest.mark.asyncio
-async def test_the_asset_browser_is_polled_until_the_upload_is_listed(clock: _Clock) -> None:
-    page = _AssetBrowserPage(["ref-d56d9d65.png"], listed_from=4)
-    await _attach_in_clip_editor(page, "ref-d56d9d65.png")
-    assert page.chips == 1
-    assert page.polls == 4
-
-
-@pytest.mark.asyncio
-async def test_two_items_with_the_name_in_the_asset_browser_are_refused(clock: _Clock) -> None:
-    page = _AssetBrowserPage(["ref-d56d9d65.png", "ref-d56d9d65.jpg"])
-    with pytest.raises(ReferenceNotFoundError, match="lists 2 assets"):
-        await _attach_in_clip_editor(page, "ref-d56d9d65.png")
-    assert page.chips == 0
-
-
-@pytest.mark.asyncio
-async def test_an_asset_browser_timeout_lists_the_items_offered(clock: _Clock) -> None:
-    page = _AssetBrowserPage(["other-11112222.png"])
-    page.typed = ""
-    with pytest.raises(ReferenceNotFoundError, match="the picker offered"):
-        await _attach_in_clip_editor(page, "ref-d56d9d65.png")
+async def test_references_on_an_existing_clip_are_refused_before_anything(
+    files: dict[str, Path], composer: MagicMock
+) -> None:
+    """Not ported to the clip editor yet: exit 11, charged no, no upload, no navigation."""
+    with pytest.raises(ConfigurationError, match="not ported") as info:
+        await _run(
+            EditVideoRequest(prompt="g", source_media_id=_MID, reference_images=(files["ref"],))
+        )
+    assert info.value.charged == "no"
+    assert "gflow data download" in (info.value.remediation_hint or "")
+    composer.upload.assert_not_called()
+    composer.ensure_editor_for.assert_not_called()
+    edit_mod._source_clip.assert_not_called()  # type: ignore[attr-defined]

@@ -8,6 +8,7 @@ from typing import Annotated, Any
 import structlog
 from pydantic import Field
 
+from gflow_cli.api.transports.migrated_video_edit import refuse_references_on_existing_clip
 from gflow_cli.api.video import EDIT_DEFAULT_MODEL, Aspect, EditVideoRequest, VideoModel
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
@@ -126,12 +127,14 @@ def _preflight_edit_inputs(  # noqa: PLR0913
     name="gflow_edit_video",
     description=(
         "Edit an existing video (local .mp4/.mov/.m4v/.3gp/.avi file or Flow clip media UUID) "
-        "with a text prompt and 0-5 reference_images on flow.google.com (single-clip output; "
+        "with a text prompt on flow.google.com, plus 0-5 reference_images for a local file only "
+        "(single-clip output; "
         "Omni models only, default omni-1.2). "
         "max_credits uses Flow's pre-submit quote as a hard cap and refuses missing or over-limit "
         "quotes. Local files support optional aspect ('16:9'/'9:16') and resolution "
-        "('360p'/'720p'); existing Flow media UUIDs require project (or a catalogued UUID) and "
-        "preserve source aspect at 720p. "
+        "('360p'/'720p'); existing Flow media UUIDs require project (or a catalogued UUID), "
+        "preserve source aspect at 720p, and refuse reference_images (exit 11, not ported "
+        "yet: download the clip with gflow data download and pass the file). "
         "out_file, if given, must resolve inside the configured output directory. "
         "Returns the local file path; a model Flow is retiring adds model_retiring to warnings."
     ),
@@ -168,6 +171,8 @@ async def gflow_edit_video(
         return pre_err
     assert checked is not None
     source_frag, opts, output = checked
+    # The CLI's and the worker's refusal, before the queue (exit 11, charged no).
+    refuse_references_on_existing_clip(source_frag.get("source_media_id"), reference_images or [])
     if not await common._rate_limiter.acquire():  # pyright: ignore[reportPrivateUsage]
         log.warning("mcp.tool.rate_limited", tool="gflow_edit_video")
         return common._rate_limited_envelope()  # pyright: ignore[reportPrivateUsage]

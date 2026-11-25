@@ -1,6 +1,6 @@
 """E2E: ``gflow video edit`` (video-to-video, ``jIps6``) on flow.google.com.
 
-Four $0 ``e2e_auth`` tests and one paid ``e2e_video`` test:
+Five $0 ``e2e_auth`` tests and one paid ``e2e_video`` test:
 
 * the zero cap through the CLI — ``--max-credits 0`` on a clip in the project exits 45 with
   ``charged: no`` and no submit click (Flow quotes every edit above 0 credits);
@@ -8,11 +8,14 @@ Four $0 ``e2e_auth`` tests and one paid ``e2e_video`` test:
   worker decodes the payload and drives the same transport, so a key the worker never reads
   or a codec that drops ``max_credits`` would show here and nowhere else;
 * the request contract, at $0, on both paths — the production driver
-  (``migrated_video_edit.run_video_edit``) prepares the edit of a project clip (clip editor)
-  and of an uploaded local copy of it (main composer) with one ``--ref``; the checked
-  ``jIps6`` must target the source's workflow, carry an Omni edit model key and exactly the
-  uploaded reference id in ``entry[8]``, and is then aborted before Flow sees it. The uploads
-  are free and stay in the project;
+  (``migrated_video_edit.run_video_edit``) prepares the edit of a project clip (clip editor,
+  no reference) and of an uploaded local copy of it (main composer) with one ``--ref``; the
+  checked ``jIps6`` must target the source's workflow, carry an Omni edit model key and
+  exactly the uploaded reference ids in ``entry[8]`` (none for the clip), and is then aborted
+  before Flow sees it. The uploads are free and stay in the project;
+* references with an existing clip, through the CLI — not ported to the clip editor yet, so
+  ``--ref`` with a media id exits 11 with ``charged: no`` before any browser work: nothing is
+  uploaded and no project is created;
 * ``e2e_video`` (SPENDS VEO CREDITS, opt in with ``GFLOW_CLI_E2E_RUN_VIDEO=1`` and only with
   the account owner's consent): one real edit of the project clip through the CLI.
 
@@ -148,7 +151,7 @@ async def test_e2e_mcp_edit_with_a_zero_cap_is_refused_before_any_submit(
 
 @pytest.mark.asyncio
 @pytest.mark.e2e_auth
-@pytest.mark.parametrize("source", ["clip_editor", "local_file"])
+@pytest.mark.parametrize("source", ["clip_editor_no_ref", "local_file"])
 async def test_e2e_edit_request_targets_the_source_and_carries_the_ref_at_zero_cost(
     source: str, e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -160,7 +163,7 @@ async def test_e2e_edit_request_targets_the_source_and_carries_the_ref_at_zero_c
         clip = await _source_clip_file(e2e_profile_dir, tmp_path / "source.mp4")
         request = EditVideoRequest(prompt=_PROMPT, source_video=clip, reference_images=(ref,))
     else:
-        request = EditVideoRequest(prompt=_PROMPT, source_media_id=media, reference_images=(ref,))
+        request = EditVideoRequest(prompt=_PROMPT, source_media_id=media)
 
     seen: dict[str, Any] = {"workflow": None, "refs": []}
     real_require, real_upload_mention = ve.require_video_source, ve.upload_video_for_mention
@@ -208,7 +211,27 @@ async def test_e2e_edit_request_targets_the_source_and_carries_the_ref_at_zero_c
     assert ve._at(entry, 0, 1) == seen["workflow"], (entry, seen)  # noqa: SLF001
     assert "_edit" in str(ve._at(entry, 2)), entry  # noqa: SLF001
     assert mx._extract_reference_ids(entry) == list(seen["refs"]), (entry, seen)  # noqa: SLF001
-    assert len(seen["refs"]) == 1, seen
+    assert len(seen["refs"]) == (1 if source == "local_file" else 0), seen
+
+
+@pytest.mark.e2e_auth
+def test_e2e_cli_references_with_an_existing_clip_are_refused_before_any_browser(
+    e2e_env: dict[str, str], tmp_path: Path
+) -> None:
+    """$0: exit 11, charged no; no browser event, so nothing was uploaded or created."""
+    from .test_image_uuid_ref_e2e import _events, _run_gflow
+
+    project, media = _ids()
+    ref = _ref_png(tmp_path / "ref.png")
+    proc = _run_gflow(
+        ["video", "edit", media, _PROMPT, "--project", project, "--ref", str(ref), "--json"],
+        e2e_env,
+    )
+    assert proc.returncode == 11, proc.stderr[-800:]
+    error = json.loads(proc.stdout)["error"]
+    assert error["charged"] == "no", error
+    assert "not ported" in error["detail"], error
+    assert not [e for e in _events(proc.stderr) if e.startswith("migrated.")], proc.stderr[-800:]
 
 
 @pytest.mark.e2e_video
