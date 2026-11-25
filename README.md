@@ -40,7 +40,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 - **Make long videos**: `gflow video extend --segments N` continues a clip past Flow's 8 s limit with a continuous join, `gflow video chain` links shots frame to frame, and `gflow scene create` stitches clips server-side for free.
 - **Generate images**: text-to-image and image-to-image, 1–4 per call, five aspect ratios (`gflow image t2i | i2i`).
 - **Keep characters consistent**: `gflow character create` makes a reusable Flow Character (face, body, voice), and prompts can mention it as `@Name`.
-- **Upscale**: video to 1080p (or a GIF), images to 2K, or 4K on an Ultra plan.
+- **Upscale**: video to 4K where Flow offers it for the item, 1080p or a GIF; images to 2K, or 4K on an Ultra plan.
 - **Run batches and pipelines**: JSON batch runs where a row can build on an earlier row (`gflow run`), multi-scene films from a manifest (`gflow movie run`), and persistent Agent-Mode briefs (`gflow instructions`).
 - **Rewrite prompts**: `--tool creative-director` and two other built-in prompt tools (`reverse-engineer`, `storyboard`), or your own ([TOOLS](docs/TOOLS.md)).
 - **Track spend and media**: the Veo credit balance (`gflow credits`), a local media catalog (`gflow data`), a health check (`gflow doctor`), and output to S3, MinIO or Google Cloud Storage.
@@ -165,7 +165,7 @@ Compared from each project's own README on 2026-11-25. "—" means that README d
 | Video, image, start/end frames, references | Yes | Yes | Yes | Text- and image-to-video, text-to-image | Yes | Yes |
 | Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
 | Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
-| Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | Image 2K/4K export; video upscale not ported |
+| Upscale | Video 4K/1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | Image 2K/4K export; video upscale not ported |
 | OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | Yes | — | — |
 | Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | Yes | — | — |
 | Spend lockout for agents (`--no-spend`) | Yes | — | — | — | — | — |

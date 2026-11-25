@@ -12,6 +12,7 @@
 - **OpenAI-compatible `POST /v1/images/generations` on `gflow serve` (#1365).** Clients built on the OpenAI SDK generate Google Flow images by pointing their base URL at the server. Flow image models only, `b64_json` responses, OpenAI-shaped errors translated from gflow's problem details, cross-site requests refused, and no SDK retry that could bill twice. Contributed by @ken2190 (#1466).
 - **`gflow video edit` and `gflow_edit_video` (#1467).** Edit a clip with a prompt and reference images, from a local file or an existing clip; reference images on an existing clip are refused for now (#1507). Contributed by @LeonJoeeee.
 - **`gflow video extend` from a local file, with `--duration`, `--ref` and a quote-checked `--max-credits`, and an MCP twin (#1468).** Contributed by @LeonJoeeee.
+- **Image thinking level and a 4K video upscale scale (#1460).** `--thinking-level` on `image t2i`/`i2i`/`generate` and MCP `thinking_level`; `video upscale --scale 4k` where Flow offers it for the item. Contributed by @LeonJoeeee.
 - **Caption placement and styling (#1432, #1488).** Position, margin, font size and box opacity on `gflow video captions` and its MCP twin. Contributed by @deepslit (#1475, #1494).
 
 **Changed.**
@@ -21,6 +22,7 @@
 **Fixed.**
 - **Short image replies are reported (#1489).** "N of M images returned" on the CLI, in JSON and MCP replies, and in batch rows, instead of a silent exit 0.
 - **`gflow.db` is created owner-only (#1437)**, with the contributor's commit from @draarivpatel-ui (#1470, #1493); `DataStore.open` closes its connection when setup fails (#1495).
+- **`media trash`/`restore` on images by the id gflow reports (#1451)**; `doctor` reports `info` before a database exists; MCP `count > 1` returns every image file (#1469, @deepslit, #1474).
 - **A folder or unresolvable `--ref`/frame path exits 2 (#1480)**, contributed by @rayw-lab; `clip_qa.py` scratch files and truncated clips (#1501, #1502); the uncalled `_check_logged_in` removed (#1289, contributed investigation by @deepslit, #1481).
 
 Full ledger: [LIVE_VERIFICATION_v0.107.0](LIVE_VERIFICATION_v0.107.0.md).

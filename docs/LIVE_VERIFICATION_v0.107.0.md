@@ -9,7 +9,7 @@ follow-ups (#1432, PR #1475; #1488, PR #1494), short image replies reported (#14
 and #1508), `isError` from one failure set shared with telemetry (#1464, PR #1479), refusing a
 folder or unresolvable `--ref`/frame path (PR #1480), owner-only `gflow.db` (#1437, PR #1493)
 and its connection cleanup (#1495, PR #1506), `clip_qa.py` scratch files and truncated clips
-(#1501, #1502, PR #1503), and the removal of the uncalled `_check_logged_in` (#1289, PR #1481).
+(#1501, #1502, PR #1503), the removal of the uncalled `_check_logged_in` (#1289, PR #1481), image thinking level and a 4K video upscale scale (PR #1460), MCP `isError` for failed tools (#1453, PR #1463), media trash for images (#1451, PR #1465), `doctor` before a database exists (PR #1473) and every image file for MCP `count > 1` (#1469, PR #1474).
 
 ## Environment
 
@@ -37,6 +37,11 @@ and its connection cleanup (#1495, PR #1506), `clip_qa.py` scratch files and tru
 | `isError` shared failure set (#1479) | `tests/e2e/test_auth_status_mcp_e2e.py`, `-m e2e_auth` | ✅ 2 passed, including a test through `mcp.Client`, the only path that sets `isError` | $0 |
 | Owner-only `gflow.db` (#1493), connection cleanup (#1506) | the real CLI and MCP on Windows and Linux; CI ProfileLease on Windows, Ubuntu and macOS | ✅ No Flow surface; macOS ProfileLease passed on the first develop run after the merge | $0 |
 | Folder `--ref`/frame path (#1480), `_check_logged_in` removal (#1481), `clip_qa.py` (#1503) | argument validation, dead-code removal, a local video-production checker | Not a Flow surface; covered by the suite | — |
+| Image thinking level (#1460) | `image t2i "<prompt>" --thinking-level high --out-file think.png --json` on the release tree | ✅ Exit 0, `status: ok`, model NARWHAL, one 768x1376 portrait image saved as JPEG (Flow returned JPEG; the extension follows the bytes) | $0 (daily image quota) |
+| Video upscale to 4K (#1460) | `video upscale <media-id> --scale 4k --project <id>` on the release tree | ✅ Exit 22, `UpscaleUnavailableError`, naming the scales Flow listed for the item (270p, 720p); balance unchanged (236). A successful 4K export was not produced: Flow does not offer 4K to this account for this item, which is an account-plan blocker, not something gflow controls | $0 |
+| Media trash and restore of an image (#1465) | `media trash <image-id> --yes --json`, then `media restore <image-id> --json` | ✅ `status: trashed, archived: true, charged: no`, then `status: restored, archived: false, charged: no` | $0 |
+| `doctor` before a database exists (#1473) | `GFLOW_CLI_DB_PATH=<absent> gflow doctor --json` | ✅ Exit 0; catalog checks report `info` ("no catalog database yet") instead of a `DataStoreError` failure | $0 |
+| MCP `count > 1` returns every image file (#1474) | `tests/e2e/test_out_file_mcp_e2e.py` (in the 16-test image run above) | ✅ Passed | $0 |
 
 ### Release-tree run
 
@@ -45,6 +50,16 @@ and its connection cleanup (#1495, PR #1506), `clip_qa.py` scratch files and tru
 request model `omni_1_2_flash` (`omni-1.2` is a CLI alias of `omni-1.2-flash`), mode `t2v`,
 duration 4, count 1, landscape. The file is MP4 (`ftyp mp42`), 1,523,091 bytes, h264 640x360
 at 24 fps with an AAC audio stream, 4.03 s.
+
+## Pre-tag gates
+
+- `/gflow:check` on the release tree: repository hygiene, size, doc links, website PII, website mirror, council memory, plugin skills, `ruff check`, `ruff format --check` and `pyright src` (0 errors) pass. The offline suite passes; 15 failures in `tests/test_e2e_env_redaction.py`, present since v0.106.0 whenever `--basetemp` sits outside the repository, were fixed before the tag (PR #1510).
+- `/gflow:doc-review`: completeness, cross-reference and drift lenses run; the findings (a duplicate CHANGELOG entry, missing entries for #1460, `video edit` absent from the command-surface summaries, the 4K upscale scale in the skill) were fixed in the release commit.
+- `scripts/ci/check_release_artifacts.py` passes on the release commit.
+
+## Post-tag evidence
+
+Recorded after the tag: the `Release` workflow run, the PyPI version and the GitHub Release.
 
 ## Not verified
 
