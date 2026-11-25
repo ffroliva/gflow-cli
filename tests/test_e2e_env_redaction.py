@@ -389,6 +389,8 @@ def test_trunc(monkeypatch):
     assert False
 """)
     result = pytester.runpytest_subprocess("-l")
+    # The inner run must actually fail: absent fragments prove nothing if it never started.
+    result.assert_outcomes(failed=1)
     output = result.stdout.str()
     # --showlocals prints object reprs with hex memory addresses
     # (e.g. <... MonkeyPatch object at 0x7a873abcdb80>), and a hex-only token
