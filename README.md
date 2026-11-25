@@ -64,6 +64,7 @@ gflow auth login --browser chrome
 | **VS Code** | `gflow mcp setup --target vscode` |
 | **Codex** | Skills: from a clone, `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`; MCP: register `gflow mcp run` as a stdio server |
 | **Any MCP client** | command `uvx`, arguments `gflow-cli mcp run`; or `gflow serve` for Streamable HTTP at `/mcp` |
+| **OpenAI SDK code** | `gflow serve`, then `base_url="http://127.0.0.1:8000/v1"`: `POST /v1/images/generations` with Flow image models, `b64_json` responses ([docs/MCP.md](docs/MCP.md#openai-compatible-image-endpoint)) |
 
 The Claude Code plugin ships disabled, because enabling it starts a server that can spend your Veo credits. For a hard guarantee, register `gflow mcp run --no-spend`, which never registers the credit-spending tools. Full setup: [docs/MCP.md](docs/MCP.md).
 

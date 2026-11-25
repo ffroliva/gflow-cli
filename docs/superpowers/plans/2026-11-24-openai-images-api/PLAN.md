@@ -13,7 +13,11 @@ turns the result into the OpenAI response (base64 of each file) or an OpenAI err
 
 - No new CLI leaf, option or MCP tool; no new setting.
 - Same guardrails as the MCP tool: token, rate limiter, `GFLOW_MCP_NO_SPEND`.
-- Loopback, no-token bind: reject a non-loopback `Host` (the SDK guards only `/mcp`).
+- Loopback, no-token bind: reject a non-loopback `Host` or `Origin`; every request needs a JSON
+  Content-Type and a body of at most 4 MiB.
+- One error system: gflow's problem details, translated at the edge into OpenAI's error object
+  (`openai_errors.py`); `x-should-retry: false` wherever an SDK retry could spend again.
+- `model` takes Flow image models only.
 - Images only; video is a follow-up on #1365.
 
 ## Tasks
@@ -28,4 +32,11 @@ turns the result into the OpenAI response (base64 of each file) or an OpenAI err
 - [x] **4. E2E (scenario 14).** `tests/e2e/test_openai_images_api_e2e.py`, `e2e` + `e2e_image`.
 - [x] **5. Docs.** `docs/MCP.md` (HTTP daemon section), README comparison row, CHANGELOG
   `[Unreleased]`, `website/docs/` mirror regenerated.
-- [x] **6. Gates.** The Impeccable Routine green.
+- [x] **6. Gates.** Superseded by task 7, which re-runs them.
+- [x] **7. Review fix round (scenarios 15–21).** CSRF checks (415/403/413), `openai_errors.py`
+  mapping table with one test per row, SDK retry suppression, 504 for unfinished tasks, 502 for
+  Flow 401/403, `null`-as-absent, `stream` refusal, OpenAI-shaped 401/405; SDK contract tests
+  (`tests/mcp/test_openai_images_sdk_contract.py`), a `gflow serve` subprocess test, and an
+  `n=2` SDK case in the e2e file. Local gates (ruff, format, pyright, size, doc links, hygiene,
+  website and plugin mirrors, PII, scoped pytest) were run after this task; the live e2e is run
+  separately with a logged-in profile.
