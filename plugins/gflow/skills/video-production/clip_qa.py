@@ -46,11 +46,23 @@ AV_DURATION_TOLERANCE = 0.1  # video vs audio stream length on an assembled cut
 
 def run(args: list[str], cwd: Path) -> str:
     """ffmpeg, failing loudly: a silent failure would surface later as missing output."""
-    r = subprocess.run(args, capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed ffmpeg args
+    r = subprocess.run(  # noqa: S603 - fixed ffmpeg args
+        args, capture_output=True, encoding="utf-8", errors="replace", cwd=cwd
+    )
     if r.returncode != 0:
         target = args[args.index("-i") + 1]
         raise RuntimeError(f"ffmpeg failed ({r.returncode}) on {target}:\n{r.stderr[-800:]}")
     return r.stderr
+
+
+def ffprobe(clip: Path, entries: str, *options: str) -> str:
+    return subprocess.run(  # noqa: S603 - fixed ffprobe args
+        ["ffprobe", "-v", "error", *options]  # noqa: S607 - system tool
+        + ["-show_entries", entries, str(clip.absolute())],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+    ).stdout.strip()
 
 
 def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
@@ -61,55 +73,22 @@ def strip(clip: Path, out_dir: Path, fps: float = 1.0) -> Path:
     and ffprobe only (minimal Windows builds ship without it, and a gate that cannot run
     is not a gate).
     """
-    dur = float(
-        subprocess.run(  # noqa: S603 - fixed ffprobe args
-            [  # noqa: S607 - system tool
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "csv=p=0",
-                str(clip),
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        or 0
-    )
+    dur = float(ffprobe(clip, "format=duration", "-of", "csv=p=0") or 0)
     n = max(1, round(dur * fps))
     cols = min(6, n)
     rows = -(-n // cols)  # ceil
     out = out_dir / f"{clip.stem}_{fps:g}fps.png"
     run(
-        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip),
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(clip.absolute()),
          "-vf", f"fps={fps},scale=420:-1,tile={cols}x{rows}",
-         "-frames:v", "1", str(out)],
+         "-frames:v", "1", str(out.absolute())],
         out_dir,
     )
     return out
 
 
 def probe_fps(clip: Path) -> float:
-    out = subprocess.run(  # noqa: S603 - fixed ffprobe args
-        [  # noqa: S607 - system tool
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=r_frame_rate",
-            "-of",
-            "csv=p=0",
-            clip.name,
-        ],
-        capture_output=True,
-        text=True,
-        cwd=clip.parent,
-    ).stdout.strip()
+    out = ffprobe(clip, "stream=r_frame_rate", "-select_streams", "v:0", "-of", "csv=p=0")
     num, _, den = out.partition("/")
     if not num.strip().isdigit():
         raise RuntimeError(
@@ -216,31 +195,40 @@ def sync(motion: list[float], envelope: list[float], fps: float, window_s: float
     return round(best_lag / fps, 3), round(peak_r, 2), round(prominence, 3), at_edge
 
 
-def av_duration_delta(clip: Path) -> float:
-    """Video stream length minus audio stream length. The 25 fps title cards concatenated
-    into 24 fps clips produced 164 s of video under 171 s of audio — this is that check."""
-    out = subprocess.run(  # noqa: S603 - fixed ffprobe args
-        [  # noqa: S607 - system tool
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,duration",
-            "-of",
-            "csv=p=0",
-            clip.name,
-        ],
-        capture_output=True,
-        text=True,
-        cwd=clip.parent,
-    ).stdout
-    rows = (line.partition(",") for line in out.splitlines() if "," in line)
-    d = {k: float(v) for k, _, v in rows if v.replace(".", "").isdigit()}
-    return round(d.get("video", 0.0) - d.get("audio", 0.0), 3)
+def probe_streams(clip: Path) -> tuple[float, float]:
+    """(audio start minus video start, video length minus audio length), in seconds.
+
+    The length delta: the 25 fps title cards concatenated into 24 fps clips produced 164 s of
+    video under 171 s of audio. A truncated clip is refused: ffmpeg exits 0 on one and its
+    header keeps the full durations, so those are checked against the packets in the file.
+    """
+    entries = "stream=index,codec_type,start_time,duration"
+    entries += ":packet=stream_index,pts_time,duration_time"
+    found = json.loads(ffprobe(clip, entries, "-of", "json") or "{}")
+    ends: dict[int, float] = {}
+    for p in found.get("packets", []):
+        if "pts_time" in p:
+            end = float(p["pts_time"]) + float(p.get("duration_time", 0))
+            ends[p["stream_index"]] = max(end, ends.get(p["stream_index"], end))
+    start, length = {}, {}
+    for s in found.get("streams", []):
+        kind = s["codec_type"]
+        if kind in start:  # the first stream of a type is the one measured
+            continue
+        start[kind], length[kind] = float(s.get("start_time", 0)), float(s.get("duration", 0))
+        if kind not in ("video", "audio"):
+            continue
+        missing = start[kind] + length[kind] - ends.get(s["index"], start[kind])
+        if missing > AV_DURATION_TOLERANCE:
+            raise RuntimeError(f"{clip.name}: truncated, {missing:.2f} s of {kind} is missing")
+    if "audio" not in start:
+        raise RuntimeError(f"{clip.name}: no audio stream, so speech and sync cannot be measured")
+    return start["audio"] - start["video"], round(length["video"] - length["audio"], 3)
 
 
 def measure(clip: Path) -> tuple[dict, dict]:
     fps = probe_fps(clip)
+    audio_start, duration_delta = probe_streams(clip)
     whole = yavg(clip, "scale=180:320")
     face = yavg(clip, FACE_CROP)
     lag, r, prom, edge = sync(face, audio_envelope(clip, fps), fps)
@@ -261,11 +249,11 @@ def measure(clip: Path) -> tuple[dict, dict]:
             "speech_onset_s": round(onset, 2),
             "face_motion_median": round(statistics.median(face), 2),
             "face_motion_p10": round(sorted(face)[len(face) // 10], 2),
-            "sync_lag_s": lag,
+            "sync_lag_s": round(lag + audio_start, 3),
             "sync_r": r,
             "sync_prominence": prom,
             "sync_edge": edge,
-            "av_duration_delta_s": av_duration_delta(clip),
+            "av_duration_delta_s": duration_delta,
         },
     )
 
@@ -323,6 +311,8 @@ def selftest(clip: Path, shift_s: float = 0.2) -> None:
 
 
 if __name__ == "__main__":
+    # A console code page that cannot show a clip's name must not end the run.
+    sys.stdout.reconfigure(errors="backslashreplace")
     if sys.argv[1] == "--selftest":
         selftest(Path(sys.argv[2]))
         raise SystemExit(0)

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import re
 import shutil
 import subprocess
@@ -152,32 +154,123 @@ def test_selftest_leaves_the_users_own_clip_alone(
     assert sorted(Path().iterdir()) == sorted([clip, mine])
 
 
-@pytest.mark.skipif(
+needs_ffmpeg = pytest.mark.skipif(
     not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs system ffmpeg"
 )
-def test_selftest_leaves_the_users_files_alone(tmp_path: Path) -> None:
-    # Motion and loudness share one irregular envelope, so the sync detector can align them.
+
+
+def ffmpeg(*args: str, cwd: Path) -> None:
+    subprocess.run(["ffmpeg", "-v", "error", *args], cwd=cwd, check=True)
+
+
+@pytest.fixture(scope="module")
+def good_clip(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A real clip whose motion and loudness share one irregular envelope, so sync can align."""
+    folder = tmp_path_factory.mktemp("good")
     gate = "(0.2+0.8*gt(sin(2*PI*{t}*0.9)+sin(2*PI*{t}*1.7),0))"
     noise = f"lum='128+{gate.format(t='T')}*100*(random(1)-0.5)':cb=128:cr=128"
     video = f"color=gray:s=64x96:r=24:d=4,geq={noise}"
     audio = f"aevalsrc='0.5*sin(2*PI*440*t)*{gate.format(t='t')}':s=48000:d=4"
-    clip = tmp_path / "my clip.mp4"
-    subprocess.run(
-        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", video, "-f", "lavfi", "-i", audio]
-        + ["-pix_fmt", "yuv420p", str(clip)],
-        check=True,
+    inputs = ("-f", "lavfi", "-i", video, "-f", "lavfi", "-i", audio)
+    ffmpeg(*inputs, "-pix_fmt", "yuv420p", "-movflags", "+faststart", "sa01.mp4", cwd=folder)
+    return folder / "sa01.mp4"
+
+
+def clip_qa_cli(*args: str, cwd: Path, utf8: str = "1") -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONIOENCODING"}
+    return subprocess.run(
+        [sys.executable, str(_MOD_PATH), *args],
+        cwd=cwd,
+        env=env | {"PYTHONUTF8": utf8},
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
     )
+
+
+@needs_ffmpeg
+def test_selftest_leaves_the_users_files_alone(good_clip: Path, tmp_path: Path) -> None:
+    clip = tmp_path / "my clip.mp4"
+    shutil.copy(good_clip, clip)
     mine = [tmp_path / n for n in ("_m.txt", "_a.txt", "_selftest.mp4")]
     for path in mine:
         path.write_text("mine")
 
-    done = subprocess.run(
-        [sys.executable, str(_MOD_PATH), "--selftest", clip.name],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-    )
+    done = clip_qa_cli("--selftest", clip.name, cwd=tmp_path)
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert sorted(tmp_path.iterdir()) == sorted([clip, *mine])
     assert [path.read_text() for path in mine] == ["mine"] * 3
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("args", [["sub"], ["--strip", "sub/sa01.mp4"]])
+def test_a_relative_path_is_measured(good_clip: Path, tmp_path: Path, args: list[str]) -> None:
+    (tmp_path / "sub").mkdir()
+    shutil.copy(good_clip, tmp_path / "sub" / "sa01.mp4")
+
+    done = clip_qa_cli(*args, cwd=tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    assert (tmp_path / "sub" / "sa01_1fps.png").is_file()
+
+
+@needs_ffmpeg
+def test_a_clip_without_audio_is_named_as_such(good_clip: Path, tmp_path: Path) -> None:
+    ffmpeg("-i", str(good_clip), "-an", "-c", "copy", "sa01.mp4", cwd=tmp_path)
+
+    done = clip_qa_cli("sa01.mp4", cwd=tmp_path)
+
+    assert done.returncode != 0
+    assert "sa01.mp4: no audio stream" in done.stderr
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("name", ["Ágil.mp4", "日本.mp4"])
+def test_a_non_ascii_name_works_without_utf8_mode(
+    good_clip: Path, tmp_path: Path, name: str
+) -> None:
+    shutil.copy(good_clip, tmp_path / name)
+
+    done = clip_qa_cli(name, cwd=tmp_path, utf8="0")
+
+    assert done.returncode == 0, done.stderr
+
+
+@needs_ffmpeg
+def test_a_stored_audio_offset_counts_as_lag(good_clip: Path, tmp_path: Path) -> None:
+    src = str(good_clip)
+    late = ("-i", src, "-itsoffset", "0.3", "-i", src, "-map", "0:v", "-map", "1:a")
+    ffmpeg(*late, "-c", "copy", "sa01.mp4", cwd=tmp_path)
+
+    in_step = clip_qa.measure(good_clip)[1]
+    shifted = clip_qa.measure(tmp_path / "sa01.mp4")[1]
+
+    assert clip_qa.verdict(in_step) == "fluid"
+    assert shifted["sync_lag_s"] - in_step["sync_lag_s"] == pytest.approx(0.3, abs=0.03)
+    assert clip_qa.verdict(shifted) == "DRIFT"
+
+
+def _packet_ends(clip: Path) -> list[int]:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "packet=pos,size", "-of", "json", str(clip)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(int(p["pos"]) + int(p["size"]) for p in json.loads(out)["packets"])
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("between_packets", [True, False])
+def test_a_truncated_clip_is_refused(
+    good_clip: Path, tmp_path: Path, between_packets: bool
+) -> None:
+    ends = _packet_ends(good_clip)
+    cut = ends[len(ends) * 3 // 4] - (0 if between_packets else 40)
+    (tmp_path / "sa01.mp4").write_bytes(good_clip.read_bytes()[:cut])
+
+    done = clip_qa_cli("sa01.mp4", cwd=tmp_path)
+
+    assert done.returncode != 0, done.stdout
+    assert "truncated" in done.stderr
