@@ -50,9 +50,11 @@ def build_ogiz0b_body(
     images in one POST, measured 2026-11-22). ``references`` are in-project images as
     ``(media_id, display_name)``: Flow's own I2I submit carries each at ``entry[2]`` and
     as a chip ahead of the prompt text, which then starts with two spaces (captured
-    2026-11-22 with one reference). ``characters`` are ``(entity_id, name)``: each at
-    ``entry[10]`` and as a character chip, the text then starting with one space (captured
-    2026-11-23 with one character). The two are never combined: that shape is unmeasured.
+    2026-11-22; multi-image repetition per entry captured and proven live 2026-11-25).
+    ``characters`` are ``(entity_id, name)``: each at ``entry[10]`` and as a character
+    chip, the text then starting with one space (captured 2026-11-23; multi-image
+    repetition per entry captured and proven live 2026-11-25). The two are never combined:
+    that shape is unmeasured.
     """
     if not entry_seeds:
         msg = "entry_seeds must name at least one image"

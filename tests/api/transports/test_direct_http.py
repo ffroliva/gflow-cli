@@ -731,8 +731,10 @@ _IN_PROJECT = ImageRef(
 )
 
 
-def test_direct_can_serve_one_in_project_reference() -> None:
-    assert direct_can_serve(GenerateImageRequest(prompt="x", refs=(_IN_PROJECT,))) is True
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_direct_can_serve_one_in_project_reference(count: int) -> None:
+    req = GenerateImageRequest(prompt="x", refs=(_IN_PROJECT,), count=count)
+    assert direct_can_serve(req) is True
 
 
 @pytest.mark.parametrize(
@@ -741,7 +743,6 @@ def test_direct_can_serve_one_in_project_reference() -> None:
         {"refs": (_IN_PROJECT, replace(_IN_PROJECT, name="00000000-0000-0000-0000-000000000003"))},
         {"refs": (replace(_IN_PROJECT, display_name=""),)},
         {"refs": (replace(_IN_PROJECT, in_project=False),)},
-        {"refs": (_IN_PROJECT,), "count": 2},
     ],
 )
 def test_direct_can_serve_refuses_unmeasured_reference_shapes(kwargs: dict[str, object]) -> None:
@@ -783,8 +784,12 @@ async def test_a_mint_on_a_page_still_loading_recaptcha_is_retried_not_dropped(
 _SKIPPER = {"reference_entities": ("entity-1",), "reference_entity_names": ("Skipper",)}
 
 
-def test_direct_can_serve_one_named_character() -> None:
-    assert direct_can_serve(GenerateImageRequest(prompt="x", **_SKIPPER)) is True  # type: ignore[arg-type]
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_direct_can_serve_one_named_character(count: int) -> None:
+    assert (
+        direct_can_serve(GenerateImageRequest(prompt="x", count=count, **_SKIPPER))  # type: ignore[arg-type]
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -797,11 +802,90 @@ def test_direct_can_serve_one_named_character() -> None:
             "reference_entity_names": ("Skipper", "Mate"),
         },
         {**_SKIPPER, "refs": (_IN_PROJECT,)},
-        {**_SKIPPER, "count": 2},
     ],
 )
 def test_direct_can_serve_refuses_unmeasured_character_shapes(kwargs: dict[str, object]) -> None:
     assert direct_can_serve(GenerateImageRequest(prompt="x", **kwargs)) is False  # type: ignore[arg-type]
+
+
+def _valid_ogiz0b_two_images_text() -> str:
+    payload = image_payload()
+    second_media = json.loads(
+        json.dumps(payload[0][0][0]).replace(MEDIA, "55555555-5555-4555-8555-555555555555")
+    )
+    payload[0][0].append(second_media)
+    frame_json = json.dumps(
+        [["wrb.fr", "ogiZ0b", json.dumps(payload), None, None, None, "generic"]]
+    )
+    return f")]}}'\n{frame_json}"
+
+
+@pytest.mark.asyncio
+async def test_direct_http_sends_reference_with_multiple_seeds(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        post_count += 1
+        return httpx.Response(200, text=_valid_ogiz0b_two_images_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    req = GenerateImageRequest(prompt="a sailboat", refs=(_IN_PROJECT,), count=2)
+    images = await transport.generate_images(project_id="proj-123", request=req)
+    assert post_count == 1
+    assert len(images) == 2
+    assert all(img.transport == "direct_http" for img in images)
+    kwargs = builder.call_args.kwargs
+    assert len(kwargs["entry_seeds"]) == 2
+    assert kwargs["references"] == ((_IN_PROJECT.name, _IN_PROJECT.display_name),)
+    assert kwargs["characters"] == ()
+
+
+@pytest.mark.asyncio
+async def test_direct_http_sends_character_with_multiple_seeds(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http.read_project",
+        AsyncMock(return_value=_project_with("Mate", "Skipper")),
+    )
+    post_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal post_count
+        if request.method == "GET":
+            return httpx.Response(
+                200, text='<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
+            )
+        post_count += 1
+        return httpx.Response(200, text=_valid_ogiz0b_two_images_text())
+
+    transport._http_transport = httpx.MockTransport(handler)
+    req = GenerateImageRequest(prompt="standing on pier", count=2, **_SKIPPER)  # type: ignore[arg-type]
+    images = await transport.generate_images(project_id="proj-123", request=req)
+    assert post_count == 1
+    assert len(images) == 2
+    assert all(img.transport == "direct_http" for img in images)
+    kwargs = builder.call_args.kwargs
+    assert len(kwargs["entry_seeds"]) == 2
+    assert kwargs["characters"] == (("entity-1", "Skipper"),)
+    assert kwargs["references"] == ()
 
 
 @pytest.mark.asyncio
@@ -1039,8 +1123,11 @@ def _project_with(*names: str) -> Any:
     return ProjectRead(characters=chars, voices=())
 
 
-def test_a_bare_mention_name_is_served() -> None:
-    req = GenerateImageRequest(prompt="Skipper on a pier", reference_entity_names=("Skipper",))
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_a_bare_mention_name_is_served(count: int) -> None:
+    req = GenerateImageRequest(
+        prompt="Skipper on a pier", reference_entity_names=("Skipper",), count=count
+    )
     assert direct_can_serve(req) is True
 
 

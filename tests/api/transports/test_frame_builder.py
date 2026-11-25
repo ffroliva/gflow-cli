@@ -163,6 +163,32 @@ def test_no_character_leaves_slot_10_empty() -> None:
     assert inner[1][0][10] is None
 
 
+def test_multi_image_reference_repeats_slot_2_and_chip_on_every_entry() -> None:
+    """#1455: count > 1 repeats entry[2] and the entry[8] chip identically across entries."""
+    _, inner, _ = _decode_body(
+        _build(entry_seeds=(11, 22, 33), references=(("media-1", "Lighthouse"),))
+    )
+    entries = inner[1]
+    assert [e[3] for e in entries] == [11, 22, 33]
+    for entry in entries:
+        assert entry[2] == [["media-1", None, None, None, 1]]
+        assert entry[8] == [[[None, [["media-1", "Lighthouse"]]], ["  a fox"]]]
+        assert entry[10] is None
+
+
+def test_multi_image_character_repeats_slot_10_and_chip_on_every_entry() -> None:
+    """#1455: count > 1 repeats entry[10] and the entry[8] chip identically across entries."""
+    _, inner, _ = _decode_body(
+        _build(entry_seeds=(11, 22, 33), characters=(("entity-1", "Skipper"),))
+    )
+    entries = inner[1]
+    assert [e[3] for e in entries] == [11, 22, 33]
+    for entry in entries:
+        assert entry[2] is None
+        assert entry[8] == [[[None, [None, None, ["entity-1", "Skipper"]]], [" a fox"]]]
+        assert entry[10] == [["entity-1"]]
+
+
 def test_an_upload_body_matches_flows_own_maseq_frame() -> None:
     """Captured 2026-11-23 from Flow's own upload: ctx with the token, inline base64 bytes,
     MIME type, 1, four nulls, the display name, null, two client UUIDs."""
