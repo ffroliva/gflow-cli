@@ -2124,9 +2124,14 @@ Twelve checks run on every invocation:
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status
-or the exit code; only `warn`/`fail` do. In the brew-doctor spirit the report
-itself says it best: findings are diagnostic signals, not a to-do list — if
-everything is working as expected, there is no need to chase them.
+or the exit code; only `warn`/`fail` do. On a fresh install before any
+generation or sync creates `gflow.db`, the seven catalog, database,
+operations, and queue checks report `info` (`no catalog database yet`) without
+creating the database and without flipping the exit code to `33`; an existing
+but corrupt or unreadable database still reports `fail` and exits `33`. In the
+brew-doctor spirit the report itself says it best: findings are diagnostic
+signals, not a to-do list — if everything is working as expected, there is no
+need to chase them.
 
 **Exit codes.** `0` when every check passes (info findings included), `33`
 when any warn/fail finding is present — a successful diagnosis, not an error
