@@ -22,6 +22,7 @@ from gflow_cli.worker.queue import QueueRepository, QueueTask
 _PID = "11111111-1111-1111-1111-111111111111"
 _MID = "22222222-2222-2222-2222-222222222222"
 _WF = "33333333-3333-3333-3333-333333333333"
+_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 _MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 
 
@@ -89,8 +90,8 @@ async def test_mcp_edit_video_validation_and_confinement(
         # Missing project for uncatalogued UUID refused
         with (
             patch.object(common, "_resolve_and_validate_profile", return_value="default"),
-            patch.object(edit_tools, "default_project", return_value=None),
-            patch.object(edit_tools, "lookup_project_in_catalog", return_value=None),
+            patch("gflow_cli.cli_video_extend.default_project", return_value=None),
+            patch("gflow_cli.cli_video_extend.lookup_project_in_catalog", return_value=None),
         ):
             res = await edit_tools.gflow_edit_video(source=_MID, prompt="glow")
         assert res["status"] == "error"
@@ -100,7 +101,7 @@ async def test_mcp_edit_video_validation_and_confinement(
         run_mock = AsyncMock(return_value={"status": "completed", "flow_media_id": _MID})
         with (
             patch.object(common, "_resolve_and_validate_profile", return_value="default"),
-            patch.object(edit_tools, "default_project", return_value=_PID),
+            patch("gflow_cli.cli_video_extend.default_project", return_value=_PID),
             patch.object(common, "_run_generation_task", run_mock),
         ):
             res = await edit_tools.gflow_edit_video(
@@ -117,21 +118,32 @@ async def test_mcp_edit_video_validation_and_confinement(
         assert call_kw["payload"]["output_file"] == str((out_dir / "sub" / "edited.mp4").resolve())
         assert call_kw["payload"]["max_credits"] == 15
 
-        # Mixed [catalog_uuid, local_path] preserves exact caller order through resolver
+        # Mixed [catalog_uuid, local_path]: the UUID resolves to its catalogued file before
+        # the queue, in the caller's order (the worker reads local paths only).
         ref_a = tmp_path / "catalog_a.png"
         ref_b = tmp_path / "local_b.png"
-        ref_a.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
-        ref_b.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
-        ordered_payload = {"reference_images": [_MID, str(ref_b)]}
-        with patch.object(common, "_resolve_ref_local_path", return_value=(str(ref_a), None)):
-            err = common._resolve_payload_refs(  # pyright: ignore[reportPrivateUsage]
-                None,  # type: ignore[arg-type]
-                "default",
-                ordered_payload,
-                "edit",
+        ref_a.write_bytes(_PNG_BYTES)
+        ref_b.write_bytes(_PNG_BYTES)
+        run_mock.reset_mock()
+        with (
+            patch.object(common, "_resolve_and_validate_profile", return_value="default"),
+            patch("gflow_cli.cli_video_extend.default_project", return_value=_PID),
+            patch.object(common, "_resolve_ref_local_path", return_value=(str(ref_a), None)),
+            patch.object(common, "_run_generation_task", run_mock),
+        ):
+            res = await edit_tools.gflow_edit_video(
+                source=str(clip), prompt="glow", reference_images=[_MID, str(ref_b)]
             )
-        assert err is None
-        assert ordered_payload["reference_images"] == [str(ref_a), str(ref_b)]
+        assert res["status"] == "completed"
+        assert run_mock.call_args.kwargs["payload"]["reference_images"] == [
+            str(ref_a),
+            str(ref_b.resolve()),
+        ]
+
+        # An empty prompt is refused before the queue, like the CLI's
+        res = await edit_tools.gflow_edit_video(source=str(clip), prompt="  ")
+        assert res["status"] == "error"
+        assert res["error"]["title"] == "Invalid Prompt"
     finally:
         reset_settings()
 
@@ -211,3 +223,87 @@ async def test_worker_processes_edit_task_end_to_end(
             worker.close()
     finally:
         reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_worker_refuses_an_unsupported_file_before_creating_a_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exit 11, charged no, and no empty project left behind (the extend task's order)."""
+    db_path = tmp_path / "gflow.db"
+    not_a_video = tmp_path / "notes.mp4"
+    not_a_video.write_text("plain text, not a container")
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "home"))
+    reset_settings()
+    created: list[str] = []
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def create_project(self, *, title: str) -> Any:
+            created.append(title)
+            raise AssertionError("no project may be created for a refused file")
+
+    try:
+        with DataStore.open(db_path) as store:
+            DataRepository(store).upsert_profile("p1", tmp_path / "home" / "profile_p1")
+            QueueRepository(store).enqueue_task(
+                task_id="edit-bad",
+                profile_name="p1",
+                task_type="edit",
+                payload={"schema_version": 1, "prompt": "glow", "source_video": str(not_a_video)},
+            )
+        worker = FlowWorker("p1", str(db_path))
+        try:
+            task = worker.repo.claim_task("edit-bad", "worker:test")
+            assert task is not None
+            with patch("gflow_cli.worker.daemon.FlowApiClient", _Client):
+                await worker.process_task(task)
+            done = worker.repo.get_task("edit-bad")
+            assert done is not None
+            assert done.status == "failed"
+            assert done.error is not None
+            assert done.error["exit_code"] == 11
+            assert done.error["charged"] == "no"
+            assert created == []
+        finally:
+            worker.close()
+    finally:
+        reset_settings()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"aspect": 16},
+        {"model": 3},
+        {"resolution": 720},
+        {"source_media_id": 7},
+        {"source_video": ["a.mp4"]},
+        {"max_credits": 1.5},
+        {"max_credits": True},
+        {"reference_images": "ref.png"},
+        {"reference_images": [3]},
+        {"project_id": 1},
+        {"output_file": {"p": 1}},
+        {"prompt": 5},
+    ],
+    ids=lambda d: next(iter(d)) + "-" + type(next(iter(d.values()))).__name__,
+)
+def test_an_edit_payload_with_a_wrong_type_is_a_queue_schema_error(bad: dict[str, object]) -> None:
+    from gflow_cli.errors import EXIT_CODE_MAP, QueueSchemaError
+
+    payload = {"prompt": "go", "source_video": "clip.mp4", **bad}
+    if "source_media_id" in bad:
+        payload.pop("source_video")
+    with pytest.raises(QueueSchemaError):
+        codec.decode_payload("edit", payload)
+    assert EXIT_CODE_MAP[QueueSchemaError] == 30

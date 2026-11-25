@@ -96,7 +96,9 @@ gflow run --config <batch.json> --project ID --resume     # skip rows already on
 # --reference-entity-name; #723). UUID references, an entity id without a name,
 # Imagen 4 (image4), image batch, and characters on t2v/i2v are refused there (exit 36);
 # local-file video r2v takes --reference-entity with --reference-entity-name (#723).
-# `gflow video extend` runs there one segment per call (--project required); -n > 1,
+# `gflow video extend` runs there one segment per call (accepts a Flow media UUID with
+# --project or a local video file with auto-created project, optional --duration 3..10,
+# up to 3 --ref images, and --max-credits pre-submit quote enforcement); -n > 1,
 # --scene/--resume-from, --seed and an --aspect other than the source clip's exit 36.
 # An agent-only composer (#799) is different: t2i and t2v only;
 # i2i, i2v, r2v and character references exit 36 there, after up to
@@ -115,7 +117,7 @@ gflow video edit <file|media-UUID> "<prompt>" [--ref IMG ...] [--model omni-1.2|
 gflow video upscale <mediaId> --scale {1080p|720p|270p} [--project ID] [--out DIR]  # 1080p = Full HD, 720p = original, 270p = GIF; Flow lists 1080p for some models only (exit 22 otherwise)
 gflow video assemble <clip|catalog-id>... --out-file <path.mp4> [--music FILE] [--voiceover FILE] [--clip-volume 0..1] [--music-volume 0..1] [--voiceover-volume 0..1] [--duck|--no-duck]  # local, credit-free, needs gflow-cli[chain]; normalizes to first clip's size and frame rate
 gflow video transcribe <file|media-UUID> [--out-file FILE.srt] [--language CODE] [--json]  # configured Whisper-compatible endpoint; no Flow credits
-gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
+gflow video captions <file|media-UUID> [--srt FILE.srt] [--out-file FILE.mp4] [--position bottom|top|middle] [--margin PX] [--font-size PX] [--box-opacity 0..1] [--json]  # local PyAV/Pillow burn-in (gflow-cli[chain]); auto-transcribes when --srt omitted; no Flow credits
 gflow media trash <media-UUID|asset-id> [--project ID] --yes [--json]  # moves a generated item to Flow's Trash; 0 credits; MCP: gflow_media_trash(confirm=true)
 gflow media restore <media-UUID|asset-id> [--project ID] [--json]      # brings it back; 0 credits; MCP: gflow_media_restore
 # `gflow video` has no `batch` subcommand — that stub never worked and was

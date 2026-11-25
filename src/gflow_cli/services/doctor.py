@@ -77,6 +77,17 @@ CHECK_IDS: tuple[str, ...] = (
 
 _STUCK_THRESHOLD = timedelta(hours=24)
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+_NO_CATALOG_DB_SUMMARY = "no catalog database yet (created on first generation or sync)"
+_DB_REQUIRED_CHECKS = frozenset(
+    {
+        "catalog.display_name_missing",
+        "catalog.local_file_missing",
+        "catalog.sha256_null",
+        "db.migration_drift",
+        "operations.stuck_started",
+        "queue.stuck_processing",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -311,6 +322,8 @@ def _check_wal_state(
     conn: sqlite3.Connection | None,
     stale_sidecars: tuple[str, ...],
     header_is_wal: bool | None,
+    *,
+    db_absent: bool = False,
 ) -> list[Finding]:
     findings: list[Finding] = []
     # Sidecar presence is sampled BEFORE the read-only open. For a WAL-mode
@@ -328,6 +341,8 @@ def _check_wal_state(
                 "close other gflow processes, then re-run: gflow doctor",
             )
         )
+    if db_absent and not findings:
+        return [_finding("db.wal_state", "info", _NO_CATALOG_DB_SUMMARY)]
     if conn is not None:
         # quick_check, never integrity_check — same corruption coverage minus
         # the expensive index-content scan.
@@ -557,17 +572,30 @@ def _guarded(check_id: str, fn: Callable[[], list[Finding]]) -> list[Finding]:
     return results or [_finding(check_id, "pass", "ok")]
 
 
+def _db_not_created(db_path: Path) -> bool:
+    """True only when ``db_path`` does not exist yet (not for dangling symlinks or EACCES)."""
+    try:
+        db_path.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def run_all(db_path: Path, settings: Settings) -> DoctorReport:
     """Run every check read-only against ``db_path`` and the environment."""
     stale_sidecars = tuple(
         suffix for suffix in ("-wal", "-shm") if db_path.with_name(db_path.name + suffix).exists()
     )
-    header_is_wal = _db_header_is_wal(db_path)
+    db_absent = _db_not_created(db_path)
+    header_is_wal = None if db_absent else _db_header_is_wal(db_path)
     store: DataStore | None = None
-    try:
-        store = DataStore.open_readonly(db_path)
-    except DataStoreError:
-        store = None  # per-DB checks degrade to fail findings via _require
+    if not db_absent:
+        try:
+            store = DataStore.open_readonly(db_path)
+        except DataStoreError:
+            store = None  # per-DB checks degrade to fail findings via _require
 
     try:
         conn = store.conn if store is not None else None
@@ -579,7 +607,10 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
             ("catalog.local_file_missing", lambda: _check_local_file_missing(_require(conn))),
             ("catalog.sha256_null", lambda: _check_sha256_null(_require(conn))),
             ("db.migration_drift", lambda: _check_migration_drift(db_path)),
-            ("db.wal_state", lambda: _check_wal_state(conn, stale_sidecars, header_is_wal)),
+            (
+                "db.wal_state",
+                lambda: _check_wal_state(conn, stale_sidecars, header_is_wal, db_absent=db_absent),
+            ),
             ("operations.stuck_started", lambda: _check_stuck_started(_require(conn))),
             ("queue.stuck_processing", lambda: _check_stuck_processing(_require(conn))),
             ("env.deprecated_vars", lambda: _check_deprecated_vars(settings)),
@@ -590,7 +621,10 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
         )
         findings: list[Finding] = []
         for check_id, fn in checks:
-            findings.extend(_guarded(check_id, fn))
+            if db_absent and check_id in _DB_REQUIRED_CHECKS:
+                findings.append(_finding(check_id, "info", _NO_CATALOG_DB_SUMMARY))
+            else:
+                findings.extend(_guarded(check_id, fn))
     finally:
         if store is not None:
             store.close()

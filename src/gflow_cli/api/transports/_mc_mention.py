@@ -398,9 +398,11 @@ class MentionMixin(UploadFrameMixin):
         # The kind check lives in `attach_character_entities`: a media chip here is
         # refused there, before any submit.
 
-    async def _require_chips_kept(self, page: Page, before: int, name: str) -> list[dict[str, str]]:
+    async def _require_chips_kept(
+        self, page: Page, before: int, name: str, *, chip: str = MENTION_CHIP
+    ) -> list[dict[str, str]]:
         """The chips after a failed query was cleared; refuse if one already attached is gone."""
-        chips = await self.read_chips(page)
+        chips = await self.read_chips(page, chip=chip)
         if len(chips) < before:
             raise ReferenceNotFoundError(
                 detail=(
@@ -417,14 +419,16 @@ class MentionMixin(UploadFrameMixin):
             )
         return chips
 
-    async def _caret_to_end(self, page: Page) -> list[dict[str, str]]:
+    async def _caret_to_end(
+        self, page: Page, *, composer: str = COMPOSER, chip: str = MENTION_CHIP
+    ) -> list[dict[str, str]]:
         """Focus the composer with the caret at its END; return the chips already there.
 
         Every ``@`` mention starts here, so a new chip can only be appended (#997).
         """
-        await page.locator(COMPOSER).first.click(timeout=5000)
-        await page.evaluate(_CARET_TO_END_JS, COMPOSER)
-        return await self.read_chips(page)
+        await page.locator(composer).first.click(timeout=5000)
+        await page.evaluate(_CARET_TO_END_JS, composer)
+        return await self.read_chips(page, chip=chip)
 
     async def clear_composer(self, page: Page) -> None:
         await page.locator(COMPOSER).first.click(timeout=5000)
@@ -432,7 +436,7 @@ class MentionMixin(UploadFrameMixin):
         await page.keyboard.press("Backspace")
         await page.wait_for_timeout(600)
 
-    async def read_chips(self, page: Page) -> list[dict[str, str]]:
+    async def read_chips(self, page: Page, *, chip: str = MENTION_CHIP) -> list[dict[str, str]]:
         """Every mention now in the prompt, with the kind that decides its wire slot."""
         return await page.evaluate(
             "(sel) => [...document.querySelectorAll(sel)].map(c => ({"
@@ -440,10 +444,18 @@ class MentionMixin(UploadFrameMixin):
             "  entity_id: c.getAttribute('data-entity-id') || '',"
             "  reference_type: c.getAttribute('data-reference-type') || '',"
             "}))",
-            MENTION_CHIP,
+            chip,
         )
 
-    async def _mention_by_name(self, page: Page, name: str, *, expect_chips: int) -> None:
+    async def _mention_by_name(
+        self,
+        page: Page,
+        name: str,
+        *,
+        expect_chips: int,
+        composer: str = COMPOSER,
+        chip: str = MENTION_CHIP,
+    ) -> None:
         """Insert one mention chip for *name*, and verify it landed.
 
         Retries like :meth:`_pick_frame_by_name` does, and for the same measured reason:
@@ -452,12 +464,13 @@ class MentionMixin(UploadFrameMixin):
         picker offers something: with no picker open it submits the generation (see
         docs/superpowers/spikes/2026-11-04-external-prs-1142-1145.md). The picker owns the
         query text, so Escape cancels a miss without touching existing chips, and the run
-        is refused if an attached chip disappeared.
+        is refused if an attached chip disappeared. ``composer`` / ``chip`` name another
+        prompt box (the clip editor's extend box) and its chips.
         """
         offered: list[str] = []
         chips: list[dict[str, str]] = []
         for attempt in range(1, FRAME_SEARCH_ATTEMPTS + 1):
-            prior = await self._caret_to_end(page)
+            prior = await self._caret_to_end(page, composer=composer, chip=chip)
             before = len(prior)
             # `keyboard.type`, never `insert_text`: the latter dispatches input events with
             # no key events, so the mention plugin opens a picker with no query behind it
@@ -472,7 +485,7 @@ class MentionMixin(UploadFrameMixin):
             if offered:
                 await page.keyboard.press("Enter")
                 await page.wait_for_timeout(2500)
-            chips = await self.read_chips(page)
+            chips = await self.read_chips(page, chip=chip)
             if len(chips) == expect_chips:
                 _require_appended(prior, chips)
                 await page.keyboard.type(" ", delay=80)
@@ -485,7 +498,7 @@ class MentionMixin(UploadFrameMixin):
                 offered=len(offered),
             )
             await page.keyboard.press("Escape")
-            chips = await self._require_chips_kept(page, before, name)
+            chips = await self._require_chips_kept(page, before, name, chip=chip)
             if attempt == FRAME_SEARCH_ATTEMPTS:
                 break
             await page.wait_for_timeout(FRAME_SEARCH_RETRY_PAUSE_S * 1000)

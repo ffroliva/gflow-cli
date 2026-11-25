@@ -55,11 +55,12 @@ _MIGRATED_VIDEO = (
     "flow.google.com: gflow drives text-to-video, image-to-video from a local "
     "--initial-frame, reference-to-video from local --ref files and/or a named "
     "character, single-clip video-to-video edit (`video edit` from a local video "
-    "file or existing clip UUID with 0-5 local --ref files), and a single-segment "
-    "extend. Not driven there yet (exit 36): a frame or reference given by Flow "
-    "media UUID or @Name, character references on t2v/i2v, a character given by id "
-    "without a name, and extend chains, --scene and --seed. The agent-only composer "
-    "(#799) takes text-to-video only."
+    "file or existing clip UUID with 0-5 local --ref files), and single-segment "
+    "extend from a Flow media UUID or local video file (with optional --duration "
+    "3-10 and up to 3 local --ref images). Not driven there yet (exit 36): a frame "
+    "or reference given by Flow media UUID or @Name, character references on "
+    "t2v/i2v, a character given by id without a name, and extend chains, --scene "
+    "and --seed. The agent-only composer (#799) takes text-to-video only."
 )
 _CREDIT_CAP_NOTE = (
     "The billed video commands accept a per-command `--max-credits` cap (also "

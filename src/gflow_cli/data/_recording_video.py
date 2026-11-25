@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.scene import Scene
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
     from gflow_cli.api.video import (
         GenerateVideoRequest,
         VideoResult,
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
         VideoStatus,
     )
     from gflow_cli.api.video_extend import ExtendStarted
-    from gflow_cli.storage import CloudStorageInfo
+    from gflow_cli.storage import AnyPath, CloudStorageInfo
 
     # All generation/edit requests carry the tool-provenance fields the recorder reads.
     _ToolableRequest = GenerateImageRequest | GenerateVideoRequest | EditVideoRequest
@@ -239,12 +240,15 @@ class VideoRecordingMixin(RecorderCore):
         model_key: str | None,
         local_path: Path | None = None,
         cloud_storage_info: CloudStorageInfo | None = None,
-    ) -> None:
-        """Note a finished extend that grew ``media_id`` in place (#1184). A clip the
-        catalog does not hold (made in Flow's UI, or elsewhere) is left unrecorded."""
-        self.repository.note_asset_extended(
+    ) -> bool:
+        """Note a finished extend that grew ``media_id`` in place (#1184).
+
+        Returns ``False`` for a clip the catalog does not hold, which is left unrecorded
+        here; :meth:`record_migrated_extend` writes a row for such a clip instead."""
+        if not self.repository.note_asset_extended(
             profile_name, media_id, model_key=model_key, workflow_id=workflow_id
-        )
+        ):
+            return False
         if local_path is not None or cloud_storage_info is not None:
             if cloud_storage_info is None and local_path is not None:
                 from gflow_cli.storage import cloud_info_from_path
@@ -257,6 +261,73 @@ class VideoRecordingMixin(RecorderCore):
                 local_path=local_path,
                 cloud_storage_info=cloud_storage_info,
                 supersede_existing=True,
+            )
+        return True
+
+    def record_migrated_extend(  # noqa: PLR0913
+        self,
+        target: AnyPath | None,
+        *,
+        profile_name: str,
+        profile_dir: Path | None,
+        media_id: str,
+        project_id: str | None,
+        outcome: ExtendOutcome,
+    ) -> None:
+        """Catalog one finished flow.google.com extend of ``media_id`` (CLI and worker).
+
+        An extend that grew the source in place (#1184) updates its row and file; a source
+        the catalog does not hold yet (made in Flow's UI, or another machine) gets a row
+        first, so the extended file is listed. An extend that made a separate clip is
+        recorded as a completed (or failed) video of its own.
+        """
+        from pathlib import Path as _Path
+
+        from gflow_cli.api.video import VideoResult, VideoStatus
+        from gflow_cli.storage import cloud_info_from_path
+
+        record = outcome.record
+        in_place = record.media_id == media_id
+        if in_place and target is None:
+            # The extend did not finish, but the source is a finished clip: a row written
+            # pending at submit for a clip uploaded in this run must not stay pending.
+            self.repository.settle_pending_asset(
+                profile_name, media_id, "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+            )
+            return
+        cloud_info = cloud_info_from_path(target) if target is not None else None
+        local_path = target if isinstance(target, _Path) else None
+        if in_place and self.record_extended_in_place(
+            profile_name,
+            media_id,
+            record.workflow_id,
+            outcome.model_key,
+            local_path=local_path,
+            cloud_storage_info=cloud_info,
+        ):
+            return
+        succeeded = target is not None or record.is_done
+        self.record_completed_video(
+            profile_name=profile_name,
+            _profile_dir=profile_dir or _Path(),
+            result=VideoResult(
+                status=VideoStatus(
+                    media_id=record.media_id,
+                    status="MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                    if succeeded
+                    else "MEDIA_GENERATION_STATUS_FAILED",
+                ),
+                local_path=local_path,
+                project_id=project_id,
+                workflow_id=record.workflow_id,
+            ),
+            cloud_storage_info=cloud_info,
+            model=outcome.model_key,
+            aspect_ratio=outcome.aspect,
+        )
+        if in_place:
+            self.repository.note_asset_extended(
+                profile_name, media_id, model_key=outcome.model_key, workflow_id=record.workflow_id
             )
 
     def record_started_video(

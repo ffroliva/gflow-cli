@@ -1,36 +1,33 @@
 """Drive Flow's video-to-video edit surface on ``flow.google.com`` (RPC ``jIps6``).
 
-Supports two empirically measured paths sharing one ``jIps6`` route guard:
+Two empirically measured paths share one ``jIps6`` request check:
 
-1. **Local video file** (Main Composer ``Ingredients``): uploads the local clip via
-   toolbar ``+ -> upload`` (``/upload/v1/flow/upload/video/<uuid>``) and any local
-   ``--ref`` images (0–5), attaches the video and image references via ``@`` mentions,
-   configures ``Omni 1.2 Flash`` / ``aspect`` / ``resolution`` / ``x1``, checks the
-   pre-submit credit quote, and observes ``jIps6`` → ``jwpduf``/``as29s``.
+1. **Local video file** (Main Composer ``Ingredients``): uploads the clip and any local
+   ``--ref`` images (0-5) through the shared toolbar uploader, attaches the clip and the
+   references as ``@`` mentions, configures ``Omni`` / aspect / resolution / ``x1``, reads
+   the pre-submit credit quote once the clip is attached, and observes ``jIps6``.
 2. **Existing Flow ``MEDIA_ID``** (Clip Editor ``/project/<pid>/edit/<MEDIA_ID>``):
    uploads any local ``--ref`` images on the project page first, opens the clip editor,
-   resolves the clip's current ``workflow_id`` from ``Zzl0ze`` (supporting both
-   generated and uploaded video records), selects the Omni model and reads its credit
-   quote from the model menu overlay, attaches ``--ref`` mentions, and observes
-   ``jIps6`` → ``jwpduf``/``as29s``.
+   resolves the clip's current workflow id from ``Zzl0ze`` (the extend port's reader),
+   selects the Omni model, attaches the references and the prompt, reads the quote from
+   the model menu, and observes ``jIps6``.
+
+While either path prepares the request, every billed submit RPC the page might send is
+aborted (the extend port's pre-submit hold); the credit cap is enforced before the click.
 """
 
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import json
 import time
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 from playwright.async_api import Error as PlaywrightError
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from gflow_cli.api._flow_workspace import validate_image_file
 from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote
-from gflow_cli.api.transports._common import extract_project_id, raise_if_known_landing
+from gflow_cli.api.dto import GenerationCheckpoint
 from gflow_cli.api.transports._mc_common import (
     _CARET_TO_END_JS,
     ASPECT_LIGATURE,
@@ -40,7 +37,6 @@ from gflow_cli.api.transports._mc_common import (
     INGREDIENTS_LIGATURE,
     MENTION_CHIP,
     MENU_ITEM,
-    MIGRATED_PROJECT_URL,
     OVERLAY,
     PICKER_CONFIRM,
     PICKER_OPTION,
@@ -48,22 +44,28 @@ from gflow_cli.api.transports._mc_common import (
     SubmitWatch,
     _select_resolution,
 )
-from gflow_cli.api.transports._mc_upload_video import UploadedVideo, upload_video
-from gflow_cli.api.transports.batchexecute import (
-    GenerationRecord,
-    find_record,
-)
+from gflow_cli.api.transports._mc_upload_video import upload_video_for_mention
 from gflow_cli.api.transports.migrated_composer import MigratedComposer, finish_video_result
 from gflow_cli.api.transports.migrated_extend import (
-    ANCHOR_TIMEOUT_S,
-    SourceClip,
+    EXTEND_MENTION_CHIP as CLIP_EDITOR_MENTION_CHIP,
+)
+from gflow_cli.api.transports.migrated_extend import (
+    EXTEND_PROMPT as CLIP_EDITOR_PROMPT,
+)
+from gflow_cli.api.transports.migrated_extend import (
+    EXTEND_SUBMIT as CLIP_EDITOR_SUBMIT,
+)
+from gflow_cli.api.transports.migrated_extend import (
+    QUOTE_SETTLE_S,
+    _anchor,
     _at,
     _confirm_editor,
-    _current_workflow,
-    _frames,
+    _decode_rpc_frames,
     _source_clip,
     batch_rpcids,
+    holding_early_submits,
     require_video_source,
+    validate_upload_files,
 )
 from gflow_cli.api.video import (
     EDIT_DEFAULT_MODEL,
@@ -89,6 +91,7 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
+    from gflow_cli.api.dto import GenerationCheckpointObserver
     from gflow_cli.api.transports.migrated_composer import ClipSaver
 
 log = structlog.get_logger(__name__)
@@ -96,6 +99,8 @@ log = structlog.get_logger(__name__)
 EDIT_SUBMIT_RPC = "jIps6"
 _WRONG_SUBMIT_RPCS = frozenset({"YhhmEf", "eb1hJf", "MZZa6b", "nprQif", "fZytfe"})
 _EDIT_SUBMIT_WATCH_RPCS = SubmitWatch._RPCS | {EDIT_SUBMIT_RPC}
+#: Every RPC that bills: none may leave the page while the edit is being prepared.
+_EDIT_HELD_RPCS = _EDIT_SUBMIT_WATCH_RPCS | _WRONG_SUBMIT_RPCS
 _ASPECT_INDEX_TO_ENUM: dict[int, Aspect] = {1: Aspect.PORTRAIT, 2: Aspect.LANDSCAPE}
 _EDIT_MODEL_PREFIX: dict[VideoModel, str] = {
     VideoModel.OMNI_1_2_FLASH: "macaron_cookie_edit",
@@ -106,65 +111,42 @@ MAIN_COMPOSER_SELECTOR = f"flow-prompt-box {COMPOSER}"
 CHIP_CONTAINER_SELECTOR = "flow-prompt-box button.chip-container"
 VIDEO_CHIP_SELECTOR = "flow-prompt-box button.chip-container:has(mat-icon:text-is('videocam'))"
 MAIN_MENTION_CHIP_SELECTOR = f"flow-prompt-box {MENTION_CHIP}"
+MAIN_SETTINGS_SCOPE = ".cdk-overlay-pane flow-prompt-box-settings"
 
 CLIP_EDITOR_BOX = "flow-edit-video-prompt-box"
-CLIP_EDITOR_PROMPT = f"{CLIP_EDITOR_BOX} .ProseMirror"
-CLIP_EDITOR_MENTION_CHIP = f"{CLIP_EDITOR_BOX} {MENTION_CHIP}"
-CLIP_EDITOR_SUBMIT = f"{CLIP_EDITOR_BOX} flow-generate-icon-button button"
 CLIP_EDITOR_MODEL_TRIGGER = f"{CLIP_EDITOR_BOX} button:has(mat-icon:text-is('arrow_drop_down'))"
 
 #: Budget for an uploaded local video to finish server-side ingest and become attachable
-#: via the ``@`` picker (while processing, ``detail-add-to-prompt-btn`` stays disabled).
+#: via the ``@`` picker (while processing, the picker's confirm button stays disabled).
 VIDEO_INGEST_ATTACH_BUDGET_S = 90.0
 _VIDEO_INGEST_POLL_S = 3.0
+_CAP_ROUTE = "flow.google.com video edit"
 
 
-# --- Zzl0ze source classification -------------------------------------------
+# --- input validation ----------------------------------------------------------
 
 
-def _is_uploaded_video_media_info(rec: list[Any]) -> bool:
-    """True when ``rec[7]`` matches a locally uploaded video record in ``Zzl0ze``.
+async def validate_edit_inputs(request: EditVideoRequest) -> None:
+    """Refuse (nothing charged) an edit Flow must not be sent, before any project exists.
 
-    Measured live 2026-11-24: uploaded videos have ``rec[7][0] is None`` and
-    ``rec[7][1] == [width, height, [3]]`` (with no ``image/*`` mime at ``rec[7][1][6]``).
+    Exit 36 for an option the clip editor does not offer, exit 11 for a local file that
+    cannot be uploaded. Called at each edge (CLI, worker) and again at the client entry.
     """
-    if _at(rec, 7, 0) is not None:
-        return False
-    info = _at(rec, 7, 1)
-    if not isinstance(info, list):
-        return False
-    typed_info = cast("list[Any]", info)
-    if len(typed_info) < 3:
-        return False
-    return (
-        isinstance(typed_info[0], int) and isinstance(typed_info[1], int) and typed_info[2] == [3]
-    )
+    if request.source_media_id is not None and request.resolution == "360p":
+        raise FlowHostMigratedError(
+            detail=(
+                "editing an existing Flow media UUID in the clip editor has no 360p toggle; "
+                "--resolution 360p is only supported when editing a local video file"
+            ),
+            remediation_hint=(
+                "Drop --resolution (or use --resolution 720p) when editing an existing media UUID, "
+                "or pass a local video file path for 360p."
+            ),
+        )
+    await validate_upload_files(request.source_video, request.reference_images)
 
 
-def edit_source_record(payload: Any, media_id: str) -> SourceClip | None:
-    """Resolve ``media_id`` from ``Zzl0ze`` into ``SourceClip(workflow_id, kind)``.
-
-    Recognises both Flow-generated videos (``rec[7][0]`` is a list) and locally
-    uploaded videos (``rec[7][0] is None`` with ``rec[7][1] == [w, h, [3]]``).
-    """
-    rec = find_record(payload, (2, media_id))
-    if rec is None:
-        return None
-    current = _current_workflow(payload, media_id)
-    head = find_record(payload, (0, current)) if current else None
-    if head is not None and head[2] == media_id:
-        rec = head
-    mime = _at(rec, 7, 1, 6)
-    if isinstance(mime, str) and mime.startswith("image/"):
-        kind = "image"
-    elif isinstance(_at(rec, 7, 0), list) or _is_uploaded_video_media_info(rec):
-        kind = "video"
-    else:
-        kind = "unknown"
-    return SourceClip(workflow_id=str(rec[0]), kind=kind)
-
-
-# --- jIps6 route guard ------------------------------------------------------
+# --- jIps6 request check ---------------------------------------------------------
 
 
 def _extract_reference_ids(entry: Any) -> set[str] | None:
@@ -208,19 +190,11 @@ def _check_model_key(
                 route=route,
             )
     is_360p = model_key.endswith("_360p")
-    if expected_resolution == "360p" and not is_360p:
+    if (expected_resolution == "360p") != is_360p and expected_resolution is not None:
         return WireFormatError(
             detail=(
-                f"migrated host: requested 360p video edit but {EDIT_SUBMIT_RPC} carried "
-                f"{model_key!r} — refusing before Flow billed it"
-            ),
-            route=route,
-        )
-    if expected_resolution == "720p" and is_360p:
-        return WireFormatError(
-            detail=(
-                f"migrated host: requested 720p video edit but {EDIT_SUBMIT_RPC} carried "
-                f"{model_key!r} — refusing before Flow billed it"
+                f"migrated host: requested {expected_resolution} video edit but "
+                f"{EDIT_SUBMIT_RPC} carried {model_key!r} — refusing before Flow billed it"
             ),
             route=route,
         )
@@ -283,20 +257,8 @@ def _check_reference_ids(
     return None
 
 
-def _decode_edit_frames(body: str) -> list[Any]:
-    decoded: list[Any] = []
-    for frame in _frames(body):
-        if _at(frame, 0) != EDIT_SUBMIT_RPC:
-            continue
-        try:
-            decoded.append(json.loads(str(_at(frame, 1))))
-        except (ValueError, TypeError):
-            decoded.append(None)
-    return decoded
-
-
 def _single_edit_entry(body: str, *, route: str) -> tuple[Any, GFlowError | None]:
-    edit_frames = _decode_edit_frames(body)
+    edit_frames = _decode_rpc_frames(EDIT_SUBMIT_RPC, body)
     if len(edit_frames) != 1:
         return None, WireFormatError(
             detail=(
@@ -318,7 +280,7 @@ def _single_edit_entry(body: str, *, route: str) -> tuple[Any, GFlowError | None
     return cast("list[Any]", entries)[0], None
 
 
-def edit_request_problem(
+def edit_request_problem(  # noqa: PLR0913
     rpcid: str,
     body: str,
     *,
@@ -345,18 +307,10 @@ def edit_request_problem(
     if entry_err is not None:
         return entry_err
     found_wf = _at(entry, 0, 1)
-    if not isinstance(found_wf, str):
-        return WireFormatError(
-            detail=(
-                f"migrated host: could not read the source workflow id in {EDIT_SUBMIT_RPC} — "
-                "refusing before Flow billed it"
-            ),
-            route=route,
-        )
     if found_wf != workflow_id:
         return WireFormatError(
             detail=(
-                f"migrated host: {EDIT_SUBMIT_RPC} targeted workflow {found_wf}, not "
+                f"migrated host: {EDIT_SUBMIT_RPC} targeted workflow {found_wf!r}, not "
                 f"{workflow_id} — refusing before Flow billed it"
             ),
             route=route,
@@ -378,7 +332,7 @@ def edit_request_problem(
     )
 
 
-def batch_edit_request_problem(
+def batch_edit_request_problem(  # noqa: PLR0913
     rpcids: list[str],
     body: str,
     *,
@@ -421,8 +375,10 @@ async def _clear_main_composer_chips(page: Page) -> None:
         if await chips.count() == 0:
             return
         first = chips.first
-        with contextlib.suppress(PlaywrightError):
+        try:
             await first.hover(timeout=2000)
+        except PlaywrightError:
+            log.debug("migrated_video_edit.chip_hover_failed")
         cancel = first.locator("mat-icon:text-is('cancel')").first
         if await cancel.count():
             await cancel.click(force=True, timeout=3000)
@@ -440,30 +396,23 @@ async def _clear_main_composer_chips(page: Page) -> None:
 
 async def _clear_editor_prompt(page: Page, selector: str) -> None:
     await page.locator(selector).first.click(timeout=5000)
-    await page.keyboard.press("Control+a")
+    await page.keyboard.press("ControlOrMeta+a")
     await page.keyboard.press("Backspace")
     await page.wait_for_timeout(400)
 
 
-async def _try_commit_picker_option(
-    page: Page,
-    *,
-    query: str,
-    chip_selector: str,
-    expect_count: int,
-) -> tuple[bool, bool]:
-    """Try clicking the picker option matching *query*.
+async def _try_commit_picker_option(page: Page, *, query: str) -> tuple[bool, bool]:
+    """Click the picker option matching *query*: ``(committed, still_processing)``.
 
-    Returns ``(committed, still_processing)`` where ``still_processing`` is True when
-    the asset is listed but ``detail-add-to-prompt-btn`` is still disabled (uploaded
-    video transcoding on Flow's servers).
+    ``still_processing`` is True when the clip is listed but the picker's confirm button
+    is still disabled (Flow is still transcoding the upload). No Enter is pressed.
     """
     options = page.locator(f"{OVERLAY} {PICKER_OPTION}").filter(has_text=query)
     if not await options.count() or not await options.first.is_visible():
         return False, False
     await options.first.click(timeout=4000)
     await page.wait_for_timeout(500)
-    if await page.locator(chip_selector).count() >= expect_count:
+    if await page.locator(VIDEO_CHIP_SELECTOR).count() >= 1:
         return True, False
     confirm = page.locator(PICKER_CONFIRM).first
     if await confirm.count() and await confirm.is_visible():
@@ -471,40 +420,28 @@ async def _try_commit_picker_option(
             return False, True
         await confirm.click(timeout=4000)
         await page.wait_for_timeout(700)
-    return await page.locator(chip_selector).count() >= expect_count, False
+    return await page.locator(VIDEO_CHIP_SELECTOR).count() >= 1, False
 
 
-async def _attach_mention_asset(
-    page: Page,
-    *,
-    composer_selector: str,
-    chip_selector: str,
-    query: str,
-    expect_count: int,
-    max_wait_s: float,
-    asset_label: str,
-) -> None:
-    """Attach one uploaded video or image reference via ``@<query>`` and verify its chip."""
-    deadline = time.monotonic() + max_wait_s
+async def _attach_uploaded_video(page: Page, query: str) -> None:
+    """Attach the clip uploaded in this run via ``@<query>``, waiting out Flow's ingest."""
+    deadline = time.monotonic() + VIDEO_INGEST_ATTACH_BUDGET_S
     attempt = 0
     while True:
         attempt += 1
-        await _caret_to_end(page, composer_selector)
+        await _caret_to_end(page, MAIN_COMPOSER_SELECTOR)
         await page.keyboard.type("@", delay=100)
         await page.wait_for_timeout(1500)
         await page.keyboard.type(query, delay=60)
         await page.wait_for_timeout(2000)
-        committed, still_processing = await _try_commit_picker_option(
-            page, query=query, chip_selector=chip_selector, expect_count=expect_count
-        )
+        committed, still_processing = await _try_commit_picker_option(page, query=query)
         if committed:
             await page.keyboard.type(" ", delay=60)
             return
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(400)
         log.info(
-            "migrated_video_edit.mention_retry",
-            asset=asset_label,
+            "migrated_video_edit.video_mention_retry",
             attempt=attempt,
             still_processing=still_processing,
         )
@@ -513,53 +450,58 @@ async def _attach_mention_asset(
         ):
             raise ReferenceNotFoundError(
                 detail=(
-                    f"migrated host: {asset_label} {query!r} did not attach as a chip "
-                    f"(expected {expect_count} chip(s) at {chip_selector}; "
-                    f"still_processing={still_processing}) — refusing before submit"
+                    f"migrated host: the uploaded video {query!r} did not attach as a chip "
+                    f"(still_processing={still_processing}) — refusing before submit"
                 ),
             )
-        pause = _VIDEO_INGEST_POLL_S if still_processing else FRAME_SEARCH_RETRY_PAUSE_S
-        await asyncio.sleep(pause)
-
-
-async def _read_overlay_credit_quote(page: Page, *, scope_selector: str) -> int | None:
-    try:
-        label = await page.locator(f"{scope_selector} flow-credit-cost-label").last.inner_text(
-            timeout=2000
+        await asyncio.sleep(
+            _VIDEO_INGEST_POLL_S if still_processing else FRAME_SEARCH_RETRY_PAUSE_S
         )
-    except PlaywrightError:
-        return None
-    return parse_credit_quote(label)
+
+
+async def _settled_overlay_quote(page: Page, *, scope_selector: str) -> int | None:
+    """Flow's credit quote once two reads agree, or ``None`` if it never settles.
+
+    A changed setting or a newly attached clip re-prices asynchronously, so a single read
+    can be the previous price. ``None`` makes an active cap refuse (exit 45).
+    """
+    deadline = asyncio.get_running_loop().time() + QUOTE_SETTLE_S
+    last: int | None = None
+    while True:
+        try:
+            label = await page.locator(f"{scope_selector} flow-credit-cost-label").last.inner_text(
+                timeout=2000
+            )
+            quoted = parse_credit_quote(label)
+        except PlaywrightError:
+            quoted = None
+        if quoted is not None and quoted == last:
+            return quoted
+        if asyncio.get_running_loop().time() >= deadline:
+            return None
+        last = quoted
+        await asyncio.sleep(0.5)
 
 
 async def _apply_main_edit_settings(
-    composer: MigratedComposer,
-    page: Page,
-    request: EditVideoRequest,
-    *,
-    enforce_cap: bool,
+    composer: MigratedComposer, page: Page, request: EditVideoRequest, *, quote: bool
 ) -> int | None:
-    """Apply Main Composer video Ingredients settings and optionally check the credit quote."""
+    """Apply Main Composer video Ingredients settings; with *quote*, read the settled quote."""
     pane = await composer._open_pane(page)
-    model = request.model or EDIT_DEFAULT_MODEL
     try:
         await composer._select(page, pane, axis="mode", lig="videocam")
         await composer._select(page, pane, axis="submode", lig=INGREDIENTS_LIGATURE)
-        await composer._select_model(page, pane, model)
+        await composer._select_model(page, pane, request.model or EDIT_DEFAULT_MODEL)
         if request.aspect is not None:
             await composer._select(page, pane, axis="aspect", lig=ASPECT_LIGATURE[request.aspect])
         if request.resolution is not None:
             await _select_resolution(page, pane, request.resolution)
         await composer._select(page, pane, axis="count", text="x1")
-        quoted = await _read_overlay_credit_quote(
-            page, scope_selector=".cdk-overlay-pane flow-prompt-box-settings"
+        quoted = (
+            await _settled_overlay_quote(page, scope_selector=MAIN_SETTINGS_SCOPE)
+            if quote
+            else None
         )
-        if enforce_cap and request.max_credits is not None:
-            quoted = enforce_credit_cap(
-                quoted=quoted,
-                max_credits=request.max_credits,
-                route="flow.google.com video edit settings",
-            )
     except BaseException:
         await composer._close_pane(page, strict=False)
         raise
@@ -567,85 +509,190 @@ async def _apply_main_edit_settings(
     return quoted
 
 
-async def _configure_clip_editor_model_and_quote(
-    page: Page, *, model: VideoModel, max_credits: int | None
-) -> int | None:
-    """Select *model* in Clip Editor's dropdown and read the pre-submit credit quote."""
+async def _open_clip_editor_model_menu(page: Page) -> tuple[Any, Any]:
+    """Open the clip editor's model menu: ``(trigger, menu items)``."""
+    trigger = await _anchor(page, CLIP_EDITOR_MODEL_TRIGGER, named="clip editor model selector")
+    await trigger.click(timeout=4000)
+    items = page.locator(f"{OVERLAY} {MENU_ITEM}")
+    try:
+        await items.first.wait_for(state="visible", timeout=5000)
+    except PlaywrightError as exc:
+        raise UiSelectorDriftError(
+            detail="migrated host: clip editor model menu did not open (host=migrated)",
+        ) from exc
+    return trigger, items
+
+
+def _model_matcher(model: VideoModel) -> Any:
     matcher = VIDEO_MODEL_MENU_MATCHERS.get(model)
     if matcher is None:
         raise ConfigurationError(
             detail=f"no flow.google.com menu matcher for model {model.value!r}"
         )
-    trigger = page.locator(CLIP_EDITOR_MODEL_TRIGGER).first
-    try:
-        await trigger.wait_for(state="visible", timeout=int(ANCHOR_TIMEOUT_S * 1000))
-    except PlaywrightTimeoutError as exc:
-        raise UiSelectorDriftError(
-            detail=(
-                f"migrated host: clip editor model selector ({CLIP_EDITOR_MODEL_TRIGGER}) "
-                "did not appear (host=migrated)"
-            ),
-        ) from exc
-    current = (await trigger.text_content() or "").strip()
-    await trigger.click(timeout=4000)
-    items = page.locator(f"{OVERLAY} {MENU_ITEM}")
-    try:
-        await items.first.wait_for(state="visible", timeout=5000)
-    except PlaywrightTimeoutError as exc:
-        raise UiSelectorDriftError(
-            detail="migrated host: clip editor model menu did not open (host=migrated)",
-        ) from exc
-    if matcher.matches(current):
-        quoted = await _read_overlay_credit_quote(page, scope_selector=OVERLAY)
+    return matcher
+
+
+async def _select_clip_editor_model(page: Page, model: VideoModel) -> None:
+    """Select *model* in the clip editor's model menu (no-op when it is already shown)."""
+    matcher = _model_matcher(model)
+    trigger = await _anchor(page, CLIP_EDITOR_MODEL_TRIGGER, named="clip editor model selector")
+    if matcher.matches((await trigger.text_content() or "").strip()):
+        return
+    _, items = await _open_clip_editor_model_menu(page)
+    offered = [t.strip() for t in await items.all_text_contents()]
+    hits = [i for i, text in enumerate(offered) if matcher.matches(text)]
+    if len(hits) != 1:
         await page.keyboard.press("Escape")
-        await page.wait_for_timeout(300)
-    else:
-        offered = [t.strip() for t in await items.all_text_contents()]
-        hits = [i for i, text in enumerate(offered) if matcher.matches(text)]
-        if len(hits) != 1:
-            await page.keyboard.press("Escape")
-            raise ConfigurationError(
+        raise ConfigurationError(
+            detail=(
+                f"model {model.value!r} matched {len(hits)} entry/entries in the clip editor "
+                f"model menu (offered: {', '.join(offered)})"
+            ),
+        )
+    await items.nth(hits[0]).click(timeout=4000)
+    await page.wait_for_timeout(400)
+
+
+async def _clip_editor_quote(page: Page, model: VideoModel) -> int | None:
+    """The settled quote in the model menu, once the trigger confirms *model* is selected."""
+    trigger, _ = await _open_clip_editor_model_menu(page)
+    try:
+        shown = (await trigger.text_content() or "").strip()
+        if not _model_matcher(model).matches(shown):
+            raise UiSelectorDriftError(
                 detail=(
-                    f"model {model.value!r} matched {len(hits)} entry/entries in the clip editor "
-                    f"model menu (offered: {', '.join(offered)})"
+                    f"migrated host: the clip editor shows model {shown!r} after selecting "
+                    f"{model.value!r} — refusing before submit (host=migrated)"
                 ),
             )
-        await items.nth(hits[0]).click(timeout=4000)
-        await page.wait_for_timeout(400)
-        await trigger.click(timeout=4000)
-        await items.first.wait_for(state="visible", timeout=5000)
-        quoted = await _read_overlay_credit_quote(page, scope_selector=OVERLAY)
+        return await _settled_overlay_quote(page, scope_selector=OVERLAY)
+    finally:
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(300)
-    if max_credits is not None:
-        quoted = enforce_credit_cap(
-            quoted=quoted,
-            max_credits=max_credits,
-            route="flow.google.com clip editor video edit",
+
+
+async def _require_chips(page: Page, *, selector: str, count: int, what: str) -> None:
+    if await page.locator(selector).count() != count:
+        raise ReferenceNotFoundError(
+            detail=f"migrated host: the {what} chip count changed before submit"
         )
-    return quoted
 
 
-async def _submit_edit_and_finish(
+async def _require_classic_composer(
+    composer: MigratedComposer, page: Page, project_id: str
+) -> None:
+    if await composer.ensure_editor_for(page, project_id, needs_classic=True) == "agent_only":
+        raise FlowHostMigratedError(
+            detail=(
+                "Flow served the agent-only composer (#799), which has no upload entry; "
+                "video edit from local files is not ported to it yet"
+            ),
+            remediation_hint=(
+                "Re-run later: Flow serves the classic composer on most loads. Editing a clip "
+                "already in the project by its media id needs no upload when no --ref is given."
+            ),
+        )
+
+
+# --- the two preparation paths ------------------------------------------------------
+
+#: (source workflow id, reference media ids, quoted credits) — everything the submit needs.
+_Prepared = tuple[str, tuple[str, ...], int | None]
+
+
+async def _prepare_local_edit(
+    composer: MigratedComposer, page: Page, request: EditVideoRequest, *, project_id: str
+) -> _Prepared:
+    assert request.source_video is not None
+    await _require_classic_composer(composer, page, project_id)
+    uploaded = await upload_video_for_mention(page, project_id, request.source_video)
+    refs = [await composer.upload(page, project_id, ref) for ref in request.reference_images]
+    await _apply_main_edit_settings(composer, page, request, quote=False)
+    await composer.clear_composer(page)
+    await _clear_main_composer_chips(page)
+    await _attach_uploaded_video(page, uploaded.query_name)
+    for idx, (_, name) in enumerate(refs, start=1):
+        await composer._mention_by_name(
+            page,
+            name,
+            expect_chips=idx,
+            composer=MAIN_COMPOSER_SELECTOR,
+            chip=MAIN_MENTION_CHIP_SELECTOR,
+        )
+    await composer.send_prompt(page, request.prompt, append=True)
+    # Flow locks the duration to the attached clip: price the request as it will be sent.
+    quoted = await _apply_main_edit_settings(composer, page, request, quote=True)
+    quoted = enforce_credit_cap(quoted=quoted, max_credits=request.max_credits, route=_CAP_ROUTE)
+    await _require_chips(page, selector=VIDEO_CHIP_SELECTOR, count=1, what="source video")
+    await _require_chips(
+        page, selector=MAIN_MENTION_CHIP_SELECTOR, count=len(refs), what="reference image"
+    )
+    return uploaded.workflow_id, tuple(ref_id for ref_id, _ in refs), quoted
+
+
+async def _prepare_clip_editor_edit(
+    composer: MigratedComposer, page: Page, request: EditVideoRequest, *, project_id: str
+) -> _Prepared:
+    media_id = request.source_media_id
+    assert media_id is not None
+    refs: list[tuple[str, str]] = []
+    if request.reference_images:
+        await _require_classic_composer(composer, page, project_id)
+        refs = [await composer.upload(page, project_id, ref) for ref in request.reference_images]
+    clip = await _source_clip(page, project_id=project_id, media_id=media_id)
+    workflow_id = require_video_source(
+        clip, media_id=media_id, project_id=project_id, action="video edit needs a video source"
+    )
+    _confirm_editor(page, project_id=project_id, media_id=media_id)
+    await _anchor(page, CLIP_EDITOR_PROMPT, named="clip editor prompt box")
+    model = request.model or EDIT_DEFAULT_MODEL
+    await _select_clip_editor_model(page, model)
+    await _clear_editor_prompt(page, CLIP_EDITOR_PROMPT)
+    for idx, (_, name) in enumerate(refs, start=1):
+        await composer._mention_by_name(
+            page, name, expect_chips=idx, composer=CLIP_EDITOR_PROMPT, chip=CLIP_EDITOR_MENTION_CHIP
+        )
+    await _caret_to_end(page, CLIP_EDITOR_PROMPT)
+    await page.keyboard.insert_text(request.prompt)
+    # After the references and the prompt: the quote prices the request as it will be sent.
+    quoted = await _clip_editor_quote(page, model)
+    quoted = enforce_credit_cap(quoted=quoted, max_credits=request.max_credits, route=_CAP_ROUTE)
+    await _require_chips(
+        page, selector=CLIP_EDITOR_MENTION_CHIP, count=len(refs), what="reference image"
+    )
+    return workflow_id, tuple(ref_id for ref_id, _ in refs), quoted
+
+
+# --- submit -----------------------------------------------------------------
+
+
+async def _submit_edit_and_finish(  # noqa: PLR0913
     composer: MigratedComposer,
     page: Page,
     request: EditVideoRequest,
+    prepared: _Prepared,
     *,
     project_id: str,
-    workflow_id: str,
-    reference_ids: tuple[str, ...],
-    quoted_credits: int | None,
-    submit_selector: str | None,
     clip_editor: bool,
     save: ClipSaver,
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
+    on_checkpoint: GenerationCheckpointObserver | None,
 ) -> VideoResult:
+    workflow_id, reference_ids, quoted_credits = prepared
     started_ids: list[str] = []
 
     def note_started(started: VideoStarted) -> Awaitable[None] | None:
         started_ids.append(started.media_id)
+        if on_checkpoint is not None:
+            on_checkpoint(
+                GenerationCheckpoint(
+                    phase="remote_started",
+                    operation_id=started.flow_operation_id,
+                    media_ids=(started.media_id,),
+                )
+            )
         return on_started(started) if on_started is not None else None
 
     def check(rpcid: str, body: str) -> GFlowError | None:
@@ -660,14 +707,17 @@ async def _submit_edit_and_finish(
             clip_editor=clip_editor,
         )
 
+    if on_checkpoint is not None:
+        # Everything before this point is pre-submit (charged "no"); only the click is next.
+        on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
     try:
-        record: GenerationRecord = await composer.submit_and_observe(
+        record = await composer.submit_and_observe(
             page,
             poll_timeout_s=poll_timeout_s,
             on_started=note_started,
             project_id=project_id,
             submit_rpcs=(EDIT_SUBMIT_RPC,),
-            submit_selector=submit_selector,
+            submit_selector=CLIP_EDITOR_SUBMIT if clip_editor else None,
             request_check=check,
             adopt_ids=reference_ids,
         )
@@ -691,13 +741,7 @@ async def _submit_edit_and_finish(
     )
 
 
-async def _validate_edit_references(request: EditVideoRequest) -> None:
-    for ref_path in request.reference_images:
-        await validate_image_file(ref_path)
-
-
-async def _run_local_video_edit(
-    composer: MigratedComposer,
+async def run_video_edit(  # noqa: PLR0913
     page: Page,
     request: EditVideoRequest,
     *,
@@ -706,237 +750,45 @@ async def _run_local_video_edit(
     poll_timeout_s: float,
     download: bool,
     on_started: VideoStartedCallback | None,
-) -> VideoResult:
-    assert request.source_video is not None
-    with nothing_submitted():
-        await _validate_edit_references(request)
-        surface = await composer.ensure_editor_for(page, project_id, needs_classic=True)
-    if surface == "agent_only":
-        raise FlowHostMigratedError(
-            detail=(
-                "video edit requires the classic migrated composer on flow.google.com; "
-                "the agent-only composer is not supported for video edit (#799)"
-            ),
-        )
-    with (
-        SubmitWatch(page, rpcs=_EDIT_SUBMIT_WATCH_RPCS) as watch,
-        nothing_submitted(sent=watch.seen),
-    ):
-        uploaded: UploadedVideo = await upload_video(page, project_id, request.source_video)
-        ref_uploads: list[tuple[str, str]] = [
-            await composer.upload(page, project_id, ref_path)
-            for ref_path in request.reference_images
-        ]
-        await _apply_main_edit_settings(composer, page, request, enforce_cap=False)
-        await composer.clear_composer(page)
-        await _clear_main_composer_chips(page)
-        await _attach_mention_asset(
-            page,
-            composer_selector=MAIN_COMPOSER_SELECTOR,
-            chip_selector=VIDEO_CHIP_SELECTOR,
-            query=uploaded.query_name,
-            expect_count=1,
-            max_wait_s=VIDEO_INGEST_ATTACH_BUDGET_S,
-            asset_label="uploaded video",
-        )
-        for idx, (_ref_id, ref_name) in enumerate(ref_uploads, start=1):
-            await _attach_mention_asset(
-                page,
-                composer_selector=MAIN_COMPOSER_SELECTOR,
-                chip_selector=MAIN_MENTION_CHIP_SELECTOR,
-                query=ref_name,
-                expect_count=idx,
-                max_wait_s=30.0,
-                asset_label="reference image",
-            )
-        await composer.send_prompt(page, request.prompt, append=True)
-        # Re-open settings after video attachment so the credit quote reflects the
-        # attached video's actual duration (Flow locks duration to the source clip).
-        quoted = await _apply_main_edit_settings(composer, page, request, enforce_cap=True)
-        # Verify video + ref chips survived settings toggle before spending credits.
-        if await page.locator(VIDEO_CHIP_SELECTOR).count() < 1:
-            raise ReferenceNotFoundError(
-                detail="migrated host: source video chip disappeared before submit"
-            )
-        if len(ref_uploads) and await page.locator(MAIN_MENTION_CHIP_SELECTOR).count() != len(
-            ref_uploads
-        ):
-            raise ReferenceNotFoundError(
-                detail="migrated host: reference image chip count changed before submit"
-            )
-    return await _submit_edit_and_finish(
-        composer,
-        page,
-        request,
-        project_id=project_id,
-        workflow_id=uploaded.workflow_id,
-        reference_ids=tuple(mid for mid, _ in ref_uploads),
-        quoted_credits=quoted,
-        submit_selector=None,
-        clip_editor=False,
-        save=save,
-        poll_timeout_s=poll_timeout_s,
-        download=download,
-        on_started=on_started,
-    )
-
-
-async def _run_clip_editor_edit(
-    composer: MigratedComposer,
-    page: Page,
-    request: EditVideoRequest,
-    *,
-    project_id: str,
-    save: ClipSaver,
-    poll_timeout_s: float,
-    download: bool,
-    on_started: VideoStartedCallback | None,
-) -> VideoResult:
-    assert request.source_media_id is not None
-    with (
-        SubmitWatch(page, rpcs=_EDIT_SUBMIT_WATCH_RPCS) as watch,
-        nothing_submitted(sent=watch.seen),
-    ):
-        await _validate_edit_references(request)
-        ref_uploads: list[tuple[str, str]] = []
-        if request.reference_images:
-            surface = await composer.ensure_editor_for(page, project_id, needs_classic=True)
-            if surface == "agent_only":
-                raise FlowHostMigratedError(
-                    detail=(
-                        "uploading reference images for video edit requires the classic composer "
-                        "on flow.google.com (#799)"
-                    ),
-                )
-            ref_uploads = [
-                await composer.upload(page, project_id, ref_path)
-                for ref_path in request.reference_images
-            ]
-        clip = await _source_clip(
-            page,
-            project_id=project_id,
-            media_id=request.source_media_id,
-            resolver=edit_source_record,
-        )
-        workflow_id = require_video_source(
-            clip,
-            media_id=request.source_media_id,
-            project_id=project_id,
-            action="video edit requires a video source",
-        )
-        _confirm_editor(page, project_id=project_id, media_id=request.source_media_id)
-        try:
-            await page.locator(CLIP_EDITOR_PROMPT).first.wait_for(
-                state="visible", timeout=int(ANCHOR_TIMEOUT_S * 1000)
-            )
-        except PlaywrightTimeoutError as exc:
-            await raise_if_known_landing(
-                page, requested=MIGRATED_PROJECT_URL.format(project_id=project_id), at="video_edit"
-            )
-            raise UiSelectorDriftError(
-                detail=(
-                    f"migrated host: clip editor prompt box ({CLIP_EDITOR_PROMPT}) did not "
-                    f"appear within {ANCHOR_TIMEOUT_S:.0f}s (host=migrated)"
-                ),
-            ) from exc
-        quoted = await _configure_clip_editor_model_and_quote(
-            page,
-            model=request.model or EDIT_DEFAULT_MODEL,
-            max_credits=request.max_credits,
-        )
-        await _clear_editor_prompt(page, CLIP_EDITOR_PROMPT)
-        for idx, (_ref_id, ref_name) in enumerate(ref_uploads, start=1):
-            await _attach_mention_asset(
-                page,
-                composer_selector=CLIP_EDITOR_PROMPT,
-                chip_selector=CLIP_EDITOR_MENTION_CHIP,
-                query=ref_name,
-                expect_count=idx,
-                max_wait_s=30.0,
-                asset_label="reference image",
-            )
-        await _caret_to_end(page, CLIP_EDITOR_PROMPT)
-        await page.keyboard.insert_text(request.prompt)
-        if len(ref_uploads) and await page.locator(CLIP_EDITOR_MENTION_CHIP).count() != len(
-            ref_uploads
-        ):
-            raise ReferenceNotFoundError(
-                detail="migrated host: reference image chip count changed before clip-editor submit"
-            )
-    return await _submit_edit_and_finish(
-        composer,
-        page,
-        request,
-        project_id=project_id,
-        workflow_id=workflow_id,
-        reference_ids=tuple(mid for mid, _ in ref_uploads),
-        quoted_credits=quoted,
-        submit_selector=CLIP_EDITOR_SUBMIT,
-        clip_editor=True,
-        save=save,
-        poll_timeout_s=poll_timeout_s,
-        download=download,
-        on_started=on_started,
-    )
-
-
-async def run_video_edit(
-    page: Page,
-    request: EditVideoRequest,
-    *,
-    project_id: str | None,
-    save: ClipSaver,
-    poll_timeout_s: float,
-    download: bool,
-    on_started: VideoStartedCallback | None,
+    on_checkpoint: GenerationCheckpointObserver | None = None,
 ) -> VideoResult:
     """Drive a single video-to-video edit (local file or existing ``MEDIA_ID``)."""
-    pid = project_id or extract_project_id(str(getattr(page, "url", "")))
-    if not pid:
-        raise ConfigurationError(
-            detail=(
-                "video edit on flow.google.com needs a project: pass --project <id> "
-                "(or let FlowApiClient create a project for a local video file)"
-            ),
-        )
-    if request.source_media_id is not None and request.resolution == "360p":
-        raise FlowHostMigratedError(
-            detail=(
-                "editing an existing Flow media UUID in the clip editor has no 360p toggle; "
-                "--resolution 360p is only supported when editing a local video file"
-            ),
-            remediation_hint=(
-                "Drop --resolution (or use --resolution 720p) when editing an existing media UUID, "
-                "or pass a local video file path for 360p."
-            ),
-        )
+    await validate_edit_inputs(request)
     composer = MigratedComposer()
+    clip_editor = request.source_video is None
     log.info(
         "migrated_video_edit.dispatch",
-        project_id=pid,
-        source_kind="media_id" if request.source_media_id else "local_file",
+        project_id=project_id,
+        source_kind="media_id" if clip_editor else "local_file",
         ref_count=len(request.reference_images),
     )
-    if request.source_video is not None:
-        return await _run_local_video_edit(
-            composer,
-            page,
-            request,
-            project_id=pid,
-            save=save,
-            poll_timeout_s=poll_timeout_s,
-            download=download,
-            on_started=on_started,
-        )
-    return await _run_clip_editor_edit(
+    prepare = _prepare_clip_editor_edit if clip_editor else _prepare_local_edit
+    async with holding_early_submits(page, rpcs=_EDIT_HELD_RPCS, noun="video edit"):
+        with (
+            SubmitWatch(page, rpcs=_EDIT_SUBMIT_WATCH_RPCS) as watch,
+            nothing_submitted(sent=watch.seen),
+        ):
+            try:
+                prepared = await prepare(composer, page, request, project_id=project_id)
+            except PlaywrightError as exc:  # incl. a click or wait that timed out
+                raise UiSelectorDriftError(
+                    detail=(
+                        "migrated host: a video edit control did not respond "
+                        f"({type(exc).__name__}) — nothing was submitted (host=migrated)"
+                    ),
+                ) from exc
+    return await _submit_edit_and_finish(
         composer,
         page,
         request,
-        project_id=pid,
+        prepared,
+        project_id=project_id,
+        clip_editor=clip_editor,
         save=save,
         poll_timeout_s=poll_timeout_s,
         download=download,
         on_started=on_started,
+        on_checkpoint=on_checkpoint,
     )
 
 
@@ -948,6 +800,6 @@ __all__ = [
     "VIDEO_CHIP_SELECTOR",
     "batch_edit_request_problem",
     "edit_request_problem",
-    "edit_source_record",
     "run_video_edit",
+    "validate_edit_inputs",
 ]

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
-    from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.api.dto import GeneratedImage, GenerationCheckpointObserver
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import (
         EditVideoRequest,
@@ -171,15 +171,16 @@ class VideoCapableTransport(Protocol):
 class VideoEditCapableTransport(Protocol):
     """Mixin protocol for transports that support video-to-video editing."""
 
-    async def edit_video(
+    async def edit_video(  # noqa: PLR0913
         self,
         *,
         request: EditVideoRequest,
-        project_id: str | None = None,
+        project_id: str,
         out_dir: Path | None,
         poll_timeout_s: float,
         download: bool,
         on_started: VideoStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> VideoResult:
         """Drive Flow's video-to-video edit UI and return the resulting clip."""
         raise NotImplementedError

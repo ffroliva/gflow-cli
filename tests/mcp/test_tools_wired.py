@@ -230,6 +230,338 @@ class TestGenerateImageWired:
         assert result["params"]["count"] == 2
 
     @pytest.mark.asyncio
+    async def test_image_t2i_count_gt_1_returns_all_files(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#1469: wait=True and task_payload return every image file generated for count > 1."""
+        from gflow_cli.mcp.tools import gflow_generate_image, task_payload
+
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-1", workflow_id="wf-1", seed=101),
+                _FakeImage(media_name="media-img-2", workflow_id="wf-2", seed=102),
+                _FakeImage(media_name="media-img-3", workflow_id="wf-3", seed=103),
+            ]
+        )
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="three cats", count=3)
+
+        assert result["status"] == "completed"
+        assert len(result["files"]) == 3
+        assert len(set(result["files"])) == 3
+        assert all(Path(p).is_file() for p in result["files"])
+        for path, expected_media in zip(
+            result["files"], ("media-img-1", "media-img-2", "media-img-3"), strict=True
+        ):
+            assert Path(path).stem.startswith(expected_media)
+        payload = task_payload("default", result["task_id"], temp_db.path)
+        assert payload["files"] == result["files"]
+
+    @pytest.mark.asyncio
+    async def test_openai_route_n2_returns_both_generated_images(
+        self, temp_db: DataStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#1365 over #1469: ``n=2`` on /v1/images/generations reaches the worker and back."""
+        import base64
+
+        import httpx
+
+        from gflow_cli.mcp.server import build_app
+
+        monkeypatch.delenv("GFLOW_MCP_NO_SPEND", raising=False)
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-1", workflow_id="wf-1", seed=101),
+                _FakeImage(media_name="media-img-2", workflow_id="wf-2", seed=102),
+            ]
+        )
+        transport = httpx.ASGITransport(app=build_app(transport="http"))
+        with (
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
+                resp = await c.post("/v1/images/generations", json={"prompt": "two cats", "n": 2})
+
+        assert resp.status_code == 200, resp.text
+        images = [base64.b64decode(d["b64_json"]) for d in resp.json()["data"]]
+        assert len(images) == 2
+        assert all(images)
+
+    @pytest.mark.asyncio
+    async def test_image_t2i_count_fewer_returned_lists_actual_files(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#1469: when Flow returns fewer than count images, files lists the actual outputs."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-a", workflow_id="wf-a"),
+                _FakeImage(media_name="media-img-b", workflow_id="wf-b"),
+            ]
+        )
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="two cats", count=3)
+
+        assert result["status"] == "completed"
+        assert len(result["files"]) == 2
+        assert len(set(result["files"])) == 2
+
+    def test_task_payload_falls_back_to_single_asset_without_operation_link(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """Legacy/unlinked assets without operation_assets rows still resolve via flow_media_id."""
+        from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord
+        from gflow_cli.data.repository import DataRepository
+        from gflow_cli.mcp.tools import task_payload
+        from gflow_cli.worker.queue import QueueRepository
+
+        img_file = tmp_path / "single.png"
+        img_file.write_bytes(b"PNG")
+        repo = DataRepository(temp_db)
+        repo.upsert_asset(
+            AssetRecord(
+                id="asset-only-1",
+                profile_name="default",
+                flow_project_id="proj-1",
+                flow_media_id="media-only-1",
+                flow_workflow_id="wf-only-1",
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model=None,
+                aspect_ratio=None,
+                width=None,
+                height=None,
+                duration_seconds=None,
+                seed=777,
+                metadata_json={},
+            )
+        )
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-only-1",
+                profile_name="default",
+                asset_id="asset-only-1",
+                path=img_file,
+                media_type="image/png",
+                bytes=3,
+                sha256=None,
+            )
+        )
+        qrepo = QueueRepository(temp_db)
+        qrepo.enqueue_task("task-only-1", "default", "t2i", {"prompt": "x"})
+        qrepo.update_task_status("task-only-1", status="completed", flow_media_id="media-only-1")
+
+        payload = task_payload("default", "task-only-1", temp_db.path)
+        assert payload["status"] == "completed"
+        assert payload["files"] == [str(img_file)]
+
+    @pytest.mark.asyncio
+    async def test_image_task_payload_ignores_later_character_op_reusing_media_id(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#1469: later character ops reusing an image media id must not shadow task outputs."""
+        import dataclasses
+
+        from gflow_cli.data.models import (
+            AssetKind,
+            AssetRecord,
+            LocalFileRecord,
+            OperationAssetRole,
+            OperationKind,
+            OperationRecord,
+        )
+        from gflow_cli.data.repository import DataRepository
+        from gflow_cli.mcp.tools import gflow_generate_image, task_payload
+        from gflow_cli.worker.queue import QueueRepository
+
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-1", workflow_id="wf-1", seed=101),
+                _FakeImage(media_name="media-img-2", workflow_id="wf-2", seed=102),
+                _FakeImage(media_name="media-img-3", workflow_id="wf-3", seed=103),
+            ]
+        )
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="three cats", count=3)
+
+        assert len(result["files"]) == 3
+        repo = DataRepository(temp_db)
+        reused = repo.get_asset_by_flow_media_id("default", "media-img-1")
+        assert reused is not None
+        char_body_file = tmp_path / "char_body.png"
+        char_body_file.write_bytes(b"CHAR_BODY")
+        repo.upsert_asset(
+            AssetRecord(
+                id="asset-char-body",
+                profile_name="default",
+                flow_project_id="proj-abc",
+                flow_media_id="media-char-body",
+                flow_workflow_id=None,
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model=None,
+                aspect_ratio=None,
+                width=None,
+                height=None,
+                duration_seconds=None,
+                seed=None,
+                metadata_json={},
+            )
+        )
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-char-body",
+                profile_name="default",
+                asset_id="asset-char-body",
+                path=char_body_file,
+                media_type="image/png",
+                bytes=9,
+                sha256=None,
+            )
+        )
+        char_op = dataclasses.replace(
+            OperationRecord.minimal(
+                id="op-char-later",
+                profile_name="default",
+                flow_project_id="proj-abc",
+                mode=OperationKind.CHARACTER,
+            ),
+            started_at="2099-01-01T00:00:00.000Z",
+        )
+        repo.insert_operation(char_op)
+        repo.link_operation_asset("op-char-later", reused.id, OperationAssetRole.OUTPUT, 0)
+        repo.link_operation_asset("op-char-later", "asset-char-body", OperationAssetRole.OUTPUT, 1)
+
+        # Primary lookup uses catalog_operation_id recorded on the task checkpoint.
+        cp = QueueRepository(temp_db).read_checkpoint(result["task_id"])
+        assert cp is not None
+        assert isinstance(cp.get("catalog_operation_id"), str) and cp["catalog_operation_id"]
+        payload = task_payload("default", result["task_id"], temp_db.path)
+        assert payload["files"] == result["files"]
+        assert str(char_body_file) not in payload["files"]
+
+        # Legacy tasks without catalog_operation_id still scope fallback lookup by task mode.
+        temp_db.conn.execute(
+            "UPDATE generation_queue SET checkpoint_json = NULL WHERE task_id = ?",
+            (result["task_id"],),
+        )
+        temp_db.conn.commit()
+        legacy_payload = task_payload("default", result["task_id"], temp_db.path)
+        assert legacy_payload["files"] == result["files"]
+        assert str(char_body_file) not in legacy_payload["files"]
+
+    @pytest.mark.asyncio
     async def test_image_explicit_output_file(self, temp_db: DataStore, tmp_path: Path) -> None:
         """When output is specified, the generated asset lands at the custom path."""
         from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_image

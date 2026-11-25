@@ -298,14 +298,14 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
 
 ### `GFLOW_MCP_NO_SPEND`
 
-**What:** Registration-time gating of the credit-spending MCP tools (#496). When set, `gflow mcp run` and `gflow serve` never register `gflow_generate_image` and `gflow_generate_video`, so a connected agent cannot even see them in `tools/list` — invisible beats refused (no wasted calls, no refusal path for prompt injection to probe, no reliance on the model honoring an error). Every read-only tool stays available.
-**Default:** unset (both generate tools registered).
+**What:** Registration-time gating of the credit-spending MCP tools (#496). When set, `gflow mcp run` and `gflow serve` never register `gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video` and `gflow_edit_video`, so a connected agent cannot even see them in `tools/list` — invisible beats refused (no wasted calls, no refusal path for prompt injection to probe, no reliance on the model honoring an error). Every read-only tool stays available.
+**Default:** unset (every credit-spending tool registered).
 **Accepted:** the value is lower-cased and stripped before comparison, so the falsy set `0`/`false`/`off`/`no`/`n`/`f`/empty is matched **case-insensitively** — `FALSE`, `Off` and `NO` all leave no-spend **disabled**, exactly like their lowercase forms. Any other value enables it. The falsy vocabulary deliberately matches Click's, so a value cannot mean "off" to the `--no-spend` flag and "on" to the server-side policy.
-**⚠️ Fails toward spending:** an unrecognised *falsy-looking* value is not a safety net — if you want the guarantee, set `GFLOW_MCP_NO_SPEND=1` (or pass `--no-spend`) and confirm the two generate tools are absent from `tools/list`.
+**⚠️ Fails toward spending:** an unrecognised *falsy-looking* value is not a safety net — if you want the guarantee, set `GFLOW_MCP_NO_SPEND=1` (or pass `--no-spend`) and confirm the four credit-spending tools are absent from `tools/list`.
 **Equivalent flag:** `gflow mcp run --no-spend` (and `gflow serve --no-spend`), which sets this variable for you. The env var is the only route that covers a server you did not start yourself — e.g. one launched from an MCP client config. See [MCP § Option A2](MCP.md#option-a2-read-only-server).
 **Note:** this is the one variable that does not carry the `GFLOW_CLI_` prefix — it is scoped to the MCP server, not the CLI.
 
-Both generate tools are gated, not just video: image generation is only *empirically* free ("~0 credits observed"), and no-spend is meant to be a hard guarantee.
+Every credit-spending tool is gated (`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video`, `gflow_edit_video`), not just video: image generation is only *empirically* free ("~0 credits observed"), and no-spend is meant to be a hard guarantee.
 
 ### `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`
 
@@ -388,6 +388,8 @@ $env:GFLOW_CLI_DB_PATH = "D:\gflow-data\gflow.db"     # PowerShell
 ```
 
 Use this when you want the DB on a different volume, outside `GFLOW_CLI_HOME`, or when running multiple isolated environments that share the same home dir.
+
+gflow restricts the database file to your user, so do not share one database between accounts; an existing directory keeps its permissions. FAT/exFAT volumes and some network shares cannot store file permissions. See [SECURITY.md](SECURITY.md#database-file-permissions).
 
 ### `GFLOW_CLI_HISTORY_PROMPTS`
 

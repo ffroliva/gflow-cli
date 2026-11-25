@@ -169,7 +169,6 @@ from gflow_cli.api.video import (
 from gflow_cli.errors import (
     AuthExpiredError,
     ConfigurationError,
-    FlowHostMigratedError,
     RateLimitError,
     TransportTimeoutError,
     WafRejectionError,
@@ -180,6 +179,8 @@ from gflow_cli.errors import (
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
+
+    from gflow_cli.api.dto import GenerationCheckpointObserver
 
 log = structlog.get_logger(__name__)
 
@@ -270,79 +271,54 @@ class VideoGenerationMixin(FrameAttachMixin):
                 name_resolver=name_resolver,
             )
 
-    async def edit_video(
+    async def edit_video(  # noqa: PLR0913
         self,
         *,
         request: EditVideoRequest,
-        project_id: str | None = None,
+        project_id: str,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
+        on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> VideoResult:
         """Edit a video via Flow's ``flow.google.com`` V2V edit surface (``jIps6``)."""
         if not self._setup_done or self._page is None:
             msg = "UiAutomationTransport.setup() must be called before edit_video()"
             raise RuntimeError(msg)
-        async with self._generate_lock:
-            return await self._edit_video_locked(
-                request,
-                project_id=project_id,
-                out_dir=out_dir,
-                poll_timeout_s=poll_timeout_s,
-                download=download,
-                on_started=on_started,
-            )
-
-    async def _edit_video_locked(
-        self,
-        request: EditVideoRequest,
-        *,
-        project_id: str | None,
-        out_dir: Path | None,
-        poll_timeout_s: float,
-        download: bool,
-        on_started: VideoStartedCallback | None,
-    ) -> VideoResult:
+        from gflow_cli.api.transports.migrated_extend import (  # noqa: PLC0415
+            require_migrated_host,
+        )
         from gflow_cli.api.transports.migrated_video_edit import run_video_edit  # noqa: PLC0415
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
-        page: Page = self._page  # type: ignore[assignment]
-        await self.park_deferred_page()
-        flow_host = get_settings().flow_host
-        route = migrated_route(page.url, flow_host, prefer_migrated=True)
-        if route == "blocked":
-            raise_if_migrated(page, at="flow_host_kill_switch")
-        if route != "migrated":
-            raise FlowHostMigratedError(
-                detail=(
-                    "video edit is only driven on flow.google.com; "
-                    f"current host setting {flow_host!r} routes to {route!r}"
-                ),
-                remediation_hint=(
-                    "Use an account served on flow.google.com (GFLOW_CLI_FLOW_HOST=auto or "
-                    "flow.google.com)."
-                ),
-            )
-        try:
-            result = await run_video_edit(
-                page,
-                request,
-                project_id=project_id,
-                save=partial(self._save_clip, out_dir=out_dir),
-                poll_timeout_s=poll_timeout_s,
-                download=download,
-                on_started=on_started,
-            )
-        except Exception:
-            self._deferred_park_pending = True
-            raise
-        except BaseException:
-            self._deferred_park_pending = True
+        async with self._generate_lock:
+            page: Page = self._page
+            await self.park_deferred_page()
+            route = migrated_route(page.url, get_settings().flow_host, prefer_migrated=True)
+            if route == "blocked":
+                raise_if_migrated(page, at="flow_host_kill_switch")
+            require_migrated_host(route, feature="video edit")
+            try:
+                result = await run_video_edit(
+                    page,
+                    request,
+                    project_id=project_id,
+                    save=partial(self._save_clip, out_dir=out_dir),
+                    poll_timeout_s=poll_timeout_s,
+                    download=download,
+                    on_started=on_started,
+                    on_checkpoint=on_checkpoint,
+                )
+            except Exception:
+                self._deferred_park_pending = True
+                raise
+            except BaseException:
+                self._deferred_park_pending = True
+                await self._park_composer_page(page, event="migrated.page_park_failed")
+                raise
             await self._park_composer_page(page, event="migrated.page_park_failed")
-            raise
-        await self._park_composer_page(page, event="migrated.page_park_failed")
-        return result
+            return result
 
     @staticmethod
     def _parse_generate_response(

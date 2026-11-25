@@ -26,7 +26,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 | | |
 |---|---|
 | **What it is** | One Python package that is both a CLI (`gflow`) and an MCP server (`gflow mcp run`, `gflow serve`) for Google Flow |
-| **Agent surface** | **28 MCP tools** plus resources and prompts, over stdio and Streamable HTTP; listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.ffroliva/gflow-cli` |
+| **Agent surface** | **29 MCP tools** plus resources and prompts, over stdio and Streamable HTTP; listed in the [official MCP Registry](https://registry.modelcontextprotocol.io/) as `io.github.ffroliva/gflow-cli` |
 | **Terminal surface** | 70+ commands with typed exit codes, most with `--json` output; `gflow --help --json` prints the whole tree for agents |
 | **Video models** | Veo 3.1 Lite, Fast and Quality; Omni Flash and Omni 1.2 Flash (up to 15 s, up to 7 reference images) |
 | **Image models** | Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4 |
@@ -64,6 +64,7 @@ gflow auth login --browser chrome
 | **VS Code** | `gflow mcp setup --target vscode` |
 | **Codex** | Skills: from a clone, `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`; MCP: register `gflow mcp run` as a stdio server |
 | **Any MCP client** | command `uvx`, arguments `gflow-cli mcp run`; or `gflow serve` for Streamable HTTP at `/mcp` |
+| **OpenAI SDK code** | `gflow serve`, then `base_url="http://127.0.0.1:8000/v1"`: `POST /v1/images/generations` with Flow image models, `b64_json` responses ([docs/MCP.md](docs/MCP.md#openai-compatible-image-endpoint)) |
 
 The Claude Code plugin ships disabled, because enabling it starts a server that can spend your Veo credits. For a hard guarantee, register `gflow mcp run --no-spend`, which never registers the credit-spending tools. Full setup: [docs/MCP.md](docs/MCP.md).
 
@@ -155,7 +156,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 
 | | **gflow-cli** | [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) | [ByteLandTechnology/flow-mcp](https://github.com/ByteLandTechnology/flow-mcp) | [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) | [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli) | [crisng95/flowkit](https://github.com/crisng95/flowkit) |
 |---|---|---|---|---|---|---|
-| Surfaces | **CLI and MCP server (28 tools)**, parity enforced in CI | MCP server, local web panel | MCP server | CLI, MCP server (5 tools), OpenAI-compatible REST API | CLI | Chrome extension, local REST API, dashboards |
+| Surfaces | **CLI and MCP server (29 tools)**, parity enforced in CI | MCP server, local web panel | MCP server | CLI, MCP server (5 tools), OpenAI-compatible REST API | CLI | Chrome extension, local REST API, dashboards |
 | Install | **`uv tool install gflow-cli` (PyPI)** | git clone, npm build | npm, binaries | clone, `pip install -e`, unpacked Chrome extension, bridge process | npm | git clone, load unpacked extension |
 | Official MCP Registry | **Yes** | — | — | — | no MCP | no MCP |
 | MCP over HTTP | **Yes** (`gflow serve`) | — | — | SSE (per its `docs/MCP_GUIDE.md`) | no MCP | no MCP |
@@ -165,12 +166,12 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
 | Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
 | Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | 4K |
-| OpenAI-compatible API | No | — | — | **Yes** | — | — |
+| OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | **Yes** | — | — |
 | Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | **Yes** | — | — |
 | Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
 | `charged` field on every error | **Yes** | — | — | — | — | — |
 | Per-call credit cap | Yes (`--max-credits`, read from Flow's own quote) | Yes (`max_credits`) | — | — | — | — |
-| Video-to-video edit | Planned ([#1356](https://github.com/ffroliva/gflow-cli/issues/1356)) | Yes | Yes | — | — | — |
+| Video-to-video edit | Yes (`video edit`, flow.google.com; local file or clip, up to 5 references) | Yes | Yes | — | — | — |
 | Narration audio | Yes (audio narrate: edge-tts or Gemini voices) | Yes | — | — | — | Yes |
 | Captions | Yes (`video captions`, `.srt` export) | Yes | — | — | — | — |
 | Join clips | Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`) | Yes, with music and voiceover | — | — | Yes (scene) | Yes, with music and narration |

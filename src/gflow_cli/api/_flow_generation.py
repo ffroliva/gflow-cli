@@ -42,7 +42,6 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.errors import (
     CONTENT_SAFETY_REASONS,
-    ConfigurationError,
     ContentPolicyError,
     FlowApiError,
     FlowHostMigratedError,
@@ -811,56 +810,35 @@ class GenerationSurface(WorkspaceSurface):
         except Exception as e:
             await self._raise_with_incident(e, phase="video_generation")
 
-    async def edit_video(
+    async def edit_video(  # noqa: PLR0913
         self,
         *,
         req: EditVideoRequest,
-        project_id: str | None = None,
+        project_id: str,
         out_dir: Path | None = None,
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
         on_checkpoint: GenerationCheckpointObserver | None = None,
     ) -> VideoResult:
-        """Edit a video via the transport's ``edit_video`` method (``flow.google.com``)."""
+        """One video-to-video edit through Flow's own UI on flow.google.com. Costs credits.
+
+        The caller owns the project, so it is created only after the inputs are valid
+        (:func:`~gflow_cli.api.transports.migrated_video_edit.validate_edit_inputs`).
+        """
+        from gflow_cli.api.transports.migrated_video_edit import (  # noqa: PLC0415
+            validate_edit_inputs,
+        )
+
         if self.transport is None:
             msg = "FlowApiClient.transport is None - call edit_video inside 'async with client'"
             raise RuntimeError(msg)
         if not isinstance(self.transport, VideoEditCapableTransport):
             msg = f"transport {type(self.transport).__name__} does not support video editing"
             raise RuntimeError(msg)
+        await validate_edit_inputs(req)
         if req.model is not None:
             warn_if_retiring(req.model, today=_today())
-        if project_id is None:
-            if req.source_media_id is not None:
-                raise ConfigurationError(
-                    detail="editing an existing Flow media UUID requires --project <id>",
-                    remediation_hint=(
-                        "Pass --project <id> naming the Flow project that owns the clip."
-                    ),
-                )
-            try:
-                project_id = (await self.create_project()).project_id
-            except Exception as e:
-                await self._raise_with_incident(e, phase="video_edit")
-
-        wrapped_on_started = on_started
-        if on_checkpoint is not None:
-            observer: GenerationCheckpointObserver = on_checkpoint
-            observer(GenerationCheckpoint(phase="submit_attempted"))
-
-            def _relay(started: VideoStarted) -> Awaitable[None] | None:
-                observer(
-                    GenerationCheckpoint(
-                        phase="remote_started",
-                        operation_id=started.flow_operation_id,
-                        media_ids=(started.media_id,),
-                    ),
-                )
-                return on_started(started) if on_started is not None else None
-
-            wrapped_on_started = _relay
-
         try:
             return await self.transport.edit_video(
                 request=req,
@@ -868,7 +846,8 @@ class GenerationSurface(WorkspaceSurface):
                 out_dir=out_dir,
                 poll_timeout_s=poll_timeout_s,
                 download=download,
-                on_started=wrapped_on_started,
+                on_started=on_started,
+                on_checkpoint=on_checkpoint,
             )
         except Exception as e:
             await self._raise_with_incident(e, phase="video_edit")

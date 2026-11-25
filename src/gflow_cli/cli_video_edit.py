@@ -17,15 +17,18 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
-    default_project,
     out_file_option,
     output_format_option,
     run_with_handlers,
+    slugify_project_name,
     spends_credits,
     tool_option,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import resolve_max_credits as _resolve_max_credits
+from gflow_cli.api.transports._common import migrated_route
+from gflow_cli.api.transports.migrated_extend import require_migrated_host
+from gflow_cli.api.transports.migrated_video_edit import validate_edit_inputs
 from gflow_cli.api.video import (
     MAX_EDIT_REFERENCE_IMAGES,
     Aspect,
@@ -34,12 +37,12 @@ from gflow_cli.api.video import (
     VideoStarted,
     is_media_uuid,
 )
-from gflow_cli.cli_image import lookup_project_in_catalog
+from gflow_cli.cli_video_extend import refuse_unported_extend, resolve_extend_project
 from gflow_cli.cli_video_reporting import _relocate_and_record_completed_video
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 
 if TYPE_CHECKING:
@@ -127,15 +130,22 @@ async def _edit_and_report(
     quiet_output = is_json or output_format == OutputFormat.ID.value
     if output_file is not None:
         refuse_cloud_storage_for_local_file(settings.storage_uri, "--out-file")
+    # Before any project: a refused host or input leaves no empty project behind.
+    require_migrated_host(
+        migrated_route(None, settings.flow_host, prefer_migrated=True), feature="video edit"
+    )
+    await validate_edit_inputs(request)
     if not quiet_output:
         console.print("[dim]Editing video — this takes ~2 minutes…[/dim]")
     recorder = OperationRecorder.open(settings)
     started_media_ids: list[str] = []
     try:
         async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
-            if project_id is None and project_name is not None:
-                p_info = await client.create_project(title=project_name)
-                project_id = p_info.project_id
+            if project_id is None:
+                created = await client.create_project(
+                    title=project_name or slugify_project_name(request.prompt)
+                )
+                project_id = created.project_id
 
             def on_started(started: VideoStarted) -> None:
                 started_media_ids.append(started.media_id)
@@ -286,17 +296,23 @@ def edit(
             f"video edit accepts at most {MAX_EDIT_REFERENCE_IMAGES} --ref images "
             f"(got {len(refs)}); Flow silently drops extras past {MAX_EDIT_REFERENCE_IMAGES}."
         )
+    if not prompt.strip():
+        raise click.BadParameter("PROMPT must not be empty.", param_hint="PROMPT")
     source_video, source_media_id = _classify_source(source)
     profile_name = _resolve_profile(profile)
-    project_id = default_project(project_id, project_name, profile_name)
-    if source_media_id is not None and project_id is None:
-        project_id = lookup_project_in_catalog(media_id=source_media_id, profile_name=profile_name)
-        if project_id is None:
-            raise click.UsageError(
-                "Editing an existing Flow media UUID requires --project <id> "
-                "(not found in the local catalog)."
-            )
     is_json = as_json or output_format == OutputFormat.JSON.value
+    try:
+        # The MCP twin's resolution: --project, the catalog, then GFLOW_CLI_PROJECT.
+        project_id = resolve_extend_project(
+            project_id=project_id,
+            project_name=project_name,
+            profile_name=profile_name,
+            media_id=source_media_id,
+            command="video edit",
+        )
+    except ConfigurationError as exc:
+        refuse_unported_extend(exc, is_json, output_format, cli_command="video edit")
+        return
     quiet_output = is_json or output_format == OutputFormat.ID.value
     prompt_to_send, original_prompt, applied_tool = apply_tool_option(
         prompt, tool_specs, category="video", quiet=quiet_output

@@ -2,39 +2,29 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated, Any
 
-import click
 import structlog
 from pydantic import Field
 
-from gflow_cli._cli_helpers import default_project
 from gflow_cli.api.video import (
     EDIT_SUPPORTED_MODELS,
     MAX_EDIT_REFERENCE_IMAGES,
     Aspect,
     VideoModel,
-    is_media_uuid,
 )
-from gflow_cli.cli_image import lookup_project_in_catalog
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.server import server
 
+# One source, reference and project resolution for both clip tools, so they cannot drift.
+from gflow_cli.mcp.video_extend_tools import (
+    _resolve_extend_project,  # pyright: ignore[reportPrivateUsage]
+    _resolve_ordered_references,  # pyright: ignore[reportPrivateUsage]
+    _validate_extend_source,  # pyright: ignore[reportPrivateUsage]
+)
+
 log = structlog.get_logger()
-
-
-def _validate_edit_source(source: str) -> tuple[dict[str, str] | None, dict[str, Any] | None]:
-    if is_media_uuid(source):
-        return {"source_media_id": source}, None
-    path = Path(source).expanduser().resolve()
-    if not path.is_file():
-        return None, common._bad_param(  # pyright: ignore[reportPrivateUsage]
-            "Invalid Source Video",
-            f"Source '{source}' is neither a Flow media UUID nor an existing local video file.",
-        )
-    return {"source_video": str(path)}, None
 
 
 def _validate_edit_options(
@@ -78,25 +68,6 @@ def _validate_edit_options(
     return {"model": model, "aspect": aspect, "resolution": norm_res}, None
 
 
-def _resolve_ordered_references(
-    reference_images: list[str],
-) -> tuple[list[str] | None, dict[str, Any] | None]:
-    """Validate local reference paths while keeping UUIDs and paths in caller order."""
-    ordered: list[str] = []
-    for ref in reference_images:
-        if is_media_uuid(ref):
-            ordered.append(ref)
-            continue
-        resolved, err = common._resolve_image_path(  # pyright: ignore[reportPrivateUsage]
-            ref, title="Invalid Reference Image", label="Reference image path"
-        )
-        if err is not None:
-            return None, err
-        assert resolved is not None
-        ordered.append(resolved)
-    return ordered, None
-
-
 def _build_edit_payload(
     *,
     source_frag: dict[str, str],
@@ -108,6 +79,7 @@ def _build_edit_payload(
     project_name: str | None,
     output: str | None,
     max_credits: int | None,
+    profile: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     payload: dict[str, Any] = {"prompt": prompt, "model": opts["model"], **source_frag}
     for key, val in (
@@ -122,7 +94,7 @@ def _build_edit_payload(
         if val is not None:
             payload[key] = val
     if reference_images:
-        ordered, err = _resolve_ordered_references(reference_images)
+        ordered, err = _resolve_ordered_references(reference_images, profile)
         if err is not None:
             return None, err
         assert ordered is not None
@@ -130,32 +102,10 @@ def _build_edit_payload(
     return payload, None
 
 
-def _resolve_edit_project(
-    project: str | None,
-    project_name: str | None,
-    resolved_profile: str,
-    source_frag: dict[str, str],
-) -> tuple[str | None, dict[str, Any] | None]:
-    try:
-        resolved_project = default_project(project, project_name, resolved_profile)
-    except click.UsageError as exc:
-        return None, common._bad_param("Default Project Belongs To Another Profile", exc.message)  # pyright: ignore[reportPrivateUsage]
-    if "source_media_id" in source_frag and resolved_project is None:
-        resolved_project = lookup_project_in_catalog(
-            media_id=source_frag["source_media_id"], profile_name=resolved_profile
-        )
-        if resolved_project is None:
-            return None, common._bad_param(  # pyright: ignore[reportPrivateUsage]
-                "Missing Project",
-                "Editing an existing Flow media UUID requires 'project' "
-                "(not found in the local catalog).",
-            )
-    return resolved_project, None
-
-
-def _preflight_edit_inputs(
+def _preflight_edit_inputs(  # noqa: PLR0913
     *,
     source: str,
+    prompt: str,
     model: str,
     aspect: str | None,
     resolution: str | None,
@@ -164,11 +114,15 @@ def _preflight_edit_inputs(
     project: str | None,
     out_file: str | None,
 ) -> tuple[tuple[dict[str, str], dict[str, Any], str | None] | None, dict[str, Any] | None]:
+    if not prompt.strip():
+        return None, common._bad_param(  # pyright: ignore[reportPrivateUsage]
+            "Invalid Prompt", "prompt must not be empty."
+        )
     if (proj_err := common._validate_project(project)) is not None:  # pyright: ignore[reportPrivateUsage]
         return None, proj_err
     if isinstance(resolved := common._resolve_out_file(out_file, local_only=True), dict):  # pyright: ignore[reportPrivateUsage]
         return None, resolved
-    source_frag, src_err = _validate_edit_source(source)
+    source_frag, src_err = _validate_extend_source(source)
     if src_err is not None:
         return None, src_err
     assert source_frag is not None
@@ -218,6 +172,7 @@ async def gflow_edit_video(
     """Edit a local video file or Flow clip UUID via Flow's V2V edit surface."""
     checked, pre_err = _preflight_edit_inputs(
         source=source,
+        prompt=prompt,
         model=model,
         aspect=aspect,
         resolution=resolution,
@@ -236,7 +191,9 @@ async def gflow_edit_video(
     resolved_profile = common._resolve_and_validate_profile(profile)  # pyright: ignore[reportPrivateUsage]
     if isinstance(resolved_profile, dict):
         return resolved_profile
-    project, proj_err = _resolve_edit_project(project, project_name, resolved_profile, source_frag)
+    project, proj_err = _resolve_extend_project(
+        project, project_name, resolved_profile, source_frag, verb="Editing"
+    )
     if proj_err is not None:
         return proj_err
     adapted = common._adapt_tools(tools)  # pyright: ignore[reportPrivateUsage]
@@ -252,6 +209,7 @@ async def gflow_edit_video(
         project_name=project_name,
         output=output,
         max_credits=max_credits,
+        profile=resolved_profile,
     )
     if payload_err is not None:
         return payload_err

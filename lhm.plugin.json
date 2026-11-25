@@ -433,6 +433,130 @@
       }
     },
     {
+      "name": "gflow_extend_video",
+      "description": "Continue an existing video (local .mp4/.mov/.m4v/.3gp/.avi file or Flow clip media UUID) by one segment on flow.google.com with a text prompt, optional duration (3-10 seconds), and 0-3 reference_images. max_credits reads Flow's pre-submit quote in the extend settings popover and refuses missing or over-limit quotes before anything is billed. Existing Flow media UUIDs require project (or a catalogued UUID); local video files auto-create a project when project is omitted. Preserves the source clip's aspect (optional aspect '9:16'/'16:9' verifies a match and refuses mismatches pre-submit). out_file, if given, must resolve inside the configured output directory. Spends video credits; returns the local file path to the extended clip.",
+      "inputSchema": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "duration": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 3,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Duration"
+          },
+          "reference_images": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Images"
+          },
+          "aspect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Aspect"
+          },
+          "max_credits": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Credits"
+          },
+          "profile": {
+            "default": "default",
+            "title": "Profile",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Project Name"
+          },
+          "out_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional file to write, inside the configured output dir: a relative path is taken relative to it; an escape or a directory is refused.",
+            "title": "Out File"
+          },
+          "wait": {
+            "default": true,
+            "description": "true (default): run the generation inside this call and return the finished result. The call stays open for the whole generation, minutes for a video, which can outlast an MCP client's tool timeout; raise that timeout, or use false. false: return {status: 'pending', task_id} at once and run the job in the background of this server process. With the SEP-2663 Tasks extension, poll tasks/get by task_id: while it runs the status is working; once done it is completed and its result field holds the same reply wait=true would (files, project id, seed). A failed generation is also completed, with result.isError true, so check isError. tasks/cancel aborts the job locally; tasks/get then reads cancelled. A job not yet submitted to Flow stops before submitting and nothing is charged; once a gflow worker has submitted it, Flow cannot cancel it, so it may still be charged (statusMessage says which). gflow cancel <id> is the CLI twin. The job runs only while this server runs: if the client closes the server, it is cancelled.",
+            "title": "Wait",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "prompt"
+        ],
+        "title": "gflow_extend_videoArguments",
+        "type": "object"
+      }
+    },
+    {
       "name": "gflow_edit_video",
       "description": "Edit an existing video (local .mp4/.mov/.m4v/.3gp/.avi file or Flow clip media UUID) with a text prompt and 0-5 reference_images on flow.google.com (single-clip output; Omni models only, default omni-1.2). max_credits uses Flow's pre-submit quote as a hard cap and refuses missing or over-limit quotes. Local files support optional aspect ('16:9'/'9:16') and resolution ('360p'/'720p'); existing Flow media UUIDs require project (or a catalogued UUID) and preserve source aspect at 720p. out_file, if given, must resolve inside the configured output directory. Returns the local file path; a model Flow is retiring adds model_retiring to warnings.",
       "inputSchema": {
@@ -881,7 +1005,7 @@
     },
     {
       "name": "gflow_auth_status",
-      "description": "Non-interactive, credit-free Flow session probe (#497). Call this BEFORE a generation tool to fail fast on expired auth, before a long blocking generation call. Never starts an interactive login flow. May boot a short-lived headless browser, which on flow.google.com is the usual path, and may take up to ~2 min on a slow network. Every session result also carries `wire: {status, build}`, the health of the direct (browser-free) credits read, probed first with one GET and one POST to flow.google.com unless the direct read is off. `wire.status` is `accepted` (the saved cookies work), `signed_out_shell` or `http_401` (Flow refused the saved session), `store_unreadable` (the profile's cookies could not be read: Chrome has it open, or it has no saved session), `disabled` (GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable` or `unexpected`. With `accepted`, credit reads need no browser; any other status means they use the browser instead and does not change `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the result is `status: throttled` with a retryable 429 `error` carrying `retry_after` seconds. `build` is Flow's build label when read, else null.",
+      "description": "Non-interactive, credit-free Flow session probe (#497). Call this BEFORE a generation tool to fail fast on expired auth, before a long blocking generation call. The result has isError true unless `status` is `authenticated`. Never starts an interactive login flow. May boot a short-lived headless browser, which on flow.google.com is the usual path, and may take up to ~2 min on a slow network. Every session result also carries `wire: {status, build}`, the health of the direct (browser-free) credits read, probed first with one GET and one POST to flow.google.com unless the direct read is off. `wire.status` is `accepted` (the saved cookies work), `signed_out_shell` or `http_401` (Flow refused the saved session), `store_unreadable` (the profile's cookies could not be read: Chrome has it open, or it has no saved session), `disabled` (GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable` or `unexpected`. With `accepted`, credit reads need no browser; any other status means they use the browser instead and does not change `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the result is `status: throttled` with a retryable 429 `error` carrying `retry_after` seconds. `build` is Flow's build label when read, else null.",
       "inputSchema": {
         "properties": {
           "profile": {
@@ -1400,7 +1524,7 @@
     },
     {
       "name": "gflow_video_captions",
-      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
+      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Supports optional position ('bottom', 'top', 'middle'), margin (pixels from edge), font_size (pixels), and box_opacity (0.0-1.0). Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
       "inputSchema": {
         "properties": {
           "file": {
@@ -1455,6 +1579,45 @@
             ],
             "default": null,
             "title": "Profile"
+          },
+          "position": {
+            "default": "bottom",
+            "enum": [
+              "bottom",
+              "top",
+              "middle"
+            ],
+            "title": "Position",
+            "type": "string"
+          },
+          "margin": {
+            "default": 28,
+            "title": "Margin",
+            "type": "integer"
+          },
+          "font_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Font Size"
+          },
+          "box_opacity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Box Opacity"
           }
         },
         "required": [

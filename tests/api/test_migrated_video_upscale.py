@@ -15,6 +15,7 @@ from gflow_cli.api.transports.migrated_video_upscale import (
     upscale_video_migrated,
 )
 from gflow_cli.errors import (
+    CreditCapExceededError,
     TransportTimeoutError,
     UiSelectorDriftError,
     UpscaleUnavailableError,
@@ -147,9 +148,76 @@ async def test_migrated_video_upscale_270p_gif() -> None:
     assert await _run(page, "270p") == _GIF
 
 
+async def test_migrated_video_upscale_4k_happy_path() -> None:
+    clip_4k = _mp4((3840, 2160), (0, 0))
+    menu = [
+        FakeItem("270p"),
+        FakeItem("720p"),
+        FakeItem("1080p"),
+        FakeItem("4K Upscaled · 50 credits", disabled=False),
+    ]
+    page = fake_page(menu, captured_b64=_b64(clip_4k))
+
+    assert await _run(page, "4k") == clip_4k
+    assert menu[3].clicked
+
+
+async def test_migrated_video_upscale_4k_disabled_raises_unavailable() -> None:
+    page = fake_page(_video_menu())
+
+    with pytest.raises(UpscaleUnavailableError, match="4k video option is not available"):
+        await _run(page, "4k")
+
+
+async def test_migrated_video_upscale_4k_zh_cn_credit_cap() -> None:
+    clip_4k = _mp4((3840, 2160), (0, 0))
+    zh_label = "4K已高清重塑 · 消耗 50 个点数"
+    ok_page = fake_page([FakeItem(zh_label)], captured_b64=_b64(clip_4k))
+    assert (
+        await upscale_video_migrated(
+            ok_page,
+            project_id=_PROJECT_ID,
+            media_id=_MEDIA_ID,
+            scale="4k",
+            max_credits=50,
+        )
+        == clip_4k
+    )
+
+    capped_item = FakeItem(zh_label)
+    capped_page = fake_page([capped_item], captured_b64=_b64(clip_4k))
+    with pytest.raises(CreditCapExceededError) as exc_info:
+        await upscale_video_migrated(
+            capped_page,
+            project_id=_PROJECT_ID,
+            media_id=_MEDIA_ID,
+            scale="4k",
+            max_credits=49,
+        )
+    assert exc_info.value.charged == "no"
+    assert not capped_item.clicked
+
+
+async def test_migrated_video_upscale_4k_rpc_refusal_uses_4k_hint() -> None:
+    status = [7, None, [["type.googleapis.com/google.rpc.ErrorInfo", ["FAILED"]]]]
+    body = ")]}'\n\n1234\n" + json.dumps([["wrb.fr", "p0UkFb", None, None, None, status]])
+    holder: list = []
+
+    async def refuse() -> None:
+        await emit_response(holder[0], body, rpcid="p0UkFb")
+
+    page = fake_page([FakeItem("4K Upscaled · 50 credits", on_click=refuse)])
+    holder.append(page)
+
+    with pytest.raises(WireFormatError, match="p0UkFb refused") as exc_info:
+        await _run(page, "4k", timeout_s=30.0)
+    assert "spends credits" in exc_info.value.remediation_hint
+    assert "simpler prompt" not in exc_info.value.remediation_hint
+
+
 async def test_migrated_video_upscale_invalid_scale() -> None:
     with pytest.raises(ValueError, match="Unsupported video upscale scale"):
-        await _run(MagicMock(), "4k")
+        await _run(MagicMock(), "8k")
 
 
 async def test_migrated_video_upscale_disabled_raises_unavailable() -> None:

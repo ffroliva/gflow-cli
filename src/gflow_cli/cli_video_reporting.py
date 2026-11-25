@@ -22,6 +22,7 @@ from gflow_cli.errors import DataStoreError, FlowApiError, GFlowError
 if TYPE_CHECKING:
     from gflow_cli.api.video import VideoResult
     from gflow_cli.data.recorder import OperationRecorder
+    from gflow_cli.storage import AnyPath
 
 _logger = structlog.get_logger(__name__)
 
@@ -280,8 +281,9 @@ def _migrated_extend_payload(
     """The ``--json`` result of one migrated extend (``rendered`` is the file, if any)."""
     record = outcome.record
     ok = rendered is not None
+    effective_source_id = outcome.source_media_id or media_id
     added, billed = _EXTEND_CONTENT_SECONDS, _EXTEND_SEGMENT_SECONDS
-    if record.media_id == media_id:
+    if record.media_id == effective_source_id:
         added = billed = migrated_extend.extend_key_seconds(outcome.model_key)
     return {
         "status": "ok" if ok else "fail",
@@ -301,6 +303,8 @@ def _migrated_extend_payload(
         "segments_requested": 1,
         "segments_completed": 1 if ok else 0,
         "media_ids": [record.media_id],
+        # The pre-submit quote, not a final charge: Flow reports no spend on this host.
+        "quoted_credits": outcome.quoted_credits,
         "credits_spent": None,
         "seconds_added": added if ok else 0,
         "seconds_billed": billed,
@@ -321,7 +325,7 @@ def _migrated_extend_payload(
 
 def _record_migrated_extend(  # noqa: PLR0913
     recorder: OperationRecorder | None,
-    target: Path | None,
+    target: AnyPath | None,
     *,
     profile_name: str,
     profile_dir: Path | None,
@@ -329,57 +333,25 @@ def _record_migrated_extend(  # noqa: PLR0913
     project_id: str | None,
     outcome: migrated_extend.ExtendOutcome,
 ) -> None:
-    """Record completed migrated extend (in-place or new-id) to catalog (#1184, #1299)."""
+    """Catalog a migrated extend; a catalog failure never fails the paid run."""
     if recorder is None:
         return
     try:
-        from gflow_cli.storage import cloud_info_from_path
-
-        cloud_info = cloud_info_from_path(target) if target is not None else None
-        if outcome.record.media_id == media_id:
-            if target is not None:
-                recorder.record_extended_in_place(
-                    profile_name,
-                    media_id,
-                    outcome.record.workflow_id,
-                    outcome.model_key,
-                    local_path=target,
-                    cloud_storage_info=cloud_info,
-                )
-        else:
-            from gflow_cli.api.video import VideoResult, VideoStatus
-
-            if target is not None:
-                status = "MEDIA_GENERATION_STATUS_SUCCESSFUL"
-            else:
-                status = (
-                    "MEDIA_GENERATION_STATUS_SUCCESSFUL"
-                    if outcome.record.is_done
-                    else "MEDIA_GENERATION_STATUS_FAILED"
-                )
-            recorder.record_completed_video(
-                profile_name=profile_name,
-                _profile_dir=profile_dir or Path(),
-                result=VideoResult(
-                    status=VideoStatus(
-                        media_id=outcome.record.media_id,
-                        status=status,
-                    ),
-                    local_path=target,
-                    project_id=project_id,
-                    workflow_id=outcome.record.workflow_id,
-                ),
-                cloud_storage_info=cloud_info,
-                model=outcome.model_key,
-                aspect_ratio=outcome.aspect,
-            )
+        recorder.record_migrated_extend(
+            target,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            media_id=outcome.source_media_id or media_id,
+            project_id=project_id,
+            outcome=outcome,
+        )
     except DataStoreError as exc:
         _logger.warning("extend_record_failed", error_class=type(exc).__name__)
 
 
 def _report_migrated_extend(  # noqa: PLR0913
     outcome: migrated_extend.ExtendOutcome,
-    target: Path | None,
+    target: AnyPath | None,
     *,
     profile_name: str,
     media_id: str,
@@ -458,13 +430,15 @@ def _print_chain_plan(
         c.print(f"  [{idx}] {mode} · {link_model} · {spec.prompt!r}{status}")
 
 
-def _print_extend_plan(
+def _print_extend_plan(  # noqa: PLR0913
     *,
     media_id: str,
     prompt: str,
     aspect: str,
     segments: int,
     migrated: bool = False,
+    duration: int | None = None,
+    ref_count: int = 0,
     max_credits: int | None = None,
     console: Console | None = None,
 ) -> None:
@@ -474,15 +448,22 @@ def _print_extend_plan(
     c.print(f"  source clip : {media_id}")
     c.print(f"  prompt      : {prompt}")
     c.print(f"  aspect      : {aspect}")
+    if duration is not None:
+        c.print(f"  duration    : {duration}s")
+    if ref_count:
+        c.print(f"  references  : {ref_count} image(s)")
     if max_credits is not None:
         c.print(f"  max credits : {max_credits}")
     if migrated:
         c.print(
-            "  cost        : spends credits — flow.google.com does not report the price "
-            "before submitting; compare `gflow credits user` before and after"
+            "  cost        : spends credits — flow.google.com checks Flow's pre-submit "
+            "credit quote when --max-credits is set"
         )
-        c.print("  length      : set by the key; measured 2026-11-08, the Omni key grows")
-        c.print("                the source clip in place by ~4s (Veo: a separate ~7s clip)")
+        c.print("  length      : --duration (3-10s), else Flow's current setting; measured")
+        c.print(
+            "                2026-11-08, the Omni key grows the source clip in place "
+            "(Veo: a separate ~7s clip)"
+        )
         return
     footage = segments * _EXTEND_CONTENT_SECONDS
     billed = segments * _EXTEND_SEGMENT_SECONDS

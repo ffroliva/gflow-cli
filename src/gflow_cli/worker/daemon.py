@@ -11,11 +11,16 @@ from typing import Any, cast
 import structlog
 
 from gflow_cli import telemetry
+from gflow_cli._cli_helpers import slugify_project_name
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.transports import migrated_extend
+from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoResult, VideoStarted
+from gflow_cli.api.video_extend import ExtendStarted, MigratedExtendRequest
+from gflow_cli.cli_video_extend import make_migrated_extend_on_started
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import (
@@ -36,7 +41,7 @@ from gflow_cli.errors import (
     outcome_members,
 )
 from gflow_cli.observability import exception_message_hash
-from gflow_cli.paths import image_output_path, numbered_path
+from gflow_cli.paths import extend_output_path, image_output_path, numbered_path
 from gflow_cli.services.reference_uploads import generate_reusing_uploads
 from gflow_cli.storage import cloud_info_from_path
 from gflow_cli.worker import codec
@@ -58,49 +63,8 @@ def _apply_configured_video_cap(
     return replace(request, max_credits=effective) if effective != request.max_credits else request
 
 
-def _apply_configured_edit_cap(request: EditVideoRequest, settings: Any) -> EditVideoRequest:
-    configured = getattr(settings, "max_credits", None)
-    effective = resolve_max_credits(request.max_credits, configured)
-    return replace(request, max_credits=effective) if effective != request.max_credits else request
-
-
-def _relocate_video_output_file(result: VideoResult, output_file_val: str | None) -> VideoResult:
-    if not output_file_val or not result.local_path or not result.local_path.exists():
-        return result
-    output_file = Path(output_file_val)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    if result.local_path != output_file:
-        import shutil
-
-        # Not Path.replace: a rename across mounts raises EXDEV (#1114).
-        shutil.move(result.local_path, output_file)
-        return replace(result, local_path=output_file)
-    return result
-
-
-def _assert_video_succeeded(result: VideoResult, flow_media_id: str) -> None:
-    if result.status.succeeded:
-        return
-    reasons = (
-        ", ".join(result.status.failure_reasons)
-        if result.status.failure_reasons
-        else result.status.error_message or "Unknown reason"
-    )
-    raise FlowApiError(
-        f"Video generation failed: {reasons}",
-        # #1201: Flow took the submit; same answer as CLI video_result.
-        next_action="reconcile",
-        operation_id=flow_media_id or None,
-        # Not the class's "retry the API call": Flow may have billed it.
-        remediation_hint=(
-            "Flow took this job and then reported it failed, so it may "
-            "have charged for it. Check the project on Flow before "
-            "running it again."
-        ),
-    )
-
-
 def _error_payload_for(exc: Exception) -> dict[str, Any]:
+    """Build the redacted problem-details error payload persisted on a failed queue row."""
     if isinstance(exc, GFlowError):
         error_payload = dict(exc.to_problem_details())
         from gflow_cli.errors import exit_code_for, is_retryable, legacy_exit_code_for
@@ -131,6 +95,43 @@ def _error_payload_for(exc: Exception) -> dict[str, Any]:
         # #1201: same members as a typed failure; nothing is proven.
         **outcome_members("maybe", "none"),
     }
+
+
+def _relocate_video_output_file(result: VideoResult, output_file_val: str | None) -> VideoResult:
+    """Move a downloaded video into caller-requested ``output_file`` across mounts."""
+    if output_file_val and result.local_path and result.local_path.exists():
+        output_file = Path(output_file_val)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        if result.local_path != output_file:
+            import shutil
+
+            # Not Path.replace: a rename across mounts raises EXDEV (#1114).
+            shutil.move(result.local_path, output_file)
+            return replace(result, local_path=output_file)
+    return result
+
+
+def _assert_video_succeeded(result: VideoResult, flow_media_id: str | None) -> None:
+    """Raise a reconcile-marked FlowApiError when Flow accepted then failed a video job."""
+    if result.status.succeeded:
+        return
+    reasons = (
+        ", ".join(result.status.failure_reasons)
+        if result.status.failure_reasons
+        else result.status.error_message or "Unknown reason"
+    )
+    raise FlowApiError(
+        f"Video generation failed: {reasons}",
+        # #1201: Flow took the submit; same answer as CLI video_result.
+        next_action="reconcile",
+        operation_id=flow_media_id or None,
+        # Not the class's "retry the API call": Flow may have billed it.
+        remediation_hint=(
+            "Flow took this job and then reported it failed, so it may "
+            "have charged for it. Check the project on Flow before "
+            "running it again."
+        ),
+    )
 
 
 async def run_counted(job: Awaitable[None]) -> None:
@@ -192,6 +193,29 @@ class FlowWorker:
         """Run one claimed task and count the browser facts it observed (#1326)."""
         await run_counted(self.process_task(task))
 
+    def _complete_image_task(
+        self,
+        task_id: str,
+        *,
+        flow_media_id: str | None,
+        recorded_op_id: str,
+        images: list[GeneratedImage],
+        save_checkpoint: Callable[..., None],
+    ) -> None:
+        save_checkpoint(
+            "completed",
+            may_have_spent=True,
+            media_ids=tuple(img.media_name for img in images),
+            workflow_ids=tuple(img.workflow_id for img in images if img.workflow_id),
+            catalog_operation_id=recorded_op_id,
+        )
+        self.repo.update_task_status(
+            task_id,
+            status="completed",
+            flow_media_id=flow_media_id,
+        )
+        logger.info("Task completed successfully", task_id=task_id, flow_media_id=flow_media_id)
+
     async def process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.
 
@@ -232,6 +256,7 @@ class FlowWorker:
             operation_id: str | None = None,
             media_ids: tuple[str, ...] = (),
             workflow_ids: tuple[str, ...] = (),
+            catalog_operation_id: str | None = None,
         ) -> None:
             # Observer-exception policy (C1 deferred decision): a checkpoint-persist
             # failure MUST NOT abort a generation already in flight — that would
@@ -247,6 +272,7 @@ class FlowWorker:
                     operation_id=operation_id,
                     media_ids=media_ids,
                     workflow_ids=workflow_ids,
+                    catalog_operation_id=catalog_operation_id,
                 )
             except Exception as exc:
                 logger.warning(
@@ -274,7 +300,13 @@ class FlowWorker:
 
         # #341: bound before the try so the failure funnel below can persist a
         # FAILED operation with whatever context was reached before the raise.
-        req: GenerateImageRequest | GenerateVideoRequest | EditVideoRequest | None = None
+        req: (
+            GenerateImageRequest
+            | GenerateVideoRequest
+            | MigratedExtendRequest
+            | EditVideoRequest
+            | None
+        ) = None
         recorder: OperationRecorder | None = None
         started_media_ids: list[str] = []
 
@@ -403,7 +435,7 @@ class FlowWorker:
                             raise
 
                         try:
-                            recorder.record_generated_images(
+                            recorded_op_id = recorder.record_generated_images(
                                 profile_name=self.profile_name,
                                 profile_dir=profile_dir,
                                 project=project,
@@ -440,13 +472,12 @@ class FlowWorker:
                     logger.warning("Failed during image generation or recording", exc_info=exc)
                     raise
 
-                self.repo.update_task_status(
+                self._complete_image_task(
                     task.task_id,
-                    status="completed",
                     flow_media_id=flow_media_id,
-                )
-                logger.info(
-                    "Task completed successfully", task_id=task.task_id, flow_media_id=flow_media_id
+                    recorded_op_id=recorded_op_id,
+                    images=images,
+                    save_checkpoint=save_checkpoint,
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
@@ -548,18 +579,17 @@ class FlowWorker:
                 logger.info(
                     "Task completed successfully", task_id=task.task_id, flow_media_id=flow_media_id
                 )
-            elif task.task_type == "edit":
-                req = (
-                    cast("EditVideoRequest", task.decoded.request)
-                    if task.decoded is not None
-                    else codec.build_video_edit_request(task.payload)
-                )
+
+            elif task.task_type in ("extend", "edit"):
+                run_clip_task = {
+                    "extend": self._run_video_extend_task,
+                    "edit": self._run_video_edit_task,
+                }[task.task_type]
                 recorder = OperationRecorder(
                     DataRepository(self.db), prompt_mode=settings.history_prompts
                 )
-                flow_media_id = await self._run_video_edit_task(
+                flow_media_id = await run_clip_task(
                     task=task,
-                    req=req,
                     recorder=recorder,
                     profile_dir=profile_dir,
                     headless=headless,
@@ -638,7 +668,9 @@ class FlowWorker:
                     command=f"worker {task.task_type}",
                     mode=op_kind,
                     exc=exc,
-                    request=req,
+                    request=req
+                    if isinstance(req, (GenerateImageRequest, GenerateVideoRequest))
+                    else None,
                     flow_project_id=checkpoint_project_id[0],
                     flow_media_ids=started_media_ids,
                 )
@@ -734,11 +766,121 @@ class FlowWorker:
         # Delegates to the codec (Task C2) — see _build_image_request.
         return codec.build_video_request(payload)
 
-    async def _run_video_edit_task(
+    async def _run_video_extend_task(  # noqa: PLR0913
         self,
         *,
         task: QueueTask,
-        req: EditVideoRequest,
+        recorder: OperationRecorder,
+        profile_dir: Path,
+        headless: bool,
+        transport: str,
+        out_dir: Path,
+        settings: Any,
+        checkpoint_project_id: list[str | None],
+        started_media_ids: list[str],
+        observe_checkpoint: Callable[[GenerationCheckpoint], None],
+    ) -> str:
+        req = (
+            cast("MigratedExtendRequest", task.decoded.request)
+            if task.decoded is not None
+            else codec.build_video_extend_request(task.payload)
+        )
+        project_id = task.payload.get("project_id")
+        project_name = task.payload.get("project_name")
+        effective_cap = resolve_max_credits(req.max_credits, getattr(settings, "max_credits", None))
+        # Before the project: a refused host or input leaves no empty project behind.
+        migrated_extend.require_migrated_host(
+            migrated_route(None, getattr(settings, "flow_host", "auto"), prefer_migrated=True)
+        )
+        await migrated_extend.validate_extend_inputs(
+            media_id=req.source_media_id,
+            source_video=req.source_video,
+            duration=req.duration,
+            reference_images=req.reference_images,
+            max_credits=effective_cap,
+        )
+        path_key = req.source_media_id or (
+            req.source_video.stem if req.source_video is not None else "extend"
+        )
+        output_file_val = task.payload.get("output_file")
+        out_path = (
+            Path(output_file_val)
+            if output_file_val
+            else extend_output_path(out_dir, media_id=path_key)
+        )
+        if output_file_val:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        async with FlowApiClient(
+            profile_dir=profile_dir,
+            headless=headless,
+            transport=transport,
+            out_dir=out_dir,
+            settings=settings,
+        ) as client:
+            if project_id is None:
+                created = await client.create_project(
+                    title=project_name or slugify_project_name(req.prompt)
+                )
+                project_id = created.project_id
+            checkpoint_project_id[0] = project_id
+            resolved_project = str(project_id)
+
+            record_started = make_migrated_extend_on_started(
+                profile_name=self.profile_name,
+                profile_dir=profile_dir,
+                project_id=resolved_project,
+                source_media_id=req.source_media_id,
+                aspect=req.aspect,
+                as_json=True,
+                recorder=recorder,
+            )
+
+            def on_started(started: ExtendStarted, page_aspect: str | None) -> None:
+                started_media_ids.append(started.media_id)
+                record_started(started, page_aspect)
+
+            outcome, target = await client.extend_video_migrated(
+                media_id=req.source_media_id,
+                source_video=req.source_video,
+                project_id=resolved_project,
+                prompt=req.prompt,
+                aspect=req.aspect,
+                duration=req.duration,
+                reference_images=req.reference_images,
+                max_credits=effective_cap,
+                out_path=out_path,
+                on_started=on_started,
+                on_checkpoint=observe_checkpoint,
+            )
+
+        try:
+            recorder.record_migrated_extend(
+                target,
+                profile_name=self.profile_name,
+                profile_dir=profile_dir,
+                media_id=outcome.source_media_id or req.source_media_id or outcome.record.media_id,
+                project_id=resolved_project,
+                outcome=outcome,
+            )
+        except DataStoreError as exc:  # the catalog never fails a paid run
+            logger.warning("Failed to record video extend", exc_info=exc)
+        if target is None:
+            raise FlowApiError(
+                f"Video extend failed: {outcome.record.failure_message}",
+                next_action="reconcile",
+                operation_id=outcome.record.media_id or None,
+                remediation_hint=(
+                    "Flow took this extend job and did not finish downloading it, so it may "
+                    "have charged for it. Check the project on Flow before running it again."
+                ),
+            )
+        return outcome.record.media_id
+
+    async def _run_video_edit_task(  # noqa: PLR0913
+        self,
+        *,
+        task: QueueTask,
         recorder: OperationRecorder,
         profile_dir: Path,
         headless: bool,
@@ -750,15 +892,33 @@ class FlowWorker:
         observe_checkpoint: Callable[[GenerationCheckpoint], None],
     ) -> str:
         from gflow_cli._cli_helpers import apply_tool_option  # noqa: PLC0415
+        from gflow_cli.api.transports.migrated_video_edit import (  # noqa: PLC0415
+            validate_edit_inputs,
+        )
 
-        project_id = task.payload.get("project_id")
+        req = (
+            cast("EditVideoRequest", task.decoded.request)
+            if task.decoded is not None
+            else codec.build_video_edit_request(task.payload)
+        )
+        req = replace(
+            req,
+            max_credits=resolve_max_credits(
+                req.max_credits, getattr(settings, "max_credits", None)
+            ),
+        )
+        # Before the project: a refused host or input leaves no empty project behind.
+        migrated_extend.require_migrated_host(
+            migrated_route(None, getattr(settings, "flow_host", "auto"), prefer_migrated=True),
+            feature="video edit",
+        )
+        await validate_edit_inputs(req)
         tool_specs = tuple(task.payload.get("tool_specs", ()))
         if tool_specs:
             prompt_to_send, orig, applied = await asyncio.to_thread(
                 apply_tool_option, req.prompt, tool_specs, category="video", quiet=True
             )
             req = replace(req, prompt=prompt_to_send, original_prompt=orig, tool=applied)
-        req = _apply_configured_edit_cap(req, settings)
 
         def on_started(started: VideoStarted) -> None:
             started_media_ids.append(started.media_id)
@@ -769,9 +929,10 @@ class FlowWorker:
                     request=req,
                     started=started,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except DataStoreError as exc:  # the catalog never fails a paid run
                 logger.warning("Failed to record started video edit", exc_info=exc)
 
+        project_id = task.payload.get("project_id")
         async with FlowApiClient(
             profile_dir=profile_dir,
             headless=headless,
@@ -779,22 +940,22 @@ class FlowWorker:
             out_dir=out_dir,
             settings=settings,
         ) as client:
-            project_name = task.payload.get("project_name")
-            if project_id is None and project_name:
-                created = await client.create_project(title=project_name)
+            if project_id is None:
+                created = await client.create_project(
+                    title=task.payload.get("project_name") or slugify_project_name(req.prompt)
+                )
                 project_id = created.project_id
             checkpoint_project_id[0] = project_id
             result = await client.edit_video(
                 req=req,
-                project_id=project_id,
+                project_id=str(project_id),
                 out_dir=out_dir,
                 download=True,
                 on_started=on_started,
                 on_checkpoint=observe_checkpoint,
             )
-            flow_media_id = result.status.media_id
-            result = _relocate_video_output_file(result, task.payload.get("output_file"))
-
+        flow_media_id = result.status.media_id
+        result = _relocate_video_output_file(result, task.payload.get("output_file"))
         try:
             recorder.record_completed_video(
                 profile_name=self.profile_name,
@@ -807,7 +968,7 @@ class FlowWorker:
                     else None
                 ),
             )
-        except Exception as exc:  # noqa: BLE001
+        except DataStoreError as exc:  # the catalog never fails a paid run
             logger.warning("Failed to record completed video edit", exc_info=exc)
         _assert_video_succeeded(result, flow_media_id)
         return flow_media_id

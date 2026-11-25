@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from typing import Any, ClassVar
+from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from gflow_cli.api.video import VideoResult, VideoStarted, VideoStatus
@@ -16,6 +18,7 @@ _PID = "11111111-1111-1111-1111-111111111111"
 _MID = "22222222-2222-2222-2222-222222222222"
 _WF = "33333333-3333-3333-3333-333333333333"
 _MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
 
 
 def test_video_edit_help_lists_options_and_no_count() -> None:
@@ -49,12 +52,14 @@ def test_video_edit_rejects_missing_source_file(tmp_path: Path) -> None:
 def test_video_edit_uuid_requires_project_when_uncatalogued(tmp_path: Path) -> None:
     with (
         patch("gflow_cli.cli_video_edit._resolve_profile", return_value="default"),
-        patch("gflow_cli.cli_video_edit.default_project", return_value=None),
-        patch("gflow_cli.cli_video_edit.lookup_project_in_catalog", return_value=None),
+        patch("gflow_cli.cli_video_extend.default_project", return_value=None),
+        patch("gflow_cli.cli_video_extend.lookup_project_in_catalog", return_value=None),
     ):
-        res = CliRunner().invoke(main, ["video", "edit", _MID, "add snow"])
-    assert res.exit_code == 2
-    assert "--project" in res.output
+        res = CliRunner().invoke(main, ["video", "edit", _MID, "add snow", "--json"])
+    assert res.exit_code == 11, res.output
+    error = json.loads(res.stdout)["error"]
+    assert "--project is required: video edit" in error["detail"]
+    assert error["charged"] == "no"
 
 
 def test_video_edit_json_and_out_file_and_no_max_credits(tmp_path: Path, monkeypatch: Any) -> None:
@@ -64,7 +69,7 @@ def test_video_edit_json_and_out_file_and_no_max_credits(tmp_path: Path, monkeyp
     ref_img = tmp_path / "ref.png"
     clip.write_bytes(_MP4_BYTES)
     downloaded.write_bytes(_MP4_BYTES)
-    ref_img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    ref_img.write_bytes(_PNG_BYTES)
 
     captured: dict[str, Any] = {}
 
@@ -103,7 +108,7 @@ def test_video_edit_json_and_out_file_and_no_max_credits(tmp_path: Path, monkeyp
         with (
             patch("gflow_cli.cli_video_edit._resolve_profile", return_value="default"),
             patch("gflow_cli.cli_video_edit._make_provider_dir", return_value=tmp_path),
-            patch("gflow_cli.cli_video_edit.default_project", return_value=_PID),
+            patch("gflow_cli.cli_video_edit.resolve_extend_project", return_value=_PID),
             patch("gflow_cli.cli_video_edit.FlowApiClient", _FakeClient),
         ):
             res = CliRunner().invoke(
@@ -135,4 +140,112 @@ def test_video_edit_json_and_out_file_and_no_max_credits(tmp_path: Path, monkeyp
         assert len(captured["req"].reference_images) == 1
     finally:
         reset_settings()
-        AsyncMock()
+
+
+class _RecordingClient:
+    """A FlowApiClient that records project creation and the edit, and spends nothing."""
+
+    created: ClassVar[list[str]] = []
+    edits: ClassVar[list[dict[str, Any]]] = []
+
+    def __init__(self, **_kwargs: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> _RecordingClient:
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        return None
+
+    async def create_project(self, *, title: str) -> Any:
+        self.created.append(title)
+        return MagicMock(project_id=_PID)
+
+    async def edit_video(self, **kwargs: Any) -> VideoResult:
+        self.edits.append(kwargs)
+        return VideoResult(
+            status=VideoStatus(media_id=_MID, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=None,
+            project_id=kwargs["project_id"],
+            workflow_id=_WF,
+        )
+
+
+@pytest.fixture
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[type[_RecordingClient]]:
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(tmp_path / "gflow.db"))
+    monkeypatch.delenv("GFLOW_CLI_PROJECT", raising=False)
+    monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    reset_settings()
+    _RecordingClient.created = []
+    _RecordingClient.edits = []
+    monkeypatch.setattr("gflow_cli.cli_video_edit._resolve_profile", lambda _p: "default")
+    monkeypatch.setattr("gflow_cli.cli_video_edit._make_provider_dir", lambda _p: tmp_path)
+    monkeypatch.setattr("gflow_cli.cli_video_edit.FlowApiClient", _RecordingClient)
+    yield _RecordingClient
+    reset_settings()
+
+
+def test_unsupported_local_video_is_exit_11_before_any_project(
+    tmp_path: Path, client: type[_RecordingClient]
+) -> None:
+    not_a_video = tmp_path / "notes.mp4"
+    not_a_video.write_text("plain text, not a container")
+    res = CliRunner().invoke(main, ["video", "edit", str(not_a_video), "glow", "--json"])
+    assert res.exit_code == 11, res.output
+    error = json.loads(res.stdout)["error"]
+    assert error["charged"] == "no"
+    assert "cannot upload this file" in error["detail"]
+    assert client.created == []
+    assert client.edits == []
+
+
+def test_labs_host_is_exit_36_before_any_project(
+    tmp_path: Path, client: type[_RecordingClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.config import reset_settings
+
+    clip = tmp_path / "in.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    monkeypatch.setenv("GFLOW_CLI_FLOW_HOST", "labs.google")
+    reset_settings()
+    res = CliRunner().invoke(main, ["video", "edit", str(clip), "glow", "--json"])
+    assert res.exit_code == 36, res.output
+    assert client.created == []
+
+
+def test_the_default_project_pin_is_honoured(
+    tmp_path: Path, client: type[_RecordingClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.config import reset_settings
+
+    pinned = "99999999-9999-9999-9999-999999999999"
+    clip = tmp_path / "in.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    monkeypatch.setenv("GFLOW_CLI_PROJECT", pinned)
+    reset_settings()
+    res = CliRunner().invoke(main, ["video", "edit", str(clip), "glow", "--json"])
+    assert res.exit_code == 0, res.output
+    assert client.created == []
+    assert client.edits[0]["project_id"] == pinned
+
+
+def test_a_local_video_without_a_project_gets_one_after_validation(
+    tmp_path: Path, client: type[_RecordingClient]
+) -> None:
+    clip = tmp_path / "in.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    res = CliRunner().invoke(main, ["video", "edit", str(clip), "golden glow", "--json"])
+    assert res.exit_code == 0, res.output
+    assert len(client.created) == 1
+    assert client.edits[0]["project_id"] == _PID
+
+
+def test_an_empty_prompt_is_a_usage_error(tmp_path: Path) -> None:
+    clip = tmp_path / "in.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    res = CliRunner().invoke(main, ["video", "edit", str(clip), "   "])
+    assert res.exit_code == 2
+    assert "PROMPT" in res.output

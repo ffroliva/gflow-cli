@@ -497,11 +497,11 @@ The public read API is `DataRepository` ([`src/gflow_cli/data/repository.py`](..
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `GFLOW_CLI_DB_PATH` | `<GFLOW_CLI_HOME>/gflow.db` | Override the SQLite file location. Useful for tests, per-account isolation, or shared filesystems. |
+| `GFLOW_CLI_DB_PATH` | `<GFLOW_CLI_HOME>/gflow.db` | Override the SQLite file location. Useful for tests or per-account isolation. Use a local disk: SQLite's WAL mode does not work over a network filesystem. |
 | `GFLOW_CLI_HISTORY_PROMPTS` | `store` | `store` keeps prompt text, `redacted` keeps only the SHA-256 hash. |
 | `GFLOW_CLI_STORAGE_URI` | unset | Optional S3/GCS output prefix; cloud-backed rows store `storage_provider` and `cloud_uri`. |
 
-The DB file is created on first run. Parent directory is auto-created.
+The DB file is created on first run. A missing parent directory is created too. The file is owner-only; see [SECURITY.md](SECURITY.md#database-file-permissions).
 
 See [`CONFIGURATION.md`](CONFIGURATION.md) for the full env-var precedence chain.
 

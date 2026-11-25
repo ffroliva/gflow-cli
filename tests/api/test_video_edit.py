@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -38,7 +38,6 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import (
     ConfigurationError,
     FlowHostMigratedError,
-    MediaUploadRejectedError,
     WireFormatError,
 )
 
@@ -176,116 +175,49 @@ def test_parse_upload_reply() -> None:
     assert upload_mod._parse_upload_reply("{}", project_id=_PID) is None
 
 
-@pytest.mark.asyncio
-async def test_staged_video_path_creates_and_cleans_private_dir(tmp_path: Path) -> None:
+def test_run_unique_link_hard_links_under_a_unique_name_and_cleans_up(tmp_path: Path) -> None:
     clip = tmp_path / "source.mp4"
     clip.write_bytes(_MP4_BYTES)
-    async with upload_mod._staged_video_path(clip, "source-deadbeef.mp4") as staged:
-        assert staged.is_file()
-        assert staged.name == "source-deadbeef.mp4"
-        assert staged.read_bytes() == _MP4_BYTES
-        tmp_dir = staged.parent
+    with upload_mod._run_unique_link(clip) as sent:
+        assert sent != clip
+        assert sent.stem.startswith("source")
+        assert sent.suffix == ".mp4"
+        assert sent.read_bytes() == _MP4_BYTES
+        tmp_dir = sent.parent
     assert not tmp_dir.exists()
+    assert clip.read_bytes() == _MP4_BYTES
+
+
+def test_run_unique_link_sends_the_file_itself_rather_than_copying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Across drives a hard link fails; a clip of up to 1 GB is never copied."""
+    clip = tmp_path / "source.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    monkeypatch.setattr(upload_mod.os, "link", MagicMock(side_effect=OSError("cross-device")))
+    with upload_mod._run_unique_link(clip) as sent:
+        assert sent == clip
 
 
 @pytest.mark.asyncio
-async def test_upload_video_two_post_and_rights_dialog_refusal(
+async def test_upload_video_for_mention_returns_both_ids_and_the_picker_query(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(_MP4_BYTES)
+    sent: list[str] = []
 
-    listeners: dict[str, list[Any]] = {"request": [], "response": []}
+    async def fake_toolbar_upload(_page: Any, files: Any, **_kw: Any) -> tuple[int, str]:
+        sent.append(str(files))
+        return 200, json.dumps({"mediaId": _WF, "media": {"workflowId": _MID}})
 
-    class _FakeLocator:
-        def __init__(self, count_val: int) -> None:
-            self._count = count_val
-
-        async def count(self) -> int:
-            return self._count
-
-    class _FakePage:
-        def __init__(self, dialog_counts: list[int]) -> None:
-            self._counts = iter(dialog_counts)
-
-        def on(self, event: str, fn: Any) -> None:
-            listeners[event].append(fn)
-
-        def remove_listener(self, event: str, fn: Any) -> None:
-            if fn in listeners[event]:
-                listeners[event].remove(fn)
-
-        def locator(self, _sel: str) -> _FakeLocator:
-            return _FakeLocator(next(self._counts, 0))
-
-    class _FakeResp:
-        def __init__(self, status: int, body: str) -> None:
-            self.url = f"https://flow.google.com/upload/v1/flow/upload/video/{_PID}"
-            self.status = status
-            self._body = body
-
-        async def text(self) -> str:
-            return self._body
-
-    class _FakeChooser:
-        def __init__(self, emit_upload: bool) -> None:
-            self._emit = emit_upload
-
-        async def set_files(self, _path: str) -> None:
-            if not self._emit:
-                return
-            for fn in list(listeners["request"]):
-                fn(MagicMock(url=f"https://flow.google.com/upload/v1/flow/upload/video/{_PID}"))
-            # 1st POST: empty 200; 2nd POST: JSON 200 (REST mediaId=rec[0], media.workflowId=rec[2])
-            for resp in (
-                _FakeResp(200, ""),
-                _FakeResp(200, json.dumps({"mediaId": _WF, "media": {"workflowId": _MID}})),
-            ):
-                for fn in list(listeners["response"]):
-                    await fn(resp)
-
-    monkeypatch.setattr(
-        upload_mod, "_open_upload_chooser", AsyncMock(return_value=_FakeChooser(True))
-    )
-    uploaded = await upload_mod.upload_video(_FakePage([0]), _PID, clip, timeout_s=2.0)
-    assert uploaded.media_id == _MID
-    assert uploaded.workflow_id == _WF
-    assert uploaded.display_name.endswith(".mp4")
-    assert not uploaded.query_name.endswith(".mp4")
-
-    # Rights dialog opened with no upload POST -> MediaUploadRejectedError with remediation
-    monkeypatch.setattr(
-        upload_mod, "_open_upload_chooser", AsyncMock(return_value=_FakeChooser(False))
-    )
-    with pytest.raises(MediaUploadRejectedError) as exc_info:
-        await upload_mod.upload_video(_FakePage([0, 1]), _PID, clip, timeout_s=0.05)
-    assert "rights to use this video" in (exc_info.value.remediation_hint or "")
-
-
-# --- Zzl0ze source classification & jIps6 route guard -----------------------
-
-
-def test_edit_source_record_recognises_generated_uploaded_and_image() -> None:
-    generated_video = [[[_WF, _PID, _MID, None, None, [], None, [["video-meta"], [1280, 720]]]]]
-    uploaded_video = [[[_WF, _PID, _MID, None, None, [], None, [None, [1280, 720, [3]]]]]]
-    uploaded_image = [
-        [
-            [
-                _WF,
-                _PID,
-                _MID,
-                None,
-                None,
-                [],
-                None,
-                [None, [512, 512, None, None, None, None, "image/png"]],
-            ]
-        ]
-    ]
-    assert edit_mod.edit_source_record(generated_video, _MID) == edit_mod.SourceClip(_WF, "video")
-    assert edit_mod.edit_source_record(uploaded_video, _MID) == edit_mod.SourceClip(_WF, "video")
-    assert edit_mod.edit_source_record(uploaded_image, _MID) == edit_mod.SourceClip(_WF, "image")
-    assert edit_mod.edit_source_record([], _MID) is None
+    monkeypatch.setattr(upload_mod, "toolbar_upload", fake_toolbar_upload)
+    uploaded = await upload_mod.upload_video_for_mention(MagicMock(), _PID, clip)
+    assert (uploaded.media_id, uploaded.workflow_id) == (_MID, _WF)
+    assert uploaded.query_name == Path(sent[0]).stem
+    # The extend path keeps its contract: the media id only, the file under its own name.
+    assert await upload_mod.upload_video(MagicMock(), _PID, clip) == _MID
+    assert sent[1] == str(clip)
 
 
 def test_edit_request_problem_enforces_jips6_contract() -> None:
@@ -379,176 +311,11 @@ def test_edit_request_problem_enforces_jips6_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_video_edit_validates_refs_and_completes_local_and_clip_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gflow_cli.api.transports.batchexecute import GenerationRecord
-
-    clip = tmp_path / "in.mp4"
-    clip.write_bytes(_MP4_BYTES)
-    good_ref = tmp_path / "ref.png"
-    good_ref.write_bytes(_PNG_BYTES)
-    bad_ref = tmp_path / "secret.png"
-    bad_ref.write_bytes(b"-----BEGIN OPENSSH PRIVATE KEY-----")
-    out_mp4 = tmp_path / "edited.mp4"
-
-    class _FakeLoc:
-        def __init__(self, count_val: int = 1) -> None:
-            self._count = count_val
-
-        @property
-        def first(self) -> _FakeLoc:
-            return self
-
-        def locator(self, _sel: str) -> _FakeLoc:
-            return self
-
-        async def count(self) -> int:
-            return self._count
-
-        async def hover(self, **_kw: Any) -> None:
-            return None
-
-        async def wait_for(self, **_kw: Any) -> None:
-            return None
-
-        async def click(self, **_kw: Any) -> None:
-            return None
-
-    class _FakePage:
-        url = f"https://flow.google.com/project/{_PID}/edit/{_MID}"
-
-        def __init__(self) -> None:
-            self.keyboard = MagicMock(insert_text=AsyncMock(), press=AsyncMock())
-
-        def on(self, *_a: Any) -> None:
-            return None
-
-        def remove_listener(self, *_a: Any) -> None:
-            return None
-
-        def locator(self, sel: str) -> _FakeLoc:
-            if sel == edit_mod.CHIP_CONTAINER_SELECTOR:
-                return _FakeLoc(0)
-            return _FakeLoc(1)
-
-        async def wait_for_timeout(self, _ms: int) -> None:
-            return None
-
-        async def evaluate(self, *_a: Any) -> None:
-            return None
-
-    # 1. Invalid reference image fails BEFORE upload_video or browser interaction
-    upload_spy = AsyncMock()
-    monkeypatch.setattr(edit_mod, "upload_video", upload_spy)
-    with pytest.raises(ValueError, match="Not a supported image format"):
-        await edit_mod.run_video_edit(
-            _FakePage(),
-            EditVideoRequest(prompt="glow", source_video=clip, reference_images=(bad_ref,)),
-            project_id=_PID,
-            save=AsyncMock(),
-            poll_timeout_s=10.0,
-            download=True,
-            on_started=None,
-        )
-    upload_spy.assert_not_called()
-
-    # 2. Local video path end-to-end: upload -> attach -> quote -> submit_and_observe -> download
-    done_record = GenerationRecord(
-        workflow_id=_WF,
-        project_id=_PID,
-        media_id=_MID,
-        status=3,
-        video_url="https://flow-content.google/v.mp4",
-        poster_url=None,
-        size_bytes=len(_MP4_BYTES),
-    )
-    monkeypatch.setattr(
-        edit_mod,
-        "upload_video",
-        AsyncMock(
-            return_value=upload_mod.UploadedVideo(_MID, _WF, "in-12345678.mp4", "in-12345678")
-        ),
-    )
-    monkeypatch.setattr(edit_mod, "_apply_main_edit_settings", AsyncMock(return_value=9))
-    monkeypatch.setattr(edit_mod, "_attach_mention_asset", AsyncMock())
-
-    fake_composer = MagicMock()
-    fake_composer.ensure_editor_for = AsyncMock(return_value="classic")
-    fake_composer.upload = AsyncMock(return_value=(_REF1, "ref-aaaaaaaa.png"))
-    fake_composer.clear_composer = AsyncMock()
-    fake_composer.send_prompt = AsyncMock()
-
-    async def _fake_submit(_page: Any, **kwargs: Any) -> GenerationRecord:
-        refs_wire = [[None, _REF1]]
-        inner = [[[[None, _WF], None, "macaron_cookie_edit", 2, None, None, None, None, refs_wire]]]
-        assert kwargs["request_check"]("jIps6", _make_freq("jIps6", inner)) is None
-        if kwargs.get("on_started"):
-            kwargs["on_started"](VideoStarted(media_id=_MID, project_id=_PID, workflow_id=_WF))
-        return done_record
-
-    fake_composer.submit_and_observe = AsyncMock(side_effect=_fake_submit)
-    fake_composer.download = AsyncMock(return_value=out_mp4)
-    monkeypatch.setattr(edit_mod, "MigratedComposer", lambda: fake_composer)
-
-    started_seen: list[str] = []
-    res = await edit_mod.run_video_edit(
-        _FakePage(),
-        EditVideoRequest(
-            prompt="golden glow",
-            source_video=clip,
-            reference_images=(good_ref,),
-            aspect=Aspect.LANDSCAPE,
-            resolution="720p",
-            max_credits=12,
-        ),
-        project_id=_PID,
-        save=AsyncMock(),
-        poll_timeout_s=30.0,
-        download=True,
-        on_started=lambda s: started_seen.append(s.media_id),
-    )
-    assert res.status.succeeded is True
-    assert res.local_path == out_mp4
-    assert res.quoted_credits == 9
-    assert started_seen == [_MID]
-
-    # 3. Clip Editor path end-to-end: source_clip -> model/quote -> attach -> submit -> download
-    monkeypatch.setattr(
-        edit_mod, "_source_clip", AsyncMock(return_value=edit_mod.SourceClip(_WF, "video"))
-    )
-    monkeypatch.setattr(edit_mod, "_confirm_editor", MagicMock())
-    monkeypatch.setattr(
-        edit_mod, "_configure_clip_editor_model_and_quote", AsyncMock(return_value=9)
-    )
-    res_clip = await edit_mod.run_video_edit(
-        _FakePage(),
-        EditVideoRequest(
-            prompt="add snow",
-            source_media_id=_MID,
-            reference_images=(good_ref,),
-            max_credits=12,
-        ),
-        project_id=_PID,
-        save=AsyncMock(),
-        poll_timeout_s=30.0,
-        download=True,
-        on_started=None,
-    )
-    assert res_clip.status.succeeded is True
-    assert res_clip.quoted_credits == 9
-    assert res_clip.local_path == out_mp4
-
-
-# --- Client, Transport, Recorder & JSON Output ------------------------------
-
-
-@pytest.mark.asyncio
-async def test_client_edit_video_requires_project_for_uuid_and_creates_for_local(
-    tmp_path: Path,
-) -> None:
+async def test_client_edit_video_validates_files_before_the_transport(tmp_path: Path) -> None:
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(_MP4_BYTES)
+    not_a_video = tmp_path / "notes.mp4"
+    not_a_video.write_bytes(b"plain text, not a container")
 
     class _FakeTransport:
         name = "fake"
@@ -568,25 +335,27 @@ async def test_client_edit_video_requires_project_for_uuid_and_creates_for_local
 
     transport = _FakeTransport()
     assert isinstance(transport, VideoEditCapableTransport)
-
     client = FlowApiClient(profile_dir=tmp_path)
     client.transport = transport  # type: ignore[assignment]
-    client.create_project = AsyncMock(return_value=MagicMock(project_id=_PID))  # type: ignore[method-assign]
 
-    # Existing media UUID without project -> ConfigurationError
-    with pytest.raises(ConfigurationError, match="--project"):
-        await client.edit_video(req=EditVideoRequest(prompt="snow", source_media_id=_MID))
+    with pytest.raises(ConfigurationError, match="cannot upload this file") as info:
+        await client.edit_video(
+            req=EditVideoRequest(prompt="glow", source_video=not_a_video), project_id=_PID
+        )
+    assert info.value.charged == "no"
+    assert transport.calls == []
 
-    # Local video without project -> auto-creates project and relays checkpoints
-    phases: list[str] = []
+    observer = MagicMock()
     res = await client.edit_video(
         req=EditVideoRequest(prompt="warm glow", source_video=clip),
-        on_checkpoint=lambda cp: phases.append(cp.phase),
+        project_id=_PID,
+        on_checkpoint=observer,
     )
-    assert res.project_id == _PID
     assert res.quoted_credits == 9
-    assert phases == ["submit_attempted"]
+    # The checkpoints are the transport's to emit, next to the click; none before it.
+    observer.assert_not_called()
     assert transport.calls[0]["project_id"] == _PID
+    assert transport.calls[0]["on_checkpoint"] is observer
 
 
 @pytest.mark.asyncio
@@ -603,8 +372,10 @@ async def test_ui_transport_edit_video_refuses_labs_host(
         tr = UiAutomationTransport()
         tr._setup_done = True
         tr._page = MagicMock(url="https://labs.google/fx/tools/flow")
-        with pytest.raises(FlowHostMigratedError):
-            await tr.edit_video(request=EditVideoRequest(prompt="glow", source_video=clip))
+        with pytest.raises(FlowHostMigratedError, match="video edit"):
+            await tr.edit_video(
+                request=EditVideoRequest(prompt="glow", source_video=clip), project_id=_PID
+            )
     finally:
         reset_settings()
 

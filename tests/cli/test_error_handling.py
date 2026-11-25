@@ -161,6 +161,72 @@ def test_video_i2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_
     assert result.exit_code == 3, result.output
 
 
+@pytest.mark.parametrize("flag", ["--initial-frame", "--end-frame"])
+@pytest.mark.parametrize("kind", ["empty", "folder"])
+def test_video_i2v_frame_that_is_not_a_file_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str, kind: str
+) -> None:
+    """A frame that resolves to a folder exits 2 before the run starts, like a missing file."""
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "frames"
+    folder.mkdir()
+    img = _make_image_file(tmp_path, "first_frame.png")
+    frame = "" if kind == "empty" else str(folder)
+    ran: list[object] = []
+
+    async def _record(*args: Any, **kwargs: Any) -> None:
+        ran.append(args)
+
+    monkeypatch.setattr("gflow_cli.cli_video._run_i2v", _record)
+    args = ["video", "i2v", "make it move", flag, frame]
+    if flag == "--end-frame":
+        args += ["--initial-frame", str(img)]
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 2, result.output
+    assert "is not a file" in result.output
+    assert ran == []
+
+
+def test_video_i2v_empty_initial_frame_does_not_fall_back_to_the_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicit empty --initial-frame is refused, not replaced by the positional IMAGE."""
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    monkeypatch.chdir(tmp_path)
+    img = _make_image_file(tmp_path, "first_frame.png")
+    ran: list[object] = []
+
+    async def _record(*args: Any, **kwargs: Any) -> None:
+        ran.append(args)
+
+    monkeypatch.setattr("gflow_cli.cli_video._run_i2v", _record)
+    result = CliRunner().invoke(
+        main, ["video", "i2v", str(img), "make it move", "--initial-frame", ""]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "is not a file" in result.output
+    assert ran == []
+
+
+@pytest.mark.parametrize("flag", ["--initial-frame", "--end-frame"])
+def test_video_i2v_unresolvable_frame_path_is_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, flag: str
+) -> None:
+    """A path resolve() rejects outright (here a NUL byte) exits 2, not a traceback."""
+    _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
+    img = _make_image_file(tmp_path, "first_frame.png")
+    args = ["video", "i2v", "make it move", flag, "bad\x00path.png"]
+    if flag == "--end-frame":
+        args += ["--initial-frame", str(img)]
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 2, result.output
+    assert "does not exist" in result.output
+
+
 def test_video_r2v_wires_run_with_handlers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _patch_profile_resolution(monkeypatch, tmp_path, "gflow_cli.cli_video")
     ref = _make_image_file(tmp_path, "ref.png")
