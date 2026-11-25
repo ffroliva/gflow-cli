@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
 import click
 import structlog
@@ -48,9 +47,6 @@ from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import OperationRecorder, record_failed_operation_safe
 from gflow_cli.errors import ConfigurationError, DataStoreError
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
-
-if TYPE_CHECKING:
-    pass
 
 console = Console()
 logger = structlog.get_logger(__name__)
@@ -303,4 +299,4 @@ def edit(
     )
 
 
-__all__: list[Any] = ["edit"]
+__all__ = ["edit"]

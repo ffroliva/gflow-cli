@@ -82,7 +82,7 @@ def _video_req_fields(
     )
 
 
-def _is_in_place_edit(request: _VideoRequest, flow_media_id: str) -> bool:
+def _is_in_place_edit(request: object, flow_media_id: str) -> bool:
     """Flow returned the edited clip under the source's own media id."""
     return isinstance(request, EditVideoRequest) and request.source_media_id == flow_media_id
 
@@ -597,12 +597,14 @@ class VideoRecordingMixin(RecorderCore):
         if existing_asset is not None and (
             request is None or _is_in_place_edit(request, flow_media_id)
         ):
-            repo.update_asset_status(
-                profile_name,
-                flow_media_id,
-                result.status.status,
-                workflow_id=result.workflow_id,
-            )
+            # A failed in-place edit leaves the source clip as it was (as an extend does).
+            if request is None or result.status.succeeded:
+                repo.update_asset_status(
+                    profile_name,
+                    flow_media_id,
+                    result.status.status,
+                    workflow_id=result.workflow_id,
+                )
             return existing_asset.id
 
         record = self._build_completed_video_asset(
@@ -752,8 +754,10 @@ class VideoRecordingMixin(RecorderCore):
                     op.id, OperationStatus.FAILED, completed_at, error_type, error_detail
                 )
                 recorded = True
-            elif op.status == OperationStatus.FAILED:
-                recorded = True  # already terminal — do not duplicate
+            elif op.status == OperationStatus.FAILED and not _is_in_place_edit(request, media_id):
+                # Already terminal — do not duplicate. An in-place edit's FAILED row may be
+                # an earlier edit of the same clip, so this run's failure is still written.
+                recorded = True
         if isinstance(exc, MediaDownloadError) and exc.media_id:
             # #896: Flow said DONE and billed; only the transfer failed. Without this the
             # asset reads "pending" forever and nothing distinguishes it from a failed

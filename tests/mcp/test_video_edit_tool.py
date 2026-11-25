@@ -395,3 +395,67 @@ async def test_worker_refuses_references_on_an_existing_clip_before_a_project(
             worker.close()
     finally:
         reset_settings()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_queued_edit_records_the_prompt_its_tool_rewrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.errors import TransportTimeoutError
+
+    db_path = tmp_path / "gflow.db"
+    clip = tmp_path / "in.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    monkeypatch.setenv("GFLOW_CLI_DB_PATH", str(db_path))
+    monkeypatch.setenv("GFLOW_CLI_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("GFLOW_CLI_HISTORY_PROMPTS", "store")
+    reset_settings()
+    monkeypatch.setattr(
+        "gflow_cli._cli_helpers.apply_tool_option",
+        lambda prompt, _specs, **_kw: (f"rewritten: {prompt}", prompt, None),
+    )
+
+    class _Client:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def edit_video(self, **_kwargs: Any) -> VideoResult:
+            raise TransportTimeoutError(detail="no reply")
+
+    try:
+        with DataStore.open(db_path) as store:
+            DataRepository(store).upsert_profile("p1", tmp_path / "home" / "profile_p1")
+            QueueRepository(store).enqueue_task(
+                task_id="edit-tool",
+                profile_name="p1",
+                task_type="edit",
+                payload={
+                    "schema_version": 1,
+                    "prompt": "glow",
+                    "source_video": str(clip),
+                    "project_id": _PID,
+                    "tool_specs": ["creative-director"],
+                },
+            )
+        worker = FlowWorker("p1", str(db_path))
+        try:
+            task = worker.repo.claim_task("edit-tool", "worker:test")
+            assert task is not None
+            with patch("gflow_cli.worker.daemon.FlowApiClient", _Client):
+                await worker.process_task(task)
+            row = worker.db.conn.execute(
+                "SELECT prompt, expanded_prompt FROM operations WHERE mode = 'edit'"
+            ).fetchone()
+            assert row is not None
+            # As a success records it: the user's prompt, and what the tool sent.
+            assert tuple(row) == ("glow", "rewritten: glow")
+        finally:
+            worker.close()
+    finally:
+        reset_settings()

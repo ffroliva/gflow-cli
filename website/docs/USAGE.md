@@ -1156,7 +1156,7 @@ video" dialog is never accepted for you: accept it once by hand in Flow.
 | `--model` | `omni-1.2` (default), `omni-1.2-flash` or `omni-flash`; Flow edits with Omni models only |
 | `--aspect 9:16\|16:9` | Local file only: output aspect; omitted, Flow's current setting is kept. A clip is edited in its own aspect; a different `--aspect` exits 36 before the submit |
 | `--resolution 360p\|720p` | Omitted, Flow's current setting is kept. `360p` needs a local file (the clip editor has no 360p toggle, exit 36 before any click) |
-| `--max-credits N` | Refuse (exit 45, `charged: no`) unless Flow's pre-submit quote is readable and at most `N`. It is read once the settings, the clip and the references are in place, and only after it has held one value for 3 seconds. Default: `GFLOW_CLI_MAX_CREDITS`; `--no-max-credits` ignores it |
+| `--max-credits N` | Refuse (exit 45, `charged: no`) unless Flow's pre-submit quote is readable and at most `N`. It is read once the settings, the clip and the references are in place, and only after it has held one value for 3 seconds. Editing an existing clip (a media UUID) under a cap currently refuses (exit 45): the clip editor's quote label is not measured yet, so its quote reads as unavailable; edit without a cap, or download the clip and edit the file. Default: `GFLOW_CLI_MAX_CREDITS`; `--no-max-credits` ignores it |
 | `--project ID` | The project owning a `MEDIA_ID` (else the catalog's record, else `GFLOW_CLI_PROJECT`); optional for a local file |
 | `--project-name NAME` | Local file: the name of the project created when none is given |
 | `--tool NAME` | Prompt tool applied before submission (as on `video t2v`) |

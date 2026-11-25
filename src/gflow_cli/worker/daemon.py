@@ -5,6 +5,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -309,6 +310,8 @@ class FlowWorker:
         ) = None
         recorder: OperationRecorder | None = None
         started_media_ids: list[str] = []
+        # The request a clip task actually built (after a prompt tool), for its failure row.
+        built_requests: list[Any] = []
 
         try:
             if task.task_type in ("t2i", "i2i"):
@@ -585,7 +588,7 @@ class FlowWorker:
                 req = task.decoded.request if task.decoded is not None else None
                 run_clip_task = {
                     "extend": self._run_video_extend_task,
-                    "edit": self._run_video_edit_task,
+                    "edit": partial(self._run_video_edit_task, built_requests=built_requests),
                 }[task.task_type]
                 recorder = OperationRecorder(
                     DataRepository(self.db), prompt_mode=settings.history_prompts
@@ -648,6 +651,7 @@ class FlowWorker:
             )
 
             error_payload = _error_payload_for(exc)
+            failed_req = next(reversed(built_requests), req)
 
             # #341: mirror the queue's failure record into the operations table
             # (single authoritative failure history). Skipped for unknown task
@@ -660,8 +664,8 @@ class FlowWorker:
                 # Prefer the mode the STARTED row was written with (the built
                 # request's mode) over task_type — they can disagree when the
                 # payload omits 'mode', and the STARTED-row lookup filters on it.
-                if isinstance(req, GenerateVideoRequest):
-                    op_kind = OperationKind(req.mode.value)
+                if isinstance(failed_req, GenerateVideoRequest):
+                    op_kind = OperationKind(failed_req.mode.value)
                 record_failed_operation_safe(
                     recorder,
                     logger=logger,
@@ -670,9 +674,10 @@ class FlowWorker:
                     command=f"worker {task.task_type}",
                     mode=op_kind,
                     exc=exc,
-                    request=req
+                    request=failed_req
                     if isinstance(
-                        req, (GenerateImageRequest, GenerateVideoRequest, EditVideoRequest)
+                        failed_req,
+                        (GenerateImageRequest, GenerateVideoRequest, EditVideoRequest),
                     )
                     else None,
                     flow_project_id=checkpoint_project_id[0],
@@ -894,6 +899,7 @@ class FlowWorker:
         checkpoint_project_id: list[str | None],
         started_media_ids: list[str],
         observe_checkpoint: Callable[[GenerationCheckpoint], None],
+        built_requests: list[Any],
     ) -> str:
         from gflow_cli._cli_helpers import apply_tool_option  # noqa: PLC0415
         from gflow_cli.api.transports.migrated_video_edit import (  # noqa: PLC0415
@@ -923,6 +929,7 @@ class FlowWorker:
                 apply_tool_option, req.prompt, tool_specs, category="video", quiet=True
             )
             req = replace(req, prompt=prompt_to_send, original_prompt=orig, tool=applied)
+        built_requests.append(req)
 
         def on_started(started: VideoStarted) -> None:
             started_media_ids.append(started.media_id)

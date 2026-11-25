@@ -500,6 +500,11 @@ def test_an_in_place_edit_keeps_the_source_row_and_the_earlier_edit(tmp_path: Pa
             (_MID,),
         ).fetchone()
         assert tuple(row) == (8.0, 7, Aspect.LANDSCAPE.value)
+        # A failed in-place edit leaves the source clip's own status alone.
+        status = store.conn.execute(
+            "SELECT status FROM assets WHERE flow_media_id = ?", (_MID,)
+        ).fetchone()[0]
+        assert status == "MEDIA_GENERATION_STATUS_SUCCESSFUL"
         statuses = [
             r[0]
             for r in store.conn.execute(
@@ -512,3 +517,69 @@ def test_an_in_place_edit_keeps_the_source_row_and_the_earlier_edit(tmp_path: Pa
         assert len(statuses) == 2
     finally:
         store.close()
+
+
+def test_a_failed_in_place_edit_is_recorded_even_after_an_earlier_failed_edit(
+    tmp_path: Path,
+) -> None:
+    from gflow_cli.errors import TransportTimeoutError
+
+    store = DataStore.open(tmp_path / "gflow.db")
+    try:
+        repo = DataRepository(store)
+        rec = OperationRecorder(repo, prompt_mode="store")
+        source = GenerateVideoRequest(prompt="a lantern", mode=Mode.T2V, aspect=Aspect.LANDSCAPE)
+        rec.record_started_video(
+            profile_name="p1",
+            profile_dir=tmp_path,
+            request=source,
+            started=VideoStarted(media_id=_MID, project_id=_PID, workflow_id=_WF),
+        )
+        edit = EditVideoRequest(prompt="snow", source_media_id=_MID)
+        failed = VideoResult(
+            status=VideoStatus(media_id=_MID, status="MEDIA_GENERATION_STATUS_FAILED"),
+            local_path=None,
+            project_id=_PID,
+            workflow_id=_WF,
+        )
+        rec.record_completed_video(
+            profile_name="p1", _profile_dir=tmp_path, request=edit, result=failed
+        )
+        for _ in range(2):
+            rec.record_failed_operation(
+                profile_name="p1",
+                profile_dir=tmp_path,
+                command="video edit",
+                mode=OperationKind.EDIT,
+                exc=TransportTimeoutError(detail="no reply"),
+                request=edit,
+                flow_media_ids=[_MID],
+            )
+        count = store.conn.execute(
+            "SELECT COUNT(*) FROM operations WHERE mode = ? AND status = ?",
+            (OperationKind.EDIT.value, OperationStatus.FAILED.value),
+        ).fetchone()[0]
+        assert count == 3  # the earlier failed edit, and each of this run's failures
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_copy_leaves_no_staging_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    clip = tmp_path / "source.mp4"
+    clip.write_bytes(_MP4_BYTES)
+    monkeypatch.setattr(upload_mod.os, "link", MagicMock(side_effect=OSError("no links")))
+
+    def partial_copy(_src: Path, dst: Path) -> None:
+        Path(dst).write_bytes(b"part")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(upload_mod.shutil, "copyfile", partial_copy)
+    with pytest.raises((KeyboardInterrupt, asyncio.CancelledError)):
+        async with upload_mod._run_unique_name(clip):
+            pass
+    assert [p.name for p in tmp_path.iterdir()] == ["source.mp4"]
