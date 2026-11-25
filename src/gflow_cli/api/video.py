@@ -92,6 +92,18 @@ class VideoModel(StrEnum):
 # ``omni_flash`` (10s capable) is a plain opt-in via an explicit ``--model``.
 I2V_DEFAULT_MODEL: VideoModel = VideoModel.VEO_3_1_LITE
 
+#: Default and supported models for video-to-video editing (``jIps6`` on flow.google.com).
+#: Measured live 2026-11-24: Flow's edit surface offers only the Omni Flash models
+#: (``macaron_cookie_edit`` / ``abra_edit``); Veo models have no V2V edit keys.
+EDIT_DEFAULT_MODEL: VideoModel = VideoModel.OMNI_1_2_FLASH
+EDIT_SUPPORTED_MODELS: frozenset[VideoModel] = frozenset(
+    {VideoModel.OMNI_1_2_FLASH, VideoModel.OMNI_FLASH}
+)
+#: Hard wire limit on reference images for video-to-video editing (``jIps6`` ``entry[8]``).
+#: Measured live at $0 (2026-11-24): the UI allows attaching >5 images with no warning,
+#: but Flow's ``jIps6`` request silently truncates ``entry[8]`` to 5 images.
+MAX_EDIT_REFERENCE_IMAGES = 5
+
 
 # Module-level alias map — friendly CLI strings -> VideoModel. Hoisted out of
 # `VideoModel.from_cli` (defined after the class so the members resolve) so
@@ -523,6 +535,62 @@ class GenerateVideoRequest:
     def _validate_seed(self) -> None:
         if self.seed is not None and not (0 <= self.seed <= 2**31 - 1):
             msg = "seed out of range"
+            raise ValueError(msg)
+
+
+@dataclass(frozen=True)
+class EditVideoRequest:
+    """Inputs for ONE video-to-video edit on ``flow.google.com`` (``jIps6``).
+
+    Single-clip output only (no ``count``): accepts either a local ``source_video``
+    file (uploaded via toolbar and bound in Main Composer Ingredients) or an existing
+    Flow ``source_media_id`` (edited in Clip Editor ``/project/<pid>/edit/<id>``),
+    plus 0–5 local ``reference_images`` (hard wire cap enforced up front because
+    Flow's ``jIps6`` ``entry[8]`` silently truncates beyond 5).
+    """
+
+    prompt: str
+    source_video: Path | None = None
+    source_media_id: str | None = None
+    reference_images: tuple[Path, ...] = ()
+    model: VideoModel = EDIT_DEFAULT_MODEL
+    aspect: Aspect | None = None
+    resolution: str | None = None
+    max_credits: int | None = None
+    original_prompt: str | None = None
+    tool: AppliedTool | None = None
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            msg = "prompt must not be empty"
+            raise ValueError(msg)
+        if (self.source_video is None) == (self.source_media_id is None):
+            msg = "exactly one of source_video or source_media_id must be provided"
+            raise ValueError(msg)
+        if self.source_media_id is not None and not is_media_uuid(self.source_media_id):
+            msg = f"source_media_id {self.source_media_id!r} is not a valid Flow media UUID"
+            raise ValueError(msg)
+        if self.max_credits is not None and (
+            isinstance(self.max_credits, bool) or self.max_credits < 0
+        ):
+            msg = "max_credits must be >= 0"
+            raise ValueError(msg)
+        if self.aspect is Aspect.SQUARE:
+            msg = "video edit does not support the SQUARE aspect; use 9:16 or 16:9"
+            raise ValueError(msg)
+        if self.resolution is not None and self.resolution not in ("360p", "720p"):
+            msg = f"resolution must be '360p' or '720p', got {self.resolution!r}"
+            raise ValueError(msg)
+        if self.model not in EDIT_SUPPORTED_MODELS:
+            supported = ", ".join(sorted(m.value for m in EDIT_SUPPORTED_MODELS))
+            msg = f"video edit supports only Omni models ({supported}), got {self.model.value!r}"
+            raise ValueError(msg)
+        if len(self.reference_images) > MAX_EDIT_REFERENCE_IMAGES:
+            msg = (
+                f"video edit allows at most {MAX_EDIT_REFERENCE_IMAGES} reference image(s) "
+                f"(Flow silently truncates jIps6 beyond {MAX_EDIT_REFERENCE_IMAGES}); "
+                f"got {len(self.reference_images)}"
+            )
             raise ValueError(msg)
 
 

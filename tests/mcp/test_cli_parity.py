@@ -64,6 +64,7 @@ CLI_TO_MCP: dict[str, str] = {
     "video t2v": "gflow_generate_video",  # mode="t2v"
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
+    "video edit": "gflow_edit_video",
     "video generate": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
     "video extend": "gflow_extend_video",  # single-segment flow.google.com extend
     "video assemble": "gflow_video_assemble",  # local, credit-free media processing
@@ -305,6 +306,7 @@ _OPTION_EXEMPT: dict[str, str] = {
     "video t2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video edit:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video extend:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video extend:segments": "multi-segment chains are not ported to flow.google.com yet; "

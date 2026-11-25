@@ -39,8 +39,13 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
+from gflow_cli.api.video import (
+    EDIT_DEFAULT_MODEL,
+    EditVideoRequest,
+    GenerateVideoRequest,
+    VideoModel,
+)
 from gflow_cli.api.video import Aspect as VideoAspect
-from gflow_cli.api.video import GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
 from gflow_cli.api.video_extend import MigratedExtendRequest
@@ -55,6 +60,7 @@ __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "DecodedPayload",
     "build_image_request",
+    "build_video_edit_request",
     "build_video_extend_request",
     "build_video_request",
     "decode_payload",
@@ -65,7 +71,10 @@ __all__ = [
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
 _VIDEO_EXTEND_TASK_TYPES = frozenset({"extend"})
-_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES | _VIDEO_EXTEND_TASK_TYPES
+_VIDEO_EDIT_TASK_TYPES = frozenset({"edit"})
+_KNOWN_TASK_TYPES = (
+    _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES | _VIDEO_EXTEND_TASK_TYPES | _VIDEO_EDIT_TASK_TYPES
+)
 
 # The only version this codec writes. 0 (an absent key) is read-only legacy
 # compatibility — nothing ever deliberately encodes as V0.
@@ -90,7 +99,7 @@ class DecodedPayload:
 
     schema_version: int
     task_type: str
-    request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest
+    request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest | EditVideoRequest
     fields: dict[str, Any]
 
 
@@ -118,11 +127,15 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
 
     try:
-        request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest
+        request: (
+            GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest | EditVideoRequest
+        )
         if task_type in _IMAGE_TASK_TYPES:
             request = build_image_request(fields)
         elif task_type in _VIDEO_EXTEND_TASK_TYPES:
             request = build_video_extend_request(fields)
+        elif task_type in _VIDEO_EDIT_TASK_TYPES:
+            request = build_video_edit_request(fields)
         else:
             request = build_video_request(fields)
     except (KeyError, ValueError, TypeError) as exc:
@@ -275,7 +288,11 @@ def _retirement_warnings(task: QueueTask) -> list[dict[str, Any]]:
     Read from the queued payload's ``model``, the value the worker generated with, so the MCP
     ``wait=true`` reply and ``tasks/get`` say the same thing.
     """
-    alias = task.payload.get("model") if task.task_type in _VIDEO_TASK_TYPES else None
+    alias = (
+        task.payload.get("model")
+        if task.task_type in (_VIDEO_TASK_TYPES | _VIDEO_EDIT_TASK_TYPES)
+        else None
+    )
     if not isinstance(alias, str):  # absent, or a hand-edited row; the reply must still go out
         return []
     try:
@@ -426,4 +443,40 @@ def build_video_extend_request(payload: dict[str, Any]) -> MigratedExtendRequest
         reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
         aspect=_optional_str(payload, "aspect"),
         max_credits=_optional_int(payload, "max_credits"),
+    )
+
+
+def build_video_edit_request(payload: dict[str, Any]) -> EditVideoRequest:
+    """Map an ``edit`` queue payload dict onto :class:`EditVideoRequest`.
+
+    Every wrong type is a ``TypeError``/``ValueError`` here, so :func:`decode_payload`
+    reports it as :class:`QueueSchemaError` (exit 30) rather than failing later.
+    """
+    prompt = payload["prompt"]
+    if not isinstance(prompt, str):
+        msg = "prompt must be a string"
+        raise TypeError(msg)
+    for key in ("project_id", "project_name", "output_file"):
+        _optional_str(payload, key)
+    source_video = _optional_str(payload, "source_video")
+    aspect_val = _optional_str(payload, "aspect")
+    model_val = _optional_str(payload, "model")
+    raw_max_credits = _optional_int(payload, "max_credits")
+    if raw_max_credits is not None and raw_max_credits < 0:
+        raise ValueError("max_credits must be a non-negative integer")
+    raw_refs = payload.get("reference_images", [])
+    if not isinstance(raw_refs, list) or not all(
+        isinstance(p, str) for p in cast("list[Any]", raw_refs)
+    ):
+        msg = "reference_images must be a list of paths"
+        raise TypeError(msg)
+    return EditVideoRequest(
+        prompt=prompt,
+        source_video=Path(source_video) if source_video else None,
+        source_media_id=_optional_str(payload, "source_media_id"),
+        reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
+        model=VideoModel.from_cli(model_val) or EDIT_DEFAULT_MODEL,
+        aspect=VideoAspect.from_cli(aspect_val) if aspect_val else None,
+        resolution=_optional_str(payload, "resolution"),
+        max_credits=raw_max_credits,
     )

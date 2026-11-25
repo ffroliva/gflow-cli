@@ -22,8 +22,10 @@ from gflow_cli._cli_helpers import (
     _validate_project_id,
     apply_tool_option,
     default_project,
+    no_max_credits_option,
     out_file_option,
     output_format_option,
+    resolve_max_credits,
     run_with_handlers,
     set_interrupt_context,
     slugify_project_name,
@@ -36,9 +38,6 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import (
     enforce_credit_cap,
 )
-from gflow_cli.api.credit_cap import (
-    resolve_max_credits as _resolve_max_credits,
-)
 from gflow_cli.api.extend_chain import run_extend_chain
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.api.transports._common import migrated_route
@@ -50,6 +49,7 @@ from gflow_cli.api.video import (
     validate_duration_for_model,
 )
 from gflow_cli.cli_video_captions import captions, transcribe
+from gflow_cli.cli_video_edit import edit
 from gflow_cli.cli_video_extend import (
     labs_unported_extend_refusal,
     make_migrated_extend_on_started,
@@ -67,6 +67,7 @@ from gflow_cli.cli_video_reporting import (
     _print_chain_plan,
     _print_extend_plan,
     _record_migrated_extend,
+    _relocate_and_record_completed_video,
     _report_migrated_extend,
 )
 from gflow_cli.config import UiMode, get_settings
@@ -84,7 +85,6 @@ from gflow_cli.image_batch import resolve_jitter_range
 from gflow_cli.paths import (
     chain_clip_relocator,
     extend_output_path,
-    relocate_video_output,
 )
 from gflow_cli.services.video_assembly import (
     assemble_videos,
@@ -154,27 +154,6 @@ _max_credits_option = click.option(
 )
 
 
-def _set_no_max_credits(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
-    if value:
-        ctx.meta["no_max_credits"] = True
-
-
-_no_max_credits_option = click.option(
-    "--no-max-credits",
-    is_flag=True,
-    expose_value=False,
-    callback=_set_no_max_credits,
-    help="Ignore GFLOW_CLI_MAX_CREDITS for this command.",
-)
-
-
-def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | None:
-    ctx = click.get_current_context(silent=True)
-    if ctx is not None and ctx.meta.get("no_max_credits"):
-        configured = None
-    return _resolve_max_credits(cli_value, configured)
-
-
 def _warn_persistence_failed_after_success(
     *,
     exc: Exception,
@@ -206,7 +185,7 @@ def _shared_gen_tail_options(f: Any) -> Any:
         (
             click.option("--profile", default=None, help="Profile name (overrides default)."),
             _max_credits_option,
-            _no_max_credits_option,
+            no_max_credits_option,
             tool_option,
             _project_option,
             _project_name_option,
@@ -395,26 +374,18 @@ async def _generate_and_report(
                 **resolver_kw,
             )
 
-        result = relocate_video_output(result, output_file)
-
-        try:
-            recorder.record_completed_video(
-                profile_name=profile_name,
-                _profile_dir=profile_dir,
-                request=request,
-                result=result,
-                cloud_storage_info=(
-                    cloud_info_from_path(result.local_path)
-                    if result.local_path is not None
-                    else None
-                ),
-            )
-        except DataStoreError as exc:
-            _warn_persistence_failed_after_success(
-                exc=exc,
-                flow_media_id=result.status.media_id,
-                local_path=result.local_path,
-            )
+        result = _relocate_and_record_completed_video(
+            recorder,
+            profile_name=profile_name,
+            profile_dir=profile_dir,
+            request=request,
+            result=result,
+            output_file=output_file,
+            on_error=lambda exc, res: _warn_persistence_failed_after_success(
+                exc=exc, flow_media_id=res.status.media_id, local_path=res.local_path
+            ),
+            cloud_info_fn=cloud_info_from_path,
+        )
     except Exception as exc:
         # #341: persist the failure before re-raising — the STARTED row (if
         # on_started fired) is updated to FAILED, else a fresh row is inserted.
@@ -1699,7 +1670,7 @@ def i2v(  # NOSONAR
     help="Directory to save the generated mp4. Defaults to tmp/.",
 )
 @_max_credits_option
-@_no_max_credits_option
+@no_max_credits_option
 @output_format_option(has_out_file=True)
 def r2v(
     prompt: str,
@@ -1826,7 +1797,7 @@ def r2v(
     help="Cap the number of links; error (exit 11) if the manifest has more.",
 )
 @_max_credits_option
-@_no_max_credits_option
+@no_max_credits_option
 @click.option(
     "--yes",
     "-y",
@@ -2460,7 +2431,7 @@ async def _extend_session(  # noqa: PLR0913
 @click.option("--dry-run", is_flag=True, help="Show the plan and cost, submit nothing.")
 @click.option("--profile", default=None, help="Auth profile to use.")
 @_max_credits_option
-@_no_max_credits_option
+@no_max_credits_option
 @output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
     source: str,
@@ -2671,5 +2642,6 @@ async def _run_video_upscale(
         console.print(f"[bold green]Saved:[/bold green] {safe_path_text(target)}")
 
 
+video.add_command(edit)
 video.add_command(transcribe)
 video.add_command(captions)

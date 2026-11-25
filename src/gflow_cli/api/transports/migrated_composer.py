@@ -475,13 +475,20 @@ async def _submit_video_with_evidence(
             ),
         )
     except Exception as exc:
-        if quoted_credits is not None:
-            setattr(exc, "quoted_credits", quoted_credits)  # noqa: B010
-        if started_ids:
-            setattr(exc, "completed_media_ids", started_ids)  # noqa: B010
-            if isinstance(exc, GFlowError):
-                exc.charged, exc.next_action = "maybe", "reconcile"
+        attach_submit_evidence(exc, quoted_credits=quoted_credits, started_ids=started_ids)
         raise
+
+
+def attach_submit_evidence(
+    exc: Exception, *, quoted_credits: int | None, started_ids: list[str]
+) -> None:
+    """Mark a failed submit with its quote and the media ids Flow accepted (it may bill)."""
+    if quoted_credits is not None:
+        setattr(exc, "quoted_credits", quoted_credits)  # noqa: B010
+    if started_ids:
+        setattr(exc, "completed_media_ids", started_ids)  # noqa: B010
+        if isinstance(exc, GFlowError):
+            exc.charged, exc.next_action = "maybe", "reconcile"
 
 
 async def run_video(
@@ -575,6 +582,28 @@ async def run_video(
         reference_ids=reference_ids,
         entity_ids=entity_ids,
     )
+    return await finish_video_result(
+        composer,
+        page,
+        record,
+        project_id=pid,
+        quoted_credits=quoted_credits,
+        save=save,
+        download=download,
+    )
+
+
+async def finish_video_result(
+    composer: MigratedComposer,
+    page: Page,
+    record: GenerationRecord,
+    *,
+    project_id: str,
+    quoted_credits: int | None,
+    save: ClipSaver,
+    download: bool,
+) -> VideoResult:
+    """Build a :class:`VideoResult` from a terminal ``GenerationRecord``, downloading if done."""
     status = VideoStatus(
         media_id=record.media_id,
         status=(
@@ -597,7 +626,7 @@ async def run_video(
         status=status,
         # Not re-wrapped in Path(): a cloud UPath must reach the caller intact (#1003).
         local_path=local_path,
-        project_id=pid,
+        project_id=project_id,
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,
         quoted_credits=quoted_credits,

@@ -72,6 +72,7 @@ EXPECTED_TREE: dict[str, bool] = {
     "video i2v": True,
     "video r2v": True,
     "video chain": True,
+    "video edit": True,
     "video extend": True,
     "video assemble": False,
     "video generate": True,

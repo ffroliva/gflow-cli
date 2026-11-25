@@ -143,12 +143,14 @@
     "request_body": "function (request: 'Any') -> 'str' sha=5bd59f1d6a05e9c7",
     "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=501c1df69835b67c",
     "run_images": "function (page: 'Page', request: 'GenerateImageRequest', *, project_id: 'str | None', out_dir: 'Path | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=88c7455fbe9ada5e",
-    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=ee040e601065ea4b",
+    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=f8ce45dfe08b729d",
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"
   },
   "public_functions": {
+    "attach_submit_evidence": "function (exc: 'Exception', *, quoted_credits: 'int | None', started_ids: 'list[str]') -> 'None' sha=4f36c65b2141e2cb",
     "body_rpcid": "function (body: 'str') -> 'str | None' sha=2742321c5304b2a9",
     "create_project": "function (page: 'Page', title: 'str', *, timeout_s: 'float' = 120.0) -> 'ProjectInfo' sha=1653b77cf258b899",
+    "finish_video_result": "function (composer: 'MigratedComposer', page: 'Page', record: 'GenerationRecord', *, project_id: 'str', quoted_credits: 'int | None', save: 'ClipSaver', download: 'bool') -> 'VideoResult' sha=338ba979410a41eb",
     "is_at": "function (url: 'object', target: 'str') -> 'bool' sha=d918ccf22f0049f8",
     "migrated_can_serve": "function (request: 'GenerateVideoRequest', project_id: 'str | None') -> 'bool' sha=6fff5b8bfd0295b6",
     "migrated_images_prefer": "function (request: 'GenerateImageRequest', *, page_url: 'str | None' = None, project_id: 'str | None' = None) -> 'bool' sha=3402dae1831304be",
@@ -157,7 +159,7 @@
     "request_body": "function (request: 'Any') -> 'str' sha=5bd59f1d6a05e9c7",
     "rpc_reply": "function (page: 'Page', rpcid: 'str', action: 'Callable[[], Awaitable[None]]', *, timeout_s: 'float', write: 'bool' = False, accept: 'Callable[[Any], bool] | None' = None) -> 'Any' sha=501c1df69835b67c",
     "run_images": "function (page: 'Page', request: 'GenerateImageRequest', *, project_id: 'str | None', out_dir: 'Path | None' = None, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'list[GeneratedImage]' sha=88c7455fbe9ada5e",
-    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=ee040e601065ea4b",
+    "run_video": "function (page: 'Page', request: 'GenerateVideoRequest', *, project_id: 'str | None', save: 'ClipSaver', poll_timeout_s: 'float', download: 'bool', on_started: 'VideoStartedCallback | None') -> 'VideoResult' sha=f8ce45dfe08b729d",
     "url_rpcid": "function (url: 'str') -> 'str | None' sha=b37fdfa2f82a1116"
   }
 }

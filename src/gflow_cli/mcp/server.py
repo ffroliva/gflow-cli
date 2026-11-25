@@ -160,6 +160,7 @@ _SPEND_TOOLS = (
     "gflow_generate_video",
     "gflow_upscale_video",
     "gflow_extend_video",
+    "gflow_edit_video",
 )
 
 
@@ -236,6 +237,7 @@ def _register_surfaces() -> None:
     from gflow_cli.mcp import resources as _resources
     from gflow_cli.mcp import tools as _tools
     from gflow_cli.mcp import video_captions_tools as _video_captions_tools
+    from gflow_cli.mcp import video_edit_tools as _video_edit_tools
     from gflow_cli.mcp import video_extend_tools as _video_extend_tools
 
     # Access them to satisfy pyright unused import check
@@ -248,6 +250,7 @@ def _register_surfaces() -> None:
         _tools,
         _video_captions_tools,
         _video_extend_tools,
+        _video_edit_tools,
     )
     _apply_no_spend_policy()
 

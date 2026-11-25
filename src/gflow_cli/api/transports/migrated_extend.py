@@ -26,6 +26,7 @@ Single segment only; chains, an existing scene and a fixed seed are not ported h
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import time
@@ -76,7 +77,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
     from pathlib import Path
 
     from playwright.async_api import Page
@@ -168,8 +169,8 @@ def unported_refusal(
     )
 
 
-def require_migrated_host(route: str) -> None:
-    """Exit 36 unless the extend would run on flow.google.com (``route`` is the served route).
+def require_migrated_host(route: str, *, feature: str = "video extend") -> None:
+    """Exit 36 unless *feature* would run on flow.google.com (``route`` is the served route).
 
     One definition for the transport entry and the worker, which checks it before it
     creates a project.
@@ -177,12 +178,12 @@ def require_migrated_host(route: str) -> None:
     if route != "migrated":
         raise FlowHostMigratedError(
             detail=(
-                "migrated video extend runs on flow.google.com only, and "
+                f"migrated {feature} runs on flow.google.com only, and "
                 "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
             ),
             remediation_hint=(
                 "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
-                "to extend via flow.google.com."
+                f"to run {feature} via flow.google.com."
             ),
         )
 
@@ -282,8 +283,14 @@ def source_record(payload: Any, media_id: str) -> SourceClip | None:
     return SourceClip(workflow_id=str(rec[0]), kind=kind, ready=ready)
 
 
-def require_video_source(clip: SourceClip | None, *, media_id: str, project_id: str) -> str:
-    """The workflow id to extend, or exit 11 before any click."""
+def require_video_source(
+    clip: SourceClip | None,
+    *,
+    media_id: str,
+    project_id: str,
+    action: str = "extend continues a video clip",
+) -> str:
+    """The workflow id to extend/edit, or exit 11 before any click."""
     if clip is None:
         raise ConfigurationError(
             detail=(
@@ -295,7 +302,7 @@ def require_video_source(clip: SourceClip | None, *, media_id: str, project_id: 
         raise ConfigurationError(
             detail=(
                 f"media {media_id} is {'an image' if clip.kind == 'image' else 'not a video'}; "
-                "extend continues a video clip"
+                f"{action}"
             ),
             remediation_hint=(
                 "Pass the media id of a generated video (`gflow data list videos`), pass a "
@@ -368,12 +375,15 @@ def submit_facts(body: str) -> tuple[str | None, str | None]:
     )
 
 
-def _single_extend_entry(body: str, *, route: str) -> tuple[Any, GFlowError | None]:
-    frames = _decode_rpc_frames(EXTEND_SUBMIT_RPC, body)
+def _single_extend_entry(
+    body: str, *, route: str, rpc: str = EXTEND_SUBMIT_RPC
+) -> tuple[Any, GFlowError | None]:
+    """The one entry of the one *rpc* frame (extend's ``fZytfe``, edit's ``jIps6``)."""
+    frames = _decode_rpc_frames(rpc, body)
     if len(frames) != 1:
         return None, WireFormatError(
             detail=(
-                f"migrated host: expected one {EXTEND_SUBMIT_RPC} frame, found {len(frames)} "
+                f"migrated host: expected one {rpc} frame, found {len(frames)} "
                 "— refused before Flow acted on it"
             ),
             route=route,
@@ -382,7 +392,7 @@ def _single_extend_entry(body: str, *, route: str) -> tuple[Any, GFlowError | No
     if not isinstance(entries, list) or len(cast("list[Any]", entries)) != 1:
         return None, WireFormatError(
             detail=(
-                f"migrated host: expected one {EXTEND_SUBMIT_RPC} extend entry — "
+                f"migrated host: expected one {rpc} single-clip entry — "
                 "refused before Flow acted on it"
             ),
             route=route,
@@ -428,13 +438,18 @@ def _check_extend_duration(
 
 
 def _check_extend_reference_ids(
-    entry: Any, *, expected_reference_ids: tuple[str, ...], route: str
+    entry: Any,
+    *,
+    expected_reference_ids: tuple[str, ...],
+    route: str,
+    rpc: str = EXTEND_SUBMIT_RPC,
 ) -> GFlowError | None:
+    """Refuse unless ``entry[8]`` holds exactly the expected ids, in order (fails closed)."""
     sent = _extract_reference_ids(entry)
     if sent is None:
         return WireFormatError(
             detail=(
-                f"migrated host: could not read {EXTEND_SUBMIT_RPC} reference slots — "
+                f"migrated host: could not read {rpc} reference slots — "
                 "refused before Flow billed it"
             ),
             route=route,
@@ -452,7 +467,7 @@ def _check_extend_reference_ids(
             mismatch = f"expected order {expected[:4]}, got {sent[:4]}"
         return WireFormatError(
             detail=(
-                f"migrated host: {EXTEND_SUBMIT_RPC} references did not match the request "
+                f"migrated host: {rpc} references did not match the request "
                 f"({mismatch}) — refused before Flow billed it"
             ),
             route=route,
@@ -1017,6 +1032,13 @@ async def validate_extend_inputs(
         raise ConfigurationError(
             detail=f"max_credits must be >= 0, got {max_credits}", remediation_hint=_INPUT_HINT
         )
+    await validate_upload_files(source_video, reference_images)
+
+
+async def validate_upload_files(
+    source_video: Path | None, reference_images: tuple[Path, ...]
+) -> None:
+    """Exit 11 (nothing charged) for a local clip or reference image Flow must not be sent."""
     try:
         if source_video is not None:
             await validate_video_file(source_video)
@@ -1144,24 +1166,59 @@ def _is_batchexecute(url: str) -> bool:
     return "batchexecute" in url
 
 
-def _pre_submit_guard(held: list[str]) -> Callable[[Any, Any], Awaitable[None]]:
-    """While gflow prepares the request, no ``fZytfe`` may leave the page.
+def _pre_submit_guard(
+    held: list[str], rpcs: frozenset[str] = frozenset({EXTEND_SUBMIT_RPC})
+) -> Callable[[Any, Any], Awaitable[None]]:
+    """While gflow prepares the request, no billed submit (*rpcs*) may leave the page.
 
-    A stray keystroke (an Enter that lands with no picker open) submits the extend before
-    the references, the duration and the credit cap are in place. Such a submit is aborted
-    and recorded in ``held``; only the checked submit after preparation is let through.
+    A stray keystroke (an Enter that lands with no picker open) submits the generation
+    before the references, the settings and the credit cap are in place. Such a submit is
+    aborted and recorded in ``held``; only the checked submit after preparation is let
+    through.
     """
 
     async def hold(route: Any, request: Any) -> None:
         body = request_body(request)
-        if EXTEND_SUBMIT_RPC in batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body):
-            held.append(EXTEND_SUBMIT_RPC)
+        sent = set(batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body)) & rpcs
+        if sent:
+            held.extend(sorted(sent))
             await route.abort()
-            log.warning("migrated_extend.early_submit_aborted")
+            log.warning("migrated.early_submit_aborted", rpcs=sorted(sent))
             return
         await route.fallback()
 
     return hold
+
+
+@contextlib.asynccontextmanager
+async def holding_early_submits(
+    page: Page, *, rpcs: frozenset[str], noun: str
+) -> AsyncGenerator[None]:
+    """Abort any billed submit (*rpcs*) the page sends while the body prepares the request.
+
+    One aborted early submit fails the run afterwards (``WireFormatError``, charged ``no``).
+    """
+    held: list[str] = []
+    hold = _pre_submit_guard(held, rpcs)
+    await page.route(_is_batchexecute, hold)
+    try:
+        yield
+    finally:
+        try:
+            await page.unroute(_is_batchexecute, hold)
+        except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
+            log.debug("migrated.unroute_failed", error=type(exc).__name__)
+    if held:
+        early = WireFormatError(
+            detail=(
+                f"migrated host: the page sent {held[0]} while gflow was still preparing the "
+                f"{noun}; it was aborted before Flow saw it (host=migrated)"
+            ),
+            route=f"batchexecute:{held[0]}",
+            remediation_hint="Nothing was submitted or charged; re-run the command.",
+        )
+        early.charged = "no"
+        raise early
 
 
 def _started_handler(
@@ -1287,10 +1344,7 @@ async def run_extend(  # noqa: PLR0913
     Inputs are validated by the caller (:func:`validate_extend_inputs`).
     """
     composer = MigratedComposer()
-    held: list[str] = []
-    hold = _pre_submit_guard(held)
-    await page.route(_is_batchexecute, hold)
-    try:
+    async with holding_early_submits(page, rpcs=frozenset({EXTEND_SUBMIT_RPC}), noun="extend"):
         # #1320: the submit inside submit_and_observe is the first send; watch for strays.
         with (
             SubmitWatch(page, rpcs=_EXTEND_SUBMIT_WATCH_RPCS) as watch,
@@ -1307,22 +1361,6 @@ async def run_extend(  # noqa: PLR0913
                 reference_images=reference_images,
                 max_credits=max_credits,
             )
-    finally:
-        try:
-            await page.unroute(_is_batchexecute, hold)
-        except Exception as exc:  # noqa: BLE001 - must not mask the real outcome
-            log.debug("migrated_extend.unroute_failed", error=type(exc).__name__)
-    if held:
-        early = WireFormatError(
-            detail=(
-                f"migrated host: the page sent {EXTEND_SUBMIT_RPC} while gflow was still "
-                "preparing the extend; it was aborted before Flow saw it (host=migrated)"
-            ),
-            route=f"batchexecute:{EXTEND_SUBMIT_RPC}",
-            remediation_hint="Nothing was submitted or charged; re-run the command.",
-        )
-        early.charged = "no"
-        raise early
 
     facts: dict[str, str | None] = {}
 
@@ -1399,6 +1437,7 @@ __all__ = [
     "batch_request_problem",
     "extend_key_seconds",
     "extend_request_problem",
+    "holding_early_submits",
     "require_migrated_host",
     "require_video_source",
     "run_extend",
@@ -1406,4 +1445,5 @@ __all__ = [
     "submit_facts",
     "unported_refusal",
     "validate_extend_inputs",
+    "validate_upload_files",
 ]

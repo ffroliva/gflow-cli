@@ -1118,6 +1118,60 @@ gflow video r2v "a continuous scene" --ref scene.png \
   --model omni-1.2-flash --duration 15 --resolution 360p
 ```
 
+## `gflow video edit`
+
+Video-to-video editing on `flow.google.com` (RPC `jIps6`, Omni models only, default `omni-1.2`,
+single-clip output). Accepts either a local video file (`.mp4`, `.m4v`, `.mov`, `.3gp`, `.avi`,
+up to 1 GB) or an existing Flow clip media UUID, plus 0–5 `--ref` local reference images
+with a local file.
+
+```text
+gflow video edit SOURCE PROMPT [--ref IMG ...] [--model {omni-1.2|omni-1.2-flash|omni-flash}] \
+  [--aspect {9:16|16:9}] [--resolution {360p|720p}] [--max-credits N] [--project ID] \
+  [--out-dir DIR] [--out-file FILE] [--json]
+```
+
+```bash
+# Edit a local video file with reference image guidance (Main Composer Ingredients)
+gflow video edit clip.mp4 "shift lighting to warm golden lantern glow" \
+  --ref palette.png --resolution 720p --max-credits 15 --json
+
+# Iteratively edit an existing Flow video clip in place via the Clip Editor
+gflow video edit 11111111-2222-3333-4444-555555555555 "add light drifting snow" \
+  --project <project-id> --max-credits 15 --json
+```
+
+A local file is uploaded with Flow's toolbar uploader and attached in the main composer's
+Ingredients mode; a media UUID is edited in the clip editor. Uploaded clips and references are
+attached through the `@` picker under a run-unique name once Flow has processed them (up to
+90 seconds each). Flow's one-time "rights to use this
+video" dialog is never accepted for you: accept it once by hand in Flow.
+
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `SOURCE` | A Flow media UUID (a clip in the project) or a local `.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi` file of up to 1 GB |
+| `--ref PATH` | Local file SOURCE only: local reference image, repeatable, up to 5, attached in order (Flow drops references past 5 on `jIps6`). With a media UUID, `--ref` exits 11 (not ported yet); run `gflow data download MEDIA_ID --out DIR` and pass the downloaded file as SOURCE |
+| `--model` | `omni-1.2` (default), `omni-1.2-flash` or `omni-flash`; Flow edits with Omni models only |
+| `--aspect 9:16\|16:9` | Local file only: output aspect; omitted, Flow's current setting is kept. A clip is edited in its own aspect; a different `--aspect` exits 36 before the submit |
+| `--resolution 360p\|720p` | Omitted, Flow's current setting is kept. `360p` needs a local file (the clip editor has no 360p toggle, exit 36 before any click) |
+| `--max-credits N` | Refuse (exit 45, `charged: no`) unless Flow's pre-submit quote is readable and at most `N`. It is read once the settings, the clip and the references are in place, and only after it has held one value for 3 seconds. Editing an existing clip (a media UUID) under a cap currently refuses (exit 45): the clip editor's quote label is not measured yet, so its quote reads as unavailable; edit without a cap, or download the clip and edit the file. Default: `GFLOW_CLI_MAX_CREDITS`; `--no-max-credits` ignores it |
+| `--project ID` | The project owning a `MEDIA_ID` (else the catalog's record, else `GFLOW_CLI_PROJECT`); optional for a local file |
+| `--project-name NAME` | Local file: the name of the project created when none is given |
+| `--tool NAME` | Prompt tool applied before submission (as on `video t2v`) |
+| `--out-dir DIR` / `--out-file FILE` | Where the edited mp4 is written |
+| `--json` / `--output-format` | Machine-readable result, or the media id only |
+
+Refusals that cost nothing, all before any project is created or anything is uploaded: a
+`SOURCE` that is neither a media UUID nor an existing file, or a missing `--ref` (exit 2, a
+usage error), a file that is not a supported video or image or is over the size limit
+(exit 11), a media UUID with no known project (exit 11), `--ref` with a media UUID (exit 11), and `GFLOW_CLI_FLOW_HOST=labs.google` (exit 36: video
+edit runs on `flow.google.com` only). While the edit is prepared, any submit the page sends is
+aborted, and the submitted `jIps6` is checked against the request (source workflow, model,
+resolution, aspect and reference set) before Flow sees it. The MCP twin is
+[`gflow_edit_video`](MCP.md).
+
 ### Sharing one project across calls
 
 By default each `video t2v` / `i2v` / `r2v` call creates its own scratch Flow
