@@ -382,9 +382,10 @@ def test_a_suppressed_lag_does_not_confirm_a_stored_offset(
 
 @needs_ffmpeg
 def test_the_audio_measured_is_the_stream_that_was_probed(good_clip: Path, tmp_path: Path) -> None:
-    # ffmpeg left alone picks the stereo track, which is silent and starts later.
+    # ffmpeg left alone picks the default track, here a silent one that starts later.
     silent = ("-itsoffset", "0.5", "-f", "lavfi", "-i", "anullsrc=cl=stereo:r=48000:d=3")
     maps = ("-map", "0:v", "-map", "0:a", "-map", "1:a")
-    ffmpeg("-i", str(good_clip), *silent, *maps, "-c:v", "copy", "sa01.mp4", cwd=tmp_path)
+    default = ("-disposition:a:0", "0", "-disposition:a:1", "default")
+    ffmpeg("-i", str(good_clip), *silent, *maps, *default, "-c:v", "copy", "sa01.mp4", cwd=tmp_path)
 
     assert clip_qa.measure(tmp_path / "sa01.mp4")[1]["sync_r"] >= clip_qa.SYNC_MIN_R

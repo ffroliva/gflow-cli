@@ -41,7 +41,7 @@ from pathlib import Path
 
 FACE_CROP = "crop=iw*0.6:ih*0.75:iw*0.2:0,scale=320:240"
 SYNC_EARLY, SYNC_LATE, SYNC_MIN_R, MIN_PROMINENCE = -0.045, 0.125, 0.3, 0.05
-AUDIO = ["-map", "0:a:0"]  # the stream probe_streams reads; ffmpeg alone prefers more channels
+AUDIO = ["-map", "0:a:0"]  # the stream probe_streams reads, whatever ffmpeg would pick
 AV_DURATION_TOLERANCE = 0.1  # video vs audio stream length on an assembled cut
 
 
