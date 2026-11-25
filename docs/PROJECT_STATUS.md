@@ -6,6 +6,27 @@
 
 ## Current release
 
+**v0.107.0 — beta.** An OpenAI-compatible image endpoint on `gflow serve`, video-to-video edit and a richer `video extend` on flow.google.com, caption styling, multi-image direct generation with a reference, and honest reporting of short image replies.
+
+**Added.**
+- **OpenAI-compatible `POST /v1/images/generations` on `gflow serve` (#1365).** Clients built on the OpenAI SDK generate Google Flow images by pointing their base URL at the server. Flow image models only, `b64_json` responses, OpenAI-shaped errors translated from gflow's problem details, cross-site requests refused, and no SDK retry that could bill twice. Contributed by @ken2190 (#1466).
+- **`gflow video edit` and `gflow_edit_video` (#1467).** Edit a clip with a prompt and reference images, from a local file or an existing clip; reference images on an existing clip are refused for now (#1507). Contributed by @LeonJoeeee.
+- **`gflow video extend` from a local file, with `--duration`, `--ref` and a quote-checked `--max-credits`, and an MCP twin (#1468).** Contributed by @LeonJoeeee.
+- **Caption placement and styling (#1432, #1488).** Position, margin, font size and box opacity on `gflow video captions` and its MCP twin. Contributed by @deepslit (#1475, #1494).
+
+**Changed.**
+- **MCP `isError` follows one failure set shared with telemetry (#1453, #1464).** Contributed by @rayw-lab (#1479).
+- **`direct_http` serves counts 2–4 with one reference or character (#1455).** Contributed by @deepslit (#1482).
+
+**Fixed.**
+- **Short image replies are reported (#1489).** "N of M images returned" on the CLI, in JSON and MCP replies, and in batch rows, instead of a silent exit 0.
+- **`gflow.db` is created owner-only (#1437)**, with the contributor's commit from @draarivpatel-ui (#1470, #1493); `DataStore.open` closes its connection when setup fails (#1495).
+- **A folder or unresolvable `--ref`/frame path exits 2 (#1480)**, contributed by @rayw-lab; `clip_qa.py` scratch files and truncated clips (#1501, #1502); the uncalled `_check_logged_in` removed (#1289, contributed investigation by @deepslit, #1481).
+
+Full ledger: [LIVE_VERIFICATION_v0.107.0](LIVE_VERIFICATION_v0.107.0.md).
+
+<details><summary>v0.106.0 — direct HTTP image transport, caption layout, typed batch errors</summary>
+
 **v0.106.0 — beta.** An experimental direct HTTP image transport, image transports in the weekly usage report, caption layout fixes, and typed errors for `image batch` and a new-project click timeout on flow.google.com.
 
 **Added.**
@@ -20,6 +41,8 @@
 **Documentation and tests.** `docs/ERRORS.md` lists the confirmation-required envelope (#1407, @aryankalantri, #1441); the `--showlocals` redaction test ignores memory addresses (#1429, @aryankalantri, #1440).
 
 Full ledger: [LIVE_VERIFICATION_v0.106.0](LIVE_VERIFICATION_v0.106.0.md).
+
+</details>
 
 <details><summary>v0.105.1 — extend catalog rows, Flow's failure text, charge guidance</summary>
 
@@ -1097,6 +1120,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| OpenAI-compatible `POST /v1/images/generations` on `gflow serve`; `video edit` and local-source `video extend` (duration, references, quote-checked cap) on flow.google.com with MCP twins; caption styling; `direct_http` counts 2-4 with a reference; short image replies reported; owner-only `gflow.db` (#1365 #1467 #1468 #1432 #1455 #1489 #1437) | ✅ done (v0.107.0) |
 | Experimental `direct_http` image transport on flow.google.com (one `ogiZ0b` request per run) and image transports in the usage report; caption layout fixes; typed errors for `image batch` and a new-project click timeout (#1442 #1431 #1446 #1452 #1434) | ✅ done (v0.106.0) |
 | Complete catalog rows and superseded local copies after `video extend` on flow.google.com; Flow's error text on a failed generation; the free recovery for a billed clip download; extend and image-batch charge guidance (#1299 #1111 #1159 #1416) | ✅ done (v0.105.1) |
 | `character create --image` / `--body-image` on flow.google.com with its MCP twin; no-replace output publishing; `charged: no` for labs pre-submit drift and accurate multi-step video charge reporting; secrets masked in pytest reports (#639 #1406 #1336 #1382) | ✅ done (v0.105.0) |
