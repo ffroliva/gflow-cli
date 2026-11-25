@@ -298,7 +298,7 @@ gflow tools run creative-director "cat in space" --json   # check "was_expanded"
 
 ### `GFLOW_MCP_NO_SPEND`
 
-**What:** Registration-time gating of the credit-spending MCP tools (#496). When set, `gflow mcp run` and `gflow serve` never register `gflow_generate_image` and `gflow_generate_video`, so a connected agent cannot even see them in `tools/list` — invisible beats refused (no wasted calls, no refusal path for prompt injection to probe, no reliance on the model honoring an error). Every read-only tool stays available.
+**What:** Registration-time gating of the credit-spending MCP tools (#496). When set, `gflow mcp run` and `gflow serve` never register `gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video` and `gflow_extend_video`, so a connected agent cannot even see them in `tools/list` — invisible beats refused (no wasted calls, no refusal path for prompt injection to probe, no reliance on the model honoring an error). Every read-only tool stays available.
 **Default:** unset (both generate tools registered).
 **Accepted:** the value is lower-cased and stripped before comparison, so the falsy set `0`/`false`/`off`/`no`/`n`/`f`/empty is matched **case-insensitively** — `FALSE`, `Off` and `NO` all leave no-spend **disabled**, exactly like their lowercase forms. Any other value enables it. The falsy vocabulary deliberately matches Click's, so a value cannot mean "off" to the `--no-spend` flag and "on" to the server-side policy.
 **⚠️ Fails toward spending:** an unrecognised *falsy-looking* value is not a safety net — if you want the guarantee, set `GFLOW_MCP_NO_SPEND=1` (or pass `--no-spend`) and confirm the two generate tools are absent from `tools/list`.
