@@ -892,6 +892,8 @@ def serve(port: int, host: str, profile: str | None, transport: str, no_spend: b
     Foundation for Gflow Studio and external API consumers:
       • MCP Streamable HTTP at /mcp — the current spec transport (default)
       • MCP-SSE at /sse — DEPRECATED (--transport sse), one cycle only
+      • OpenAI-compatible POST /v1/images/generations — Flow image models
+        only, b64_json responses (docs/MCP.md)
       • REST /api/v1/* — CRUD + generation queue (planned)
       • Background FlowWorker — sequential generation (planned)
 
