@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from tests.e2e.conftest import RedactedEnv
 
 pytest_plugins = ["pytester"]
 
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+
 
 @pytest.fixture(autouse=True)
 def _no_shard_in_inner_runs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -23,8 +26,15 @@ def _no_shard_in_inner_runs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     The inner run inherits ``GFLOW_TEST_SHARD``; its single generated file always
     belongs to shard 1, so it was deselected whenever this file ran in another shard.
+
+    The inner run also needs the repository root on ``PYTHONPATH`` to import the
+    ``tests._secret_scrub`` plugin: pytester adds only its temp directory, which sits
+    under the repository only when ``--basetemp`` does.
     """
     monkeypatch.delenv("GFLOW_TEST_SHARD", raising=False)
+    monkeypatch.setenv(
+        "PYTHONPATH", os.pathsep.join(filter(None, [_REPO_ROOT, os.environ.get("PYTHONPATH")]))
+    )
 
 
 _DUMMY_SECRET_NAME = "GFLOW_TEST_SECRET"

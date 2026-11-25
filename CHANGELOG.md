@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation and tests
 
 - **The `tests/test_e2e_env_redaction.py` inner pytest runs no longer inherit CI's shard filter.** Each inner run inherited `GFLOW_TEST_SHARD`, and its single generated file always belongs to shard 1, so its tests were deselected and the assertions failed whenever the outer file was assigned to another shard. A fixture now clears the variable for those runs.
+- **The same inner runs now import the repository's `tests` package wherever `--basetemp` points.** They found it only when their temporary directory sat inside the repository, so 15 tests failed with `No module named 'tests'` under a `--basetemp` outside it; the fixture now puts the repository root on `PYTHONPATH`.
 
 ## [0.106.0] — 2026-11-23
 
