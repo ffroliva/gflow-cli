@@ -586,15 +586,27 @@ async def test_an_upload_never_listed_times_out_naming_its_media_id(clock: _Cloc
         ("source-11628e4b", "source-11628e4b.mp4"),  # the option adds one
         ("source-11628e4b", "Video source-11628e4b 0:08"),  # other words around it
         ("Ref-215CA6AC.PNG", "ref-215ca6ac.png"),  # case-insensitive
+        # Live 2026-11-25: the name and a media-type label run together in the option text.
+        ("source-5e66c86f", "source-5e66c86fVideo"),
+        ("ref-d56d9d65.png", "ref-d56d9d65Image"),
+        ("ref-d56d9d65.png", "ref-d56d9d65.png Image"),
     ],
 )
 def test_an_option_names_the_upload_with_or_without_its_extension(query: str, option: str) -> None:
     assert edit_mod._names_option(query, option)
 
 
-@pytest.mark.parametrize("option", ["ref-215ca6ac-2.png", "xref-215ca6ac.png", "ref-215ca6"])
+@pytest.mark.parametrize(
+    "option",
+    ["ref-215ca6ac-2.png", "xref-215ca6ac.png", "ref-215ca6", "ref-215ca6ac0Image"],
+)
 def test_an_option_naming_another_upload_does_not_match(option: str) -> None:
     assert not edit_mod._names_option("ref-215ca6ac.png", option)
+
+
+@pytest.mark.parametrize("option", ["source-5e66c86f0Video", "source-5e66c86fVideos"])
+def test_a_longer_token_before_the_label_does_not_match(option: str) -> None:
+    assert not edit_mod._names_option("source-5e66c86f", option)
 
 
 @pytest.mark.asyncio

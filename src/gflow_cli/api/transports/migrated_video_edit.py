@@ -359,6 +359,7 @@ async def _clear_editor_prompt(page: Page, selector: str) -> None:
 
 
 _EXTENSION = re.compile(r"\.[a-z0-9]{2,4}$", re.IGNORECASE)
+_EXTENSION_PREFIX = re.compile(r"\.[a-z0-9]{2,4}(?![0-9a-z_-])", re.IGNORECASE)
 
 
 def _bare_name(name: str) -> str:
@@ -366,15 +367,30 @@ def _bare_name(name: str) -> str:
     return _EXTENSION.sub("", name.strip()).casefold()
 
 
+#: What may follow the name in an option's word: nothing, a character that cannot continue
+#: the run-unique token, or a media-type label run on without a separator (live
+#: 2026-11-25: ``source-5e66c86fVideo``).
+_AFTER_NAME = re.compile(r"(?:(?:video|image)(?![0-9a-z_-])|(?![0-9a-z_-]))", re.IGNORECASE)
+
+
 def _names_option(query: str, text: str) -> bool:
     """Whether a picker option's visible *text* names *query*.
 
-    Either side may carry a file extension, and the text may hold other words around the
-    name (the 2026-11-25 live run attached nothing under an exact-name match); the
-    run-unique tag in *query* keeps one upload from naming another.
+    True when a word of *text* starts with the name (casefolded, any file extension
+    stripped from *query* and skipped in the word) and what follows is accepted by
+    :data:`_AFTER_NAME`. The run-unique tag in *query* keeps one upload from naming
+    another, so ``source-5e66c86f0Video`` does not name ``source-5e66c86f``.
     """
     wanted = _bare_name(query)
-    return any(_bare_name(word) == wanted for word in text.split())
+    for word in text.casefold().split():
+        if not word.startswith(wanted):
+            continue
+        rest = word[len(wanted) :]
+        if (ext := _EXTENSION_PREFIX.match(rest)) is not None:
+            rest = rest[ext.end() :]
+        if _AFTER_NAME.match(rest):
+            return True
+    return False
 
 
 async def _try_commit_picker_option(
