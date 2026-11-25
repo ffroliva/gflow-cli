@@ -4883,3 +4883,100 @@ async def test_a_request_check_verdict_is_aborted_by_the_guard_and_reads_unsent(
         )
     assert page.route_outcomes == ["abort"]
     assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
+
+
+async def test_a_lost_terminal_status_poll_recovers_the_finished_clip_from_the_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1484: once the clip finishes, Flow's frontend stops polling `jwpduf`. When Chrome
+    evicts the terminal `jwpduf` body after a successful submit, waiting out the full
+    600 s poll timeout drops a finished clip; re-reading `Zzl0ze` settles it."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tab = ListingTab(_listing(_ours(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    started: list[Any] = []
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=5.0,
+        on_started=started.append,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert [(s.media_id, s.workflow_id) for s in started] == [(MEDIA_OURS, WF_OURS)]
+    assert tab.closed
+
+
+async def test_an_intermediate_lost_status_poll_with_a_readable_poll_opens_no_listing_tab_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1484: if the clip is still running when one `jwpduf` body is evicted, the next 5 s
+    poll arrives and settles the run without opening a second tab."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.2)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(3, VIDEO_URL))),
+    ]
+    tabs = {"n": 0}
+
+    async def new_page() -> ListingTab:
+        tabs["n"] += 1
+        return ListingTab(_listing(_ours(3)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url == VIDEO_URL
+    assert tabs["n"] == 0
+
+
+async def test_a_poll_timeout_re_reads_the_listing_before_raising_exit_9_1484() -> None:
+    """#1484: if the poll deadline expires because the page stopped delivering status polls
+    without an observed body-read error, check `Zzl0ze` once before raising exit 9."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+    ]
+    tab = ListingTab(_listing(_ours(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=0.1,
+        on_started=None,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert tab.closed

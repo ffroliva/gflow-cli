@@ -107,6 +107,29 @@ def _other_clip_first(world: dict[str, Any]) -> None:
     )
 
 
+@given(
+    "the terminal status poll body is unreadable while "
+    "the project listing records the finished clip"
+)
+def _lost_terminal_poll(world: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports import _mc_submit_observe
+    from tests.api.transports.test_migrated_composer import LOST_BODY, ListingTab, _listing
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    world["page"].scripted_responses = [
+        (_batch_url("YhhmEf"), _frame("YhhmEf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tab = ListingTab(_listing(_record(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    world["page"].context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+
+
 @given("GFLOW_CLI_FLOW_HOST is labs.google")
 def _kill_switch(world: dict[str, Any]) -> None:
     world["set_flow_host"]("labs.google")

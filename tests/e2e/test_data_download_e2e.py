@@ -57,7 +57,7 @@ def _catalog_video(profile: str) -> VideoRow:
     rows = list_videos(
         db_path=get_settings().resolved_db_path(), profile=profile, limit=200, offset=0
     )
-    usable = [r for r in rows if r.project_id]
+    usable = [r for r in rows if r.project_id and r.status != "MEDIA_GENERATION_STATUS_FAILED"]
     if not usable:
         pytest.skip(f"no catalogued videos for profile {profile!r} to recover")
     return next((r for r in usable if r.copy_count == 0), usable[0])
@@ -121,3 +121,41 @@ async def test_download_reports_an_unknown_media_id_as_a_catalog_miss(
             profile=profile,
             out_dir=None,
         )
+
+
+async def test_download_recovers_after_the_first_as29s_reply_body_is_evicted_1484(
+    e2e_profile_dir: Path, real_catalog: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1484: when Chrome evicts the first route-load `as29s` body, `_await_signed_record`
+    re-opens the clip route and recovers the MP4 at $0."""
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api._generated import Response
+
+    from gflow_cli.services.media_recovery import download_media
+
+    profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    row = _catalog_video(profile)
+    real_text = Response.text
+    evicted = {"count": 0}
+
+    async def text(self: Response) -> str:
+        if "as29s" in self.url and evicted["count"] == 0:
+            evicted["count"] += 1
+            raise PlaywrightError(
+                "Response.text: Protocol error (Network.getResponseBody): "
+                "No data found for resource with given identifier"
+            )
+        return await real_text(self)
+
+    monkeypatch.setattr(Response, "text", text)
+    result = await download_media(media_id=row.media_id, profile=profile, out_dir=tmp_path)
+    db_path = get_settings().resolved_db_path()
+    try:
+        assert evicted["count"] == 1
+        assert result.path.exists()
+        body = result.path.read_bytes()
+        assert body[4:8] == b"ftyp" and len(body) == result.bytes
+    finally:
+        with DataStore.open(db_path) as store:
+            store.conn.execute("DELETE FROM local_files WHERE path = ?", (str(result.path),))
+            store.conn.commit()

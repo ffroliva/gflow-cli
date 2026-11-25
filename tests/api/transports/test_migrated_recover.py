@@ -308,6 +308,54 @@ class TestRecoverClip:
 
         assert page._handlers == []  # noqa: SLF001 - asserting cleanup
 
+    @pytest.mark.asyncio
+    async def test_reloads_the_clip_route_when_the_first_as29s_body_is_evicted_1484(
+        self, tmp_path: Path
+    ) -> None:
+        """#1484: `as29s` is sent once as the clip route loads; if Chrome evicts its body on
+        the first load, sitting idle on the page never triggers a second `as29s`, whereas
+        re-opening the route does."""
+
+        class _EvictedFirstLoad(FakePage):
+            async def goto(self, url: str, **_: Any) -> None:
+                self.gotos.append(url)
+                if len(self.gotos) == 1:
+                    for handler in list(self._handlers):
+                        await handler(_Unreadable())
+                    return
+                for text in self.frames:
+                    for handler in list(self._handlers):
+                        await handler(_Frame(text))
+
+        page = _EvictedFirstLoad()
+        clip = await _recover(page, tmp_path, wait_s=0.3)
+
+        assert clip.media_id == MEDIA_ID
+        expected_url = MIGRATED_CLIP_URL.format(project_id=PROJECT_ID, media_id=MEDIA_ID)
+        assert page.gotos == [expected_url, expected_url]
+
+    @pytest.mark.asyncio
+    async def test_reloads_the_clip_route_when_the_first_load_emits_no_as29s_1484(
+        self, tmp_path: Path
+    ) -> None:
+        """#1484: if the first route load misses `as29s` altogether, a retry load within the
+        wait budget fetches the signed URL without requiring a second CLI command."""
+
+        class _SilentFirstLoad(FakePage):
+            async def goto(self, url: str, **_: Any) -> None:
+                self.gotos.append(url)
+                if len(self.gotos) == 1:
+                    return
+                for text in self.frames:
+                    for handler in list(self._handlers):
+                        await handler(_Frame(text))
+
+        page = _SilentFirstLoad()
+        clip = await _recover(page, tmp_path, wait_s=0.15)
+
+        assert clip.media_id == MEDIA_ID
+        assert len(page.gotos) >= 2
+
 
 @pytest.mark.asyncio
 async def test_recover_clip_refuses_an_unsafe_media_id_before_any_page_work(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
@@ -337,6 +338,7 @@ class SubmitObserveMixin(MentionMixin):
         terminal: asyncio.Future[GenerationRecord] = loop.create_future()
         done_no_url: asyncio.Future[GenerationRecord] = loop.create_future()
         workflow: dict[str, str] = {}
+        status_watch = _StatusWatch(terminal, done_no_url, workflow)
         # The submit rpc whose reply body was lost, while a status poll may still name it.
         lost: dict[str, str] = {}
 
@@ -424,6 +426,7 @@ class SubmitObserveMixin(MentionMixin):
                     if rpcid in submit_rpcs
                     else next((r for q, r in submit_requests if q is sent), None)
                 )
+                status_watch.note_unreadable(rpcid)
                 if sub is None or submitted.done():
                     return
                 if adopt_prompt is not None and project_id and "key" in submit_key:
@@ -480,12 +483,7 @@ class SubmitObserveMixin(MentionMixin):
                     else:
                         _adopt(rid, payload)
                 elif rid in STATUS_RPCS and workflow:
-                    try:
-                        rec = generation_record(rid, payload, workflow_id=workflow["id"])
-                    except WireFormatError:
-                        continue
-                    log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
-                    _settle(rec)
+                    status_watch.note_frame(rid, payload, _settle)
 
         page.on("response", on_response)
 
@@ -608,19 +606,14 @@ class SubmitObserveMixin(MentionMixin):
                     f"migrated host: no {'/'.join(submit_rpcs)} reply within "
                     f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
-            first = submitted.result()
-            started = VideoStarted(
-                media_id=first.media_id,
-                project_id=project_id or first.project_id,
-                flow_operation_id=first.workflow_id,
-                workflow_id=first.workflow_id,
-            )
-            if on_started is not None:
-                maybe = on_started(started)
-                if asyncio.iscoroutine(maybe):
-                    await maybe
-            final = await self._await_terminal(
-                terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
+            final = await _finish_submitted(
+                self,
+                page,
+                first=submitted.result(),
+                project_id=project_id,
+                on_started=on_started,
+                status_watch=status_watch,
+                deadline=deadline,
             )
             log.info(
                 "migrated.result",
@@ -933,6 +926,130 @@ class SubmitObserveMixin(MentionMixin):
             return done_no_url.result()
 
 
+@dataclass
+class _StatusWatch:
+    """Tracks post-submit ``jwpduf``/``as29s`` health and recovers from ``Zzl0ze`` (#1484)."""
+
+    terminal: asyncio.Future[GenerationRecord]
+    done_no_url: asyncio.Future[GenerationRecord]
+    workflow: dict[str, str]
+    lost: asyncio.Event = field(default_factory=asyncio.Event)
+    seen: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def settled(self) -> bool:
+        return self.terminal.done() or self.done_no_url.done()
+
+    def note_unreadable(self, rpcid: str | None) -> None:
+        if rpcid in STATUS_RPCS and self.workflow and not self.settled:
+            self.lost.set()
+
+    def note_frame(
+        self, rid: str, payload: Any, settle: Callable[[GenerationRecord], None]
+    ) -> None:
+        try:
+            rec = generation_record(rid, payload, workflow_id=self.workflow["id"])
+        except WireFormatError:
+            return
+        self.lost.clear()
+        self.seen.set()
+        log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
+        settle(rec)
+
+    async def wait_until(self, event: asyncio.Event, timeout: float) -> None:
+        if self.settled or timeout <= 0:
+            return
+        task = asyncio.create_task(event.wait())
+        try:
+            await asyncio.wait(
+                {self.terminal, self.done_no_url, task},
+                timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            task.cancel()
+
+
+async def _settle_from_listing(
+    composer: SubmitObserveMixin,
+    page: Page,
+    project_id: str | None,
+    workflow_id: str,
+    terminal: asyncio.Future[GenerationRecord],
+    *,
+    budget_s: float,
+) -> None:
+    """Read ``Zzl0ze`` once and settle ``workflow_id`` if the listing reports it terminal."""
+    if not project_id or terminal.done():
+        return
+    listing = await composer._read_listing(page, project_id, budget_s=budget_s)
+    if listing is None or terminal.done():
+        return
+    try:
+        rec = generation_record(LISTING_RPC, listing, workflow_id=workflow_id)
+    except WireFormatError:
+        return
+    if rec.is_done or rec.is_failed:
+        log.info("migrated.status", rpc=LISTING_RPC, status=rec.status, bytes=rec.size_bytes)
+        terminal.set_result(rec)
+
+
+async def _finish_submitted(
+    composer: SubmitObserveMixin,
+    page: Page,
+    *,
+    first: GenerationRecord,
+    project_id: str | None,
+    on_started: VideoStartedCallback | None,
+    status_watch: _StatusWatch,
+    deadline: float,
+) -> GenerationRecord:
+    """Fire ``on_started``, then wait for a terminal poll or recover from ``Zzl0ze`` (#1484)."""
+    resolved_project_id = project_id or first.project_id
+    started = VideoStarted(
+        media_id=first.media_id,
+        project_id=resolved_project_id,
+        flow_operation_id=first.workflow_id,
+        workflow_id=first.workflow_id,
+    )
+    if on_started is not None:
+        maybe = on_started(started)
+        if asyncio.iscoroutine(maybe):
+            await maybe
+    while not status_watch.settled and time.monotonic() < deadline:
+        await status_watch.wait_until(status_watch.lost, deadline - time.monotonic())
+        if status_watch.settled or not status_watch.lost.is_set():
+            break
+        status_watch.lost.clear()
+        status_watch.seen.clear()
+        grace = min(RESULT_URL_GRACE_S, max(deadline - time.monotonic(), 0.01))
+        await status_watch.wait_until(status_watch.seen, grace)
+        if not status_watch.settled and not status_watch.seen.is_set():
+            await _settle_from_listing(
+                composer,
+                page,
+                resolved_project_id,
+                first.workflow_id,
+                status_watch.terminal,
+                budget_s=min(LISTING_READ_BUDGET_S, max(deadline - time.monotonic(), 0.01)),
+            )
+    if not status_watch.settled:
+        await _settle_from_listing(
+            composer,
+            page,
+            resolved_project_id,
+            first.workflow_id,
+            status_watch.terminal,
+            budget_s=LISTING_READ_BUDGET_S,
+        )
+    return await composer._await_terminal(
+        status_watch.terminal,
+        status_watch.done_no_url,
+        deadline=deadline,
+        workflow_id=first.workflow_id,
+    )
+
+
 async def read_project_listing(page: Page, project_id: str, *, budget_s: float) -> Any | None:
     """The project's ``Zzl0ze`` payload, read in a second tab; ``None`` if none came.
 
@@ -966,7 +1083,7 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
         return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
     # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
     # caller's exit 9, which names the project; this runs after Flow has billed.
-    except (TimeoutError, PlaywrightError) as exc:
+    except (TimeoutError, PlaywrightError, AttributeError) as exc:
         log.warning(
             "migrated.video_listing_unanswered", budget_s=budget_s, error=type(exc).__name__
         )

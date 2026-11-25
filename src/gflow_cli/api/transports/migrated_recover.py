@@ -53,6 +53,11 @@ MIGRATED_CLIP_URL = "https://flow.google.com/project/{project_id}/edit/{media_id
 #: Measured: the reply lands within a few seconds: this is slack, not a poll budget.
 SIGNED_URL_WAIT_S = 45.0
 
+#: Route-load attempts within :data:`SIGNED_URL_WAIT_S` (#1484). ``as29s`` is sent once as
+#: the clip route loads; if Chrome evicts that reply body or a load misses it, an already
+#: loaded page will not send a second ``as29s`` without re-opening the route.
+_SIGNED_URL_ATTEMPTS = 3
+
 _ROUTE = "batchexecute:as29s"
 
 
@@ -80,26 +85,39 @@ async def _await_signed_record(
     never persisted in the catalog.
     """
     found: dict[str, Any] = {}
+    unreadable = False
 
     async def on_response(response: Any) -> None:
-        if found or "batchexecute" not in str(getattr(response, "url", "")):
+        nonlocal unreadable
+        url = str(getattr(response, "url", ""))
+        if found or "batchexecute" not in url:
             return
         try:
             text = await response.text()
         except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+            if "as29s" in url:
+                unreadable = True
             return
         _collect(text, media_id=media_id, into=found)
 
     page.on("response", on_response)
     try:
-        log.info("migrated.recover_navigate", project_id=project_id, media_id=media_id)
-        await page.goto(
-            _clip_url(project_id, media_id), wait_until="domcontentloaded", timeout=90_000
-        )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + wait_s
-        while not found and loop.time() < deadline:
-            await page.wait_for_timeout(500)
+        attempt_wait_s = wait_s / _SIGNED_URL_ATTEMPTS
+        for _ in range(_SIGNED_URL_ATTEMPTS):
+            if found or loop.time() >= deadline:
+                break
+            unreadable = False
+            log.info("migrated.recover_navigate", project_id=project_id, media_id=media_id)
+            await page.goto(
+                _clip_url(project_id, media_id), wait_until="domcontentloaded", timeout=90_000
+            )
+            attempt_deadline = min(deadline, loop.time() + attempt_wait_s)
+            while not found and loop.time() < attempt_deadline:
+                await page.wait_for_timeout(500)
+                if unreadable:
+                    break
     finally:
         page.remove_listener("response", on_response)
 
