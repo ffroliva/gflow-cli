@@ -66,6 +66,26 @@ def _probe_server() -> GflowMCPServer:
     async def rate_limited() -> dict[str, Any]:
         return {"status": "rate_limited", "error": {"title": "Rate limited"}}
 
+    @probe.tool(name="failed")
+    async def failed() -> dict[str, Any]:
+        return {"status": "failed", "task_id": "t-1", "error": {"title": "Flow API error"}}
+
+    @probe.tool(name="invalid_tools")
+    async def invalid_tools() -> dict[str, Any]:
+        return {"status": "invalid_tools", "error": "Each item in 'tools' must be ..."}
+
+    @probe.tool(name="ok")
+    async def ok() -> dict[str, Any]:
+        return {"status": "ok"}
+
+    @probe.tool(name="object_status")
+    async def object_status() -> dict[str, Any]:
+        return {"status": {"complete": True}}
+
+    @probe.tool(name="completed")
+    async def completed() -> dict[str, Any]:
+        return {"status": "completed", "task_id": "t-1", "files": []}
+
     return probe
 
 
@@ -80,7 +100,18 @@ async def test_exception_caught_by_guarded_is_flagged() -> None:
     assert "boom" not in str(result.structured_content)
 
 
-@pytest.mark.parametrize("tool", ["pending", "rate_limited"])
+@pytest.mark.parametrize("tool", ["rate_limited", "failed", "invalid_tools"])
+async def test_every_failure_status_is_flagged(tool: str) -> None:
+    """#1464: the statuses telemetry already counts as failures (``outcome_of``)."""
+    async with Client(_probe_server(), mode="2026-07-28") as client:
+        result = await client.call_tool(tool, {})
+
+    assert result.is_error is True
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == tool
+
+
+@pytest.mark.parametrize("tool", ["pending", "ok", "completed"])
 async def test_other_statuses_are_left_alone(tool: str) -> None:
     async with Client(_probe_server(), mode="2026-07-28") as client:
         result = await client.call_tool(tool, {})
@@ -88,3 +119,41 @@ async def test_other_statuses_are_left_alone(tool: str) -> None:
     assert result.is_error is False
     assert result.structured_content is not None
     assert result.structured_content["status"] == tool
+
+
+async def test_malformed_tools_argument_is_flagged(mcp_server: Any) -> None:
+    """The real ``invalid_tools`` envelope, through the generate tool a client calls."""
+    from unittest.mock import patch
+
+    with patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"):
+        async with Client(mcp_server, mode="2026-07-28") as client:
+            result = await client.call_tool(
+                "gflow_generate_image", {"prompt": "a cat", "tools": [{"options": {"x": "y"}}]}
+            )
+
+    assert result.is_error is True
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == "invalid_tools"
+
+
+async def test_is_error_and_telemetry_share_one_failure_set() -> None:
+    """Every status the server flags is one telemetry records as a failure, and back."""
+    from gflow_cli.mcp.envelope_status import FAILURE_STATUSES, is_failure
+    from gflow_cli.mcp.tools import outcome_of
+
+    for status in FAILURE_STATUSES:
+        envelope = {"status": status, "error": {"exit_code": 7}}
+        assert is_failure(envelope)
+        assert outcome_of(envelope) == "7"
+    for status in ("ok", "completed", "pending"):
+        assert not is_failure({"status": status})
+        assert outcome_of({"status": status}) in {"0", "queued"}
+
+
+async def test_a_status_that_is_not_a_string_is_left_alone() -> None:
+    """A tool's own ``status`` object is not an envelope status; it must not break the call."""
+    async with Client(_probe_server(), mode="2026-07-28") as client:
+        result = await client.call_tool("object_status", {})
+
+    assert result.is_error is False
+    assert result.structured_content == {"status": {"complete": True}}

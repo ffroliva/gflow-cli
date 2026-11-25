@@ -53,6 +53,7 @@ from gflow_cli.data.repository import DataRepository, verified_local_path
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.auth_status_errors import auth_status_error
+from gflow_cli.mcp.envelope_status import is_failure
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -333,7 +334,7 @@ def outcome_of(result: dict[str, Any]) -> str:
     status = result.get("status")
     if status == "pending":
         return "queued"
-    if status in {"error", "failed", "rate_limited", "invalid_tools"}:
+    if is_failure(result):
         error = result.get("error")
         code: Any = result.get("exit_code")
         if code is None and isinstance(error, dict):
