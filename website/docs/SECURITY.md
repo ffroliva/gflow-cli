@@ -135,7 +135,16 @@ The `OperationRecorder.redact_metadata` method explicitly strips `signedUrl`, `c
 
 ### Database file permissions
 
-The database is created with standard OS file permissions. On POSIX systems this means it is readable by the current user (mode `0600` is not enforced — use filesystem-level controls if you need strict isolation). On Windows, ACLs follow the `GFLOW_CLI_HOME` directory defaults. Use full-disk encryption (FileVault / BitLocker / LUKS) if you store sensitive prompts and need at-rest protection.
+gflow creates `gflow.db` readable and writable only by its owner: mode `0600` on POSIX, an ACL naming only the current user on Windows. An existing database is tightened when gflow opens it for writing. On POSIX this includes its `-wal` and `-shm` files; on Windows it happens once per process. If opening the database creates its directory on POSIX, that directory is `0700`. gflow never changes the permissions of an existing directory here, because `GFLOW_CLI_DB_PATH` can name one that other software uses. This is best-effort: a failure is logged and does not stop the command.
+
+Limits:
+
+- On Windows, the `-wal` and `-shm` files inherit the directory's ACL, and can remain after a crash. Use a directory that other users cannot read.
+- On Windows, permissions someone explicitly granted on an existing `gflow.db` file are kept.
+- Another account that shared the database through group, other or inherited permissions loses access to it.
+- FAT/exFAT volumes and some network shares do not store these permissions.
+
+Use full-disk encryption (FileVault / BitLocker / LUKS) if you store sensitive prompts and need at-rest protection.
 
 ## Cloud storage
 

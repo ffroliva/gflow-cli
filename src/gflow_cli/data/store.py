@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sqlite3
+import stat
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,7 +15,7 @@ from typing import TYPE_CHECKING, Self
 import structlog
 
 from gflow_cli.errors import DataMigrationError, DataStoreError
-from gflow_cli.winsec import ensure_profile_hardened
+from gflow_cli.winsec import harden_file_once
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -28,24 +30,37 @@ _ROUTE_MIGRATE = "data.migrate"
 logger = structlog.get_logger(__name__)
 
 
-def _harden_store_permissions(path: Path) -> None:
-    """Restrict the database file and its directory to the owner (issue #1437).
+def _secure_store_files(path: Path) -> None:
+    """Create the database owner-only, or drop group/other access from an existing one.
 
-    The catalog holds prompts, media ids and queued payloads, so it gets the
-    same treatment as the auth profiles: ``0o700``/``0o600`` on POSIX, the
-    winsec DACL on Windows. Best-effort like the profile hardening: a mode
-    failure must not break the open. It also doubles as the fixup for files
-    and directories that predate this rule.
+    Runs before SQLite opens the file. An existing directory is left alone:
+    ``GFLOW_CLI_DB_PATH`` can name one gflow does not own (issue #1437).
     """
+    # Not on Windows: there 0o700 sets a DACL that names the directory's owner, not the
+    # user, so a directory first created by an elevated run would lock the user out.
+    dir_mode = 0o777 if sys.platform == "win32" else 0o700
+    path.parent.mkdir(mode=dir_mode, parents=True, exist_ok=True)
+    # SQLite follows a symlinked database and keeps its sidecars beside the target.
+    real = os.path.realpath(path)
+    try:
+        # O_EXCL: opening and closing an EXISTING database would drop the POSIX locks
+        # another connection in this process holds on it.
+        os.close(os.open(real, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        harden_file_once.cache_clear()  # a recreated file needs its own ACL
+    except FileExistsError:
+        pass
     if sys.platform == "win32":
-        ensure_profile_hardened(path.parent)
+        harden_file_once(real)
         return
-    for target, wanted in ((path.parent, 0o700), (path, 0o600)):
+    for target in (real, f"{real}-wal", f"{real}-shm"):
         try:
-            if target.stat().st_mode & 0o777 != wanted:
-                target.chmod(wanted)
-        except OSError as exc:
-            logger.warning("data_store_chmod_failed", path=str(target), error=str(exc))
+            mode = os.lstat(target).st_mode
+            if stat.S_ISREG(mode) and mode & 0o077:
+                os.chmod(target, stat.S_IMODE(mode) & 0o700)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:  # best-effort: the open must still work
+            logger.warning("data_store_chmod_failed", error=type(exc).__name__)
 
 
 def _utc_now() -> str:
@@ -237,14 +252,13 @@ class DataStore:
     @classmethod
     def open(cls, path: Path) -> DataStore:
         try:
-            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            _secure_store_files(path)
             conn = sqlite3.connect(path, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
             store = cls(conn=conn, path=path)
-            _harden_store_permissions(path)
             store.apply_migrations()
             return store
         except DataMigrationError:

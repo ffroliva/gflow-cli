@@ -436,8 +436,8 @@ jobs:
   # This job exists because ProfileLease's kernel lock is genuinely
   # OS-specific (msvcrt.locking on Windows vs. fcntl.flock on POSIX) and D1's
   # local Windows-only run left the POSIX fcntl branch reasoned-but-unexecuted
-  # (see .superpowers/sdd/task-D1-report.md). Runs ONLY the lease unit +
-  # subprocess tests, not the full suite.
+  # (see .superpowers/sdd/task-D1-report.md). Runs the lease unit +
+  # subprocess tests and the OS-specific database permission tests, not the full suite.
   profile-lease-matrix:
     name: ProfileLease (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -466,6 +466,9 @@ jobs:
 
       - name: ProfileLease unit + subprocess tests
         run: uv run python -m pytest tests/test_profile_lease.py tests/test_profile_lease_subprocess.py -q --junitxml=pytest-lease.xml
+
+      - name: Database permission tests (POSIX modes, Windows ACLs; #1437)
+        run: uv run python -m pytest tests/data/test_store.py -q
 
       - name: Test-count guard (lease matrix ran its suite)
         # Floor well below the ~29 executed per OS leg — catches collapse, not

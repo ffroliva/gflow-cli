@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+from functools import cache
 from typing import TYPE_CHECKING
 
 import structlog
@@ -117,4 +118,27 @@ def ensure_profile_hardened(path: Path) -> bool:
         marker.write_bytes(b"")
     except OSError:
         logger.warning("auth_profile_acl_marker_failed")
+    return True
+
+
+@cache
+def harden_file_once(path: str) -> bool:
+    """Grant only the current user on one file; attempted once per process and path.
+
+    Never touches the containing directory, which may not be ours (issue #1437). A failure
+    is cached too: each attempt spawns two subprocesses.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        sid = _current_user_sid()
+        subprocess.run(  # noqa: S603 - fixed System32 binary, argv list, no shell
+            [_system32("icacls.exe"), path, "/inheritance:r", "/grant:r", f"*{sid}:F", "/q"],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, caller must proceed
+        logger.warning("file_acl_failed", error=type(exc).__name__)
+        return False
     return True
