@@ -131,10 +131,11 @@ def clip_files(tmp_path: Path) -> tuple[Path, Path]:
             sample_rate = source_audio.getframerate()
             audio = output.add_stream("pcm_s16le", rate=sample_rate)
             audio.layout = "mono"
+            vframe = av.VideoFrame(160, 90, "rgb24")
+            vframe.planes[0].update(bytes(vframe.planes[0].buffer_size))
             for index in range(90):
-                frame = av.VideoFrame(160, 90, "rgb24")
-                frame.pts = index
-                for packet in video.encode(frame):
+                vframe.pts = index
+                for packet in video.encode(vframe):
                     output.mux(packet)
             for packet in video.encode():
                 output.mux(packet)
