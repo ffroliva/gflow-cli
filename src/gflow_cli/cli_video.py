@@ -1377,7 +1377,7 @@ def _resolve_i2v_args(
         return initial_frame, image
 
     if prompt is not None:
-        resolved_image = initial_frame or image
+        resolved_image = initial_frame if initial_frame is not None else image
         if resolved_image is None:
             raise click.UsageError(
                 "Provide an initial frame via --initial-frame or as the first positional argument."
@@ -1404,9 +1404,13 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
         return None, value
     try:
         resolved = Path(value).resolve(strict=True)
-    except FileNotFoundError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:  # also bad syntax, NUL, symlink loop
         msg = f"{param_hint} path {value!r} does not exist."
         raise click.UsageError(msg) from exc
+    if not resolved.is_file():
+        # "" and "." resolve to the current folder, which strict=True accepts.
+        msg = f"{param_hint} path {value!r} is not a file."
+        raise click.UsageError(msg)
     return str(resolved), None
 
 

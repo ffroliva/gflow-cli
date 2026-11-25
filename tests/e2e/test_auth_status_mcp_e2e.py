@@ -30,3 +30,25 @@ async def test_mcp_auth_status_reports_a_live_profile_authenticated(
     assert result.get("status") == "authenticated", f"MCP auth status failed: {result}"
     assert result["profile"] == profile
     assert result["user_email"], "an authenticated result must name the account"
+
+
+async def test_mcp_auth_status_on_a_live_profile_is_not_flagged_as_an_error(
+    e2e_profile_dir: Path,
+) -> None:
+    """#1464: the server sets `isError` from the envelope, so go through `call_tool`.
+
+    Calling `tools.gflow_auth_status` directly skips `GflowMCPServer.call_tool`, the one
+    place the flag is set; only a real client sees what an agent sees.
+    """
+    from mcp import Client
+
+    import gflow_cli.mcp.tools  # noqa: F401  # registers the tools on the server
+    from gflow_cli.mcp.server import server
+
+    profile = os.environ["GFLOW_CLI_E2E_PROFILE"].strip()
+    async with Client(server, mode="2026-07-28") as client:
+        result = await client.call_tool("gflow_auth_status", {"profile": profile})
+
+    assert result.structured_content is not None
+    assert result.structured_content["status"] == "authenticated", result.structured_content
+    assert result.is_error is False

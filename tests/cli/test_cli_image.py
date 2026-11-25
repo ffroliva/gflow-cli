@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -592,6 +593,64 @@ class TestImageI2I:
         assert result.exit_code == 2, result.output
         lower = result.output.lower()
         assert "does not exist" in lower or "not found" in lower or str(missing) in result.output
+
+    @pytest.mark.parametrize("kind", ["empty", "dot", "folder", "symlink-to-folder"])
+    @pytest.mark.parametrize("command", ["i2i", "generate"])
+    def test_ref_that_is_not_a_file_is_a_usage_error(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        kind: str,
+        command: str,
+    ) -> None:
+        """`--ref ""`, `.` or a folder exits 2 before a client opens, like a missing file.
+
+        `Path("").resolve(strict=True)` is the current folder, so these passed the existence
+        check and failed later reading the folder as an image (`IsADirectoryError`, exit 1).
+        """
+        folder = tmp_path / "refs"
+        folder.mkdir()
+        link = tmp_path / "refs-link"
+        if sys.platform == "win32":  # a junction needs no privilege on Windows; a symlink does
+            import _winapi
+
+            _winapi.CreateJunction(str(folder), str(link))
+        else:
+            link.symlink_to(folder, target_is_directory=True)
+        ref = {"empty": "", "dot": ".", "folder": str(folder), "symlink-to-folder": str(link)}[kind]
+        monkeypatch.chdir(tmp_path)
+        client = MagicMock()
+        from gflow_cli.cli import main
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            result = runner.invoke(main, ["image", command, "a cat", "--ref", ref])
+
+        assert result.exit_code == 2, result.output
+        assert "is not a file" in result.output
+        client.assert_not_called()
+
+    def test_unresolvable_ref_path_is_a_usage_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A path resolve() rejects outright (here a NUL byte) exits 2, not a traceback."""
+        client = MagicMock()
+        from gflow_cli.cli import main
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            result = runner.invoke(main, ["image", "i2i", "a cat", "--ref", "bad\x00ref.png"])
+
+        assert result.exit_code == 2, result.output
+        assert "does not exist" in result.output
+        client.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
