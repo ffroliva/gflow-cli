@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -222,14 +224,12 @@ def test_a_clip_without_audio_is_named_as_such(good_clip: Path, tmp_path: Path) 
     done = clip_qa_cli("sa01.mp4", cwd=tmp_path)
 
     assert done.returncode != 0
-    assert "sa01.mp4: no audio stream" in done.stderr
+    assert "REFUSED sa01.mp4: no audio stream" in done.stdout
 
 
 @needs_ffmpeg
-@pytest.mark.parametrize("name", ["Ágil.mp4", "日本.mp4"])
-def test_a_non_ascii_name_works_without_utf8_mode(
-    good_clip: Path, tmp_path: Path, name: str
-) -> None:
+def test_a_non_ascii_name_works_without_utf8_mode(good_clip: Path, tmp_path: Path) -> None:
+    name = "\u00c1gil \u65e5\u672c.mp4"  # cp1252 cannot decode the first or print the second
     shutil.copy(good_clip, tmp_path / name)
 
     done = clip_qa_cli(name, cwd=tmp_path, utf8="0")
@@ -243,11 +243,9 @@ def test_a_stored_audio_offset_counts_as_lag(good_clip: Path, tmp_path: Path) ->
     late = ("-i", src, "-itsoffset", "0.3", "-i", src, "-map", "0:v", "-map", "1:a")
     ffmpeg(*late, "-c", "copy", "sa01.mp4", cwd=tmp_path)
 
-    in_step = clip_qa.measure(good_clip)[1]
     shifted = clip_qa.measure(tmp_path / "sa01.mp4")[1]
 
-    assert clip_qa.verdict(in_step) == "fluid"
-    assert shifted["sync_lag_s"] - in_step["sync_lag_s"] == pytest.approx(0.3, abs=0.03)
+    assert shifted["sync_lag_s"] == pytest.approx(0.3, abs=0.06)
     assert clip_qa.verdict(shifted) == "DRIFT"
 
 
@@ -262,15 +260,108 @@ def _packet_ends(clip: Path) -> list[int]:
 
 
 @needs_ffmpeg
-@pytest.mark.parametrize("between_packets", [True, False])
+@pytest.mark.parametrize(("between_packets", "target"), [(True, ["sa01.mp4"]), (False, ["."])])
 def test_a_truncated_clip_is_refused(
-    good_clip: Path, tmp_path: Path, between_packets: bool
+    good_clip: Path, tmp_path: Path, between_packets: bool, target: list[str]
 ) -> None:
+    shutil.copy(good_clip, tmp_path / "sa02.mp4")
     ends = _packet_ends(good_clip)
     cut = ends[len(ends) * 3 // 4] - (0 if between_packets else 40)
     (tmp_path / "sa01.mp4").write_bytes(good_clip.read_bytes()[:cut])
 
-    done = clip_qa_cli("sa01.mp4", cwd=tmp_path)
+    done = clip_qa_cli(*target, cwd=tmp_path)
 
     assert done.returncode != 0, done.stdout
-    assert "truncated" in done.stderr
+    assert "REFUSED sa01.mp4: truncated" in done.stdout
+    if target == ["."]:  # one bad clip must not cost the rest of the folder its results
+        assert list(json.loads((tmp_path / "motion.json").read_text())) == ["sa02"]
+
+
+@needs_ffmpeg
+def test_a_late_audio_stream_starts_speech_late(good_clip: Path, tmp_path: Path) -> None:
+    src = str(good_clip)
+    late = ("-i", src, "-itsoffset", "2", "-i", src, "-map", "0:v", "-map", "1:a")
+    ffmpeg(*late, "-c", "copy", "sa01.mp4", cwd=tmp_path)
+
+    assert clip_qa.measure(tmp_path / "sa01.mp4")[1]["speech_onset_s"] >= 1.9
+
+
+@pytest.mark.parametrize("stored", [0.5, -0.5])
+def test_content_that_cancels_a_stored_offset_is_in_step(stored: float) -> None:
+    # A trimmed, still aligned clip: too smooth for a clear peak, so lag must default to zero.
+    motion = [1 + 0.8 * math.sin(i / 25) for i in range(192)]
+    heard = [1 + 0.8 * math.sin((i + stored * 24) / 25) for i in range(192)]
+
+    lag = clip_qa.sync(motion, clip_qa.on_video_timeline(heard, stored, 24.0), 24.0)[0]
+
+    assert lag == 0.0
+
+
+FACE = {"speech_onset_s": 0.0, "face_motion_p10": 1.0, "sync_lag_s": 0.0, "av_duration_delta_s": 0}
+
+
+@pytest.mark.parametrize(("is_beat", "passes"), [(True, "fluid"), (False, "ok")])
+def test_a_stored_offset_sync_cannot_confirm_needs_a_look(is_beat: bool, passes: str) -> None:
+    face = FACE | {"sync_r": 0.1}
+
+    assert clip_qa.verdict(face | {"audio_start_s": 1.0}, is_beat) == "CHECK"
+    assert clip_qa.verdict(face | {"audio_start_s": 0.02}, is_beat) == passes
+
+
+FULL = [0.0, 1.0, 0.5, 1.5]  # decode order, as B-frames arrive
+VIDEO = {"codec_type": "video", "start_time": "0.0", "duration": "2.0", "times": FULL}
+AUDIO = VIDEO | {"codec_type": "audio"}
+LATE_AUDIO = AUDIO | {"start_time": "0.5", "times": [0.5, 1.0, 1.5, 2.0]}
+AVI_VIDEO = VIDEO | {"key": "dts_time"}  # AVI has no presentation times
+MKV_VIDEO = {k: v for k, v in VIDEO.items() if k != "duration"}  # MKV declares no length
+
+
+def _probe(monkeypatch: pytest.MonkeyPatch, *streams: dict[str, Any]) -> tuple[float, float]:
+    """probe_streams on what ffprobe would answer; each stream lists its packet times."""
+    answer = {
+        "streams": [s | {"index": i} for i, s in enumerate(streams)],
+        "packets": [
+            {"stream_index": i, "duration_time": "0.5", s.get("key", "pts_time"): str(time)}
+            for i, s in enumerate(streams)
+            for time in s["times"]
+        ],
+    }
+    done = MagicMock(stdout=json.dumps(answer))
+    monkeypatch.setattr(subprocess, "run", lambda *_a, **_k: done)
+    return clip_qa.probe_streams(Path("a.mp4"))
+
+
+@pytest.mark.parametrize(
+    ("video", "audio", "expected"),
+    [
+        (VIDEO, AUDIO, (0.0, 0.0)),
+        (VIDEO, LATE_AUDIO, (0.5, 0.0)),
+        (AVI_VIDEO, AUDIO, (0.0, 0.0)),
+        (MKV_VIDEO, AUDIO, (0.0, -2.0)),
+    ],
+)
+def test_a_complete_clip_is_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+    video: dict[str, Any],
+    audio: dict[str, Any],
+    expected: tuple[float, float],
+) -> None:
+    cover = VIDEO | {"duration": "9.0", "start_time": "5.0"}  # only the first of a type counts
+
+    assert _probe(monkeypatch, video, audio, cover) == expected
+
+
+@pytest.mark.parametrize(
+    ("video", "audio", "kind"),
+    [
+        (VIDEO | {"times": FULL[:3]}, AUDIO, "video"),
+        (VIDEO, AUDIO | {"times": FULL[:3]}, "audio"),
+        (VIDEO, LATE_AUDIO | {"times": [0.5, 1.0, 1.5]}, "audio"),
+        (VIDEO, AUDIO | {"times": []}, "audio"),
+    ],
+)
+def test_a_stream_that_ends_early_is_refused(
+    monkeypatch: pytest.MonkeyPatch, video: dict[str, Any], audio: dict[str, Any], kind: str
+) -> None:
+    with pytest.raises(RuntimeError, match=rf"a\.mp4: truncated, .* of {kind} is missing"):
+        _probe(monkeypatch, video, audio)

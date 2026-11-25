@@ -141,6 +141,12 @@ def audio_envelope(clip: Path, fps: float) -> list[float]:
     return [10 ** (x / 20) for x in db]
 
 
+def on_video_timeline(envelope: list[float], audio_start: float, fps: float) -> list[float]:
+    """The envelope as heard: a late stream opens with silence, an early one loses its head."""
+    frames = round(audio_start * fps)
+    return [0.0] * frames + envelope[max(0, -frames) :]
+
+
 def smooth(v: list[float], k: int = 5) -> list[float]:
     """Centred moving average. Turns the spiky per-frame difference into an activity
     envelope; correlating a spike train against a plateau returns ~0 (measured)."""
@@ -203,12 +209,13 @@ def probe_streams(clip: Path) -> tuple[float, float]:
     header keeps the full durations, so those are checked against the packets in the file.
     """
     entries = "stream=index,codec_type,start_time,duration"
-    entries += ":packet=stream_index,pts_time,duration_time"
+    entries += ":packet=stream_index,pts_time,dts_time,duration_time"
     found = json.loads(ffprobe(clip, entries, "-of", "json") or "{}")
     ends: dict[int, float] = {}
     for p in found.get("packets", []):
-        if "pts_time" in p:
-            end = float(p["pts_time"]) + float(p.get("duration_time", 0))
+        time = p.get("pts_time", p.get("dts_time"))  # AVI stores no presentation times
+        if time is not None:
+            end = float(time) + float(p.get("duration_time", 0))
             ends[p["stream_index"]] = max(end, ends.get(p["stream_index"], end))
     start, length = {}, {}
     for s in found.get("streams", []):
@@ -231,14 +238,16 @@ def measure(clip: Path) -> tuple[dict, dict]:
     audio_start, duration_delta = probe_streams(clip)
     whole = yavg(clip, "scale=180:320")
     face = yavg(clip, FACE_CROP)
-    lag, r, prom, edge = sync(face, audio_envelope(clip, fps), fps)
+    heard = on_video_timeline(audio_envelope(clip, fps), audio_start, fps)
+    lag, r, prom, edge = sync(face, heard, fps)
     err = run(
         ["ffmpeg", "-i", clip.name, "-af", "silencedetect=n=-35dB:d=0.3", "-f", "null", "-"],
         clip.parent,
     )
     starts = [float(x) for x in re.findall(r"silence_start: ([0-9.]+)", err)]
     ends = [float(x) for x in re.findall(r"silence_end: ([0-9.]+)", err)]
-    onset = ends[0] if starts and starts[0] < 0.05 and ends else 0.0
+    begins = max(0.0, audio_start)  # a late stream's first sample is not at zero
+    onset = ends[0] if starts and starts[0] < begins + 0.05 and ends else begins
     return (
         {
             "median": round(statistics.median(whole), 2),
@@ -249,10 +258,11 @@ def measure(clip: Path) -> tuple[dict, dict]:
             "speech_onset_s": round(onset, 2),
             "face_motion_median": round(statistics.median(face), 2),
             "face_motion_p10": round(sorted(face)[len(face) // 10], 2),
-            "sync_lag_s": round(lag + audio_start, 3),
+            "sync_lag_s": lag,
             "sync_r": r,
             "sync_prominence": prom,
             "sync_edge": edge,
+            "audio_start_s": round(audio_start, 3),
             "av_duration_delta_s": duration_delta,
         },
     )
@@ -263,12 +273,15 @@ def verdict(fa: dict, is_beat: bool = True) -> str:
     and per-shot sync gates do not apply — the stream-length check does."""
     if abs(fa["av_duration_delta_s"]) > AV_DURATION_TOLERANCE:
         return "DRIFT"
+    starts_together = SYNC_EARLY <= fa.get("audio_start_s", 0.0) <= SYNC_LATE
     if not is_beat:
-        return "ok"
+        return "ok" if starts_together else "CHECK"
     live = fa["speech_onset_s"] <= 1.6 and fa["face_motion_p10"] > 0.15
     # a weak correlation means the shot gives the detector nothing to align, not that it drifts
     measurable = fa["sync_r"] >= SYNC_MIN_R and not fa.get("sync_edge")
     in_sync = not measurable or SYNC_EARLY <= fa["sync_lag_s"] <= SYNC_LATE
+    if not measurable and not starts_together:
+        return "CHECK"  # the stored offset may be a fault, and nothing here can tell
     return "fluid" if live and in_sync else ("DRIFT" if live else "CHECK")
 
 
@@ -340,7 +353,11 @@ if __name__ == "__main__":
     motion, face = {}, {}
     for clip in clips:
         is_beat = bool(re.fullmatch(r"[a-z]{2}\d{2}", clip.stem))
-        motion[clip.stem], face[clip.stem] = measure(clip)
+        try:
+            motion[clip.stem], face[clip.stem] = measure(clip)
+        except RuntimeError as e:
+            print(f"REFUSED {e}")
+            continue
         f, m = face[clip.stem], motion[clip.stem]
         print(
             f"{verdict(f, is_beat):5} {clip.stem} onset={f['speech_onset_s']:.2f}s "
@@ -348,10 +365,11 @@ if __name__ == "__main__":
             f"sync={f['sync_lag_s']:+.3f}s r={f['sync_r']} prom={f['sync_prominence']:+.3f} "
             f"a/v={f['av_duration_delta_s']:+.3f}s"
         )
-    for clip in clips:
+    for clip in (c for c in clips if c.stem in motion):
         # Not optional, and not left to the operator's memory: the numbers above cannot
         # see a temporal artifact, so the artifact that CAN is produced every run.
         print(f"strip {strip(clip, out_dir).name}  (cell k = second k, read in order)")
     if target.is_dir():  # a single-file run is a spot check; do not clobber the batch results
         (out_dir / "motion.json").write_text(json.dumps(motion, indent=1))
         (out_dir / "motion_face.json").write_text(json.dumps(face, indent=1))
+    raise SystemExit(len(motion) < len(clips))
