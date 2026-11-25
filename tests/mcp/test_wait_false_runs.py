@@ -327,6 +327,30 @@ async def test_an_expired_session_fails_the_row_and_tasks_get_says_why(
     assert error["type"].endswith("/auth-expired") and error["exit_code"] == 3, error
 
 
+async def test_a_failed_job_reads_is_error_on_both_paths(
+    db: DataStore, wired: dict[str, Any]
+) -> None:
+    """#1464: one failed job, read through ``wait=true`` and through ``tasks/get``."""
+    from mcp import Client
+
+    from gflow_cli.errors import AuthExpiredError
+    from gflow_cli.mcp.server import server
+
+    wired["client"].generate_images_batch.side_effect = AuthExpiredError(detail="session gone")
+    wired["client"].generate_image.side_effect = AuthExpiredError(detail="session gone")
+    async with Client(server, mode="2026-07-28") as client:
+        waited = await client.call_tool("gflow_generate_image", {"prompt": "x"})
+
+    assert waited.structured_content is not None
+    assert waited.structured_content["status"] == "failed"
+    got = await _get(db, waited.structured_content["task_id"])
+    assert got["result"]["isError"] is True
+    assert waited.is_error is True
+    # The same envelope both ways; wait=true also echoes the request's ``params``.
+    waited_envelope = {k: v for k, v in waited.structured_content.items() if k != "params"}
+    assert got["result"]["structuredContent"] == waited_envelope
+
+
 @pytest.mark.sharpit(allow_n_plus_one=True)  # polls a row until its state changes
 async def test_cancel_of_a_finished_job_reports_it_as_finished(
     db: DataStore, wired: dict[str, Any]
