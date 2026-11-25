@@ -9,14 +9,17 @@ import click
 import structlog
 from pydantic import Field
 
-from gflow_cli._cli_helpers import default_project
 from gflow_cli.api.video import Aspect, is_media_uuid
 from gflow_cli.api.video_extend import (
     EXTEND_MAX_DURATION,
     EXTEND_MIN_DURATION,
     MAX_EXTEND_REFERENCE_IMAGES,
 )
-from gflow_cli.cli_image import lookup_project_in_catalog
+from gflow_cli.cli_video_extend import resolve_extend_project
+from gflow_cli.config import get_settings
+from gflow_cli.data.repository import DataRepository
+from gflow_cli.data.store import DataStore
+from gflow_cli.errors import ConfigurationError
 from gflow_cli.mcp import tools as common
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.server import server
@@ -37,21 +40,10 @@ def _validate_extend_source(source: str) -> tuple[dict[str, str] | None, dict[st
 
 
 def _validate_extend_options(
-    *,
-    duration: int | None,
-    aspect: str | None,
-    reference_images: list[str] | None,
-    max_credits: int | None,
+    *, aspect: str | None, reference_images: list[str] | None
 ) -> dict[str, Any] | None:
+    """The checks the schema cannot make (duration and max_credits ranges are in it)."""
     bad = common._bad_param  # pyright: ignore[reportPrivateUsage]
-    if max_credits is not None and max_credits < 0:
-        return bad("Invalid max_credits", "max_credits must be >= 0.")
-    if duration is not None and not (EXTEND_MIN_DURATION <= duration <= EXTEND_MAX_DURATION):
-        return bad(
-            "Invalid Duration",
-            f"duration must be between {EXTEND_MIN_DURATION} and {EXTEND_MAX_DURATION} seconds "
-            f"(got {duration}).",
-        )
     if aspect is not None:
         try:
             aspect_enum = Aspect.from_cli(aspect)
@@ -69,21 +61,25 @@ def _validate_extend_options(
 
 
 def _resolve_ordered_references(
-    reference_images: list[str],
+    reference_images: list[str], profile: str
 ) -> tuple[list[str] | None, dict[str, Any] | None]:
-    """Validate local reference paths while keeping UUIDs and paths in caller order."""
+    """Every reference as a local file path, in the caller's order (the wire's order).
+
+    A media UUID resolves to its catalogued file, the way the r2v refs do.
+    """
     ordered: list[str] = []
-    for ref in reference_images:
-        if is_media_uuid(ref):
-            ordered.append(ref)
-            continue
-        resolved, err = common._resolve_image_path(  # pyright: ignore[reportPrivateUsage]
-            ref, title="Invalid Reference Image", label="Reference image path"
-        )
-        if err is not None:
-            return None, err
-        assert resolved is not None
-        ordered.append(resolved)
+    with DataStore.open(get_settings().resolved_db_path()) as store:
+        repo = DataRepository(store)
+        for ref in reference_images:
+            if is_media_uuid(ref):
+                resolved, err = common._resolve_ref_local_path(repo, profile, ref)  # pyright: ignore[reportPrivateUsage]
+            else:
+                resolved, err = common._resolve_image_path(  # pyright: ignore[reportPrivateUsage]
+                    ref, title="Invalid Reference Image", label="Reference image path"
+                )
+            if err is not None:
+                return None, err
+            ordered.append(str(resolved))
     return ordered, None
 
 
@@ -93,23 +89,23 @@ def _resolve_extend_project(
     resolved_profile: str,
     source_frag: dict[str, str],
 ) -> tuple[str | None, dict[str, Any] | None]:
-    if "source_media_id" in source_frag and project is None:
-        catalog_project = lookup_project_in_catalog(
-            media_id=source_frag["source_media_id"], profile_name=resolved_profile
-        )
-        if catalog_project is not None:
-            return catalog_project, None
+    """The CLI's project resolution (:func:`resolve_extend_project`), as an envelope."""
     try:
-        resolved_project = default_project(project, project_name, resolved_profile)
+        resolved = resolve_extend_project(
+            project_id=project,
+            project_name=project_name,
+            profile_name=resolved_profile,
+            media_id=source_frag.get("source_media_id"),
+        )
     except click.UsageError as exc:
         return None, common._bad_param("Default Project Belongs To Another Profile", exc.message)  # pyright: ignore[reportPrivateUsage]
-    if "source_media_id" in source_frag and resolved_project is None:
+    except ConfigurationError:
         return None, common._bad_param(  # pyright: ignore[reportPrivateUsage]
             "Missing Project",
             "Extending an existing Flow media UUID requires 'project' "
             "(not found in the local catalog).",
         )
-    return resolved_project, None
+    return resolved, None
 
 
 def _build_extend_payload(
@@ -123,6 +119,7 @@ def _build_extend_payload(
     project_name: str | None,
     output: str | None,
     max_credits: int | None,
+    profile: str,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     payload: dict[str, Any] = {"prompt": prompt, **source_frag}
     for key, val in (
@@ -136,7 +133,7 @@ def _build_extend_payload(
         if val is not None:
             payload[key] = val
     if reference_images:
-        ordered, err = _resolve_ordered_references(reference_images)
+        ordered, err = _resolve_ordered_references(reference_images, profile)
         if err is not None:
             return None, err
         assert ordered is not None
@@ -148,10 +145,8 @@ def _preflight_extend_inputs(
     *,
     source: str,
     prompt: str,
-    duration: int | None,
     aspect: str | None,
     reference_images: list[str] | None,
-    max_credits: int | None,
     project: str | None,
     out_file: str | None,
 ) -> tuple[tuple[dict[str, str], str | None] | None, dict[str, Any] | None]:
@@ -167,12 +162,7 @@ def _preflight_extend_inputs(
     if src_err is not None:
         return None, src_err
     assert source_frag is not None
-    opt_err = _validate_extend_options(
-        duration=duration,
-        aspect=aspect,
-        reference_images=reference_images,
-        max_credits=max_credits,
-    )
+    opt_err = _validate_extend_options(aspect=aspect, reference_images=reference_images)
     if opt_err is not None:
         return None, opt_err
     return (source_frag, resolved), None
@@ -211,10 +201,8 @@ async def gflow_extend_video(  # noqa: PLR0913
     checked, pre_err = _preflight_extend_inputs(
         source=source,
         prompt=prompt,
-        duration=duration,
         aspect=aspect,
         reference_images=reference_images,
-        max_credits=max_credits,
         project=project,
         out_file=out_file,
     )
@@ -243,6 +231,7 @@ async def gflow_extend_video(  # noqa: PLR0913
         project_name=project_name,
         output=output,
         max_credits=max_credits,
+        profile=resolved_profile,
     )
     if payload_err is not None:
         return payload_err

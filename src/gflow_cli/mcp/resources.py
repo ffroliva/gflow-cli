@@ -95,7 +95,8 @@ Generate videos using Google's Veo model.
 
 ### gflow_extend_video
 Continue an existing video (local video file or Flow clip UUID) by one segment on `flow.google.com`.
-- **Duration:** optional `3-10` seconds (default `4s`)
+- **Duration:** optional `3-10` seconds (omitted: Flow's current setting is kept;
+  the result reports the length sent)
 - **References:** optional `0-3` `reference_images`
 - **Credit cap:** `max_credits` checks Flow's pre-submit quote before submitting
 

@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main as cli
+from gflow_cli.data.recorder import OperationRecorder
 
 MEDIA = "b9458021-fc2d-4d95-ab53-cf844c6f1079"
 PROJECT = "7d3d6bd9-a39f-4c2d-b772-146e73e539cf"
@@ -800,7 +801,7 @@ def test_migrated_payload_reports_quoted_credits_and_uploaded_source_length() ->
         aspect=None,
     )
     assert payload["quoted_credits"] == 15
-    assert payload["credits_spent"] == 15
+    assert payload["credits_spent"] is None  # a pre-submit quote is not a final charge
     assert payload["seconds_added"] == 5
     assert payload["seconds_billed"] == 5
 
@@ -856,6 +857,8 @@ async def test_the_migrated_session_reports_one_video_result(
     rows: list[tuple[str, str]] = []
 
     class _Recorder:
+        record_migrated_extend = OperationRecorder.record_migrated_extend
+
         def record_started_extend(self, *, started: Any, aspect: str, **_kw: Any) -> None:
             rows.append((started.media_id, aspect))
 
@@ -907,13 +910,16 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
     notes: list[tuple[Any, ...]] = []
 
     class _Recorder:
+        record_migrated_extend = OperationRecorder.record_migrated_extend
+
         def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
             sources.append(source_media_id)
 
         def record_extended_in_place(
             self, *args: Any, local_path: Path | None = None, **_kw: Any
-        ) -> None:
+        ) -> bool:
             notes.append(args)
+            return True  # the clip is catalogued
 
     with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
         await _extend_migrated_session(
@@ -1708,3 +1714,63 @@ def test_new_id_extend_failure_or_timeout_transitions_pending_to_terminal(tmp_pa
         assert row_updated is not None
         assert row_updated[0] != "pending"
         assert row_updated[0] == "MEDIA_GENERATION_STATUS_FAILED"
+
+
+def test_cli_extend_honours_the_default_project_for_an_uncatalogued_clip(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity with every other generate command and the MCP twin: GFLOW_CLI_PROJECT."""
+    monkeypatch.setenv("GFLOW_CLI_PROJECT", PROJECT)
+    _host("flow.google.com")
+    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert _run_spy["project_id"] == PROJECT
+
+
+def test_cli_extend_of_an_uncatalogued_clip_without_a_project_is_exit_11(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any]
+) -> None:
+    _host("flow.google.com")
+    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--yes", "--json"])
+    assert result.exit_code == 11
+    assert _run_spy == {}
+
+
+@pytest.mark.parametrize(
+    ("name", "data"), [("clip.webm", b"\x1aE\xdf\xa3" + b"\x00" * 12), ("notes.txt", b"hi")]
+)
+def test_cli_an_unsupported_local_file_is_exit_11_before_any_project(
+    runner: CliRunner,
+    _host: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    data: bytes,
+) -> None:
+    created: list[str] = []
+
+    class _Client:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def create_project(self, **_kw: Any) -> Any:
+            created.append("project")
+
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", _Client)
+    monkeypatch.setattr("gflow_cli.cli_video._make_provider_dir", lambda _p: tmp_path)
+    monkeypatch.setattr("gflow_cli.cli_video._resolve_profile", lambda _p: "p")
+    _host("flow.google.com")
+    path = tmp_path / name
+    path.write_bytes(data)
+    result = runner.invoke(cli, ["video", "extend", str(path), "go", "--yes", "--json"])
+    assert result.exit_code == 11, result.output
+    error = json.loads(result.stdout)["error"]
+    assert error["charged"] == "no", error
+    assert "transport" not in error.get("remediation_hint", ""), error
+    assert created == []

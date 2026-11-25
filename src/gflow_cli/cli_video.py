@@ -51,10 +51,10 @@ from gflow_cli.api.video import (
 )
 from gflow_cli.cli_video_captions import captions, transcribe
 from gflow_cli.cli_video_extend import (
+    labs_unported_extend_refusal,
     make_migrated_extend_on_started,
-    migrated_only_extend_refusal,
     refuse_unported_extend,
-    resolve_extend_project_id,
+    resolve_extend_project,
     resolve_extend_source,
     validate_extend_refs,
 )
@@ -2000,13 +2000,6 @@ async def _run_extend(  # noqa: PLR0913
 ) -> None:
     """Submit N chained extends (labs) or one migrated extend (flow.google.com)."""
     max_credits = resolve_max_credits(max_credits, get_settings().max_credits)
-    project_id = resolve_extend_project_id(
-        project_id=project_id,
-        media_id=media_id,
-        source_video=source_video,
-        profile_name=profile_name,
-        migrated=migrated,
-    )
 
     # `chain` defaults jitter to 0.0, which ships unpaced runs and contradicts
     # ACCOUNT_SAFETY's "submissions are paced". Reuse image_batch's resolver so
@@ -2044,7 +2037,9 @@ async def _run_extend(  # noqa: PLR0913
                 max_credits=max_credits,
             )
             return
-        assert project_id is not None
+        if not project_id:  # resolved by `extend`; a direct caller must pass one
+            msg = "--project is required: extend must know which project owns the source clip"
+            raise ConfigurationError(msg)
         await _extend_session(
             profile_name=profile_name,
             profile_dir=profile_dir,
@@ -2087,7 +2082,10 @@ async def _extend_migrated_session(  # noqa: PLR0913
     refs: tuple[Path, ...] = (),
     project_name: str | None = None,
 ) -> None:
-    """One segment on flow.google.com: Flow's own extend UI, downloaded to a file."""
+    """One segment on flow.google.com: Flow's own extend UI, downloaded to a file.
+
+    Inputs are validated before any project is created, so a refused file leaves none.
+    """
     await migrated_extend.validate_extend_inputs(
         media_id=None if source_video is not None else media_id,
         source_video=source_video,
@@ -2112,7 +2110,6 @@ async def _extend_migrated_session(  # noqa: PLR0913
             media_id=None if source_video is not None else media_id,
             source_video=source_video,
             project_id=resolved_project,
-            project_name=project_name,
             prompt=prompt,
             aspect=aspect,
             duration=duration,
@@ -2361,7 +2358,8 @@ async def _extend_session(  # noqa: PLR0913
     help=(
         "Continue an existing video, carrying its motion and audio forward (by another "
         "8-second segment on labs.google; for flow.google.com see below).\n\n"
-        "MEDIA_ID is the clip to continue; PROMPT says what happens next.\n\n"
+        "SOURCE is the clip to continue: a Flow media UUID, or (flow.google.com) a local "
+        "video file; PROMPT says what happens next.\n\n"
         "Unlike `video chain`, which restarts from an extracted still, extend is "
         "seeded server-side from the source clip, so the join is continuous. "
         "The result lands as a Scene; render it to one file with "
@@ -2369,10 +2367,11 @@ async def _extend_session(  # noqa: PLR0913
         "\b\n"
         "Examples:\n"
         '  gflow video extend <media-id> "the wave recedes" --project <project-id>\n'
-        '  gflow video extend <media-id> "drifts upward" --project <project-id> --aspect 16:9\n\n'
-        "--project is REQUIRED here: extend must know which project owns MEDIA_ID. "
-        "The shared --project help calls it optional because it is — for every "
-        "other generate command.\n\n"
+        '  gflow video extend clip.mp4 "drifts upward" --duration 5 --ref hero.png\n\n'
+        "Project: --project, else the project the local catalog records for a media UUID, "
+        "else GFLOW_CLI_PROJECT. A media UUID with none of these exits 11; a local file "
+        "with none gets a new project (named by --project-name), created only after the "
+        "inputs are validated.\n\n"
         "Each segment spends credits — the exact cost depends on your plan and is "
         "shown for confirmation before anything is submitted (labs.google).\n\n"
         "Note: a segment carries ~7s of content though Flow bills 8s, so a "
@@ -2386,7 +2385,7 @@ async def _extend_session(  # noqa: PLR0913
         "Flow grows the source clip in place under its own media id."
     ),
 )
-@click.argument("media_id", metavar="SOURCE")
+@click.argument("source")
 @click.argument("prompts", nargs=-1, required=True)
 @click.option(
     "--aspect",
@@ -2406,7 +2405,8 @@ async def _extend_session(  # noqa: PLR0913
     type=click.IntRange(video_extend.EXTEND_MIN_DURATION, video_extend.EXTEND_MAX_DURATION),
     help=(
         "Extension length in seconds (3-10 on flow.google.com; Omni models). "
-        "Omit to use Flow's default (4s)."
+        "Omit to keep the length Flow's extend settings already hold; the JSON result "
+        "reports the length that was sent."
     ),
 )
 @click.option(
@@ -2463,7 +2463,7 @@ async def _extend_session(  # noqa: PLR0913
 @_no_max_credits_option
 @output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
-    media_id: str,
+    source: str,
     prompts: tuple[str, ...],
     aspect: str | None,
     duration: int | None,
@@ -2485,7 +2485,8 @@ def extend(  # noqa: PLR0913
 ) -> None:
     """Continue SOURCE (Flow media UUID or local video file), one PROMPT per segment."""
     scene_id = resume_from or scene_id
-    source_video = resolve_extend_source(media_id, scene_id)
+    source_video = resolve_extend_source(source, scene_id)
+    media_id = "" if source_video is not None else source
     validated_refs = validate_extend_refs(refs)
     count = segments if segments is not None else len(prompts)
     refusal = migrated_extend.unported_refusal(segments=count, scene_id=scene_id, seed=seed)
@@ -2499,7 +2500,7 @@ def extend(  # noqa: PLR0913
         refuse_unported_extend(refusal, is_json=is_json, output_format=output_format)
         return
     if not migrated:
-        labs_refusal = migrated_only_extend_refusal(
+        labs_refusal = labs_unported_extend_refusal(
             source_video=source_video, duration=duration, refs=validated_refs
         )
         if labs_refusal is not None:
@@ -2508,7 +2509,7 @@ def extend(  # noqa: PLR0913
     _maybe_print_extend_plan(
         is_json=is_json,
         output_format=output_format,
-        media_id=str(source_video) if source_video is not None else media_id,
+        media_id=source,
         prompt=prompts[0],
         aspect=aspect,
         segments=count,
@@ -2523,6 +2524,16 @@ def extend(  # noqa: PLR0913
         click.confirm(f"Submit {count} extend segment(s)?", abort=True)
 
     profile_name = _resolve_profile(profile)
+    try:
+        project_id = resolve_extend_project(
+            project_id=project_id,
+            project_name=project_name,
+            profile_name=profile_name,
+            media_id=media_id or None,
+        )
+    except ConfigurationError as exc:
+        refuse_unported_extend(exc, is_json=is_json, output_format=output_format)
+        return
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_extend(

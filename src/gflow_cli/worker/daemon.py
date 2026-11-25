@@ -20,7 +20,7 @@ from gflow_cli.api.transports import migrated_extend
 from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStarted
 from gflow_cli.api.video_extend import ExtendStarted, MigratedExtendRequest
-from gflow_cli.cli_video_reporting import _record_migrated_extend  # pyright: ignore[reportPrivateUsage]
+from gflow_cli.cli_video_extend import make_migrated_extend_on_started
 from gflow_cli.config import get_settings
 from gflow_cli.data.models import OperationKind
 from gflow_cli.data.recorder import (
@@ -36,7 +36,6 @@ from gflow_cli.errors import (
     DataIntegrityError,
     DataStoreError,
     FlowApiError,
-    FlowHostMigratedError,
     GFlowError,
     TaskCancelledError,
     outcome_members,
@@ -763,29 +762,6 @@ class FlowWorker:
         # Delegates to the codec (Task C2) — see _build_image_request.
         return codec.build_video_request(payload)
 
-    async def _preflight_extend_task(
-        self, req: MigratedExtendRequest, settings: Any, effective_cap: int | None
-    ) -> None:
-        flow_host = getattr(settings, "flow_host", "auto")
-        if migrated_route(None, flow_host, prefer_migrated=True) != "migrated":
-            raise FlowHostMigratedError(
-                detail=(
-                    "migrated video extend runs on flow.google.com only, and "
-                    "GFLOW_CLI_FLOW_HOST=labs.google switched that host off"
-                ),
-                remediation_hint=(
-                    "Unset GFLOW_CLI_FLOW_HOST (or set it to auto / flow.google.com) "
-                    "to extend via flow.google.com."
-                ),
-            )
-        await migrated_extend.validate_extend_inputs(
-            media_id=req.source_media_id,
-            source_video=req.source_video,
-            duration=req.duration,
-            reference_images=req.reference_images,
-            max_credits=effective_cap,
-        )
-
     async def _run_video_extend_task(  # noqa: PLR0913
         self,
         *,
@@ -804,7 +780,17 @@ class FlowWorker:
         project_id = task.payload.get("project_id")
         project_name = task.payload.get("project_name")
         effective_cap = resolve_max_credits(req.max_credits, getattr(settings, "max_credits", None))
-        await self._preflight_extend_task(req, settings, effective_cap)
+        # Before the project: a refused host or input leaves no empty project behind.
+        migrated_extend.require_migrated_host(
+            migrated_route(None, getattr(settings, "flow_host", "auto"), prefer_migrated=True)
+        )
+        await migrated_extend.validate_extend_inputs(
+            media_id=req.source_media_id,
+            source_video=req.source_video,
+            duration=req.duration,
+            reference_images=req.reference_images,
+            max_credits=effective_cap,
+        )
         path_key = req.source_media_id or (
             req.source_video.stem if req.source_video is not None else "extend"
         )
@@ -832,25 +818,24 @@ class FlowWorker:
             checkpoint_project_id[0] = project_id
             resolved_project = str(project_id)
 
+            record_started = make_migrated_extend_on_started(
+                profile_name=self.profile_name,
+                profile_dir=profile_dir,
+                project_id=resolved_project,
+                source_media_id=req.source_media_id,
+                aspect=req.aspect,
+                as_json=True,
+                recorder=recorder,
+            )
+
             def on_started(started: ExtendStarted, page_aspect: str | None) -> None:
                 started_media_ids.append(started.media_id)
-                try:
-                    recorder.record_started_extend(
-                        profile_name=self.profile_name,
-                        profile_dir=profile_dir,
-                        project_id=resolved_project,
-                        aspect=page_aspect or req.aspect or "unknown",
-                        started=started,
-                        source_media_id=req.source_media_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Failed to record started video extend", exc_info=exc)
+                record_started(started, page_aspect)
 
             outcome, target = await client.extend_video_migrated(
                 media_id=req.source_media_id,
                 source_video=req.source_video,
                 project_id=resolved_project,
-                project_name=project_name,
                 prompt=req.prompt,
                 aspect=req.aspect,
                 duration=req.duration,
@@ -861,16 +846,17 @@ class FlowWorker:
                 on_checkpoint=observe_checkpoint,
             )
 
-        effective_media = outcome.source_media_id or req.source_media_id or outcome.record.media_id
-        _record_migrated_extend(
-            recorder,
-            target,
-            profile_name=self.profile_name,
-            profile_dir=profile_dir,
-            media_id=effective_media,
-            project_id=resolved_project,
-            outcome=outcome,
-        )
+        try:
+            recorder.record_migrated_extend(
+                target,
+                profile_name=self.profile_name,
+                profile_dir=profile_dir,
+                media_id=outcome.source_media_id or req.source_media_id or outcome.record.media_id,
+                project_id=resolved_project,
+                outcome=outcome,
+            )
+        except DataStoreError as exc:  # the catalog never fails a paid run
+            logger.warning("Failed to record video extend", exc_info=exc)
         if target is None:
             raise FlowApiError(
                 f"Video extend failed: {outcome.record.failure_message}",

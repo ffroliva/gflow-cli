@@ -361,33 +361,47 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
     )
 
 
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is not None and not isinstance(value, str):
+        msg = f"{key} must be a string"
+        raise TypeError(msg)
+    return value
+
+
+def _optional_int(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        msg = f"{key} must be an integer"
+        raise TypeError(msg)
+    return value
+
+
 def build_video_extend_request(payload: dict[str, Any]) -> MigratedExtendRequest:
-    """Map an ``extend`` queue payload dict onto :class:`MigratedExtendRequest`."""
+    """Map an ``extend`` queue payload dict onto :class:`MigratedExtendRequest`.
+
+    Every wrong type is a ``TypeError``/``ValueError`` here, so :func:`decode_payload`
+    reports it as :class:`QueueSchemaError` (exit 30) rather than failing later.
+    """
     prompt = payload["prompt"]
     if not isinstance(prompt, str):
-        raise ValueError("prompt must be a string")
-    source_video = Path(payload["source_video"]) if payload.get("source_video") else None
-    source_media_id = payload.get("source_media_id")
-    if source_media_id is not None and not isinstance(source_media_id, str):
-        raise ValueError("source_media_id must be a string")
-    raw_duration = payload.get("duration")
-    if raw_duration is not None and (
-        isinstance(raw_duration, bool) or not isinstance(raw_duration, int)
-    ):
-        raise ValueError("duration must be an integer")
-    raw_cap = payload.get("max_credits")
-    if raw_cap is not None and (isinstance(raw_cap, bool) or not isinstance(raw_cap, int)):
-        raise ValueError("max_credits must be a non-negative integer")
+        msg = "prompt must be a string"
+        raise TypeError(msg)
+    for key in ("project_id", "project_name", "output_file"):
+        _optional_str(payload, key)
+    source_video = _optional_str(payload, "source_video")
     raw_refs = payload.get("reference_images", [])
-    if not isinstance(raw_refs, list):
-        raise ValueError("reference_images must be a list of paths")
-    reference_images = tuple(Path(p) for p in cast("list[Any]", raw_refs))
+    if not isinstance(raw_refs, list) or not all(
+        isinstance(p, str) for p in cast("list[Any]", raw_refs)
+    ):
+        msg = "reference_images must be a list of paths"
+        raise TypeError(msg)
     return MigratedExtendRequest(
         prompt=prompt,
-        source_video=source_video,
-        source_media_id=source_media_id,
-        duration=raw_duration,
-        reference_images=reference_images,
-        aspect=payload.get("aspect"),
-        max_credits=raw_cap,
+        source_video=Path(source_video) if source_video else None,
+        source_media_id=_optional_str(payload, "source_media_id"),
+        duration=_optional_int(payload, "duration"),
+        reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
+        aspect=_optional_str(payload, "aspect"),
+        max_credits=_optional_int(payload, "max_credits"),
     )

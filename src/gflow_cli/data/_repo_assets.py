@@ -121,8 +121,8 @@ class AssetsRepo(RepositoryBase):
 
     def note_asset_extended(
         self, profile_name: str, flow_media_id: str, *, model_key: str | None, workflow_id: str
-    ) -> None:
-        """Record a finished extend that grew this clip in place (#1184).
+    ) -> bool:
+        """Record a finished extend that grew this clip in place (#1184); ``False``: no row.
 
         Completed status, model and the clip's own workflow are kept; a ``pending`` row
         (from a freshly uploaded local-video extend) settles to completed. The stored
@@ -131,7 +131,7 @@ class AssetsRepo(RepositoryBase):
         extend. No row, no-op.
         """
         with self._store.transaction(immediate=True):
-            self._store.conn.execute(
+            cursor = self._store.conn.execute(
                 """
                 UPDATE assets
                 SET status = CASE
@@ -149,6 +149,7 @@ class AssetsRepo(RepositoryBase):
                 """,
                 (model_key, workflow_id, _utc_now(), profile_name, flow_media_id),
             )
+        return cursor.rowcount > 0
 
     def set_asset_display_name(
         self,

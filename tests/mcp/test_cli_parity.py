@@ -275,8 +275,6 @@ _PARAM_ALIASES: dict[str, str] = {
     "refs": "reference_images",
     "tool_specs": "tools",
     "image": "initial_frame",
-    "media_id": "source",  # video extend SOURCE accepts Flow media UUID or local video path
-    "prompts": "prompt",  # video extend CLI accepts N prompts for labs chains; MCP takes one
     "enable_mode": "enabled",  # CLI --enable-mode / tool `enabled`: same switch
     "disabled": "enabled",
     "output_file": "out_file",  # --out-file PATH (#1158)
@@ -286,6 +284,12 @@ _PARAM_ALIASES: dict[str, str] = {
 
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked
 #: admission, NOT an exemption: it exists so a known hole cannot widen unnoticed.
+#: Per-leaf renames, scoped so they cannot hide a gap on any other command.
+_LEAF_PARAM_ALIASES: dict[str, str] = {
+    # The CLI takes N prompts for a chained run; the tool drives one segment, one prompt.
+    "video extend:prompts": "prompt",
+}
+
 _OPTION_EXEMPT: dict[str, str] = {
     "audio narrate:text_file": "reads a local file; the tool takes the text directly",
     "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
@@ -303,11 +307,12 @@ _OPTION_EXEMPT: dict[str, str] = {
     "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video extend:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
-    "video extend:segments": "labs-only multi-segment chain; MCP drives single-segment extend",
-    "video extend:jitter": "pacing knob for labs multi-segment loops; MCP tool is single-segment",
-    "video extend:scene_id": "labs-only existing scene continuation; not ported to flow.google.com",
-    "video extend:resume_from": "labs-only scene resume handle; not ported to flow.google.com",
-    "video extend:seed": "labs-only fixed seed; not ported to flow.google.com",
+    "video extend:segments": "multi-segment chains are not ported to flow.google.com yet; "
+    "the MCP tool drives one segment",
+    "video extend:jitter": "pacing between chained segments; the MCP tool drives one segment",
+    "video extend:scene_id": "an existing scene is not ported to flow.google.com yet",
+    "video extend:resume_from": "a scene resume handle is not ported to flow.google.com yet",
+    "video extend:seed": "a fixed seed is not ported to flow.google.com yet",
     "video extend:yes": "CLI interactive cost-confirmation bypass; MCP tools are non-interactive",
     "video extend:dry_run": "CLI plan-preview flag; MCP tools execute or return validation errors",
     "character create:face_prompt": "GAP #691 — prompt-generated create not ported over MCP",
@@ -346,7 +351,11 @@ def test_every_cli_option_reaches_its_mcp_tool(mcp_server: Any) -> None:
             continue  # test_mapped_tools_are_registered owns that failure
         tool_params = _tool_params(registered.fn)
         for raw in sorted(_leaf_params(leaf) - _CLI_ONLY_PARAMS):
-            candidates = {raw, _PARAM_ALIASES.get(raw, raw)}
+            candidates = {
+                raw,
+                _PARAM_ALIASES.get(raw, raw),
+                _LEAF_PARAM_ALIASES.get(f"{leaf}:{raw}", raw),
+            }
             if candidates & tool_params or f"{leaf}:{raw}" in _OPTION_EXEMPT:
                 continue
             unmirrored.append(f"{leaf} --{raw.replace('_', '-')} -> {tool}")
