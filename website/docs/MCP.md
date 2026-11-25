@@ -500,7 +500,13 @@ import base64
 
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="<GFLOW_DAEMON_TOKEN or any string>")
+# max_retries=0: the route keeps generating after a client disconnect, so an SDK retry on
+# a timeout or proxy error can bill a second generation.
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="<GFLOW_DAEMON_TOKEN or any string>",
+    max_retries=0,
+)
 image = client.images.generate(prompt="a paper boat", size="1792x1024", n=1)
 png_bytes = base64.b64decode(image.data[0].b64_json)
 ```
@@ -513,11 +519,11 @@ a new Flow project, as the tool does when it is given no `project`.
 | Field | Accepted |
 |---|---|
 | `prompt` | required, non-empty |
-| `model` | Flow image models only: `nano2` (default), `nano2-lite`, `nano-pro`, `image4` and their aliases; anything else, OpenAI's own names included, is 400 |
+| `model` | Google Flow image models only: `nano2` (default), `nano2-lite`, `nano-pro`, `image4` and their aliases; anything else, OpenAI's own names included, is 400 |
 | `n` | 1–4 |
 | `size` | `WIDTHxHEIGHT` → the nearest of Flow's aspects (`1:1`, `9:16`, `16:9`, `4:3`, `3:4`); an aspect string itself; `auto` or absent → `1:1` |
 | `response_format` | `b64_json` only (the default here; OpenAI's default `url` is 400 — gflow does not host files) |
-| `stream` | absent or `false`; `true` is 400 |
+| `stream` | absent, `null`, `false` or `0`; `true` is 400 (streaming is not supported), any other value is 400 (not a boolean) |
 | `quality`, `style`, `user`, `background`, `output_format` | ignored |
 
 An explicit JSON `null` counts as an absent field. Video is not exposed yet.
@@ -525,13 +531,14 @@ An explicit JSON `null` counts as an absent field. Video is not exposed yet.
 **Contract decision — Flow models only.** The endpoint is a facade over Google Flow, not
 an OpenAI emulator: it speaks OpenAI's request and response schema, but the images come
 from Flow's models. A request naming an OpenAI model (`gpt-image-1`, `dall-e-3`, …) is
-refused with 400 `param: "model"` and a message listing the Flow models, rather than
+refused with 400 `param: "model"` and a message listing the accepted Flow model names, rather than
 silently substituting one. A caller that keeps OpenAI's model name gets an error that
 says what to send instead, and a generation is never billed under a model it did not
 name.
 
 **Request checks.** Every request must be a `POST` (405 otherwise) with
-`Content-Type: application/json` (415) and a body of at most 4 MiB (413). With no token
+`Content-Type: application/json` (415) and a body of at most 4 MiB, the MCP SDK's own
+request-body cap, whether the length is declared or the body is chunked (413). With no token
 configured, the route also refuses a non-loopback `Host` (421, DNS rebinding) and a
 non-loopback `Origin` (403): a web page in the user's browser can send a `text/plain`
 POST without a CORS preflight, and these checks keep it from starting a generation.
@@ -547,34 +554,49 @@ their exception classes:
            "retryable": false, "next_action": "reconcile", "task_id": "..."}}
 ```
 
-`gflow_type`, `exit_code`, `charged`, `retryable`, `next_action`, `operation_id` and
-`task_id` are gflow's facts, present when known; OpenAI clients ignore keys they do not
+`gflow_type`, `exit_code`, `charged`, `retryable`, `next_action`, `operation_id`,
+`retry_after` and `task_id` are gflow's facts, present when known; OpenAI clients ignore keys they do not
 know. The mapping (`src/gflow_cli/mcp/openai_errors.py`):
 
 | gflow problem | HTTP | `type` | `code` |
 |---|---|---|---|
 | `content-policy` | 400 | `invalid_request_error` | `content_policy_violation` |
-| `bad-parameter`, `reference-not-found`, any other 4xx | 400 (or the 4xx) | `invalid_request_error` | `invalid_value` |
+| `bad-parameter`, `reference-not-found` | 400 | `invalid_request_error` | `invalid_value` |
 | `rate-limit`, a 429, `status: rate_limited` | 429 | `rate_limit_error` | `rate_limit_exceeded` |
 | `insufficient-credits` | 429 | `rate_limit_error` | `insufficient_quota` |
-| `auth-expired`, `auth-missing`, `aisandbox-auth`, `auth-browser-rejected`, any 401/403 from Flow | 502 | `server_error` | `upstream_auth_failed` |
-| `transport-timeout`, a task still `pending`/`processing` | 504 | `server_error` | `generation_timeout` |
+| `auth-expired`, `auth-missing`, `aisandbox-auth`, `auth-browser-rejected`, any other 401/403 from Flow | 502 | `server_error` | `upstream_auth_failed` |
+| `waf-rejection`, `recaptcha-mint` | 502 | `server_error` | `upstream_rejected` |
+| any other 4xx from Flow | 502 | `server_error` | `upstream_error` |
+| `no-profile`, `no-default-profile`, `configuration`, `profile-access`, `profile-engine-downgrade`, `browser-engine-unavailable`, and a `bad-parameter` about the profile or `GFLOW_CLI_PROJECT` | 500 | `server_error` | `server_misconfigured` |
+| `transport-timeout`, a task `wait=true` left `pending`/`processing` (`task_status`) | 504 | `server_error` | `generation_timeout` |
 | any 5xx, or no usable status | the 5xx, else 500 | `server_error` | `generation_failed` |
 
 A 401 or 403 from Flow concerns the daemon's saved Google session, so it becomes a 502
 whose message says to run `gflow auth renew`; passing it through would make an OpenAI
-client treat its daemon token as invalid. The route's own refusals use the same object:
+client treat its daemon token as invalid. A WAF or reCAPTCHA refusal is Flow rejecting
+the daemon's request, not an expired session, so its 502 does not suggest a renewal. A
+4xx from Flow answers the daemon's request, never the caller's, so only the route's own
+parameter validation and gflow's `bad-parameter` produce a 400. A missing profile, an
+ambiguous default profile or a `GFLOW_CLI_PROJECT` that belongs to another profile is a
+fault in the daemon's configuration: a 500 whose message names it, which the caller cannot
+fix by changing the request. The message is the problem's `detail`, else its `message`,
+else its `title`, else `Generation failed.`. The route's own refusals use the same object
+and carry `charged: "no"` (400s also `gflow_type` `bad-parameter`):
 400 `invalid_value` with `param`, 401 `authentication_error`/`invalid_api_key` (a missing
 or wrong daemon token), 403 `permission_error` (`no_spend`, `invalid_origin`), 405
 `method_not_allowed`, 413 `request_too_large`, 415 `unsupported_media_type`, 421
 `invalid_host`, 502 `no_output` (Flow reported success with no file) and 500
-`output_unreadable` (the file could not be read).
+`output_unreadable` (the file could not be read; the path and the OS error are logged on
+the server, not returned).
 
-**Retries.** The OpenAI SDKs retry 5xx responses twice by default, and a retried
+**Retries.** The OpenAI SDKs retry 429 and 5xx responses twice by default, and a retried
 generation is a second generation. Every error response therefore carries
-`x-should-retry: false`, which the SDKs obey, unless gflow reports the failure as
-`retryable` with `charged: "no"` and the status is neither 502 nor 504. A 429 also
-carries `retry-after: 20`, one refill of the rate-limit bucket.
+`x-should-retry: false`, which the SDKs obey, except the local rate-limit refusal
+(`status: rate_limited`): it is answered before anything runs and the bucket refills on
+its own. A 429 carries `retry-after` with the problem's own `retry_after` when Flow gave
+one (a daily quota), else 20 seconds, one refill of the bucket; a Flow quota 429 is not
+retried by the SDK. These requests are counted in telemetry under the client name
+`openai-http`, apart from MCP clients' tool calls.
 
 > **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
 > surface are built as internal foundation but are **not yet wired into**

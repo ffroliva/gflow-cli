@@ -44,20 +44,24 @@ path. It adds no CLI leaf, option or MCP tool.
 | 8 | D11 | Unknown `model`, including OpenAI's own (`gpt-image-1`, `dall-e-3`) | **High** | 400 `param: model` listing Flow's image models; gflow aliases (`nano2`, `nano-pro`, …) accepted | Unit |
 | 9 | D11 | Missing/empty `prompt`, body not a JSON object | **High** | 400 `param: prompt` / 400 invalid JSON | Unit |
 | 10 | D7 | Tool returns `status: error` with a problem dict | **High** | Status, `type` and `code` from the mapping table in `docs/MCP.md`; `gflow_type` carries the problem `type` URI | Unit, one per table row |
-| 11 | D5 | Tool returns `status: rate_limited` | **High** | 429 `rate_limit_error` with `retry-after` | Unit, SDK contract |
+| 11 | D5 | Tool returns `status: rate_limited` (local bucket), or a Flow quota 429 | **High** | 429 `rate_limit_error`; `retry-after` is the problem's `retry_after` when present, else 20; only the local bucket refusal omits `x-should-retry: false` | Unit, SDK contract |
 | 12 | D7 | Tool completes with no files | **Medium** | 502; never a 200 with an empty `data` list | Unit |
 | 13 | D11 | Fields OpenAI clients send that Flow has no knob for (`quality`, `style`, `user`, `background`, `output_format`) | **Medium** | Ignored, request still served | Unit |
 | 14 | E2E | Live generation over HTTP on a logged-in profile | **High** | `POST /v1/images/generations` through `build_app` returns one decodable PNG/JPEG; through the `openai` SDK, `n=2` returns two | Live E2E (`e2e`, `e2e_image`, $0) |
 | 15 | D1 | No token, a web page POSTs `text/plain` or from a foreign `Origin` (CSRF) | **Critical** | 415 for any non-JSON Content-Type, 403 for a non-loopback Origin; the tool is never called | Unit, subprocess |
 | 16 | D5 | A failure the official SDK would retry (5xx) after Flow may have billed | **Critical** | `x-should-retry: false`, so the SDK makes exactly one call | Unit, SDK contract |
 | 17 | D1 | Flow answers 401/403 for the daemon's saved session | **High** | 502 `server_error` saying to run `gflow auth renew`, never a 401 that makes a client rotate a valid daemon token | Unit |
-| 18 | D7 | The task is still pending or processing when the wait ends | **High** | 504 `generation_timeout` naming the task id | Unit |
+| 18 | D7 | The task is still pending or processing when the wait ends | **High** | `wait=true` marks the unfinished row with `task_status`; 504 `generation_timeout` naming the task id | Unit, through `task_payload` |
 | 19 | D11 | Explicit `null` fields, `stream: true`, a huge `size`, a deeply nested or oversized body | **High** | `null` reads as absent; `stream` 400; huge `size` and deep nesting 400; over 4 MiB 413 | Unit |
 | 20 | D7 | The generated file cannot be read | **Medium** | 500 `output_unreadable`, `x-should-retry: false` | Unit |
 | 21 | D1 | Wrong token, or a GET on the route | **Medium** | OpenAI-shaped 401 / 405 | Unit, SDK contract |
+| 22 | D7 | Flow answers a 4xx with no table row, or a WAF / reCAPTCHA refusal | **High** | 502 `upstream_error` / `upstream_rejected`, never a 400 that blames the caller; no `gflow auth renew` advice for WAF / reCAPTCHA | Unit |
+| 23 | D7 | The daemon is misconfigured: no profile, no default profile, a missing profile directory, `GFLOW_CLI_PROJECT` of another profile | **High** | 500 `server_misconfigured`, message naming the daemon configuration | Unit |
+| 24 | D11 | `stream` given as a non-boolean (`"true"`, `1`) | **Medium** | 400 `param: stream` saying it must be a boolean; `false`, `0` and `null` pass | Unit |
+| 25 | D12 | A request through the route reaches telemetry | **Medium** | Counted under the client name `openai-http`, apart from MCP clients | Unit |
 
-**Count:** 21 scenarios. Critical 5 · High 12 · Medium 4.
+**Count:** 25 scenarios. Critical 5 · High 14 · Medium 6.
 
 ## Must-cover before merge
 
-Scenarios 1–11 and 14–21.
+Scenarios 1–11 and 14–25.
