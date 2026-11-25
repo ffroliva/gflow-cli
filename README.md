@@ -113,7 +113,7 @@ gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16
 gflow character create --project <project-id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
-Outputs land under `$GFLOW_CLI_OUTPUT_DIR` (default `~/Downloads/gflow-cli`), or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
+Outputs land under `$GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`), or you can route them to S3, MinIO, or Google Cloud Storage with [`GFLOW_CLI_STORAGE_URI`](docs/EXTERNAL_STORAGE.md). The first call takes 30 to 90 seconds while Chromium warms up; later calls reuse the warm session.
 
 To save one result at an exact path, pass `--out-file PATH` (for example `gflow image t2i "..." --out-file hero.png`). Use `-o/--output` to select the output format (`json|table|id`). Non-format arguments to `-o` fail fast with exit 2 reminding you to use `--out-file`. See [USAGE](docs/USAGE.md#gflow-image-t2i).
 

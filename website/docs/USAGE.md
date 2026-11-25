@@ -2594,7 +2594,7 @@ catalog has not seen yet is recorded without one, as with `t2i --project`).
 | `prompts[].ref` | no | — | `"batch:N"` (generate from row N's image) or a local image file. See [Referencing an earlier row](#referencing-an-earlier-row) and [Referencing a local file](#referencing-a-local-file). |
 | `profile` | no | active profile | CLI `--profile` overrides. |
 | `transport` | no | `ui_automation` | Experimental strategies need `GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`. |
-| `output_dir` | no | `<output root>/images/<YYYY-MM-DD>/` | CLI `--output-dir` overrides. The output root is `GFLOW_CLI_OUTPUT_DIR` (default `~/Downloads/gflow-cli`). |
+| `output_dir` | no | `<output root>/images/<YYYY-MM-DD>/` | CLI `--output-dir` overrides. The output root is `GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`). |
 | `project` | no | new `gflow-cli run` project | Existing Flow project id (letters, digits, hyphens) to generate every row into. CLI `--project` overrides. |
 
 ### Error semantics
@@ -2703,7 +2703,7 @@ Refer to the complete [Movie Manifests Guide](MOVIE.md) for detailed syntax, cha
 ### Parameters
 
 * `MANIFEST`: Path to your `movie.toml` manifest file (required positional argument).
-* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Defaults to `<output root>/images/<YYYY-MM-DD>/`, where the output root is `GFLOW_CLI_OUTPUT_DIR` (default `~/Downloads/gflow-cli`).
+* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Without it, the manifest's `output_dir` applies when set (the generated template sets `./out/my-movie`); otherwise the default is `<output root>/images/<YYYY-MM-DD>/`, where the output root is `GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`).
 * `--profile NAME`: Specify Google Flow profile to use.
 * `--continue-on-error`: Skip failed scenes and continue generating subsequent scenes (default).
 * `--fail-fast`: Terminate immediately on the first failed scene generation.
