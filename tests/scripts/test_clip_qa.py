@@ -389,3 +389,4 @@ def test_the_audio_measured_is_the_stream_that_was_probed(good_clip: Path, tmp_p
     ffmpeg("-i", str(good_clip), *silent, *maps, *default, "-c:v", "copy", "sa01.mp4", cwd=tmp_path)
 
     assert clip_qa.measure(tmp_path / "sa01.mp4")[1]["sync_r"] >= clip_qa.SYNC_MIN_R
+    clip_qa.selftest(tmp_path / "sa01.mp4")  # shifts that same stream
