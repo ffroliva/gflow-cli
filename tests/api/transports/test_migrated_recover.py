@@ -472,3 +472,21 @@ async def test_a_reload_that_times_out_is_the_typed_no_url_error_1484(tmp_path: 
         await _recover(page, tmp_path, wait_s=0.3)
     # The reload spends only what is left of the wait, never a fresh navigation timeout.
     assert len(page.reload_timeouts_ms) == 1 and 0 < page.reload_timeouts_ms[0] <= 300
+
+
+@pytest.mark.asyncio
+async def test_a_reply_requested_by_the_previous_load_is_charged_to_that_load_1484() -> None:
+    """The loss belongs to the load that SENT the request, even when its response handler
+    only starts after the next load began."""
+    from gflow_cli.api.transports.migrated_recover import _As29sWatch
+
+    watch = _As29sWatch(MEDIA_ID)
+    watch.attempt = 1
+    watch.on_request(type("Req", (), {"url": _Unreadable.url})())  # another request
+    stale = type("Req", (), {"url": _Unreadable.url})()
+    watch.on_request(stale)
+    watch.attempt = 2
+    response = _Unreadable()
+    response.request = stale  # type: ignore[attr-defined]
+    await watch.on_response(response)
+    assert watch.waiting, "a body lost by load 1 cut load 2 short"

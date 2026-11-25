@@ -367,8 +367,8 @@ class SubmitObserveMixin(MentionMixin):
                 _accept(rid, rec)
 
         def _accept(rid: str, rec: GenerationRecord) -> None:
-            if rid == LISTING_RPC:  # its URL is an unsigned lh3 rendition (#948)
-                rec = replace(rec, video_url=None)
+            if rid == LISTING_RPC:
+                rec = _without_listing_url(rec)
             workflow["id"] = rec.workflow_id
             log.info(
                 "migrated.video_adopted_from_listing"
@@ -486,7 +486,7 @@ class SubmitObserveMixin(MentionMixin):
                     else:
                         _adopt(rid, payload)
                 elif rid in STATUS_RPCS and workflow:
-                    status_watch.note_frame(rid, payload, _settle)
+                    status_watch.note_frame(rid, payload)
 
         page.on("response", on_response)
 
@@ -929,6 +929,12 @@ class SubmitObserveMixin(MentionMixin):
             return done_no_url.result()
 
 
+def _without_listing_url(rec: GenerationRecord) -> GenerationRecord:
+    """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); without it
+    the download takes the clip route, which fetches a signed one."""
+    return replace(rec, video_url=None)
+
+
 @dataclass
 class _StatusWatch:
     """Tracks post-submit ``jwpduf``/``as29s`` health and recovers from ``Zzl0ze`` (#1484)."""
@@ -936,6 +942,8 @@ class _StatusWatch:
     terminal: asyncio.Future[GenerationRecord]
     done_no_url: asyncio.Future[GenerationRecord]
     workflow: dict[str, str]
+    #: Set once a status body is lost; stays set, since a later readable frame can be a
+    #: stale running one while the terminal poll that matters was the one lost.
     status_lost: asyncio.Event = field(default_factory=asyncio.Event)
     seen: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -954,17 +962,29 @@ class _StatusWatch:
         if rpcid in STATUS_RPCS and self.workflow and not self.settled:
             self.status_lost.set()
 
-    def note_frame(
-        self, rid: str, payload: Any, settle: Callable[[GenerationRecord], None]
-    ) -> None:
+    def settle_from_listing(self, rec: GenerationRecord) -> None:
+        """Settle on a terminal listing record; no signed URL can follow it."""
+        if not self.terminal.done():
+            self.terminal.set_result(_without_listing_url(rec))
+
+    def note_frame(self, rid: str, payload: Any) -> None:
         try:
             rec = generation_record(rid, payload, workflow_id=self.workflow["id"])
         except WireFormatError:
             return
-        self.status_lost.clear()
         self.seen.set()
         log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
-        settle(rec)
+        self.settle(rec)
+
+    async def went_quiet(self, window_s: float, deadline: float) -> bool:
+        """Wait until no readable status frame arrives for ``window_s``; ``False`` if the
+        run settles or the deadline passes first. Flow polls every ~5 s while it works."""
+        while not self.settled and time.monotonic() < deadline:
+            self.seen.clear()
+            await self.wait_until(self.seen, min(window_s, deadline - time.monotonic()))
+            if not self.seen.is_set():
+                return not self.settled and time.monotonic() < deadline
+        return False
 
     async def wait_until(self, event: asyncio.Event, timeout: float) -> None:
         if self.settled or timeout <= 0:
@@ -1025,9 +1045,7 @@ class _ListingRecovery:
             return
         if rec.is_done or rec.is_failed:
             log.info("migrated.status", rpc=LISTING_RPC, status=rec.status, bytes=rec.size_bytes)
-            # The listing's URL is an unsigned lh3 rendition that answers 302 (#948), so a
-            # done record goes out without it and the download takes the clip route.
-            self.status_watch.settle(replace(rec, video_url=None))
+            self.status_watch.settle_from_listing(rec)
 
 
 async def _finish_submitted(
@@ -1055,16 +1073,11 @@ async def _finish_submitted(
     listing = _ListingRecovery(composer, page, resolved_project_id, first.workflow_id, status_watch)
     while not status_watch.settled and time.monotonic() < deadline:
         await status_watch.wait_until(status_watch.status_lost, deadline - time.monotonic())
-        if not status_watch.status_lost.is_set():
-            # Settled, out of time, or a readable poll already cleared the loss: the loop
-            # condition decides; only settling or the deadline ends the watch.
-            continue
-        status_watch.status_lost.clear()
-        status_watch.seen.clear()
-        await status_watch.wait_until(
-            status_watch.seen, min(RESULT_URL_GRACE_S, deadline - time.monotonic())
-        )
-        if not status_watch.seen.is_set():
+        # Once a status body is lost, polls going quiet is the sign the lost one was the
+        # terminal poll: Flow sends none after it.
+        if status_watch.status_lost.is_set() and await status_watch.went_quiet(
+            RESULT_URL_GRACE_S, deadline
+        ):
             await listing.read_if_due(deadline)
     # A last look past the poll deadline (up to LISTING_READ_BUDGET_S more): the clip is
     # billed, and the listing is the only record left once its polls stopped arriving.

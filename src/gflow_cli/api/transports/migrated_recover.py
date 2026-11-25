@@ -87,17 +87,23 @@ class _As29sWatch:
     found: dict[str, Any] = field(default_factory=dict[str, Any])
     attempt: int = 0
     unreadable_on: int = 0
+    #: The load each as29s request was sent on; a loss belongs to that load.
+    sent_on: dict[Any, int] = field(default_factory=dict[Any, int])
 
     @property
     def waiting(self) -> bool:
         """Still no record, and the current load has not lost its ``as29s`` body."""
         return not self.found and self.unreadable_on != self.attempt
 
+    def on_request(self, request: Any) -> None:
+        if "as29s" in str(getattr(request, "url", "")):
+            self.sent_on[request] = self.attempt
+
     async def on_response(self, response: Any) -> None:
         url = str(getattr(response, "url", ""))
         if self.found or "batchexecute" not in url:
             return
-        load = self.attempt  # a read pending across a reload fails on behalf of its own load
+        load = self.sent_on.get(getattr(response, "request", None), self.attempt)
         try:
             text = await response.text()
         except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
@@ -121,6 +127,7 @@ async def _await_signed_record(
     loop = asyncio.get_running_loop()
     started = loop.time()
     deadline: float | None = None
+    page.on("request", watch.on_request)
     page.on("response", watch.on_response)
     try:
         # Total time is capped at the first navigation's timeout plus ``wait_s``: the wait
@@ -157,6 +164,7 @@ async def _await_signed_record(
             while watch.waiting and loop.time() < deadline:
                 await page.wait_for_timeout(500)
     finally:
+        page.remove_listener("request", watch.on_request)
         page.remove_listener("response", watch.on_response)
 
     if not watch.found:

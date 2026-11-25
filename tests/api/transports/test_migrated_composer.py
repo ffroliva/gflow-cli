@@ -5164,3 +5164,50 @@ async def test_a_clip_adopted_from_the_listing_carries_no_listing_url_1484(
     lh3 = "https://lh3.googleusercontent.com/unsigned"
     rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, lh3))))
     assert rec.is_done and rec.video_url is None
+
+
+async def test_a_stale_running_frame_after_a_lost_terminal_poll_still_reads_the_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A readable running frame landing after the evicted terminal poll used to clear the
+    loss; Flow then sends nothing more and the finished clip waited for the deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(2))),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(3)))
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS
+    assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
+    assert len(tabs) == 1
+
+
+async def test_a_clip_settled_from_the_listing_skips_the_result_url_grace_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No as29s with a signed URL follows a listing read, so waiting for one is dead time."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    _listing_tabs(page, _listing(_ours(3)))
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=5.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.video_url is None
+    assert time.monotonic() - started < 0.9, "waited the URL grace after the listing read"
