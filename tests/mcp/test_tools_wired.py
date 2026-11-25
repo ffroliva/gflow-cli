@@ -230,6 +230,158 @@ class TestGenerateImageWired:
         assert result["params"]["count"] == 2
 
     @pytest.mark.asyncio
+    async def test_image_t2i_count_gt_1_returns_all_files(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#1469: wait=True and task_payload return every image file generated for count > 1."""
+        from gflow_cli.mcp.tools import gflow_generate_image, task_payload
+
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-1", workflow_id="wf-1", seed=101),
+                _FakeImage(media_name="media-img-2", workflow_id="wf-2", seed=102),
+                _FakeImage(media_name="media-img-3", workflow_id="wf-3", seed=103),
+            ]
+        )
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="three cats", count=3)
+
+        assert result["status"] == "completed"
+        assert len(result["files"]) == 3
+        assert len(set(result["files"])) == 3
+        assert all(Path(p).is_file() for p in result["files"])
+        payload = task_payload("default", result["task_id"], temp_db.path)
+        assert payload["files"] == result["files"]
+
+    @pytest.mark.asyncio
+    async def test_image_t2i_count_fewer_returned_lists_actual_files(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """#1469: when Flow returns fewer than count images, files lists the actual outputs."""
+        from gflow_cli.mcp.tools import gflow_generate_image
+
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-a", workflow_id="wf-a"),
+                _FakeImage(media_name="media-img-b", workflow_id="wf-b"),
+            ]
+        )
+        with (
+            patch(
+                "gflow_cli.mcp.tools._resolve_and_validate_profile",
+                return_value="default",
+            ),
+            patch(
+                "gflow_cli.worker.daemon.FlowApiClient",
+                return_value=fake_client,
+            ),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            result = await gflow_generate_image(prompt="two cats", count=3)
+
+        assert result["status"] == "completed"
+        assert len(result["files"]) == 2
+        assert len(set(result["files"])) == 2
+
+    def test_task_payload_falls_back_to_single_asset_without_operation_link(
+        self, temp_db: DataStore, tmp_path: Path
+    ) -> None:
+        """Legacy/unlinked assets without operation_assets rows still resolve via flow_media_id."""
+        from gflow_cli.data.models import AssetKind, AssetRecord, LocalFileRecord
+        from gflow_cli.data.repository import DataRepository
+        from gflow_cli.mcp.tools import task_payload
+        from gflow_cli.worker.queue import QueueRepository
+
+        img_file = tmp_path / "single.png"
+        img_file.write_bytes(b"PNG")
+        repo = DataRepository(temp_db)
+        repo.upsert_asset(
+            AssetRecord(
+                id="asset-only-1",
+                profile_name="default",
+                flow_project_id="proj-1",
+                flow_media_id="media-only-1",
+                flow_workflow_id="wf-only-1",
+                flow_media_generation_id=None,
+                kind=AssetKind.IMAGE,
+                status="ready",
+                model=None,
+                aspect_ratio=None,
+                width=None,
+                height=None,
+                duration_seconds=None,
+                seed=777,
+                metadata_json={},
+            )
+        )
+        repo.upsert_local_file(
+            LocalFileRecord(
+                id="lf-only-1",
+                profile_name="default",
+                asset_id="asset-only-1",
+                path=img_file,
+                media_type="image/png",
+                bytes=3,
+                sha256=None,
+            )
+        )
+        qrepo = QueueRepository(temp_db)
+        qrepo.enqueue_task("task-only-1", "default", "t2i", {"prompt": "x"})
+        qrepo.update_task_status("task-only-1", status="completed", flow_media_id="media-only-1")
+
+        payload = task_payload("default", "task-only-1", temp_db.path)
+        assert payload["status"] == "completed"
+        assert payload["files"] == [str(img_file)]
+
+    @pytest.mark.asyncio
     async def test_image_explicit_output_file(self, temp_db: DataStore, tmp_path: Path) -> None:
         """When output is specified, the generated asset lands at the custom path."""
         from gflow_cli.mcp.tools import _TokenBucket, gflow_generate_image

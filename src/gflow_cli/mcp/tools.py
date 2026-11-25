@@ -555,7 +555,8 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
         flow_workflow_id: str | None = None
         seed: int | None = None
         if completed_task.flow_media_id:
-            asset = DataRepository(store).get_asset_by_flow_media_id(
+            repo = DataRepository(store)
+            asset = repo.get_asset_by_flow_media_id(
                 profile,
                 completed_task.flow_media_id,
             )
@@ -565,8 +566,17 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 # The catalogued seed (#1013): Flow's own on the classic image paths, the
                 # requested one for video, a 0 placeholder on the agentic/agent-only arms.
                 seed = asset.seed
-                if asset.local_files:
-                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+            output_assets = repo.get_operation_output_assets_for_media(
+                profile, completed_task.flow_media_id
+            ) or ([asset] if asset is not None else [])
+            file_paths = list(
+                dict.fromkeys(
+                    str(lf.path)
+                    for out in output_assets
+                    for lf in out.local_files
+                    if lf.path is not None
+                )
+            )
 
     log.info(
         "mcp.tool.task_completed",

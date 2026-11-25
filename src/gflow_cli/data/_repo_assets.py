@@ -319,6 +319,43 @@ class AssetsRepo(RepositoryBase):
             return None
         return self._hydrate_asset_lookup(row)
 
+    def get_operation_output_assets_for_media(
+        self,
+        profile_name: str,
+        flow_media_id: str,
+    ) -> list[AssetLookup]:
+        """Return all output assets produced by the latest operation owning *flow_media_id*."""
+        op_row = self._store.conn.execute(
+            """
+            SELECT o.id
+            FROM operations o
+            JOIN operation_assets oa ON oa.operation_id = o.id
+            JOIN assets a ON a.id = oa.asset_id
+            WHERE o.profile_name = ?
+              AND a.flow_media_id = ?
+              AND oa.role = 'output'
+            ORDER BY o.started_at DESC, o.id DESC
+            LIMIT 1
+            """,
+            (profile_name, flow_media_id),
+        ).fetchone()
+        if op_row is None:
+            return []
+        cols = ", ".join(f"a.{col.strip()}" for col in _ASSET_LOOKUP_COLUMNS.split(","))
+        rows = self._store.conn.execute(
+            f"""
+            SELECT {cols}
+            FROM operation_assets oa
+            JOIN assets a ON a.id = oa.asset_id
+            WHERE oa.operation_id = ?
+              AND oa.role = 'output'
+              AND a.profile_name = ?
+            ORDER BY oa.position ASC, a.created_at ASC, a.id ASC
+            """,  # noqa: S608 - constants and ? placeholders only, values stay bound
+            (str(op_row["id"]), profile_name),
+        ).fetchall()
+        return [self._hydrate_asset_lookup(row) for row in rows]
+
     def get_asset_by_any_id(
         self,
         profile_name: str,
