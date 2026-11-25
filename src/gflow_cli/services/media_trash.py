@@ -18,7 +18,7 @@ from gflow_cli.api import flow_wire
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.flow_wire import WireReadUnavailable
 from gflow_cli.config import get_settings
-from gflow_cli.data.models import AssetLookup
+from gflow_cli.data.models import AssetKind, AssetLookup
 from gflow_cli.data.repository import DataRepository
 from gflow_cli.data.store import DataStore
 from gflow_cli.errors import DataStoreError, WireFormatError
@@ -136,14 +136,31 @@ def resolve_media_trash_target(target_id: str, *, profile: str | None, route: st
         return matches[0]
 
 
+def _wire_id(asset: AssetLookup) -> str:
+    """The id ``pGCYOe`` acts on for ``asset`` (#1451).
+
+    For an image, Flow's trash mutation takes the id gflow records as the image's
+    workflow id (``node[2]`` of the ogiZ0b media tuple), not the media id gflow
+    reports and catalogs (``node[0]``). A video's media id is the one it takes. An
+    image row without a workflow id falls back to its media id.
+    """
+    if asset.kind is AssetKind.IMAGE and asset.flow_workflow_id:
+        return asset.flow_workflow_id
+    return asset.flow_media_id
+
+
 def _resolve_target_info(
     clean_id: str,
     profile: str | None,
     project_id: str | None,
     route: str,
     db_path: Path,
-) -> tuple[str, str, str, str]:
-    """Return (media_id, project_id, workflow_id, profile_name)."""
+) -> tuple[str, str, str, str, str]:
+    """Return (media_id, project_id, workflow_id, profile_name, wire_id).
+
+    ``media_id`` is the id gflow reports for the item; ``wire_id`` is the one sent to
+    ``pGCYOe`` (see :func:`_wire_id`).
+    """
     if project_id:
         from gflow_cli import profile_store
 
@@ -151,9 +168,30 @@ def _resolve_target_info(
         profile_name = profile if profile else profile_store.resolve_profile(None)
         with DataStore.open(db_path) as store:
             repo = DataRepository(store)
-            asset = repo.get_asset_by_any_id(profile_name, clean_id)
-        workflow_id = asset.flow_workflow_id if asset and asset.flow_workflow_id else ""
-        return clean_id, resolved_project_id, workflow_id, profile_name
+            matches = repo.find_assets_by_any_id(clean_id, profile_name=profile_name)
+        if len(matches) > 1:
+            # The catalog row decides which id is sent (#1451), so pick it by project.
+            matches = [m for m in matches if m.flow_project_id == resolved_project_id] or matches
+        if len(matches) > 1:
+            candidates = sorted({f"{m.flow_media_id} ({m.kind.value})" for m in matches})
+            raise DataStoreError(
+                detail=(
+                    f"Multiple media records match {clean_id!r} under profile "
+                    f"{profile_name!r}: {candidates}. Pass a specific media id to disambiguate."
+                ),
+                route=route,
+                charged="no",
+            )
+        if not matches:
+            return clean_id, resolved_project_id, "", profile_name, clean_id
+        asset = matches[0]
+        return (
+            asset.flow_media_id,
+            resolved_project_id,
+            asset.flow_workflow_id or "",
+            profile_name,
+            _wire_id(asset),
+        )
 
     asset = resolve_media_trash_target(clean_id, profile=profile, route=route)
     if not asset.flow_project_id:
@@ -170,6 +208,7 @@ def _resolve_target_info(
         asset.flow_project_id,
         asset.flow_workflow_id or "",
         asset.profile_name,
+        _wire_id(asset),
     )
 
 
@@ -222,14 +261,17 @@ async def set_archived_media_service(
     clean_id = target_id.strip()
     settings = get_settings()
 
-    media_id, resolved_project_id, workflow_id, profile_name = _resolve_target_info(
+    media_id, resolved_project_id, workflow_id, profile_name, wire_id = _resolve_target_info(
         clean_id, profile, project_id, resolved_route, settings.resolved_db_path()
     )
     profile_dir = settings.profile_subdir(profile_name)
+    if wire_id != media_id:
+        log.info(f"media.{action}_image_workflow_id", media_id=media_id, wire_id=wire_id)
 
+    # The wire layer checks Flow's echo against ``wire_id``, the id actually sent.
     wire_res = await _dispatch_mutation(
         profile_dir,
-        media_id,
+        wire_id,
         resolved_project_id,
         archived=archived,
         action=action,
@@ -260,7 +302,11 @@ async def set_archived_media_service(
     return MediaTrashResult(
         media_id=media_id,
         project_id=resolved_project_id,
-        workflow_id=wire_res.get("workflow_id") or workflow_id,
+        # An image sent by its workflow id: Flow's echo puts the reported media id in
+        # the workflow slot, so keep the catalog's workflow id.
+        workflow_id=workflow_id
+        if wire_id != media_id
+        else (wire_res.get("workflow_id") or workflow_id),
         profile_name=profile_name,
         status="trashed" if archived else "restored",
         archived=final_archived,

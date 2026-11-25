@@ -331,7 +331,7 @@ spend no Flow credits. Install media support with `pip install 'gflow-cli[chain]
 
 ```text
 gflow video transcribe FILE [--out-file FILE.srt] [--language CODE] [--profile NAME] [--json]
-gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--json]
+gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language CODE] [--profile NAME] [--position bottom|top|middle] [--margin PX] [--font-size PX] [--box-opacity 0.0-1.0] [--json]
 ```
 
 `FILE` is a local video path or catalog video UUID. `transcribe` defaults to `<name>.srt`;
@@ -339,7 +339,14 @@ gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language COD
 first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
 burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. It
 chooses a system font with broad glyph coverage; CJK coverage depends on fonts installed
-on the machine.
+on the machine. By default, captions sit near the bottom (`--position bottom --margin 28`)
+with auto-sized text and a translucent dark pill (`~0.7` opacity); long cues that
+previously overflowed the fixed 25% band now render in full without clipping. Use
+`--position top|middle`, `--margin PX` (distance in pixels from the anchored top/bottom
+edge to the text ink; values `0-7` clamp to `8 px`, and the background pill extends `6 px`
+beyond the text), `--font-size PX` (`1-1000`; disables 3-line auto-shrink, shrinking to the
+largest size fitting both frame width and height if needed), and `--box-opacity 0.0-1.0`
+(`0.0` removes the pill) to keep lower-thirds or on-screen content clear.
 
 Transcription sends only extracted 16 kHz mono WAV audio to the configured
 `GFLOW_CLI_LLM_BASE_URL` at `/audio/transcriptions`, with the optional
@@ -363,8 +370,8 @@ the input file is never overwritten.
 
 ## `gflow video upscale`
 
-Upscale or export a **platform-generated** video to 1080p Full HD, download it at 720p,
-or export as a 270p animated GIF and save it locally.
+Upscale or export a **platform-generated** video to 4K Ultra (spends credits), 1080p Full HD,
+download it at 720p, or export as a 270p animated GIF and save it locally.
 
 ```text
 gflow video upscale MEDIA_ID [OPTIONS]
@@ -374,10 +381,12 @@ Arguments:
                             `gflow data list videos`).
 
 Options:
-  --scale [1080p|720p|270p] Target quality: 1080p (enhanced Full HD), 720p (the original
-                            download, or Flow's upscale of a smaller original), or 270p
-                            (animated GIF export). Flow lists only some scales for some
-                            models; an unlisted one exits 22. [default: 1080p]
+  --scale [4k|1080p|720p|270p]
+                            Target quality: 4k (Ultra 2160p upscale; spends credits),
+                            1080p (enhanced Full HD), 720p (the original download, or
+                            Flow's upscale of a smaller original), or 270p (animated GIF
+                            export). Flow lists only some scales for some models; an
+                            unlisted one exits 22. [default: 1080p]
   --project ID              Project that owns the video. Resolved from the local
                             catalog when omitted; pass it explicitly for videos
                             gflow didn't record (e.g. generated in the web UI).
@@ -408,7 +417,7 @@ Notes:
   gflow could not pick its item.
 - **flow.google.com only.** There is no labs.google route; `GFLOW_CLI_FLOW_HOST=labs.google`
   refuses the command with exit 36.
-- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07).
+- **Cost:** the 1080p export was measured free (1 observation, 2026-10-07); the 4K export on Flow Ultra spends credits (measured 50 credits on Omni 1.2 Flash, 2026-11-23).
 - Saved as `<output_dir>/videos/<YYYY-MM-DD>/<mediaId>_<scale>.<ext>` (`.mp4` or `.gif`).
 
 ## `gflow image generate` / `gflow video generate`
@@ -533,6 +542,10 @@ Options:
                             auto (default) — auto resolves to classic, the only
                             arm that can satisfy an image request (#595).
                             Aborts exit 28 if unreachable.
+  --thinking-level [low|medium|high]
+                            Image thinking level in Flow's settings pane (low,
+                            medium, or high; when omitted, Flow's existing
+                            setting is left untouched). Single-prompt only.
                             Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
   --profile NAME            Profile name (overrides default).
 ```
@@ -1925,7 +1938,8 @@ Flow provides a restorable Trash: moving an item to Trash removes it from Flow p
 gflow media trash ID [OPTIONS]
 
 Options:
-  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --project PROJECT_ID           Flow project ID; the ID is still resolved
+                                 through the local catalog.
   --profile TEXT                 Profile name to disambiguate or scope the lookup.
   -y, --yes                      Confirm trashing media without an interactive prompt.
   -o, --output [json|table|id]   Output format (json|table|id). [default: table]
@@ -1933,7 +1947,8 @@ Options:
 ```
 
 - Accepts a Flow media UUID (`flow_media_id`), local catalog asset ID, or workflow UUID.
-- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- An image is trashed by the id Flow's Trash takes for it, its workflow id, while the output and the restore hint keep the media id gflow reports for it ([#1451](https://github.com/ffroliva/gflow-cli/issues/1451)). A video is trashed by its media id. An image cataloged without a workflow id (an uploaded image, for example) is still sent by its media id, which Flow may refuse with `code=5`; if you know the image's workflow id, pass it with `--project`, since an id the catalog does not know is sent as given.
+- When `--project` is passed, the project comes from the option; the ID is still looked up in the local catalog under the profile, so a cataloged image is sent by its workflow id. An ID the catalog does not know is sent as given. An ID that matches several cataloged items under the profile resolves to the one in that project; if that still leaves more than one, the command refuses with exit 16 before anything is sent.
 - Resolves the Flow project ID from the local catalog when `--project` is omitted.
 - If the identifier matches assets across multiple profiles and `--profile` is unset, raises exit 16 (`DataStoreError`) requesting `--profile`.
 - In interactive environments, prompts `Move <kind> <id> in project <project_id> (profile: <profile>) to Flow's Trash? [y/N]: ` unless `--yes` (`-y`) is supplied.
@@ -1945,14 +1960,15 @@ Options:
 gflow media restore ID [OPTIONS]
 
 Options:
-  --project PROJECT_ID           Flow project ID (skips local catalog lookup).
+  --project PROJECT_ID           Flow project ID; the ID is still resolved
+                                 through the local catalog.
   --profile TEXT                 Profile name to disambiguate or scope the lookup.
   -o, --output [json|table|id]   Output format (json|table|id). [default: table]
   --json                         Alias for -o json.
 ```
 
 - Restores a trashed media item back to its Flow project over the wire.
-- When `--project` is passed, skips local catalog lookup and directly targets the item on Flow with the specified project ID.
+- Takes the same IDs as `gflow media trash` and sends an image by its workflow id the same way; `--project` works the same way too.
 - Clears the `metadata.archived` flag and resets `collection_id` via `pGCYOe`.
 
 Exit codes: `0` success, `2` confirmation missing in non-interactive shell or usage error, `16` ambiguous asset across profiles or catalog record missing.
@@ -2115,9 +2131,14 @@ Twelve checks run on every invocation:
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status
-or the exit code; only `warn`/`fail` do. In the brew-doctor spirit the report
-itself says it best: findings are diagnostic signals, not a to-do list — if
-everything is working as expected, there is no need to chase them.
+or the exit code; only `warn`/`fail` do. On a fresh install before any
+generation or sync creates `gflow.db`, the seven catalog, database,
+operations, and queue checks report `info` (`no catalog database yet`) without
+creating the database and without flipping the exit code to `33`; an existing
+but corrupt or unreadable database still reports `fail` and exits `33`. In the
+brew-doctor spirit the report itself says it best: findings are diagnostic
+signals, not a to-do list — if everything is working as expected, there is no
+need to chase them.
 
 **Exit codes.** `0` when every check passes (info findings included), `33`
 when any warn/fail finding is present — a successful diagnosis, not an error

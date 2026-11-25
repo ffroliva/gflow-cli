@@ -32,6 +32,7 @@ from gflow_cli.api.image import (
     AgentInstruction,
     GenerateImageRequest,
     ImageRef,
+    ThinkingLevel,
     recorded_in_project,
 )
 from gflow_cli.api.image import Aspect as ImageAspect
@@ -232,6 +233,11 @@ def build_image_request(payload: dict[str, Any]) -> GenerateImageRequest:
         count=count,
         instructions=_parse_agent_instructions(payload.get("instructions")),
         ui_mode=UiMode(payload["ui_mode"]) if payload.get("ui_mode") else None,
+        thinking_level=(
+            ThinkingLevel.from_cli(payload["thinking_level"])
+            if payload.get("thinking_level")
+            else None
+        ),
     )
 
 

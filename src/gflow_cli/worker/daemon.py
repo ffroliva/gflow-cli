@@ -117,6 +117,29 @@ class FlowWorker:
         """Run one claimed task and count the browser facts it observed (#1326)."""
         await run_counted(self.process_task(task))
 
+    def _complete_image_task(
+        self,
+        task_id: str,
+        *,
+        flow_media_id: str | None,
+        recorded_op_id: str,
+        images: list[GeneratedImage],
+        save_checkpoint: Callable[..., None],
+    ) -> None:
+        save_checkpoint(
+            "completed",
+            may_have_spent=True,
+            media_ids=tuple(img.media_name for img in images),
+            workflow_ids=tuple(img.workflow_id for img in images if img.workflow_id),
+            catalog_operation_id=recorded_op_id,
+        )
+        self.repo.update_task_status(
+            task_id,
+            status="completed",
+            flow_media_id=flow_media_id,
+        )
+        logger.info("Task completed successfully", task_id=task_id, flow_media_id=flow_media_id)
+
     async def process_task(self, task: QueueTask) -> None:
         """Execute an ALREADY-CLAIMED (processing) task.
 
@@ -157,6 +180,7 @@ class FlowWorker:
             operation_id: str | None = None,
             media_ids: tuple[str, ...] = (),
             workflow_ids: tuple[str, ...] = (),
+            catalog_operation_id: str | None = None,
         ) -> None:
             # Observer-exception policy (C1 deferred decision): a checkpoint-persist
             # failure MUST NOT abort a generation already in flight — that would
@@ -172,6 +196,7 @@ class FlowWorker:
                     operation_id=operation_id,
                     media_ids=media_ids,
                     workflow_ids=workflow_ids,
+                    catalog_operation_id=catalog_operation_id,
                 )
             except Exception as exc:
                 logger.warning(
@@ -328,7 +353,7 @@ class FlowWorker:
                             raise
 
                         try:
-                            recorder.record_generated_images(
+                            recorded_op_id = recorder.record_generated_images(
                                 profile_name=self.profile_name,
                                 profile_dir=profile_dir,
                                 project=project,
@@ -365,13 +390,12 @@ class FlowWorker:
                     logger.warning("Failed during image generation or recording", exc_info=exc)
                     raise
 
-                self.repo.update_task_status(
+                self._complete_image_task(
                     task.task_id,
-                    status="completed",
                     flow_media_id=flow_media_id,
-                )
-                logger.info(
-                    "Task completed successfully", task_id=task.task_id, flow_media_id=flow_media_id
+                    recorded_op_id=recorded_op_id,
+                    images=images,
+                    save_checkpoint=save_checkpoint,
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):

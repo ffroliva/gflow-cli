@@ -75,7 +75,7 @@ EXPECTED_TREE: dict[str, bool] = {
     "video extend": True,
     "video assemble": False,
     "video generate": True,
-    "video upscale": False,
+    "video upscale": True,  # 4K Ultra video upscale spends credits
     "image upload": False,
     "image upscale": False,
     "image t2i": True,

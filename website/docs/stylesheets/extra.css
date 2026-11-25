@@ -23,7 +23,7 @@
   --md-default-fg-color--light: #4a5058;
   --md-default-fg-color--lighter:#6a7079;  /* landing --muted */
   --md-default-fg-color--lightest:#9aa0a7; /* landing --faint */
-  --md-typeset-a-color:         #b9740f;
+  --md-typeset-a-color:         #8f5a0b;   /* link text: #b9740f is 3.4:1 on paper, under WCAG AA */
   --md-code-bg-color:           #0b0d12;
   --md-code-fg-color:           #d7dae0;
 }

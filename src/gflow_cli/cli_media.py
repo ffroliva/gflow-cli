@@ -58,7 +58,7 @@ def _emit_result(result: MediaTrashResult, output_format: str, is_json: bool) ->
     "--project",
     "project_id",
     default=None,
-    help="Flow project ID (skips local catalog lookup).",
+    help="Flow project ID; the ID is still resolved through the local catalog.",
 )
 @click.option(
     "--profile",
@@ -148,7 +148,7 @@ def trash_subcommand(
     "--project",
     "project_id",
     default=None,
-    help="Flow project ID (skips local catalog lookup).",
+    help="Flow project ID; the ID is still resolved through the local catalog.",
 )
 @click.option(
     "--profile",

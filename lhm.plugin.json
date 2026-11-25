@@ -728,7 +728,7 @@
     },
     {
       "name": "gflow_auth_status",
-      "description": "Non-interactive, credit-free Flow session probe (#497). Call this BEFORE a generation tool to fail fast on expired auth, before a long blocking generation call. Never starts an interactive login flow. May boot a short-lived headless browser, which on flow.google.com is the usual path, and may take up to ~2 min on a slow network. Every session result also carries `wire: {status, build}`, the health of the direct (browser-free) credits read, probed first with one GET and one POST to flow.google.com unless the direct read is off. `wire.status` is `accepted` (the saved cookies work), `signed_out_shell` or `http_401` (Flow refused the saved session), `store_unreadable` (the profile's cookies could not be read: Chrome has it open, or it has no saved session), `disabled` (GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable` or `unexpected`. With `accepted`, credit reads need no browser; any other status means they use the browser instead and does not change `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the result is `status: throttled` with a retryable 429 `error` carrying `retry_after` seconds. `build` is Flow's build label when read, else null.",
+      "description": "Non-interactive, credit-free Flow session probe (#497). Call this BEFORE a generation tool to fail fast on expired auth, before a long blocking generation call. The result has isError true unless `status` is `authenticated`. Never starts an interactive login flow. May boot a short-lived headless browser, which on flow.google.com is the usual path, and may take up to ~2 min on a slow network. Every session result also carries `wire: {status, build}`, the health of the direct (browser-free) credits read, probed first with one GET and one POST to flow.google.com unless the direct read is off. `wire.status` is `accepted` (the saved cookies work), `signed_out_shell` or `http_401` (Flow refused the saved session), `store_unreadable` (the profile's cookies could not be read: Chrome has it open, or it has no saved session), `disabled` (GFLOW_CLI_WIRE_READS=0 or the macOS default), `proxy_configured`, `throttled`, `no_chrome_version`, `network`, `redirect`, `http_400`, `http_error`, `unparseable` or `unexpected`. With `accepted`, credit reads need no browser; any other status means they use the browser instead and does not change `status`, except `throttled`: Flow is rate-limiting the account, so the browser probe is skipped and the result is `status: throttled` with a retryable 429 `error` carrying `retry_after` seconds. `build` is Flow's build label when read, else null.",
       "inputSchema": {
         "properties": {
           "profile": {
@@ -1247,7 +1247,7 @@
     },
     {
       "name": "gflow_video_captions",
-      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
+      "description": "Burn an authored SRT file into a local video or transcribe first when srt is omitted. Supports optional position ('bottom', 'top', 'middle'), margin (pixels from edge), font_size (pixels), and box_opacity (0.0-1.0). Credit-free; generated .mp4 and automatic .srt outputs stay inside the configured output directory.",
       "inputSchema": {
         "properties": {
           "file": {
@@ -1302,6 +1302,45 @@
             ],
             "default": null,
             "title": "Profile"
+          },
+          "position": {
+            "default": "bottom",
+            "enum": [
+              "bottom",
+              "top",
+              "middle"
+            ],
+            "title": "Position",
+            "type": "string"
+          },
+          "margin": {
+            "default": 28,
+            "title": "Margin",
+            "type": "integer"
+          },
+          "font_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Font Size"
+          },
+          "box_opacity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Box Opacity"
           }
         },
         "required": [

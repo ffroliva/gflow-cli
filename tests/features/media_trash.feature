@@ -4,11 +4,19 @@ Feature: Move a generated media item to Flow's Trash and restore it (#1363)
   and provides a corresponding restore command to recover trashed items at zero credit cost.
 
   Scenario: Trashing a media item with explicit confirmation sends pGCYOe wire mutation
-    Given a cataloged media item with ID "5a383d6c-2207-42d3-8d62-4cd82ff804ac" in project "proj-uuid"
+    Given a cataloged video with ID "5a383d6c-2207-42d3-8d62-4cd82ff804ac" in project "proj-uuid"
     When the user runs "gflow media trash 5a383d6c-2207-42d3-8d62-4cd82ff804ac --yes --json"
     Then the command exits with code 0
     And a batchexecute mutation is sent for RPC "pGCYOe" with media ID "5a383d6c-2207-42d3-8d62-4cd82ff804ac"
     And the JSON output reports status "trashed" and project "proj-uuid"
+
+  Scenario: Trashing an image sends its workflow id and still reports its media id
+    Given a cataloged image with ID "01ff3b57-0000-4000-8000-000000000001" and workflow ID "e0c1c070-0000-4000-8000-000000000002" in project "proj-uuid"
+    When the user runs "gflow media trash 01ff3b57-0000-4000-8000-000000000001 --yes --json"
+    Then the command exits with code 0
+    And a batchexecute mutation is sent for RPC "pGCYOe" with media ID "e0c1c070-0000-4000-8000-000000000002"
+    And the JSON output reports media ID "01ff3b57-0000-4000-8000-000000000001" and workflow ID "e0c1c070-0000-4000-8000-000000000002"
+    And the JSON output's restore hint names "01ff3b57-0000-4000-8000-000000000001"
 
   Scenario: Trashing without confirmation flag in a non-interactive environment fails fast
     Given a cataloged media item with ID "5a383d6c-2207-42d3-8d62-4cd82ff804ac"
