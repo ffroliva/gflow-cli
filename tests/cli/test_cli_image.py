@@ -634,6 +634,24 @@ class TestImageI2I:
         assert "is not a file" in result.output
         client.assert_not_called()
 
+    def test_unresolvable_ref_path_is_a_usage_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """A path resolve() rejects outright (here a NUL byte) exits 2, not a traceback."""
+        client = MagicMock()
+        from gflow_cli.cli import main
+
+        with (
+            patch("gflow_cli.cli_image.FlowApiClient", client),
+            patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+            patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        ):
+            result = runner.invoke(main, ["image", "i2i", "a cat", "--ref", "bad\x00ref.png"])
+
+        assert result.exit_code == 2, result.output
+        assert "does not exist" in result.output
+        client.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # batch subcommand — flag contract

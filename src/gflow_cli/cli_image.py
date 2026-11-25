@@ -270,7 +270,7 @@ def _classify_ref(ref: str) -> ImageRef | Path:
     )
     try:
         resolved = Path(ref).resolve(strict=True)
-    except FileNotFoundError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:  # also bad syntax, NUL, symlink loop
         msg = f"--ref {ref!r} does not exist as a file and is not a valid asset UUID. {hint}"
         raise click.UsageError(
             msg,
