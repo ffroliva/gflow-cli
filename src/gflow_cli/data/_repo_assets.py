@@ -12,7 +12,7 @@ import dataclasses
 import json
 import sqlite3
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from gflow_cli.data.models import (
     AssetKind,
@@ -462,13 +462,13 @@ class AssetsRepo(RepositoryBase):
         rows = self._store.conn.execute(query, params).fetchall()  # noqa: S608
         return self._hydrate_asset_lookups(rows)
 
-    # Rows typed Any: SonarCloud's python:S6663 misreads str keys on sqlite3.Row as list indexes.
-    def _hydrate_asset_lookups(self, rows: Sequence[Any]) -> list[AssetLookup]:
+    def _hydrate_asset_lookups(self, rows: Sequence[sqlite3.Row]) -> list[AssetLookup]:
         if not rows:
             return []
         by_profile: dict[str, list[str]] = {}
         for row in rows:
-            by_profile.setdefault(str(row["profile_name"]), []).append(str(row["id"]))
+            profile = str(row["profile_name"])  # NOSONAR - sqlite3.Row takes a column name
+            by_profile.setdefault(profile, []).append(str(row["id"]))  # NOSONAR - same
         files_by_asset: dict[str, list[LocalFileRecord]] = {}
         for profile_name, asset_ids in by_profile.items():
             unique_ids = list(dict.fromkeys(asset_ids))
