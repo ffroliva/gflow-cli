@@ -32,7 +32,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 | **Image models** | Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4 |
 | **Works with** | Claude Code (plugin), Claude Desktop, Cursor, VS Code, Codex, any MCP client, shell scripts and CI |
 | **Cost** | Free and MIT-licensed. Video bills your own Flow credits; images spend no credits (they count against a daily image quota) |
-| **Maturity** | 130+ releases since May 2026; every release since v0.54.0 is live-verified against real Google Flow before it ships |
+| **Maturity** | Releases are listed in the [changelog](https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md); every release since v0.54.0 is live-verified against real Google Flow before it ships |
 
 ## What can gflow-cli do?
 
@@ -40,7 +40,7 @@ An independent project, not affiliated with Google. It drives your own signed-in
 - **Make long videos**: `gflow video extend --segments N` continues a clip past Flow's 8 s limit with a continuous join, `gflow video chain` links shots frame to frame, and `gflow scene create` stitches clips server-side for free.
 - **Generate images**: text-to-image and image-to-image, 1–4 per call, five aspect ratios (`gflow image t2i | i2i`).
 - **Keep characters consistent**: `gflow character create` makes a reusable Flow Character (face, body, voice), and prompts can mention it as `@Name`.
-- **Upscale**: video to 1080p (or a GIF), images to 2K, or 4K on an Ultra plan.
+- **Upscale**: video to 4K where Flow offers it for the item, 1080p or a GIF; images to 2K, or 4K on an Ultra plan.
 - **Run batches and pipelines**: JSON batch runs where a row can build on an earlier row (`gflow run`), multi-scene films from a manifest (`gflow movie run`), and persistent Agent-Mode briefs (`gflow instructions`).
 - **Rewrite prompts**: `--tool creative-director` and two other built-in prompt tools (`reverse-engineer`, `storyboard`), or your own ([TOOLS](docs/TOOLS.md)).
 - **Track spend and media**: the Veo credit balance (`gflow credits`), a local media catalog (`gflow data`), a health check (`gflow doctor`), and output to S3, MinIO or Google Cloud Storage.
@@ -113,7 +113,7 @@ Scripts that branch on exit codes can opt in to the stable core now (0 ok, 1 err
 > **Installing from a local checkout?** `uv tool install <path>` **ignores `uv.lock`** and resolves dependencies from the `pyproject.toml` ranges, so it can hand you a Playwright build this project has never tested. Playwright ships the browser driver, and an untested minor can wedge a generation silently. Carry the locked version explicitly:
 >
 > ```bash
-> uv tool install --force --with playwright==1.59.0 .
+> uv tool install --force --with playwright==1.61.0 .
 > ```
 >
 > Installing from PyPI (`uv tool install gflow-cli`) is unaffected — the published range is upper-bounded. Check what you actually have with `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"`.
@@ -152,33 +152,33 @@ Video comes in 16:9 and 9:16; images in 16:9, 4:3, 1:1, 3:4 and 9:16. Which mode
 
 ## How does gflow-cli compare with other Google Flow automation tools?
 
-Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent column on 2026-11-20). "—" means that README does not state it.
+Compared from each project's own README on 2026-11-25. "—" means that README does not state it.
 
-| | **gflow-cli** | [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) | [ByteLandTechnology/flow-mcp](https://github.com/ByteLandTechnology/flow-mcp) | [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) | [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli) | [crisng95/flowkit](https://github.com/crisng95/flowkit) |
+| | gflow-cli | [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) | [ByteLandTechnology/flow-mcp](https://github.com/ByteLandTechnology/flow-mcp) | [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) | [swissmarley/gflow-cli](https://github.com/swissmarley/gflow-cli) | [crisng95/flowkit](https://github.com/crisng95/flowkit) |
 |---|---|---|---|---|---|---|
-| Surfaces | **CLI and MCP server (29 tools)**, parity enforced in CI | MCP server, local web panel | MCP server | CLI, MCP server (5 tools), OpenAI-compatible REST API | CLI | Chrome extension, local REST API, dashboards |
-| Install | **`uv tool install gflow-cli` (PyPI)** | git clone, npm build | npm, binaries | clone, `pip install -e`, unpacked Chrome extension, bridge process | npm | git clone, load unpacked extension |
-| Official MCP Registry | **Yes** | — | — | — | no MCP | no MCP |
-| MCP over HTTP | **Yes** (`gflow serve`) | — | — | SSE (per its `docs/MCP_GUIDE.md`) | no MCP | no MCP |
-| macOS / Windows / Linux | **All three** | macOS, Windows | All three | — | — | All three |
+| Surfaces | CLI and MCP server (29 tools), parity enforced in CI | MCP server, local web panel | MCP server | CLI, MCP server (5 tools), OpenAI-compatible REST API | CLI | Chrome extension, local REST API, dashboards |
+| Install | `uv tool install gflow-cli` (PyPI) | git clone, npm build | npm, binaries | clone, `pip install -e`, unpacked Chrome extension, bridge process | npm | git clone, load unpacked extension |
+| Official MCP Registry | Yes | — | — | — | no MCP | no MCP |
+| MCP over HTTP | Yes (`gflow serve`) | — | — | SSE (per its `docs/MCP_GUIDE.md`) | no MCP | no MCP |
+| macOS / Windows / Linux | All three | macOS, Windows | All three | — | — | macOS, Linux; Windows through WSL or Git Bash |
 | Licence | MIT | — | MIT | MIT (README; no licence file in the repository) | MIT | MIT |
 | Video, image, start/end frames, references | Yes | Yes | Yes | Text- and image-to-video, text-to-image | Yes | Yes |
 | Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
 | Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
-| Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | 4K |
-| OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | **Yes** | — | — |
-| Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | **Yes** | — | — |
-| Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
-| `charged` field on every error | **Yes** | — | — | — | — | — |
+| Upscale | Video 4K/1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | Image 2K/4K export; video upscale not ported |
+| OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | Yes | — | — |
+| Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | Yes | — | — |
+| Spend lockout for agents (`--no-spend`) | Yes | — | — | — | — | — |
+| `charged` field on every error | Yes | — | — | — | — | — |
 | Per-call credit cap | Yes (`--max-credits`, read from Flow's own quote) | Yes (`max_credits`) | — | — | — | — |
 | Video-to-video edit | Yes (`video edit`, flow.google.com; local file with up to 5 references, or a clip) | Yes | Yes | — | — | — |
 | Narration audio | Yes (audio narrate: edge-tts or Gemini voices) | Yes | — | — | — | Yes |
 | Captions | Yes (`video captions`, `.srt` export) | Yes | — | — | — | — |
 | Join clips | Yes, server-side (`scene create`) or local with music and voiceover (`video assemble`) | Yes, with music and voiceover | — | — | Yes (scene) | Yes, with music and narration |
-| Bulk agent-mode image batch | Planned ([#1361](https://github.com/ffroliva/gflow-cli/issues/1361)) | Yes | Yes | — | — | — |
+| Bulk agent-mode image batch | Planned ([#1361](https://github.com/ffroliva/gflow-cli/issues/1361)) | Yes | — | — | — | — |
 | Web control panel | Planned ([#1364](https://github.com/ffroliva/gflow-cli/issues/1364)) | Yes | — | — | — | Yes |
-| Machine-readable self-description | **`capabilities`, `--help --json`, `models`, `llms.txt`, agent skills** | — | — | — | — | Agent skills |
-| Live-verified against real Flow every release | **Yes** (since v0.54.0) | — | — | — | — | — |
+| Machine-readable self-description | `capabilities`, `--help --json`, `models`, `llms.txt`, agent skills | — | — | — | — | Agent skills |
+| Live-verified against real Flow every release | Yes (since v0.54.0) | — | — | — | — | — |
 
 The full list of planned items is in [#1367](https://github.com/ffroliva/gflow-cli/issues/1367). A correction to a cell is welcome as an issue or a pull request.
 
@@ -196,7 +196,7 @@ The full list of planned items is in [#1367](https://github.com/ffroliva/gflow-c
 
 **Does it run headless or on a server?** Sign-in needs a display once. Generation drives a real Chrome window, so on Linux servers it runs under Xvfb. A pure-HTTP transport for video is blocked by Google's reCAPTCHA (see [Architecture](#architecture--current-limitations)).
 
-**Does it work with flow.google.com as well as labs.google?** Yes. It drives both Flow frontends and routes by the host Flow serves your account. On flow.google.com it covers text-, image- and reference-to-video from local files, Nano Banana image generation, a single-segment extend, image and video upscale, and characters by `@Name`; the rest keeps the labs driver until ported ([Architecture](#architecture--current-limitations)).
+**Does it work with flow.google.com as well as labs.google?** Yes. It drives both Flow frontends and chooses the driver from the host that Flow serves for your account. On flow.google.com it supports text-to-video, image-to-video and reference-to-video from local files. It also supports Nano Banana image generation, a single-segment extend, image and video upscale, and characters by `@Name`. Features that are not ported yet still use the labs driver ([Architecture](#architecture--current-limitations)).
 
 **Which Python version?** Python 3.11 or newer. `uv tool install gflow-cli` handles it for you.
 
@@ -261,23 +261,46 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
                               aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-**Current transport:** `ui_automation` drives Flow through a persistent Playwright Chromium profile. It is production-stable and verified end-to-end every release (see the per-release `LIVE_VERIFICATION_*` evidence files).
+**Current transport:** `ui_automation` drives Flow through a persistent Playwright Chromium profile. It is the production transport and is verified end-to-end every release (see the per-release `LIVE_VERIFICATION_*` evidence files).
 
-**Two Flow frontends:** Google is moving accounts from `labs.google` onto `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)) — same product, different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). The migrated driver covers text-to-video, image-to-video from a local start frame, reference-to-video from local files, text-to-image, image-to-image from local files, and a single-segment `video extend`. Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ffroliva/gflow-cli/issues/958)) / 2 Lite / Pro, the five aspect ratios measured on that host (16:9, 4:3, 1:1, 3:4, 9:16), and counts 1–4; an existing project is required at the transport boundary. Images can tag a character by `@Name`, and reference-to-video takes a named character with `--reference-entity` + `--reference-entity-name` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)). An account served the **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gets text-to-image and text-to-video only. An image `--ref <uuid>` is referenced in place when the catalog records it in the same `--project` ([#995](https://github.com/ffroliva/gflow-cli/issues/995)). Other UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix keep the labs driver until ported (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
+**Two Flow frontends:** Google is moving accounts from `labs.google` to `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). It is the same product with a different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). The migrated driver covers:
 
-**What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers plus a reCAPTCHA mint we cannot reproduce headlessly. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
+- text-to-video, image-to-video from a local start frame, and reference-to-video from local files;
+- text-to-image and image-to-image from local files;
+- a single-segment `video extend`.
 
-**How you can help:** if you have driven `aisandbox-pa.googleapis.com` from outside a real Chrome session, or you understand Google's anti-bot stack here, please open an issue. A working REST transport would unlock serverless deployments, true horizontal concurrency, and roughly 10x the project's reach. Details: [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation).
+Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ffroliva/gflow-cli/issues/958)), 2 Lite and Pro. It supports the five aspect ratios measured on that host (16:9, 4:3, 1:1, 3:4, 9:16) and counts 1–4. An existing project is required at the transport boundary. Images can tag a character by `@Name`. Reference-to-video takes a named character with `--reference-entity` and `--reference-entity-name` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)). An account that is served the **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gets text-to-image and text-to-video only. An image `--ref <uuid>` is referenced in place when the catalog records it in the same `--project` ([#995](https://github.com/ffroliva/gflow-cli/issues/995)).
+
+These keep the labs driver until they are ported: other UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
+
+**What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers. The transport also needs a reCAPTCHA token that the project cannot create in a headless browser. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
+
+**How you can help:** if you have driven `aisandbox-pa.googleapis.com` from outside a real Chrome session, or you understand Google's anti-bot stack here, please open an issue. A working REST transport would enable serverless deployments and true horizontal concurrency. Details: [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation).
 
 ## Project status
 
-**Beta.** Image (t2i, i2i, upload, upscale, batch) and video (t2v, i2v, r2v, chain, extend, upscale), plus `image generate` / `video generate`, which pick the mode from the inputs, run end-to-end on `ui_automation`, with a six-model video picker (Veo 3.1 and Omni) plus `--duration` and `--count`. Beyond single generations: `gflow movie` renders multi-scene manifests, `gflow instructions` manages persistent Agent-Mode brief cards (credits-free), `gflow character` handles reusable subjects, `gflow scene` does credit-free server-side stitching, `--tool` applies prompt-rewriting tools, and an MCP server (`gflow mcp run` stdio / `gflow serve` Streamable HTTP) exposes the core surface to AI agents with a CI-enforced CLI↔MCP parity contract.
+**Beta.** These features run end-to-end on `ui_automation`:
+
+- images: t2i, i2i, upload, upscale and batch;
+- video: t2v, i2v, r2v, chain, extend and upscale;
+- `image generate` and `video generate`, which pick the mode from the inputs;
+- a six-model video picker (Veo 3.1 and Omni), plus `--duration` and `--count`.
+
+Beyond single generations:
+
+- `gflow movie` renders multi-scene manifests;
+- `gflow instructions` manages persistent Agent-Mode brief cards (credits-free);
+- `gflow character` handles reusable subjects;
+- `gflow scene` does credit-free server-side stitching;
+- `--tool` applies prompt-rewriting tools.
+
+An MCP server (`gflow mcp run` for stdio, `gflow serve` for Streamable HTTP) exposes the core surface to AI agents. A CI-enforced CLI↔MCP parity contract keeps the two surfaces in step.
 
 Full milestone history lives in [CHANGELOG.md](CHANGELOG.md). Where the project is heading: [ROADMAP.md](ROADMAP.md).
 
 ## Support gflow-cli
 
-gflow-cli is built and maintained by one person. Every release is verified against real Google Flow, which spends real AI credits, and breakages get fixed fast because people run it in their pipelines. Sponsorship pays for both.
+gflow-cli is maintained by one person. Every release is verified against real Google Flow, which spends real AI credits. Sponsorship pays for that verification.
 
 [![Sponsor $5 one-time](https://img.shields.io/badge/☕_sponsor-$5_one--time-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amount=5)
 [![Sponsor $5 a month](https://img.shields.io/badge/💖_sponsor-$5_a_month-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=monthly&amount=5)
