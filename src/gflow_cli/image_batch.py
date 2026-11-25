@@ -8,6 +8,7 @@ import json
 import random
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1525,6 +1526,21 @@ async def run_manifest_image_batch(
         return outcomes
 
 
+def _row_status_and_detail(outcome: BatchOutcome) -> tuple[str, str]:
+    """The summary table's ``status`` and ``detail`` cells for one row."""
+    if outcome.status == "fail":
+        return "[red]FAIL[/red]", outcome.error or ""
+    if outcome.status not in ("ok", "resumed"):
+        return "[yellow]SKIPPED[/yellow]", outcome.error or "(not attempted)"
+    detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
+    if outcome.status == "resumed":
+        return "[cyan]RESUMED[/cyan]", detail
+    saved, requested = len(outcome.saved_paths), outcome.prompt.count
+    if saved < requested:  # #1489
+        detail += f" · {saved} of {requested} images returned"
+    return "[green]OK[/green]", detail
+
+
 def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> int:
     """Print a Rich table + return the aggregate exit code."""
     table = Table(title=title)
@@ -1534,20 +1550,7 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
     table.add_column("status")
     table.add_column("detail", overflow="fold")
     for outcome in outcomes:
-        if outcome.status == "ok":
-            detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
-            if len(outcome.saved_paths) < outcome.prompt.count:  # #1489
-                detail += f" · {len(outcome.saved_paths)} of {outcome.prompt.count} images returned"
-            status_str = "[green]OK[/green]"
-        elif outcome.status == "resumed":
-            detail = " · ".join(safe_path_text(path) for path in outcome.saved_paths)
-            status_str = "[cyan]RESUMED[/cyan]"
-        elif outcome.status == "fail":
-            detail = outcome.error or ""
-            status_str = "[red]FAIL[/red]"
-        else:
-            detail = outcome.error or "(not attempted)"
-            status_str = "[yellow]SKIPPED[/yellow]"
+        status_str, detail = _row_status_and_detail(outcome)
         table.add_row(
             str(outcome.index),
             safe_prompt_preview(outcome.prompt.text),
@@ -1556,13 +1559,11 @@ def render_image_batch_summary(outcomes: list[BatchOutcome], *, title: str) -> i
             safe_terminal_text(detail),
         )
     console.print(table)
-    succeeded = sum(1 for outcome in outcomes if outcome.status == "ok")
-    failed = sum(1 for outcome in outcomes if outcome.status == "fail")
-    skipped = sum(1 for outcome in outcomes if outcome.status == "skipped")
-    resumed = sum(1 for outcome in outcomes if outcome.status == "resumed")
+    tally = Counter(outcome.status for outcome in outcomes)
     console.print(
-        f"\n{succeeded}/{len(outcomes)} succeeded · {failed} failure(s) · {skipped} skipped"
-        + (f" · {resumed} resumed" if resumed else ""),
+        f"\n{tally['ok']}/{len(outcomes)} succeeded · {tally['fail']} failure(s)"
+        f" · {tally['skipped']} skipped"
+        + (f" · {tally['resumed']} resumed" if tally["resumed"] else ""),
     )
     # Rows hold legacy codes so the priority between failures never depends on the mode.
     return active_exit_code(max((outcome.exit_code for outcome in outcomes), default=0))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -52,9 +53,9 @@ async def test_a_full_reply_logs_nothing() -> None:
     assert await _drive(returned=4, requested=4) == []
 
 
-@pytest.mark.parametrize(("saved", "note"), [(3, True), (4, False)])
+@pytest.mark.parametrize(("saved", "note"), [(3, "3 of 4 images returned"), (4, None)])
 def test_batch_summary_marks_the_short_row(
-    monkeypatch: pytest.MonkeyPatch, saved: int, note: bool
+    monkeypatch: pytest.MonkeyPatch, saved: int, note: str | None
 ) -> None:
     out = io.StringIO()
     monkeypatch.setattr(image_batch, "console", Console(file=out, width=200))
@@ -63,7 +64,8 @@ def test_batch_summary_marks_the_short_row(
         index=0, prompt=item, status="ok", saved_paths=[Path(f"{i}.png") for i in range(saved)]
     )
     assert render_image_batch_summary([outcome], title="t") == 0
-    assert ("3 of 4 images returned" in out.getvalue()) is note
+    found = re.search(r"\d of \d images returned", out.getvalue())
+    assert (found and found[0]) == note
 
 
 @pytest.mark.parametrize(
