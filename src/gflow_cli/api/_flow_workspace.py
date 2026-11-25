@@ -54,6 +54,12 @@ logger = structlog.get_logger(__name__)
 # protects this process from OOM and the remote endpoint from DoS-shaped traffic.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 20 MB
 
+# Flow's video uploader accepts MP4 / M4V / MOV / 3GP / AVI clips up to ~1 GB.
+# Validated by extension, size cap, and container magic bytes before any file
+# leaves disk (preventing symlink-laundering of arbitrary local files).
+MAX_VIDEO_BYTES = 1024 * 1024 * 1024  # 1 GB
+ALLOWED_VIDEO_EXTENSIONS = frozenset({".mp4", ".m4v", ".mov", ".3gp", ".avi"})
+
 # Server-side concat returns the combined MP4 inline as base64 in `encodedVideo`
 # (~1.27 MB base64 per second of video). Cap before b64decode to avoid OOM on a
 # pathologically long scene; ~350 MB base64 ≈ 260 MB MP4 ≈ a ~4.5-min scene.
@@ -87,6 +93,34 @@ def _is_supported_image_header(header: bytes) -> bool:
     return header[:6] in (b"GIF87a", b"GIF89a")
 
 
+_QUICKTIME_TOP_ATOMS = frozenset({b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot"})
+
+
+def _is_supported_video_header(header: bytes) -> bool:
+    """Return True if ``header`` (first 12 bytes) matches a supported video container.
+
+    * **ISO-BMFF** (``.mp4``, ``.m4v``, ``.mov``, ``.3gp``) — bytes 4..8 are ``ftyp``
+    * **QuickTime MOV** — top-level atom ``moov``/``mdat``/``wide``/``free``/``skip``/``pnot``
+      at bytes 4..8 with a valid big-endian atom size (``>= 8`` or ``1`` for 64-bit size)
+    * **AVI** — bytes 0..4 ``RIFF`` + bytes 8..12 ``AVI ``
+    """
+    if len(header) < 12:
+        return False
+    box_type = header[4:8]
+    if box_type == b"ftyp":
+        return True
+    if box_type in _QUICKTIME_TOP_ATOMS:
+        atom_size = int.from_bytes(header[:4], "big")
+        if atom_size == 1 or atom_size >= 8:
+            return True
+    return header[:4] == b"RIFF" and header[8:12] == b"AVI "
+
+
+def _read_magic_header(path: Path) -> bytes:
+    with path.open("rb") as fh:
+        return fh.read(12)
+
+
 async def validate_image_file(image_path: Path) -> None:
     """Reject a file that must not be uploaded to Flow, before any bytes leave.
 
@@ -105,14 +139,41 @@ async def validate_image_file(image_path: Path) -> None:
         )
         raise ValueError(msg)
 
-    # Staged read: validate magic bytes first (12 B) before loading the full
-    # file. Run both reads in a worker thread to keep the event loop free.
-    def _read_header(p: Path) -> bytes:
-        with p.open("rb") as fh:
-            return fh.read(12)
-
-    if not _is_supported_image_header(await asyncio.to_thread(_read_header, image_path)):
+    if not _is_supported_image_header(await asyncio.to_thread(_read_magic_header, image_path)):
         msg = f"Not a supported image format: {image_path.name}"
+        raise ValueError(msg)
+
+
+async def validate_video_file(video_path: Path) -> None:
+    """Reject a video file that must not be uploaded to Flow, before any bytes leave.
+
+    Checks existence, regular file, extension (``.mp4/.m4v/.mov/.3gp/.avi``),
+    non-empty size within :data:`MAX_VIDEO_BYTES`, and container magic bytes.
+    """
+    if not video_path.exists():
+        raise FileNotFoundError(video_path)
+    if not video_path.is_file():
+        msg = f"Video path is not a regular file: {video_path.name}"
+        raise ValueError(msg)
+    if video_path.suffix.lower() not in ALLOWED_VIDEO_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_VIDEO_EXTENSIONS))
+        msg = (
+            f"Unsupported video extension {video_path.suffix!r} for {video_path.name}; "
+            f"Flow accepts {allowed}"
+        )
+        raise ValueError(msg)
+    size = video_path.stat().st_size
+    if size <= 0:
+        msg = f"Video file is empty: {video_path.name}"
+        raise ValueError(msg)
+    if size > MAX_VIDEO_BYTES:
+        msg = (
+            f"Video too large: {size / 1_048_576:.1f} MB exceeds "
+            f"{MAX_VIDEO_BYTES // 1_048_576} MB limit"
+        )
+        raise ValueError(msg)
+    if not _is_supported_video_header(await asyncio.to_thread(_read_magic_header, video_path)):
+        msg = f"Not a supported video format: {video_path.name}"
         raise ValueError(msg)
 
 

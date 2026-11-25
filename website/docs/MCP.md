@@ -96,6 +96,7 @@ is sent to the selected provider, Edge Read Aloud or Gemini; Gemini uses the sep
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
+* `gflow_extend_video(source, prompt, duration, reference_images, aspect, max_credits, profile, project, project_name, out_file, wait)`: Worker-queued single-segment video extend on `flow.google.com`. `source` accepts either a local video path (`.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi`, auto-creating a project if `project` is omitted) or an existing Flow clip UUID (requires `project` or a catalogued clip). Supports optional `duration` (`3-10` seconds; omitted, Flow's current setting is kept and the result reports the length sent), `0-3` `reference_images` (local image paths or catalogued UUIDs in caller order), optional `aspect` (`9:16`/`16:9` verification), and `max_credits` pre-submit quote cap. Gated by `--no-spend`; `out_file` must resolve inside the configured output directory.
 * `gflow_video_assemble(clips, out_file, music, voiceover, clip_volume, music_volume, voiceover_volume, duck, profile)`: Direct, credit-free local processing; joins local files or catalog video IDs with verified local copies, optionally mixes local music and voiceover audio files, and returns the same result fields as `gflow video assemble --json`. Ducking lowers music and clip audio while voiceover is present by default. `out_file` must be inside the configured output directory, uses the first clip's size and frame rate, and refuses existing files (an empty file left by an interrupted run is cleared once older than 60 s). It runs in-process on a background thread, not through the worker queue.
   Example: `{"clips":["clip-a.mp4","clip-b.mp4"],"out_file":"assembled.mp4","music":"score.wav","voiceover":"narration.wav","duck":true}`. `out_file` is relative to the configured output directory; music and voiceover are local audio paths.
 
@@ -387,7 +388,7 @@ Use this if you installed `gflow-cli` globally (e.g. via `uv tool install gflow-
 ##### Option A2: Read-only server
 
 Use this when the agent must never be able to spend credits (#496). The two
-credit-spending tools (`gflow_generate_image`, `gflow_generate_video`) are then
+credit-spending tools (`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video`) are then
 **never registered**, so they do not appear in `tools/list` at all — invisible
 rather than refused. Every read-only tool stays available.
 
@@ -448,7 +449,7 @@ For decoupled clients, local web interfaces, or multi-process frontends, run the
 ```bash
 gflow serve --port 8000 --host 127.0.0.1 --profile default
 
-# Read-only daemon — the two credit-spending tools are never registered (#496):
+# Read-only daemon — the credit-spending tools are never registered (#496):
 gflow serve --port 8000 --host 127.0.0.1 --profile default --no-spend
 ```
 This serves the MCP server over **Streamable HTTP**, the current spec transport:
@@ -653,7 +654,7 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
    This prevents crashes caused by non-ASCII prompt strings on Windows.
 4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). It limits call rate, not spend. Spend is bounded per call by `max_credits` on `gflow_generate_video` (or the server's `GFLOW_CLI_MAX_CREDITS` default), which refuses before submit when Flow's quote is unreadable or exceeds the cap (exit 45, #1355), and `--no-spend` (item 6) removes the credit-spending tools altogether. There is no per-session or daily cap (#495).
 5. **CLI-MCP Parameter Symmetry:** Two CI layers guard the surfaces against drift: `tests/mcp/test_cli_parity.py` forces an explicit MCP decision (mapped tool or stated exemption) for every CLI leaf command, and `tests/mcp/test_server.py::TestCliMcpParameterSymmetry` compares CLI Click parameters against registered tool signatures for the two generate tools. Parameter-level comparison does not yet cover the other tools.
-6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending generate tools — `gflow_generate_image` and `gflow_generate_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
+6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending tools — `gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video` and `gflow_extend_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
 
 ---
 

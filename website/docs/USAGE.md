@@ -1212,56 +1212,69 @@ reach for it before spending anything.
 
 ## `gflow video extend`
 
-> **Where the two ids come from.** `MEDIA_ID` is the clip you want to continue —
-> list yours with `gflow data list videos` (the `media_id` column). The project id is
-> the project that owns it: `gflow data list projects`, or copy it out of the Flow URL
-> (`/project/<project-id>`). `--project` is required here, unlike on the other generate
-> commands, because extend has to find the workflow that owns `MEDIA_ID` before it can
-> create the scene to extend into.
+> **Where `SOURCE` comes from.** `SOURCE` is either a Flow clip `MEDIA_ID` — list yours
+> with `gflow data list videos` (the `media_id` column) — or, on `flow.google.com`, a local
+> video file (`.mp4`, `.m4v`, `.mov`, `.3gp`, `.avi`, up to 1 GB). The project is `--project`,
+> else (for a `MEDIA_ID`) the project the local catalog records for the clip, else
+> `GFLOW_CLI_PROJECT`. A `MEDIA_ID` with none of these exits 11; a local file with none gets a
+> new project (named by `--project-name`). Inputs are validated before any project is created,
+> so an unsupported or missing file exits 11 (`charged: no`) and leaves no empty project. The
+> upload is given 120 s plus one second per MiB of the file (a 1 GB clip: about 19 minutes);
+> Flow then has 90 s from the end of the upload to list the clip ready (with its size and
+> length) and offer the timeline's add-clip button; still processing after that is exit 9,
+> naming the uploaded media id to extend later. Once the clip is listed ready, a disabled
+> Extend item is exit 35 (37 with Flow's insufficient-credits warning), as for any clip.
 >
-> **On flow.google.com: one segment per call.** gflow opens the clip's editor
-> (`/project/<id>/edit/<media-id>`) and drives Flow's own Extend control; the page builds
-> and signs the request itself. Before any click, Flow's project read must list
-> `MEDIA_ID` as a video in `--project` (exit 11 otherwise), and every scene/extend request
-> is checked at the route and aborted, before Flow sees it, if it names another clip. When
-> Flow shows the Extend menu item disabled, gflow does not click it and exits 35, or 37
-> when Flow also shows its insufficient-credits warning; nothing is submitted
-> ([#1334](https://github.com/ffroliva/gflow-cli/issues/1334)). Measured 2026-11-18 on an
-> account holding 12 credits: the item was disabled with a link to Google's AI plans beside
-> it, and enabled on a funded account. The
-> result is downloaded to `-o` (default: `videos/<date>/<media-id>_extend.mp4` in the output
-> directory, with a random tag added when that file already exists, so a same-day re-run
-> keeps the earlier file). **Measured 2026-11-08 with
-> the Omni extend key `macaron_cookie_extend_4s`:** Flow grew the source clip **in place**
-> by about 4 s (7.93 s became 11.83 s), under the source's own media id, for 12 credits. So
-> the file is the whole extended clip, the project lists no separate extension or earlier
-> version, and `--json` reports `seconds_added`/`seconds_billed` from the key (4/4; `null`
-> when the key names no length). The catalog notes the extend on the source's row once Flow
-> reports it done (`extended_by`, `extend_workflow_id`, `extended_at`)
-> ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)). A page that still orders a
-> Veo extend key was not observed that day. Not ported to
-> flow.google.com yet, each refused with exit 36 before anything is billed: more than one
-> PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect` other than the
-> source clip's (leave `--aspect` off; the extension keeps the source's). The plan shows no
-> price because that host does not report one before submitting — compare
-> `gflow credits user` before and after. To go further, extend the same clip again: each extend continues the newest version of the clip ([#1346](https://github.com/ffroliva/gflow-cli/issues/1346)). "Cost and safety" and "What it produces" below
-> describe the labs.google arm.
+> **On flow.google.com: one segment per call.** gflow optionally uploads a local video file
+> and `0–3` `--ref` reference images to the project, opens the clip's editor
+> (`/project/<id>/edit/<media-id>`), and drives Flow's own Extend control; the page builds
+> and signs the request itself. Before any click, Flow's project read must list the clip as
+> a video (generated or uploaded) in the project (exit 11 otherwise), and every scene/extend
+> request is checked at the route and aborted, before Flow sees it, if it names another clip,
+> wrong `--duration`, wrong `--aspect`, or mismatched or unreadable `--ref` IDs. Optional
+> `--duration` sets the extend slider to `3–10` seconds; without it Flow's extend settings keep
+> whatever length they already hold, and `--json` reports the length actually sent
+> (`request.duration`, read from the submitted key). `--max-credits` reads Flow's pre-submit
+> credit quote in the extend settings popover after the references are attached and the
+> slider is set, waits for the label to re-price, and refuses a missing, unconfirmed or
+> over-limit quote (exit 45, nothing billed). The settings popover is opened only when
+> `--duration` or `--max-credits` needs it. When Flow shows the Extend menu item disabled,
+> gflow does not click it and exits 35, or 37 when Flow also shows its insufficient-credits
+> warning; nothing is submitted ([#1334](https://github.com/ffroliva/gflow-cli/issues/1334)).
+> The result is downloaded to `--out-file` (default: `videos/<date>/<source>_extend.mp4` in
+> the output directory, with a random tag added when that file already exists, so a same-day
+> re-run keeps the earlier file). **Measured with Omni extend keys (`macaron_cookie_extend_<N>s`):**
+> Flow grows the source clip **in place** under its own media id, so the file is the whole
+> extended clip, the project lists no separate extension or earlier version, and `--json`
+> reports `seconds_added`/`seconds_billed` from the key, plus `quoted_credits` (the pre-submit
+> quote; `credits_spent` stays `null`, since Flow reports no final charge on this host).
+> The catalog notes the extend on the source's row once Flow reports it done (`extended_by`,
+> `extend_workflow_id`, `extended_at`) ([#1184](https://github.com/ffroliva/gflow-cli/issues/1184)).
+> Not ported to flow.google.com yet, each refused with exit 36 before anything is billed:
+> more than one PROMPT or `-n > 1`, `--scene`/`--resume-from`, `--seed`, and an `--aspect`
+> other than the source clip's (leave `--aspect` off; the extension keeps the source's). To
+> go further, extend the same clip again: each extend continues the newest version of the
+> clip ([#1346](https://github.com/ffroliva/gflow-cli/issues/1346)). "Cost and safety" and
+> "What it produces" below describe the labs.google arm.
 
-Continue an existing clip (on labs.google by another 8 seconds), then optionally render
-the whole thing to one file.
+Continue an existing clip (or a local video file on `flow.google.com`), then optionally
+render the whole thing to one file.
 
 ```bash
-# one continuation
-gflow video extend <media-id> "the wave recedes back into the ocean" --project <id>
+# one continuation of an existing Flow clip (custom duration + ref + credit cap on flow.google.com)
+gflow video extend <media-id> "the wave recedes back into the ocean" --project <id> --duration 6 --ref style.png --max-credits 20
 
-# four continuations, different beats, rendered to a single mp4
+# upload and continue a local video file directly on flow.google.com
+gflow video extend clip.mp4 "camera glides forward through mist" --duration 5 --max-credits 20
+
+# four continuations on labs.google, different beats, rendered to a single mp4
 gflow video extend <media-id> \
   "the camera drifts upward" \
   "the coastline opens out below" \
   -n 4 --out-file long.mp4 --project <id>
 ```
 
-`MEDIA_ID` is the clip to continue; each `PROMPT` describes one 8-second
+`SOURCE` is the clip to continue; on labs.google each `PROMPT` describes one 8-second
 segment. With `--segments/-n` greater than the number of prompts, the last
 prompt is reused — so `-n 4` with one prompt continues the same idea four times.
 
@@ -1301,9 +1314,13 @@ server-side concat, which is credit-free. Without `--out-file`, render later wit
 | Flag | Meaning |
 |---|---|
 | `-n`, `--segments N` | How many 8s continuations (1–30). Default: one per prompt |
-| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save the clip Flow returns; with the Omni key (measured 2026-11-08) Flow grows the source clip in place by ~4s, so that is the whole extended clip |
+| `--out-file PATH` | labs.google: render the whole scene (source clip + extensions) to one mp4 (free). flow.google.com: save the clip Flow returns; with an Omni key Flow grows the source clip in place, so that is the whole extended clip |
 | `--aspect 9:16\|16:9` | Portrait or landscape. **No square** — Flow has no square extend model. Default 9:16 on labs.google; flow.google.com keeps the source clip's aspect |
-| `--project ID` | Required — the project owning `MEDIA_ID` |
+| `--project ID` | The project owning a `MEDIA_ID` (else the catalog's record, else `GFLOW_CLI_PROJECT`); optional for a local file |
+| `--project-name NAME` | flow.google.com, local file: the name of the project created when none is given |
+| `--duration N` | flow.google.com: extension length, 3–10 seconds. Omitted: Flow's current setting |
+| `--ref PATH` | flow.google.com: local reference image, repeatable, up to 3, attached in order |
+| `--max-credits N` | Refuse (exit 45) unless Flow's pre-submit quote is readable and at most `N` |
 | `--scene ID` | Extend inside an existing scene instead of creating one |
 | `--resume-from ID` | Continue an interrupted run's scene — appends after the clips already there |
 | `--seed N` | Fixed seed, for a reproducible run |
@@ -2453,7 +2470,7 @@ independent of the output channel.
 
 Model Context Protocol server for IDE/agent integration. Full reference: [MCP.md](MCP.md).
 
-- **`gflow mcp run [--profile NAME] [--no-spend]`** — start the MCP server over **stdio** (Claude Desktop, Cursor, VS Code). Auto-selects your default profile; pin one with `--profile` or `GFLOW_CLI_PROFILE`. `--no-spend` (#496) never registers the two credit-spending tools (`gflow_generate_image`, `gflow_generate_video`), so a connected agent cannot even see them in `tools/list` — read-only tools stay available. `GFLOW_MCP_NO_SPEND=1` does the same and also covers `gflow serve` (which takes the same flag). See [CONFIGURATION § GFLOW_MCP_NO_SPEND](CONFIGURATION.md#gflow_mcp_no_spend).
+- **`gflow mcp run [--profile NAME] [--no-spend]`** — start the MCP server over **stdio** (Claude Desktop, Cursor, VS Code). Auto-selects your default profile; pin one with `--profile` or `GFLOW_CLI_PROFILE`. `--no-spend` (#496) never registers the credit-spending tools (`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video`), so a connected agent cannot even see them in `tools/list` — read-only tools stay available. `GFLOW_MCP_NO_SPEND=1` does the same and also covers `gflow serve` (which takes the same flag). See [CONFIGURATION § GFLOW_MCP_NO_SPEND](CONFIGURATION.md#gflow_mcp_no_spend).
 - **`gflow mcp setup [--target claude-desktop|cursor|vscode]`** — write the gflow server entry into the target client's config. Non-destructive: existing content is merged, an existing `gflow`/`gflow-cli` entry is left untouched ("Already configured"), a pre-existing file is backed up once as `<name>.gflow-backup`, and a corrupt config fails loud (exit 11) without being modified. See [MCP.md § Setup Instructions](MCP.md#4-setup-instructions).
 
 For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).

@@ -38,6 +38,7 @@ from gflow_cli.errors import (
     ConfigurationError,
     ContentPolicyError,
     InsufficientCreditsError,
+    MediaUploadRejectedError,
     RpcResponseUnavailableError,
     TransportTimeoutError,
     UiSelectorDriftError,
@@ -1641,3 +1642,135 @@ class SubmitWatch:
 
     def __exit__(self, *_exc: object) -> None:
         self._page.remove_listener("request", self._on_request)
+
+
+def upload_terms_remediation(noun: str) -> str:
+    """What to do about Flow's one-time "rights to use this <noun>" dialog (#719)."""
+    return (
+        f"Open the project on flow.google.com, upload any {noun} by hand, "
+        f"and accept the one-time 'rights to use this {noun}' dialog. gflow "
+        "does not accept it for you: it affirms that YOU hold the rights "
+        "to what you upload. It appears once per account — after that, "
+        "uploads work unattended. If you see a different dialog instead "
+        "(an error, a quota notice, a re-login), that is the one blocking "
+        "the upload. Nothing was spent; re-run when done."
+    )
+
+
+async def _open_upload_chooser(page: Page) -> Any:
+    """Toolbar ``+`` → the ``upload`` menu item → Playwright's file chooser."""
+    add = page.locator(TOOLBAR_ADD).first
+    if not await add.count():
+        raise UiSelectorDriftError(
+            detail=(
+                "migrated host: the toolbar add button (mat-icon 'add' outside "
+                "flow-prompt-box) is missing (host=migrated)"
+            ),
+        )
+    await add.click(timeout=5000)
+    item = page.locator(UPLOAD_MENU_ITEM).first
+    try:
+        await item.wait_for(state="visible", timeout=int(FRAME_PICKER_OPEN_S * 1000))
+    except Exception as e:
+        raise UiSelectorDriftError(
+            detail=(
+                "migrated host: the toolbar menu rendered no upload entry "
+                f"({MENU_ITEM} with the 'upload' ligature) within "
+                f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
+            ),
+        ) from e
+    try:
+        async with page.expect_file_chooser(timeout=int(FRAME_PICKER_OPEN_S * 1000)) as fc_info:
+            await item.click(timeout=4000)
+        return await fc_info.value
+    except Exception as e:
+        raise UiSelectorDriftError(
+            detail=(
+                "migrated host: the upload entry opened no file chooser within "
+                f"{FRAME_PICKER_OPEN_S:.0f}s (host=migrated)"
+            ),
+        ) from e
+
+
+async def toolbar_upload(  # noqa: PLR0913
+    page: Page,
+    files: Any,
+    *,
+    is_upload_url: Callable[[str], bool],
+    read_reply: Callable[[Any], Awaitable[tuple[int, str | None] | None]],
+    timeout_s: float,
+    noun: str,
+    request_name: str,
+    route: str,
+    timeout_hint: str,
+) -> tuple[int, str | None]:
+    """Hand ``files`` to the toolbar uploader and return the app's own upload reply.
+
+    ``read_reply`` turns a matching response into ``(status, text)``, or ``None`` to keep
+    waiting (a resumable upload answers more than once). Nothing is replayed.
+    """
+    reply: asyncio.Future[tuple[int, str | None]] = asyncio.get_running_loop().create_future()
+    # The response listener alone cannot tell "the page never asked" from "Flow was
+    # slow" — different bugs with opposite fixes (#719: a blocked send vs a lost reply).
+    sent = False
+
+    async def on_response(response: Any) -> None:
+        if reply.done() or not is_upload_url(str(getattr(response, "url", ""))):
+            return
+        result = await read_reply(response)
+        if result is not None and not reply.done():
+            reply.set_result(result)
+
+    def on_request(request: Any) -> None:
+        nonlocal sent
+        if is_upload_url(str(getattr(request, "url", ""))):
+            sent = True
+
+    page.on("response", on_response)
+    page.on("request", on_request)
+    try:
+        chooser = await _open_upload_chooser(page)
+        # Flow holds an account's FIRST upload behind a one-time "rights to use this
+        # <noun>" confirmation that renders only after the chooser hands the file over,
+        # and sends nothing until a human accepts (#719). Counted, never matched: its
+        # buttons carry no anchor and its copy is translated. The baseline is taken
+        # BEFORE `set_files` so an already-open modal is never blamed. gflow does not
+        # click it: accepting affirms the account owner holds the rights to the content.
+        # docs/superpowers/spikes/2026-09-08-migrated-upload-fails-two-ways.md
+        dialogs_before = await page.locator(DIALOG).count()
+        await chooser.set_files(files)
+        try:
+            return await asyncio.wait_for(reply, timeout=timeout_s)
+        except TimeoutError:
+            try:
+                opened = await page.locator(DIALOG).count() > dialogs_before
+            except Exception:  # noqa: BLE001 - a probe is never the failure it reports
+                # A dead or navigated page raises here too; escaping would replace a
+                # mapped exit 27 with an unmapped traceback (#752).
+                opened = False
+            if opened and not sent:
+                raise MediaUploadRejectedError(
+                    detail=(
+                        f"migrated host: a dialog opened after the file was chosen and no "
+                        f"{request_name} request left the page — most likely Flow's one-time "
+                        f"upload-terms confirmation (host=migrated)"
+                    ),
+                    route=route,
+                    remediation_hint=upload_terms_remediation(noun),
+                ) from None
+            went_out = (
+                "the request left the page and Flow did not answer in time"
+                if sent
+                else "no upload request ever left the page"
+            )
+            raise MediaUploadRejectedError(
+                detail=(
+                    f"migrated host: no {request_name} reply within {timeout_s:.0f}s "
+                    f"of choosing the file — {went_out}"
+                ),
+                route=route,
+                remediation_hint=timeout_hint,
+            ) from None
+    finally:
+        page.remove_listener("response", on_response)
+        page.remove_listener("request", on_request)

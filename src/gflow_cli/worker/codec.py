@@ -42,6 +42,7 @@ from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, VideoModel
 from gflow_cli.api.video import Mode as VideoMode
 from gflow_cli.api.video import Tier as VideoTier
+from gflow_cli.api.video_extend import MigratedExtendRequest
 from gflow_cli.config import UiMode
 from gflow_cli.data.redaction import redact_error_detail
 from gflow_cli.errors import QueueSchemaError
@@ -53,6 +54,7 @@ __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "DecodedPayload",
     "build_image_request",
+    "build_video_extend_request",
     "build_video_request",
     "decode_payload",
     "encode_payload",
@@ -61,7 +63,8 @@ __all__ = [
 
 _IMAGE_TASK_TYPES = frozenset({"t2i", "i2i"})
 _VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
-_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES
+_VIDEO_EXTEND_TASK_TYPES = frozenset({"extend"})
+_KNOWN_TASK_TYPES = _IMAGE_TASK_TYPES | _VIDEO_TASK_TYPES | _VIDEO_EXTEND_TASK_TYPES
 
 # The only version this codec writes. 0 (an absent key) is read-only legacy
 # compatibility — nothing ever deliberately encodes as V0.
@@ -86,7 +89,7 @@ class DecodedPayload:
 
     schema_version: int
     task_type: str
-    request: GenerateImageRequest | GenerateVideoRequest
+    request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest
     fields: dict[str, Any]
 
 
@@ -114,11 +117,13 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
 
     try:
-        request: GenerateImageRequest | GenerateVideoRequest = (
-            build_image_request(fields)
-            if task_type in _IMAGE_TASK_TYPES
-            else build_video_request(fields)
-        )
+        request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest
+        if task_type in _IMAGE_TASK_TYPES:
+            request = build_image_request(fields)
+        elif task_type in _VIDEO_EXTEND_TASK_TYPES:
+            request = build_video_extend_request(fields)
+        else:
+            request = build_video_request(fields)
     except (KeyError, ValueError, TypeError) as exc:
         detail = redact_error_detail(f"{task_type} payload rejected: {exc}")
         raise QueueSchemaError(detail, route=_CODEC_ROUTE) from exc
@@ -353,4 +358,50 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         reference_audio=reference_audio,
         ui_mode=ui_mode,
         max_credits=max_credits,
+    )
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is not None and not isinstance(value, str):
+        msg = f"{key} must be a string"
+        raise TypeError(msg)
+    return value
+
+
+def _optional_int(payload: dict[str, Any], key: str) -> int | None:
+    value = payload.get(key)
+    if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+        msg = f"{key} must be an integer"
+        raise TypeError(msg)
+    return value
+
+
+def build_video_extend_request(payload: dict[str, Any]) -> MigratedExtendRequest:
+    """Map an ``extend`` queue payload dict onto :class:`MigratedExtendRequest`.
+
+    Every wrong type is a ``TypeError``/``ValueError`` here, so :func:`decode_payload`
+    reports it as :class:`QueueSchemaError` (exit 30) rather than failing later.
+    """
+    prompt = payload["prompt"]
+    if not isinstance(prompt, str):
+        msg = "prompt must be a string"
+        raise TypeError(msg)
+    for key in ("project_id", "project_name", "output_file"):
+        _optional_str(payload, key)
+    source_video = _optional_str(payload, "source_video")
+    raw_refs = payload.get("reference_images", [])
+    if not isinstance(raw_refs, list) or not all(
+        isinstance(p, str) for p in cast("list[Any]", raw_refs)
+    ):
+        msg = "reference_images must be a list of paths"
+        raise TypeError(msg)
+    return MigratedExtendRequest(
+        prompt=prompt,
+        source_video=Path(source_video) if source_video else None,
+        source_media_id=_optional_str(payload, "source_media_id"),
+        duration=_optional_int(payload, "duration"),
+        reference_images=tuple(Path(p) for p in cast("list[str]", raw_refs)),
+        aspect=_optional_str(payload, "aspect"),
+        max_credits=_optional_int(payload, "max_credits"),
     )

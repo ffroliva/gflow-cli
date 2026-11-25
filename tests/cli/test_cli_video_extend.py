@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.cli import main as cli
+from gflow_cli.data.recorder import OperationRecorder
 
 MEDIA = "b9458021-fc2d-4d95-ab53-cf844c6f1079"
 PROJECT = "7d3d6bd9-a39f-4c2d-b772-146e73e539cf"
@@ -675,16 +676,134 @@ def test_the_arm_is_chosen_before_the_browser(
     assert _run_spy["aspect"] is None  # no hidden 9:16 sent to the migrated arm
 
 
-def test_the_migrated_plan_claims_no_price(runner: CliRunner, _host: Any) -> None:
+def test_the_migrated_plan_describes_pre_submit_quote(runner: CliRunner, _host: Any) -> None:
     _host("flow.google.com")
-    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, "--dry-run"])
-    assert result.exit_code == 0
-    assert "does not report the price" in result.output
-    assert "exact amount" not in result.output
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "extend",
+            MEDIA,
+            "go",
+            "--project",
+            PROJECT,
+            "--duration",
+            "6",
+            "--max-credits",
+            "20",
+            "--dry-run",
+        ],
+    )
+    assert result.exit_code == 0, result.output
     flat = " ".join(result.output.split())  # Rich wraps at the terminal width
-    assert "grows the source clip in place" in flat  # #1184, a dated observation
-    assert "measured 2026-11-08" in flat
+    assert "pre-submit credit quote" in flat
+    assert "6s" in flat
+    assert "grows the source clip in place" in flat
     assert "Flow bills 8s" not in flat  # the length is the key's, not a fixed Veo 8 s
+
+
+def test_cli_accepts_local_video_duration_refs_and_credit_cap(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    _host("flow.google.com")
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "extend",
+            str(clip),
+            "camera rises",
+            "--duration",
+            "6",
+            "--ref",
+            str(ref),
+            "--max-credits",
+            "20",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert _run_spy["migrated"] is True
+    assert _run_spy["source_video"] == clip.resolve()
+    assert _run_spy["duration"] == 6
+    assert _run_spy["refs"] == (ref.resolve(),)
+    assert _run_spy["max_credits"] == 20
+
+
+def test_cli_rejects_more_than_three_refs_at_boundary(
+    runner: CliRunner, _host: Any, tmp_path: Path
+) -> None:
+    _host("flow.google.com")
+    refs = []
+    for i in range(4):
+        p = tmp_path / f"r{i}.png"
+        p.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        refs.extend(["--ref", str(p)])
+    result = runner.invoke(
+        cli, ["video", "extend", MEDIA, "go", "--project", PROJECT, *refs, "--yes"]
+    )
+    assert result.exit_code == 2
+    assert "3" in result.output
+
+
+@pytest.mark.parametrize("bad_dur", ["2", "11"])
+def test_cli_rejects_out_of_range_duration(runner: CliRunner, _host: Any, bad_dur: str) -> None:
+    _host("flow.google.com")
+    result = runner.invoke(
+        cli,
+        ["video", "extend", MEDIA, "go", "--project", PROJECT, "--duration", bad_dur, "--yes"],
+    )
+    assert result.exit_code == 2
+
+
+def test_cli_refuses_migrated_only_extend_options_on_labs_host(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], tmp_path: Path
+) -> None:
+    _host("labs.google")
+    clip = tmp_path / "local.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    result = runner.invoke(cli, ["video", "extend", str(clip), "go", "--duration", "5", "--yes"])
+    assert result.exit_code == 36
+    assert _run_spy == {}
+
+
+def test_migrated_payload_reports_quoted_credits_and_uploaded_source_length() -> None:
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_extend import ExtendOutcome
+    from gflow_cli.cli_video_reporting import _migrated_extend_payload
+
+    uploaded_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+    record = GenerationRecord(
+        workflow_id="wf-up",
+        project_id=PROJECT,
+        media_id=uploaded_id,
+        status=3,
+    )
+    outcome = ExtendOutcome(
+        record=record,
+        video=None,
+        model_key="macaron_cookie_extend_5s",
+        aspect="16:9",
+        scene_id=None,
+        quoted_credits=15,
+        source_media_id=uploaded_id,
+    )
+    payload = _migrated_extend_payload(
+        outcome,
+        "out.mp4",
+        profile_name="p",
+        media_id="/tmp/clip.mp4",
+        project_id=PROJECT,
+        aspect=None,
+    )
+    assert payload["quoted_credits"] == 15
+    assert payload["credits_spent"] is None  # a pre-submit quote is not a final charge
+    assert payload["seconds_added"] == 5
+    assert payload["seconds_billed"] == 5
 
 
 class _MigratedClient:
@@ -738,6 +857,8 @@ async def test_the_migrated_session_reports_one_video_result(
     rows: list[tuple[str, str]] = []
 
     class _Recorder:
+        record_migrated_extend = OperationRecorder.record_migrated_extend
+
         def record_started_extend(self, *, started: Any, aspect: str, **_kw: Any) -> None:
             rows.append((started.media_id, aspect))
 
@@ -787,15 +908,22 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
     monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
     sources: list[str | None] = []
     notes: list[tuple[Any, ...]] = []
+    settled: list[str] = []
 
     class _Recorder:
+        record_migrated_extend = OperationRecorder.record_migrated_extend
+        repository = SimpleNamespace(
+            settle_pending_asset=lambda *a: settled.append(a[1])  # a failed run settles it
+        )
+
         def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
             sources.append(source_media_id)
 
         def record_extended_in_place(
             self, *args: Any, local_path: Path | None = None, **_kw: Any
-        ) -> None:
+        ) -> bool:
             notes.append(args)
+            return True  # the clip is catalogued
 
     with pytest.raises(SystemExit) if not done else contextlib.nullcontext():
         await _extend_migrated_session(
@@ -811,6 +939,7 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
         )
     assert sources == [MEDIA]
     assert notes == ([("p", MEDIA, "new-wf", "k")] if done else [])  # profile, id, workflow, key
+    assert settled == ([] if done else [MEDIA])
 
 
 @pytest.mark.asyncio
@@ -1590,3 +1719,63 @@ def test_new_id_extend_failure_or_timeout_transitions_pending_to_terminal(tmp_pa
         assert row_updated is not None
         assert row_updated[0] != "pending"
         assert row_updated[0] == "MEDIA_GENERATION_STATUS_FAILED"
+
+
+def test_cli_extend_honours_the_default_project_for_an_uncatalogued_clip(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Parity with every other generate command and the MCP twin: GFLOW_CLI_PROJECT."""
+    monkeypatch.setenv("GFLOW_CLI_PROJECT", PROJECT)
+    _host("flow.google.com")
+    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert _run_spy["project_id"] == PROJECT
+
+
+def test_cli_extend_of_an_uncatalogued_clip_without_a_project_is_exit_11(
+    runner: CliRunner, _host: Any, _run_spy: dict[str, Any]
+) -> None:
+    _host("flow.google.com")
+    result = runner.invoke(cli, ["video", "extend", MEDIA, "go", "--yes", "--json"])
+    assert result.exit_code == 11
+    assert _run_spy == {}
+
+
+@pytest.mark.parametrize(
+    ("name", "data"), [("clip.webm", b"\x1aE\xdf\xa3" + b"\x00" * 12), ("notes.txt", b"hi")]
+)
+def test_cli_an_unsupported_local_file_is_exit_11_before_any_project(
+    runner: CliRunner,
+    _host: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    data: bytes,
+) -> None:
+    created: list[str] = []
+
+    class _Client:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_a: object) -> None:
+            return None
+
+        async def create_project(self, **_kw: Any) -> Any:
+            created.append("project")
+
+    monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", _Client)
+    monkeypatch.setattr("gflow_cli.cli_video._make_provider_dir", lambda _p: tmp_path)
+    monkeypatch.setattr("gflow_cli.cli_video._resolve_profile", lambda _p: "p")
+    _host("flow.google.com")
+    path = tmp_path / name
+    path.write_bytes(data)
+    result = runner.invoke(cli, ["video", "extend", str(path), "go", "--yes", "--json"])
+    assert result.exit_code == 11, result.output
+    error = json.loads(result.stdout)["error"]
+    assert error["charged"] == "no", error
+    assert "transport" not in error.get("remediation_hint", ""), error
+    assert created == []
