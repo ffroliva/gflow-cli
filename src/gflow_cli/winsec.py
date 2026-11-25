@@ -132,14 +132,15 @@ def harden_file_once(path: str) -> bool:
         return False
     try:
         sid = _current_user_sid()
-        subprocess.run(  # noqa: S603 - fixed System32 binary, argv list, no shell
+        # Fixed System32 binary, argv list, no shell.
+        subprocess.run(  # noqa: S603
             [_system32("icacls.exe"), path, "/inheritance:r", "/grant:r", f"*{sid}:F", "/q"],
             check=True,
             capture_output=True,
             timeout=10,
         )
-    except Exception as exc:  # noqa: BLE001 — best-effort, caller must proceed
-        # No stderr: icacls echoes the path.
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort: the caller must proceed. No stderr: icacls echoes the path.
         logger.warning(
             "file_acl_failed",
             error=type(exc).__name__,
