@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sqlite3
+import stat
+import sys
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Self
 
+import structlog
+
 from gflow_cli.errors import DataMigrationError, DataStoreError
+from gflow_cli.winsec import harden_file_once
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -20,6 +27,53 @@ MIGRATION_PACKAGE = "gflow_cli.data.migrations"
 BUSY_TIMEOUT_MS = 5000
 MIGRATION_RE = re.compile(r"^(?P<version>\d{4,})_.+\.sql$")
 _ROUTE_MIGRATE = "data.migrate"
+
+logger = structlog.get_logger(__name__)
+
+
+#: One thread creates the file at a time; see ``_secure_store_files``.
+_create_lock = threading.Lock()
+
+
+def _secure_store_files(path: Path) -> None:
+    """Create the database owner-only, or drop group/other access from an existing one.
+
+    Runs before SQLite opens the file. An existing directory is left alone:
+    ``GFLOW_CLI_DB_PATH`` can name one gflow does not own (issue #1437).
+    """
+    # Not on Windows: there 0o700 sets a DACL that names the directory's owner, not the
+    # user, so a directory first created by an elevated run would lock the user out.
+    dir_mode = 0o777 if sys.platform == "win32" else 0o700
+    path.parent.mkdir(mode=dir_mode, parents=True, exist_ok=True)
+    # SQLite follows a symlinked database and keeps its sidecars beside the target.
+    real = os.path.realpath(path)
+    try:
+        # On POSIX, closing any descriptor of a file drops this process's locks on it.
+        # O_EXCL never opens an existing database; the lock keeps another thread from
+        # connecting between this open and close.
+        with _create_lock:
+            os.close(os.open(real, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        harden_file_once.cache_clear()  # a recreated file needs its own ACL
+    except FileExistsError:
+        pass
+    if not os.path.isfile(real):
+        return  # a directory or device is no database, so "<path>-wal" is no sidecar
+    if sys.platform == "win32":
+        harden_file_once(real)
+        return
+    for target in (real, f"{real}-wal", f"{real}-shm"):
+        try:
+            mode = os.lstat(target).st_mode
+            if stat.S_ISREG(mode) and mode & 0o077:
+                os.chmod(target, stat.S_IMODE(mode) & 0o700)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:  # best-effort: the open must still work
+            logger.warning(
+                "data_store_chmod_failed",
+                file=os.path.basename(target),
+                error=type(exc).__name__,
+            )
 
 
 def _utc_now() -> str:
@@ -211,7 +265,7 @@ class DataStore:
     @classmethod
     def open(cls, path: Path) -> DataStore:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
+            _secure_store_files(path)
             conn = sqlite3.connect(path, isolation_level=None)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA foreign_keys = ON")

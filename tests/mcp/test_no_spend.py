@@ -44,6 +44,7 @@ def test_default_mode_keeps_generate_tools(
     names = _tool_names(registered_server)
     assert "gflow_generate_image" in names
     assert "gflow_generate_video" in names
+    assert "gflow_extend_video" in names
 
 
 def test_no_spend_removes_both_generate_tools(
@@ -54,6 +55,7 @@ def test_no_spend_removes_both_generate_tools(
     names = _tool_names(registered_server)
     assert "gflow_generate_image" not in names
     assert "gflow_generate_video" not in names
+    assert "gflow_extend_video" not in names
     # Read-only surfaces stay available.
     assert "gflow_list_projects" in names
     assert "gflow_list_tools" in names
@@ -84,6 +86,7 @@ async def test_guide_matches_no_spend_registry(
     assert "NO-SPEND" in guide
     assert "### gflow_generate_image" not in guide
     assert "### gflow_generate_video" not in guide
+    assert "### gflow_extend_video" not in guide
     assert "gflow_auth_status" in guide
 
 

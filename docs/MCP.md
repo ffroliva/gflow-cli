@@ -96,6 +96,7 @@ is sent to the selected provider, Edge Read Aloud or Gemini; Gemini uses the sep
 The server registers three protocol surfaces:
 
 ### Tools (Executable actions)
+* `gflow_extend_video(source, prompt, duration, reference_images, aspect, max_credits, profile, project, project_name, out_file, wait)`: Worker-queued single-segment video extend on `flow.google.com`. `source` accepts either a local video path (`.mp4`/`.m4v`/`.mov`/`.3gp`/`.avi`, auto-creating a project if `project` is omitted) or an existing Flow clip UUID (requires `project` or a catalogued clip). Supports optional `duration` (`3-10` seconds; omitted, Flow's current setting is kept and the result reports the length sent), `0-3` `reference_images` (local image paths or catalogued UUIDs in caller order), optional `aspect` (`9:16`/`16:9` verification), and `max_credits` pre-submit quote cap. Gated by `--no-spend`; `out_file` must resolve inside the configured output directory.
 * `gflow_video_assemble(clips, out_file, music, voiceover, clip_volume, music_volume, voiceover_volume, duck, profile)`: Direct, credit-free local processing; joins local files or catalog video IDs with verified local copies, optionally mixes local music and voiceover audio files, and returns the same result fields as `gflow video assemble --json`. Ducking lowers music and clip audio while voiceover is present by default. `out_file` must be inside the configured output directory, uses the first clip's size and frame rate, and refuses existing files (an empty file left by an interrupted run is cleared once older than 60 s). It runs in-process on a background thread, not through the worker queue.
   Example: `{"clips":["clip-a.mp4","clip-b.mp4"],"out_file":"assembled.mp4","music":"score.wav","voiceover":"narration.wav","duck":true}`. `out_file` is relative to the configured output directory; music and voiceover are local audio paths.
 
@@ -123,7 +124,9 @@ An omitted parameter cannot clear that environment default for one MCP call.
 > `tools/list` says what follows. With `wait=true` the tool runs the job **inside the
 > call**, so the call stays open for the whole generation — minutes for a video — which
 > can outlast an MCP client's tool timeout. Raise the client's tool timeout, or use
-> `wait=false`. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
+> `wait=false`. If the job has not finished when a `wait=true` call returns, the reply has
+> `status: "failed"` plus `task_status: "pending"` or `"processing"`: the job is unfinished,
+> not failed, and its `task_id` can still be read back later. With `wait=false` the tool returns `{"status": "pending", "task_id": ...}`
 > at once and runs the job in the background of the same server process, one job at a
 > time per profile within that server. Read it back with the SEP-2663 Tasks extension
 > (`io.modelcontextprotocol/tasks`): poll `tasks/get`. While the job runs it answers
@@ -385,7 +388,7 @@ Use this if you installed `gflow-cli` globally (e.g. via `uv tool install gflow-
 ##### Option A2: Read-only server
 
 Use this when the agent must never be able to spend credits (#496). The two
-credit-spending tools (`gflow_generate_image`, `gflow_generate_video`) are then
+credit-spending tools (`gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video`, `gflow_extend_video`) are then
 **never registered**, so they do not appear in `tools/list` at all — invisible
 rather than refused. Every read-only tool stays available.
 
@@ -446,7 +449,7 @@ For decoupled clients, local web interfaces, or multi-process frontends, run the
 ```bash
 gflow serve --port 8000 --host 127.0.0.1 --profile default
 
-# Read-only daemon — the two credit-spending tools are never registered (#496):
+# Read-only daemon — the credit-spending tools are never registered (#496):
 gflow serve --port 8000 --host 127.0.0.1 --profile default --no-spend
 ```
 This serves the MCP server over **Streamable HTTP**, the current spec transport:
@@ -482,15 +485,144 @@ A missing header, a non-`Bearer` scheme, or a wrong token is answered `401` with
 `WWW-Authenticate: Bearer` — on `/mcp` and on both halves of the deprecated SSE
 surface (`/sse`, `/messages/`). The comparison is constant-time
 (`hmac.compare_digest`), and auth is the outermost layer, so an unauthenticated
-caller learns nothing about the transport's DNS-rebinding allow-list.
+caller learns nothing about the transport's DNS-rebinding allow-list. The same
+token guards the OpenAI-compatible route below.
 
 Non-loopback binds (e.g. `--host 0.0.0.0`) **require** the token — `gflow serve`
 refuses to start without one (exit 11). A loopback bind with no token stays
 unauthenticated, which is the local single-user default.
 
+### OpenAI-compatible image endpoint
+
+`gflow serve` (either transport) also answers `POST /v1/images/generations` in the
+OpenAI Images schema ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)), so
+OpenAI SDK code can generate Flow images by changing its base URL:
+
+```python
+import base64
+
+from openai import OpenAI
+
+# max_retries=0: the route keeps generating after a client disconnect, so an SDK retry on
+# a timeout or proxy error can bill a second generation.
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="<GFLOW_DAEMON_TOKEN or any string>",
+    max_retries=0,
+)
+image = client.images.generate(prompt="a paper boat", size="1792x1024", n=1)
+png_bytes = base64.b64decode(image.data[0].b64_json)
+```
+
+It is the `gflow_generate_image` tool behind another door: the same profile resolution,
+rate limit (429 when the bucket is empty) and `GFLOW_MCP_NO_SPEND` (403 `no_spend`).
+Without `GFLOW_CLI_PROJECT` set on the daemon, every request creates
+a new Flow project, as the tool does when it is given no `project`. The account is the
+daemon's: `gflow serve --profile <name>` pins it (it sets `GFLOW_CLI_PROFILE` for the
+server process, as `gflow mcp run --profile` does), otherwise the default profile is used.
+
+The route refuses up front, before any quota is spent:
+
+- **A prompt with an `@`-mention and no pinned project.** gflow reads `@Name` as a Flow
+  character name, and names resolve inside a project, so `"a logo for @acme"` is 400
+  `param: "prompt"` unless the daemon sets `GFLOW_CLI_PROJECT`; with a pinned project,
+  mentions resolve as they do on the CLI. An `@` inside a word (`user@example.com`) is
+  not a mention.
+- **Cloud storage.** With `GFLOW_CLI_STORAGE_URI` set to `s3://` or `gs://`, outputs have
+  no local file to read back, so every request is 500 `server_misconfigured` naming the
+  setting.
+
+| Field | Accepted |
+|---|---|
+| `prompt` | required, non-empty |
+| `model` | Google Flow image models only: `nano2` (default), `nano2-lite`, `nano-pro`, `image4` and their aliases; anything else, OpenAI's own names included, is 400 |
+| `n` | 1–4 |
+| `size` | `WIDTHxHEIGHT` → the nearest of Flow's aspects (`1:1`, `9:16`, `16:9`, `4:3`, `3:4`); an aspect string itself; `auto` or absent → `1:1` |
+| `response_format` | `b64_json` only (the default here; OpenAI's default `url` is 400 — gflow does not host files) |
+| `stream` | absent, `null`, `false` or `0`; `true` is 400 (streaming is not supported), any other value is 400 (not a boolean) |
+| `quality`, `style`, `user`, `background`, `output_format` | ignored |
+
+An explicit JSON `null` counts as an absent field. Video is not exposed yet. Flow can
+return fewer images than `n`; the response is then still 200 with the images produced
+(they are billed), and the `x-gflow-images-returned` header, present on every 200,
+carries the count, so `data` stays in OpenAI's schema.
+
+**Contract decision — Flow models only.** The endpoint is a facade over Google Flow, not
+an OpenAI emulator: it speaks OpenAI's request and response schema, but the images come
+from Flow's models. A request naming an OpenAI model (`gpt-image-1`, `dall-e-3`, …) is
+refused with 400 `param: "model"` and a message listing the accepted Flow model names, rather than
+silently substituting one. A caller that keeps OpenAI's model name gets an error that
+says what to send instead, and a generation is never billed under a model it did not
+name.
+
+**Request checks.** Every request must be a `POST` (405 otherwise) with
+`Content-Type: application/json` (415) and a body of at most 4 MiB, the MCP SDK's own
+request-body cap, whether the length is declared or the body is chunked (413). With no token
+configured, the route also refuses a non-loopback `Host` (421, DNS rebinding) and a
+non-loopback `Origin` (403): a web page in the user's browser can send a `text/plain`
+POST without a CORS preflight, and these checks keep it from starting a generation.
+With a token, a browser cannot attach the `Authorization` header cross-site.
+
+**Errors.** gflow's RFC 9457 problem details stay the source of truth; the route
+translates them at the edge into OpenAI's error object, which the OpenAI SDKs parse into
+their exception classes:
+
+```json
+{"error": {"message": "...", "type": "server_error", "param": null, "code": "generation_timeout",
+           "gflow_type": "https://gflow-cli.dev/errors/transport-timeout", "charged": "maybe",
+           "retryable": false, "next_action": "reconcile", "task_id": "..."}}
+```
+
+`gflow_type`, `exit_code`, `charged`, `retryable`, `next_action`, `operation_id`,
+`retry_after` and `task_id` are gflow's facts, present when known; OpenAI clients ignore keys they do not
+know. The mapping (`src/gflow_cli/mcp/openai_errors.py`):
+
+| gflow problem | HTTP | `type` | `code` |
+|---|---|---|---|
+| `content-policy` | 400 | `invalid_request_error` | `content_policy_violation` |
+| `bad-parameter`, `reference-not-found` | 400 | `invalid_request_error` | `invalid_value` |
+| `rate-limit`, a 429, `status: rate_limited` | 429 | `rate_limit_error` | `rate_limit_exceeded` |
+| `insufficient-credits` | 429 | `rate_limit_error` | `insufficient_quota` |
+| `auth-expired`, `auth-missing`, `aisandbox-auth`, `auth-browser-rejected`, any other 401/403 from Flow | 502 | `server_error` | `upstream_auth_failed` |
+| `waf-rejection`, `recaptcha-mint` | 502 | `server_error` | `upstream_rejected` |
+| any other 4xx from Flow | 502 | `server_error` | `upstream_error` |
+| `no-profile`, `no-default-profile`, `configuration`, `profile-access`, `profile-engine-downgrade`, `browser-engine-unavailable`, and a `bad-parameter` about the profile or `GFLOW_CLI_PROJECT` | 500 | `server_error` | `server_misconfigured` |
+| `transport-timeout`, a task `wait=true` left `pending`/`processing` (`task_status`) | 504 | `server_error` | `generation_timeout` |
+| any 5xx, or no usable status | the 5xx, else 500 | `server_error` | `generation_failed` |
+
+A 401 or 403 from Flow concerns the daemon's saved Google session, so it becomes a 502
+whose message says to run `gflow auth renew`; passing it through would make an OpenAI
+client treat its daemon token as invalid. A WAF or reCAPTCHA refusal is Flow rejecting
+the daemon's request, not an expired session, so its 502 does not suggest a renewal. A
+4xx from Flow answers the daemon's request, never the caller's, so only the route's own
+parameter validation and gflow's `bad-parameter` produce a 400. A missing profile, an
+ambiguous default profile or a `GFLOW_CLI_PROJECT` that belongs to another profile is a
+fault in the daemon's configuration: a 500 whose message names it, which the caller cannot
+fix by changing the request. The message is the problem's `detail`, else its `message`,
+else its `title`, else `Generation failed.`. The refusals made before the tool runs use
+the same object and carry `charged: "no"` (400s also `gflow_type` `bad-parameter`):
+400 `invalid_value` with `param`, 401 `authentication_error`/`invalid_api_key` (a missing
+or wrong daemon token), 403 `permission_error` (`no_spend`, `invalid_origin`), 405
+`method_not_allowed`, 413 `request_too_large`, 415 `unsupported_media_type`, 421
+`invalid_host` and 500 `server_misconfigured` (cloud storage). Two failures come after a
+generation Flow reported as finished and carry `charged: "yes"`: 502 `no_output` (no file)
+and 500 `output_unreadable` (the file could not be read; the path and the OS error are
+logged on the server, not returned).
+
+**Retries.** The OpenAI SDKs retry 429 and 5xx responses twice by default, and a retried
+generation is a second generation. Every error response therefore carries
+`x-should-retry: false`, which the SDKs obey, except the local rate-limit refusal
+(`status: rate_limited`): it is answered before anything runs and the bucket refills on
+its own. That refusal carries `retry-after: 20`, one refill of the bucket. Any other 429
+carries `retry-after` only when the problem has a `retry_after` (a Flow quota names its
+own wait); `insufficient_quota` and a Flow 429 without one carry none, and neither is
+retried by the SDK. These requests are counted in telemetry under the client name
+`openai-http`, apart from MCP clients' tool calls.
+
 > **Note:** the background `FlowWorker` queue manager and the REST `/api/v1`
 > surface are built as internal foundation but are **not yet wired into**
-> `gflow serve` — it currently runs the MCP/SSE server only. See the
+> `gflow serve` — it currently runs the MCP server (Streamable HTTP or SSE) and the
+> OpenAI-compatible image route above. See the
 > [CHANGELOG](../CHANGELOG.md) for the roadmap.
 
 > **Settings reach the server through its environment, not your shell's `.env`.** An MCP
@@ -522,7 +654,7 @@ Because the MCP server runs locally, inheriting the host user's permissions and 
    This prevents crashes caused by non-ASCII prompt strings on Windows.
 4. **Local Rate-Limiting:** Enforces a token-bucket rate limiter with a capacity of 8 tokens and a refill rate of 1 token every 20 seconds (allowing burst filmmaking tasks without timeouts). It limits call rate, not spend. Spend is bounded per call by `max_credits` on `gflow_generate_video` (or the server's `GFLOW_CLI_MAX_CREDITS` default), which refuses before submit when Flow's quote is unreadable or exceeds the cap (exit 45, #1355), and `--no-spend` (item 6) removes the credit-spending tools altogether. There is no per-session or daily cap (#495).
 5. **CLI-MCP Parameter Symmetry:** Two CI layers guard the surfaces against drift: `tests/mcp/test_cli_parity.py` forces an explicit MCP decision (mapped tool or stated exemption) for every CLI leaf command, and `tests/mcp/test_server.py::TestCliMcpParameterSymmetry` compares CLI Click parameters against registered tool signatures for the two generate tools. Parameter-level comparison does not yet cover the other tools.
-6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending generate tools — `gflow_generate_image` and `gflow_generate_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
+6. **No-Spend Mode (#496):** `gflow mcp run --no-spend` (or `GFLOW_MCP_NO_SPEND=1`, which also covers `gflow serve`) never registers the credit-spending tools — `gflow_generate_image`, `gflow_generate_video`, `gflow_upscale_video` and `gflow_extend_video` are absent from `tools/list` entirely, rather than present-but-refusing. Both are gated because image generation is only empirically free and no-spend is a hard guarantee. Listing, instructions, and other read-only tools remain available.
 
 ---
 

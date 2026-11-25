@@ -16,6 +16,12 @@ against a live page and keep every ``fZytfe`` from reaching Flow:
   on that item instead of a 30 s click timeout (#1334). The tests that need an enabled
   item skip on such a profile.
 
+Two more $0 ``e2e_auth`` tests cover the local-upload arm (#1468): ``--max-credits 0``
+through the CLI exits 45 with ``charged: no`` and no submit click, and a local clip with
+``--duration 5`` and one ``--ref`` must reach the checked ``fZytfe`` as the 5 s key, the
+uploaded ref id in ``entry[8]`` and the uploaded clip's workflow (the upload itself is free
+and stays in the project). Its paid twin is an ``e2e_video`` test.
+
 Belt and braces: a context-level route aborts ``fZytfe`` for the whole test, so even a
 fall-through in the driver cannot bill.
 
@@ -34,6 +40,8 @@ Env: ``GFLOW_CLI_E2E_PROFILE`` (profile served flow.google.com), ``GFLOW_CLI_E2E
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import struct
 import uuid
@@ -357,3 +365,147 @@ async def test_e2e_a_clip_extended_once_extends_again(
     # The second run continued the workflow the first one created, and its file is longer.
     assert expected[1] == workflows[0], (expected, workflows)
     assert seconds[1] > seconds[0], seconds
+
+
+# --- local upload, --duration, --ref and the quote cap (#1468) -----------------
+
+
+def _ref_png(path: Path) -> Path:
+    """A normal-sized image: Flow declines degenerate ones (#755)."""
+    from PIL import Image
+
+    Image.new("RGB", (512, 512), (40, 120, 200)).save(path)
+    return path
+
+
+async def _source_clip_file(profile: Path, path: Path) -> Path:
+    """The env clip's bytes, read through Flow itself, as a local file to upload ($0)."""
+    from gflow_cli.api.transports.migrated_recover import read_clip
+
+    project, media = _ids()
+    transport, page = await _live_page(profile)
+    try:
+        _wf, data = await read_clip(page, project_id=project, media_id=media)
+    finally:
+        await transport.teardown()
+    path.write_bytes(data)
+    return path
+
+
+@pytest.mark.e2e_auth
+def test_e2e_cli_a_zero_cap_is_exit_45_and_nothing_is_submitted(e2e_env: dict[str, str]) -> None:
+    """$0: every extend quotes above 0 credits, so the cap refuses before the click."""
+    from .test_image_uuid_ref_e2e import _events, _run_gflow
+
+    _need_enabled_extend()
+    project, media = _ids()
+    proc = _run_gflow(
+        ["video", "extend", media, _PROMPT, "--project", project, "--max-credits", "0"]
+        + ["--yes", "--json"],
+        e2e_env,
+    )
+    assert proc.returncode == 45, proc.stderr[-800:]
+    error = json.loads(proc.stdout)["error"]
+    assert error["charged"] == "no", error
+    assert "migrated.submit_clicked" not in _events(proc.stderr)
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_auth
+async def test_e2e_local_upload_duration_and_ref_reach_the_submit_at_zero_cost(
+    e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$0 route-abort: a local clip and one ref are uploaded (free, they stay in the
+    project), the slider is set to 5 s, and the checked ``fZytfe`` must carry the 5 s key,
+    the uploaded ref id in ``entry[8]`` and the uploaded clip's workflow — then it is
+    aborted before Flow bills it."""
+    _need_enabled_extend()
+    project, _ = _ids()
+    monkeypatch.delenv("GFLOW_CLI_FLOW_HOST", raising=False)
+    reset_settings()
+    source = await _source_clip_file(e2e_profile_dir, tmp_path / "source.mp4")
+    ref = _ref_png(tmp_path / "ref.png")
+    seen: dict[str, Any] = {"fZytfe": [], "workflow": None, "refs": None}
+    real_require, real_upload = mx.require_video_source, mx._upload_extend_inputs  # noqa: SLF001
+
+    def spy_require(clip: Any, **kw: Any) -> str:
+        seen["workflow"] = real_require(clip, **kw)
+        return seen["workflow"]
+
+    async def spy_upload(*args: Any, **kw: Any) -> Any:
+        uploaded, refs = await real_upload(*args, **kw)
+        seen["refs"] = [ref_id for ref_id, _ in refs]
+        return uploaded, refs
+
+    async def capture_release(route: Any, rpcid: str | None) -> None:
+        if rpcid == mx.EXTEND_SUBMIT_RPC:
+            body = migrated_composer.request_body(route.request)
+            entry = mx._at(mx._inner(rpcid, body), 0, 0)  # noqa: SLF001
+            seen["fZytfe"].append(
+                {
+                    "slot1": mx._at(entry, 0, 1),  # noqa: SLF001
+                    "refs": mx._extract_reference_ids(entry),  # noqa: SLF001
+                    "key": mx.submit_facts(body)[0],
+                }
+            )
+            await route.abort()
+            return
+        await route.fallback()
+
+    monkeypatch.setattr(mx, "require_video_source", spy_require)
+    monkeypatch.setattr(mx, "_upload_extend_inputs", spy_upload)
+    monkeypatch.setattr(mx, "_release", capture_release)
+    transport, page = await _live_page(e2e_profile_dir)
+    try:
+        with pytest.raises(TransportTimeoutError):
+            await mx.run_extend(
+                page,
+                project_id=project,
+                source_video=source,
+                reference_images=(ref,),
+                duration=5,
+                prompt=_PROMPT,
+                aspect=None,
+                poll_timeout_s=_SUBMIT_WAIT_S,
+            )
+    finally:
+        await transport.teardown()
+
+    assert len(seen["fZytfe"]) == 1, seen
+    hit = seen["fZytfe"][0]
+    assert mx.extend_key_seconds(hit["key"]) == 5, hit
+    assert hit["refs"] == seen["refs"] and len(hit["refs"]) == 1, (hit, seen["refs"])
+    assert hit["slot1"] == seen["workflow"], (hit, seen["workflow"])
+
+
+@pytest.mark.e2e_video
+def test_e2e_one_paid_local_upload_extend_with_a_ref(
+    e2e_env: dict[str, str], e2e_profile_dir: Path, tmp_path: Path
+) -> None:
+    """SPENDS VEO CREDITS. A local clip at --duration 5 with one --ref, through the CLI:
+    the output is an mp4 and the catalog lists the extended clip."""
+    if os.environ.get("GFLOW_CLI_E2E_RUN_VIDEO") != "1":
+        pytest.skip("spends Veo credits — set GFLOW_CLI_E2E_RUN_VIDEO=1 (owner consent)")
+    _need_enabled_extend()
+    from gflow_cli.data.repository import DataRepository
+    from gflow_cli.data.store import DataStore
+
+    from .test_image_uuid_ref_e2e import _run_gflow
+
+    project, _ = _ids()
+    source = asyncio.run(_source_clip_file(e2e_profile_dir, tmp_path / "source.mp4"))
+    ref = _ref_png(tmp_path / "ref.png")
+    proc = _run_gflow(
+        ["video", "extend", str(source), _PROMPT, "--project", project, "--duration", "5"]
+        + ["--ref", str(ref), "--yes", "--json"],
+        e2e_env,
+    )
+    assert proc.returncode == 0, proc.stderr[-800:]
+    payload = json.loads(proc.stdout)
+    assert Path(payload["local_path"]).read_bytes()[4:8] == b"ftyp", payload
+    assert payload["request"]["duration"] in (5, None), payload  # None: a separate Veo clip
+    with DataStore.open(Path(e2e_env["GFLOW_CLI_DB_PATH"])) as store:
+        row = DataRepository(store).get_asset_by_flow_media_id(
+            e2e_env["GFLOW_CLI_PROFILE"], payload["media_id"]
+        )
+    assert row is not None, payload

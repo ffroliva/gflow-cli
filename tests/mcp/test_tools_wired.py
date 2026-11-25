@@ -287,6 +287,57 @@ class TestGenerateImageWired:
         assert payload["files"] == result["files"]
 
     @pytest.mark.asyncio
+    async def test_openai_route_n2_returns_both_generated_images(
+        self, temp_db: DataStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#1365 over #1469: ``n=2`` on /v1/images/generations reaches the worker and back."""
+        import base64
+
+        import httpx
+
+        from gflow_cli.mcp.server import build_app
+
+        monkeypatch.delenv("GFLOW_MCP_NO_SPEND", raising=False)
+        fake_client = _FakeFlowApiClient()
+        fake_client.generate_images_batch = AsyncMock(
+            return_value=[
+                _FakeImage(media_name="media-img-1", workflow_id="wf-1", seed=101),
+                _FakeImage(media_name="media-img-2", workflow_id="wf-2", seed=102),
+            ]
+        )
+        transport = httpx.ASGITransport(app=build_app(transport="http"))
+        with (
+            patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"),
+            patch("gflow_cli.worker.daemon.FlowApiClient", return_value=fake_client),
+            patch(
+                "gflow_cli.mcp.tools.get_settings",
+                return_value=MagicMock(
+                    resolved_db_path=lambda: temp_db.path,
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    timeout_seconds=30,
+                    output_dir=tmp_path / "out",
+                ),
+            ),
+            patch(
+                "gflow_cli.worker.daemon.get_settings",
+                return_value=MagicMock(
+                    profile_subdir=lambda _: tmp_path / "profile_default",
+                    headless=True,
+                    transport=None,
+                    output_dir=tmp_path / "out",
+                    max_credits=None,
+                ),
+            ),
+        ):
+            async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
+                resp = await c.post("/v1/images/generations", json={"prompt": "two cats", "n": 2})
+
+        assert resp.status_code == 200, resp.text
+        images = [base64.b64decode(d["b64_json"]) for d in resp.json()["data"]]
+        assert len(images) == 2
+        assert all(images)
+
+    @pytest.mark.asyncio
     async def test_image_t2i_count_fewer_returned_lists_actual_files(
         self, temp_db: DataStore, tmp_path: Path
     ) -> None:

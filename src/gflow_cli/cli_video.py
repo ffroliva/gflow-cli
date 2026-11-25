@@ -50,6 +50,14 @@ from gflow_cli.api.video import (
     validate_duration_for_model,
 )
 from gflow_cli.cli_video_captions import captions, transcribe
+from gflow_cli.cli_video_extend import (
+    labs_unported_extend_refusal,
+    make_migrated_extend_on_started,
+    refuse_unported_extend,
+    resolve_extend_project,
+    resolve_extend_source,
+    validate_extend_refs,
+)
 from gflow_cli.cli_video_reporting import (
     _chain_json,
     _emit_chain_result,
@@ -89,7 +97,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from gflow_cli.api.video import VideoResult
-    from gflow_cli.api.video_extend import ExtendStarted
     from gflow_cli.chain import ChainLinkSpec
     from gflow_cli.tools.invocation import AppliedTool
 
@@ -1942,28 +1949,7 @@ _LABS_EXTEND_DEFAULT_ASPECT = "9:16"
 _EXTEND_COMMAND = "video extend"
 
 
-def _refuse_unported_extend(refusal: Exception, is_json: bool, output_format: str) -> None:
-    async def _refuse() -> None:
-        raise refusal
-
-    run_with_handlers(
-        _refuse,
-        cli_command=_EXTEND_COMMAND,
-        as_json=is_json,
-        output_format=output_format,
-    )
-
-
-def _validate_extend_target(media_id: str, scene_id: str | None) -> None:
-    if scene_id is not None and not is_media_uuid(scene_id):
-        msg = f"scene id must be a UUID, got {scene_id!r}"
-        raise click.BadParameter(msg)
-    if not is_media_uuid(media_id):
-        msg = f"MEDIA_ID must be a media UUID, got {media_id!r}"
-        raise click.BadParameter(msg)
-
-
-def _maybe_print_extend_plan(
+def _maybe_print_extend_plan(  # noqa: PLR0913
     *,
     is_json: bool,
     output_format: str,
@@ -1972,6 +1958,8 @@ def _maybe_print_extend_plan(
     aspect: str | None,
     segments: int,
     migrated: bool,
+    duration: int | None = None,
+    ref_count: int = 0,
     max_credits: int | None,
 ) -> None:
     if is_json or output_format == OutputFormat.ID.value:
@@ -1982,23 +1970,9 @@ def _maybe_print_extend_plan(
         aspect=aspect or ("the source clip's" if migrated else _LABS_EXTEND_DEFAULT_ASPECT),
         segments=segments,
         migrated=migrated,
+        duration=duration,
+        ref_count=ref_count,
         max_credits=max_credits,
-    )
-
-
-def _refuse_migrated_extend_cap(
-    effective_max_credits: int, is_json: bool, output_format: str
-) -> None:
-    async def _refuse() -> None:
-        enforce_credit_cap(
-            quoted=None, max_credits=effective_max_credits, route="flow.google.com video extend"
-        )
-
-    run_with_handlers(
-        _refuse,
-        cli_command=_EXTEND_COMMAND,
-        as_json=is_json,
-        output_format=output_format,
     )
 
 
@@ -2019,12 +1993,13 @@ async def _run_extend(  # noqa: PLR0913
     output_format: str = "table",
     migrated: bool = False,
     max_credits: int | None = None,
+    source_video: Path | None = None,
+    duration: int | None = None,
+    refs: tuple[Path, ...] = (),
+    project_name: str | None = None,
 ) -> None:
-    """Submit N chained extends, then optionally render them to one file."""
+    """Submit N chained extends (labs) or one migrated extend (flow.google.com)."""
     max_credits = resolve_max_credits(max_credits, get_settings().max_credits)
-    if not project_id:
-        msg = "--project is required: extend must know which project owns MEDIA_ID"
-        raise ConfigurationError(msg)
 
     # `chain` defaults jitter to 0.0, which ships unpaced runs and contradicts
     # ACCOUNT_SAFETY's "submissions are paced". Reuse image_batch's resolver so
@@ -2048,16 +2023,23 @@ async def _run_extend(  # noqa: PLR0913
                 profile_name=profile_name,
                 profile_dir=profile_dir,
                 media_id=media_id,
+                source_video=source_video,
                 prompt=prompts[0],
                 aspect=aspect,
+                duration=duration,
+                refs=refs,
                 output_file=output_file,
                 project_id=project_id,
+                project_name=project_name,
                 as_json=as_json,
                 output_format=output_format,
                 recorder=recorder,
                 max_credits=max_credits,
             )
             return
+        if not project_id:  # resolved by `extend`; a direct caller must pass one
+            msg = "--project is required: extend must know which project owns the source clip"
+            raise ConfigurationError(msg)
         await _extend_session(
             profile_name=profile_name,
             profile_dir=profile_dir,
@@ -2090,90 +2072,81 @@ async def _extend_migrated_session(  # noqa: PLR0913
     prompt: str,
     aspect: str | None,
     output_file: Path | None,
-    project_id: str,
+    project_id: str | None,
     as_json: bool,
     output_format: str = "table",
     recorder: OperationRecorder | None,
     max_credits: int | None = None,
+    source_video: Path | None = None,
+    duration: int | None = None,
+    refs: tuple[Path, ...] = (),
+    project_name: str | None = None,
 ) -> None:
     """One segment on flow.google.com: Flow's own extend UI, downloaded to a file.
 
-    No price, scene read-back or resume exists on this arm yet (exit 36 refuses the
-    forms that would need them before this runs).
+    Inputs are validated before any project is created, so a refused file leaves none.
     """
-    out_path = output_file or extend_output_path(get_settings().output_dir, media_id=media_id)
+    await migrated_extend.validate_extend_inputs(
+        media_id=None if source_video is not None else media_id,
+        source_video=source_video,
+        duration=duration,
+        reference_images=refs,
+        max_credits=max_credits,
+    )
+    path_key = source_video.stem if source_video is not None else media_id
+    out_path = output_file or extend_output_path(get_settings().output_dir, media_id=path_key)
     quiet_output = as_json or output_format in (
         OutputFormat.JSON.value,
         OutputFormat.ID.value,
     )
     async with FlowApiClient(profile_dir=profile_dir) as client:
+        resolved_project = project_id
+        if resolved_project is None:
+            created = await client.create_project(
+                title=project_name or slugify_project_name(prompt)
+            )
+            resolved_project = created.project_id
         outcome, target = await client.extend_video_migrated(
-            media_id=media_id,
-            project_id=project_id,
+            media_id=None if source_video is not None else media_id,
+            source_video=source_video,
+            project_id=resolved_project,
             prompt=prompt,
             aspect=aspect,
+            duration=duration,
+            reference_images=refs,
             max_credits=max_credits,
             out_path=out_path,
-            on_started=_migrated_extend_on_started(
+            on_started=make_migrated_extend_on_started(
                 profile_name=profile_name,
                 profile_dir=profile_dir,
-                project_id=project_id,
-                source_media_id=media_id,
+                project_id=resolved_project,
+                source_media_id=None if source_video is not None else media_id,
                 aspect=aspect,
                 as_json=quiet_output,
                 recorder=recorder,
+                console=console,
             ),
         )
+    effective_media = outcome.source_media_id or media_id
     _record_migrated_extend(
         recorder,
         target,
         profile_name=profile_name,
         profile_dir=profile_dir,
-        media_id=media_id,
-        project_id=project_id,
+        media_id=effective_media,
+        project_id=resolved_project,
         outcome=outcome,
     )
     _report_migrated_extend(
         outcome,
         target,
         profile_name=profile_name,
-        media_id=media_id,
-        project_id=project_id,
+        media_id=effective_media,
+        project_id=resolved_project,
         aspect=aspect,
         as_json=as_json,
         output_format=output_format,
     )
-
-
-def _migrated_extend_on_started(  # noqa: PLR0913
-    *,
-    profile_name: str,
-    profile_dir: Path,
-    project_id: str,
-    source_media_id: str,
-    aspect: str | None,
-    as_json: bool,
-    recorder: OperationRecorder | None,
-) -> Callable[[ExtendStarted, str | None], None]:
-    """The migrated arm's submit hook: announce it and record it at acceptance."""
-
-    def _on_started(started: ExtendStarted, page_aspect: str | None) -> None:
-        if not as_json:
-            console.print(f"  submitted   : {started.media_id} ({started.model_key})")
-        if recorder is not None:  # at SUBMIT: Flow bills on acceptance
-            try:
-                recorder.record_started_extend(
-                    profile_name=profile_name,
-                    profile_dir=profile_dir,
-                    project_id=project_id,
-                    aspect=page_aspect or aspect or "unknown",
-                    started=started,
-                    source_media_id=source_media_id,
-                )
-            except DataStoreError as exc:
-                logger.warning("extend_record_failed", error_class=type(exc).__name__)
-
-    return _on_started
 
 
 async def _extend_session(  # noqa: PLR0913
@@ -2385,7 +2358,8 @@ async def _extend_session(  # noqa: PLR0913
     help=(
         "Continue an existing video, carrying its motion and audio forward (by another "
         "8-second segment on labs.google; for flow.google.com see below).\n\n"
-        "MEDIA_ID is the clip to continue; PROMPT says what happens next.\n\n"
+        "SOURCE is the clip to continue: a Flow media UUID, or (flow.google.com) a local "
+        "video file; PROMPT says what happens next.\n\n"
         "Unlike `video chain`, which restarts from an extracted still, extend is "
         "seeded server-side from the source clip, so the join is continuous. "
         "The result lands as a Scene; render it to one file with "
@@ -2393,24 +2367,25 @@ async def _extend_session(  # noqa: PLR0913
         "\b\n"
         "Examples:\n"
         '  gflow video extend <media-id> "the wave recedes" --project <project-id>\n'
-        '  gflow video extend <media-id> "drifts upward" --project <project-id> --aspect 16:9\n\n'
-        "--project is REQUIRED here: extend must know which project owns MEDIA_ID. "
-        "The shared --project help calls it optional because it is — for every "
-        "other generate command.\n\n"
+        '  gflow video extend clip.mp4 "drifts upward" --duration 5 --ref hero.png\n\n'
+        "Project: --project, else the project the local catalog records for a media UUID, "
+        "else GFLOW_CLI_PROJECT. A media UUID with none of these exits 11; a local file "
+        "with none gets a new project (named by --project-name), created only after the "
+        "inputs are validated.\n\n"
         "Each segment spends credits — the exact cost depends on your plan and is "
         "shown for confirmation before anything is submitted (labs.google).\n\n"
         "Note: a segment carries ~7s of content though Flow bills 8s, so a "
         "multi-segment render holds a frozen, silent second at each internal "
         "seam. See KNOWN_ISSUES.\n\n"
         "On flow.google.com gflow drives Flow's own extend UI: one segment per call "
-        "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), in "
-        "the source clip's aspect, downloaded to --out-file or the output directory. With "
-        "the Omni key (macaron_cookie_extend_4s, measured 2026-11-08) Flow grows the source "
-        "in place by ~4s under its own media id, so the file is the whole extended clip and "
-        "no earlier version is listed. The price is not shown before submitting there."
+        "(one PROMPT; --segments > 1, --scene/--resume-from and --seed exit 36), accepting "
+        "either a Flow media UUID or a local video file (.mp4/.mov/.m4v/.3gp/.avi), "
+        "optional --duration 3..10, up to 3 --ref reference images, and --max-credits "
+        "pre-submit quote enforcement. With the Omni key (macaron_cookie_extend_<N>s) "
+        "Flow grows the source clip in place under its own media id."
     ),
 )
-@click.argument("media_id")
+@click.argument("source")
 @click.argument("prompts", nargs=-1, required=True)
 @click.option(
     "--aspect",
@@ -2423,6 +2398,23 @@ async def _extend_session(  # noqa: PLR0913
         "exists. labs.google defaults to 9:16; flow.google.com keeps the source clip's "
         "aspect and refuses (exit 36) a different one before anything is billed."
     ),
+)
+@click.option(
+    "--duration",
+    default=None,
+    type=click.IntRange(video_extend.EXTEND_MIN_DURATION, video_extend.EXTEND_MAX_DURATION),
+    help=(
+        "Extension length in seconds (3-10 on flow.google.com; Omni models). "
+        "Omit to keep the length Flow's extend settings already hold; the JSON result "
+        "reports the length that was sent."
+    ),
+)
+@click.option(
+    "--ref",
+    "refs",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Local reference image to guide the extension (repeatable, up to 3 on flow.google.com).",
 )
 @click.option(
     "--segments",
@@ -2448,10 +2440,11 @@ async def _extend_session(  # noqa: PLR0913
     help=(
         "labs.google: render the whole scene (source clip + extensions) to ONE mp4 "
         "here (server-side concat, credit-free). flow.google.com: save the clip Flow returns "
-        "here; with the Omni key (measured 2026-11-08), the source grown in place by ~4s."
+        "here; with the Omni key, the source grown in place."
     ),
 )
 @_project_option
+@_project_name_option
 @click.option("--scene", "scene_id", default=None, help="Existing scene to extend within.")
 @click.option(
     "--resume-from",
@@ -2470,13 +2463,16 @@ async def _extend_session(  # noqa: PLR0913
 @_no_max_credits_option
 @output_format_option(has_out_file=True)
 def extend(  # noqa: PLR0913
-    media_id: str,
+    source: str,
     prompts: tuple[str, ...],
     aspect: str | None,
+    duration: int | None,
+    refs: tuple[Path, ...],
     segments: int | None,
     jitter: str | None,
     output_file: Path | None,
     project_id: str | None,
+    project_name: str | None,
     scene_id: str | None,
     resume_from: str | None,
     seed: int | None,
@@ -2487,14 +2483,12 @@ def extend(  # noqa: PLR0913
     as_json: bool,
     output_format: str = "table",
 ) -> None:
-    """Continue MEDIA_ID, one PROMPT per 8-second segment."""
-    # --resume-from and --scene are the same knob wearing two names; resume is
-    # the one the interrupt banner advertises, so it wins.
+    """Continue SOURCE (Flow media UUID or local video file), one PROMPT per segment."""
     scene_id = resume_from or scene_id
-    _validate_extend_target(media_id, scene_id)
+    source_video = resolve_extend_source(source, scene_id)
+    media_id = "" if source_video is not None else source
+    validated_refs = validate_extend_refs(refs)
     count = segments if segments is not None else len(prompts)
-    # Which host drives this run is decided here, from settings and the request alone,
-    # so an unported form is refused before the plan, the prompt or any browser.
     refusal = migrated_extend.unported_refusal(segments=count, scene_id=scene_id, seed=seed)
     migrated = (
         migrated_route(None, get_settings().flow_host, prefer_migrated=refusal is None)
@@ -2503,44 +2497,59 @@ def extend(  # noqa: PLR0913
     is_json = as_json or output_format == OutputFormat.JSON.value
     effective_max_credits = resolve_max_credits(max_credits, get_settings().max_credits)
     if migrated and refusal is not None:
-        _refuse_unported_extend(refusal, is_json=is_json, output_format=output_format)
+        refuse_unported_extend(refusal, is_json=is_json, output_format=output_format)
         return
-    # The cost gate runs before a client exists, so --dry-run cannot spend and
-    # cannot even open a browser. Machine-readable output must not carry the
-    # human plan preamble — it would corrupt the JSON document on stdout.
+    if not migrated:
+        labs_refusal = labs_unported_extend_refusal(
+            source_video=source_video, duration=duration, refs=validated_refs
+        )
+        if labs_refusal is not None:
+            refuse_unported_extend(labs_refusal, is_json=is_json, output_format=output_format)
+            return
     _maybe_print_extend_plan(
         is_json=is_json,
         output_format=output_format,
-        media_id=media_id,
+        media_id=source,
         prompt=prompts[0],
         aspect=aspect,
         segments=count,
         migrated=migrated,
+        duration=duration,
+        ref_count=len(validated_refs),
         max_credits=effective_max_credits,
     )
     if dry_run:
-        return
-    if migrated and effective_max_credits is not None:
-        _refuse_migrated_extend_cap(
-            effective_max_credits, is_json=is_json, output_format=output_format
-        )
         return
     if not yes:
         click.confirm(f"Submit {count} extend segment(s)?", abort=True)
 
     profile_name = _resolve_profile(profile)
+    try:
+        project_id = resolve_extend_project(
+            project_id=project_id,
+            project_name=project_name,
+            profile_name=profile_name,
+            media_id=media_id or None,
+        )
+    except ConfigurationError as exc:
+        refuse_unported_extend(exc, is_json=is_json, output_format=output_format)
+        return
     provider_dir = _make_provider_dir(profile_name)
     run_with_handlers(
         lambda: _run_extend(
             profile_name=profile_name,
             profile_dir=provider_dir,
             media_id=media_id,
+            source_video=source_video,
             prompts=tuple(prompts),
             segments=count,
             aspect=aspect,
+            duration=duration,
+            refs=validated_refs,
             jitter=jitter,
             output_file=output_file,
             project_id=project_id,
+            project_name=project_name,
             scene_id=scene_id,
             seed=seed,
             as_json=as_json,

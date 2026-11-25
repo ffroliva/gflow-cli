@@ -1,4 +1,4 @@
-"""Windows DACL hardening for secret-bearing directories (issue #472).
+"""Windows DACL hardening for secret-bearing directories and files (#472, #1437).
 
 POSIX mode bits (0700/0600) cover Unix; on Windows ``chmod`` is a no-op, so a
 profile created under a world-readable ``GFLOW_CLI_HOME`` inherits that
@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+from functools import cache
 from typing import TYPE_CHECKING
 
 import structlog
@@ -27,6 +28,9 @@ logger = structlog.get_logger(__name__)
 ACL_MARKER = ".gflow_acl_v1"
 
 _SID_RE = re.compile(rb"S-1-\d+(?:-\d+)+")
+
+#: A process without a console (an MCP server started by a GUI) would flash a window.
+_NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _system32(executable: str) -> str:
@@ -48,6 +52,7 @@ def _current_user_sid() -> str:
         check=True,
         capture_output=True,
         timeout=10,
+        creationflags=_NO_WINDOW,
     )
     match = _SID_RE.search(out.stdout)
     if match is None:
@@ -117,4 +122,34 @@ def ensure_profile_hardened(path: Path) -> bool:
         marker.write_bytes(b"")
     except OSError:
         logger.warning("auth_profile_acl_marker_failed")
+    return True
+
+
+@cache
+def harden_file_once(path: str) -> bool:
+    """Grant only the current user on one file; attempted once per process and path.
+
+    Never touches the containing directory, which may not be ours (issue #1437). A failure
+    is cached too: each attempt spawns two subprocesses.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        sid = _current_user_sid()
+        # Fixed System32 binary, argv list, no shell.
+        subprocess.run(  # noqa: S603
+            [_system32("icacls.exe"), path, "/inheritance:r", "/grant:r", f"*{sid}:F", "/q"],
+            check=True,
+            capture_output=True,
+            timeout=10,
+            creationflags=_NO_WINDOW,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort: the caller must proceed. No stderr: icacls echoes the path.
+        logger.warning(
+            "file_acl_failed",
+            error=type(exc).__name__,
+            returncode=getattr(exc, "returncode", None),
+        )
+        return False
     return True

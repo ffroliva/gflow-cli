@@ -25,6 +25,7 @@ import time
 import uuid
 import weakref
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -256,6 +257,7 @@ async def _record_tool_use(
         client_name = params.client_info.name if params is not None else None
     except Exception:  # noqa: BLE001 — metadata may be absent outside a request
         client_name = None
+    client_name = telemetry_client.get() or client_name
     if client_name is not None:
         try:
             await asyncio.to_thread(
@@ -320,8 +322,13 @@ KNOWN_MCP_CLIENTS = frozenset(
         "codex-mcp-client",  # observed with Codex 0.166.0 on 2026-11-06
         "claude-code",  # observed with Claude Code 2.1.319 on 2026-11-06
         "mcp",  # SDK default: mcp/client/session.py:67; observed with ClientSession on 2026-11-06
+        "openai-http",  # gflow serve's OpenAI-compatible route (#1365), set by the route itself
     }
 )
+
+#: Telemetry client name for a call that arrives without an MCP session. The OpenAI
+#: route sets it, so its requests are told apart from MCP clients' tool calls.
+telemetry_client: ContextVar[str | None] = ContextVar("telemetry_client", default=None)
 
 
 def client_key(name: str | None) -> str:
@@ -566,6 +573,9 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 )
                 if asset is not None:
                     failed["flow_project_id"] = asset.flow_project_id
+            if completed_task.status in ("pending", "processing"):
+                # Unfinished, not failed: another claimant may still complete it.
+                failed["task_status"] = completed_task.status
             return failed | codec.retirement_warnings(completed_task)
 
         flow_project_id, flow_workflow_id, seed, file_paths = _completed_outputs(
@@ -783,7 +793,7 @@ def _resolve_ref_local_path(
 # existing tile to select. Image task types DO surface generated media in the
 # reference picker, so their refs are enriched (not rewritten) and attached by
 # selecting the existing asset — see _enrich_image_refs.
-_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v"})
+_VIDEO_TASK_TYPES = frozenset({"t2v", "i2v", "r2v", "extend"})
 
 
 def _enrich_image_refs(

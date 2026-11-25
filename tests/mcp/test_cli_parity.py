@@ -65,6 +65,7 @@ CLI_TO_MCP: dict[str, str] = {
     "video i2v": "gflow_generate_video",  # mode="i2v"
     "video r2v": "gflow_generate_video",  # mode="r2v"
     "video generate": "gflow_generate_video",  # bridge verb (#1193): mode inferred, tool takes it
+    "video extend": "gflow_extend_video",  # single-segment flow.google.com extend
     "video assemble": "gflow_video_assemble",  # local, credit-free media processing
     "video transcribe": "gflow_video_transcribe",
     "video captions": "gflow_video_captions",
@@ -98,22 +99,6 @@ CLI_TO_MCP: dict[str, str] = {
 # entries are backlog, not policy — moving one to CLI_TO_MCP is the upgrade
 # path. Everything else is a considered exclusion.
 _MCP_EXEMPT: dict[str, str] = {
-    # Deliberately deferred, not overlooked (2026-09-01). Three reasons, any one
-    # of which would be enough on its own:
-    #  1. A chained run is minutes long and is not wired to FlowWorker, so it
-    #     would block an MCP client's tool call past its timeout — the exact
-    #     hazard issue #481 exists to address.
-    #  2. The feature has an open defect (a 7s segment padded into an 8s slot
-    #     produces a frozen, silent second at each internal seam — KNOWN_ISSUES).
-    #     Widening the surface before that is settled multiplies the blast radius.
-    #  3. It spends credits per segment behind a confirmation prompt that has no
-    #     MCP equivalent; an agent could not give informed consent on the user's
-    #     behalf.
-    # Revisit once extend is enqueued through the worker like the generate tools.
-    "video extend": (
-        "long-running billed chain; not worker-enqueued, and its cost "
-        "confirmation has no MCP equivalent (#481)"
-    ),
     # Not a gap: the twin is a protocol method, not a tool. SEP-2663 `tasks/cancel` and
     # `gflow cancel` store the same row state through worker.queue.abort_task, and the
     # MCP side also stops a job running in its own server. What differs is the report:
@@ -299,6 +284,12 @@ _PARAM_ALIASES: dict[str, str] = {
 
 #: "<leaf>:<cli param>" -> why the tool does not carry it. A GAP entry is a tracked
 #: admission, NOT an exemption: it exists so a known hole cannot widen unnoticed.
+#: Per-leaf renames, scoped so they cannot hide a gap on any other command.
+_LEAF_PARAM_ALIASES: dict[str, str] = {
+    # The CLI takes N prompts for a chained run; the tool drives one segment, one prompt.
+    "video extend:prompts": "prompt",
+}
+
 _OPTION_EXEMPT: dict[str, str] = {
     "audio narrate:text_file": "reads a local file; the tool takes the text directly",
     "image t2i:prompts": "multi-prompt fan-out is a batch concern; `image batch` is exempt too",
@@ -315,6 +306,15 @@ _OPTION_EXEMPT: dict[str, str] = {
     "video i2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video r2v:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
     "video generate:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video extend:no_max_credits": "CLI clears env default; MCP omission cannot (docs/MCP.md)",
+    "video extend:segments": "multi-segment chains are not ported to flow.google.com yet; "
+    "the MCP tool drives one segment",
+    "video extend:jitter": "pacing between chained segments; the MCP tool drives one segment",
+    "video extend:scene_id": "an existing scene is not ported to flow.google.com yet",
+    "video extend:resume_from": "a scene resume handle is not ported to flow.google.com yet",
+    "video extend:seed": "a fixed seed is not ported to flow.google.com yet",
+    "video extend:yes": "CLI interactive cost-confirmation bypass; MCP tools are non-interactive",
+    "video extend:dry_run": "CLI plan-preview flag; MCP tools execute or return validation errors",
     "character create:face_prompt": "GAP #691 — prompt-generated create not ported over MCP",
     "character create:body_prompt": "GAP #691 — prompt-generated create not ported over MCP",
     "character create:model": "GAP #691 — prompt-generated create not ported over MCP",
@@ -351,7 +351,11 @@ def test_every_cli_option_reaches_its_mcp_tool(mcp_server: Any) -> None:
             continue  # test_mapped_tools_are_registered owns that failure
         tool_params = _tool_params(registered.fn)
         for raw in sorted(_leaf_params(leaf) - _CLI_ONLY_PARAMS):
-            candidates = {raw, _PARAM_ALIASES.get(raw, raw)}
+            candidates = {
+                raw,
+                _PARAM_ALIASES.get(raw, raw),
+                _LEAF_PARAM_ALIASES.get(f"{leaf}:{raw}", raw),
+            }
             if candidates & tool_params or f"{leaf}:{raw}" in _OPTION_EXEMPT:
                 continue
             unmirrored.append(f"{leaf} --{raw.replace('_', '-')} -> {tool}")
