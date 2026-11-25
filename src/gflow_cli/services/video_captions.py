@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import itertools
+import math
 import os
 import re
 import tempfile
@@ -11,7 +12,7 @@ import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import structlog
 
@@ -61,6 +62,71 @@ class CaptionsResult:
     total_frames: int
     frames_burned: int
     bytes: int
+
+
+CaptionPosition = Literal["bottom", "top", "middle"]
+_CAPTION_POSITIONS = frozenset({"bottom", "top", "middle"})
+_MAX_FONT_SIZE = 1000
+_MIN_FIT_FONT_SIZE = 12
+
+
+@dataclass(frozen=True)
+class CaptionStyle:
+    position: CaptionPosition = "bottom"
+    margin: int = 28
+    font_size: int | None = None
+    box_opacity: float | None = None
+
+
+def _validate_caption_style(
+    *,
+    position: str,
+    margin: int,
+    font_size: int | None,
+    box_opacity: float | None,
+) -> CaptionStyle:
+    normalized = position.strip().lower()
+    if normalized not in _CAPTION_POSITIONS:
+        raise ConfigurationError(
+            detail=f"Invalid caption position {position!r}; expected bottom, top, or middle.",
+            charged="no",
+            remediation_hint="Pass --position bottom, top, or middle.",
+        )
+    if isinstance(margin, bool) or margin < 0:
+        raise ConfigurationError(
+            detail=f"Invalid caption margin {margin!r}; expected a non-negative integer.",
+            charged="no",
+            remediation_hint="Pass --margin with a pixel value >= 0.",
+        )
+    if font_size is not None and (
+        isinstance(font_size, bool) or font_size <= 0 or font_size > _MAX_FONT_SIZE
+    ):
+        raise ConfigurationError(
+            detail=(
+                f"Invalid caption font size {font_size!r}; "
+                f"expected an integer between 1 and {_MAX_FONT_SIZE}."
+            ),
+            charged="no",
+            remediation_hint=f"Pass --font-size between 1 and {_MAX_FONT_SIZE}.",
+        )
+    if box_opacity is not None and (
+        isinstance(box_opacity, bool)
+        or not math.isfinite(box_opacity)
+        or not 0.0 <= box_opacity <= 1.0
+    ):
+        raise ConfigurationError(
+            detail=(
+                f"Invalid caption box opacity {box_opacity!r}; expected a value between 0 and 1."
+            ),
+            charged="no",
+            remediation_hint="Pass --box-opacity between 0.0 and 1.0.",
+        )
+    return CaptionStyle(
+        position=cast("CaptionPosition", normalized),
+        margin=margin,
+        font_size=font_size,
+        box_opacity=box_opacity,
+    )
 
 
 def _seconds(value: str) -> float:
@@ -402,7 +468,17 @@ def caption_video(
     language: str | None = None,
     profile: str | None = None,
     transcriber: Transcriber | None = None,
+    position: str = "bottom",
+    margin: int = 28,
+    font_size: int | None = None,
+    box_opacity: float | None = None,
 ) -> CaptionsResult:
+    style = _validate_caption_style(
+        position=position,
+        margin=margin,
+        font_size=font_size,
+        box_opacity=box_opacity,
+    )
     if srt_path is not None:
         _require_chain_extra()
     source = resolve_video_source(file_or_id, profile=profile, route="video.captions")
@@ -455,7 +531,7 @@ def caption_video(
         os.close(descriptor)
         temporary = Path(temp_name)
         frames, burned, duration = _render_video(
-            av, source, temporary, entries, image_draw, image_font
+            av, source, temporary, entries, image_draw, image_font, style
         )
         temporary.replace(destination)
     except ConfigurationError:
@@ -481,6 +557,7 @@ def _render_video(
     entries: list[CaptionEntry],
     draw_module: Any,
     font_module: Any,
+    style: CaptionStyle | None = None,
 ) -> tuple[int, int, float]:
     frames = burned = 0
     with (
@@ -518,7 +595,7 @@ def _render_video(
                 burned += 1
                 if text not in overlays:
                     overlays[text] = _caption_overlay(
-                        frame.width, frame.height, text, draw_module, font_module
+                        frame.width, frame.height, text, draw_module, font_module, style
                     )
                 frame = _draw_caption(av, frame, text, draw_module, font_module, overlays[text])
             for packet in encoded.encode(frame):
@@ -552,37 +629,105 @@ def _draw_caption(
     )
 
 
+def _caption_frame_y(height: int, box_height: int, style: CaptionStyle) -> int:
+    if style.position == "top":
+        raw_y = style.margin
+    elif style.position == "middle":
+        raw_y = (height - box_height) // 2
+    else:
+        raw_y = height - box_height - style.margin
+    return max(8, min(raw_y, max(8, height - box_height - 8)))
+
+
+def _measure_caption(
+    height: int,
+    width: int,
+    text: str,
+    draw: Any,
+    font_module: Any,
+    size: int | None,
+) -> tuple[Any, str, tuple[int, int, int, int]]:
+    font = _load_caption_font(height, font_module, size=size)
+    wrapped = "\n".join(_wrap_caption(text, font, draw, width * 0.9))
+    box = draw.multiline_textbbox((0, 0), wrapped, font=font, align="center", spacing=2)
+    return font, wrapped, box
+
+
+def _fit_caption_layout(
+    width: int,
+    height: int,
+    text: str,
+    draw: Any,
+    font_module: Any,
+    explicit_size: int | None,
+) -> tuple[Any, str, tuple[int, int, int, int]]:
+    font, wrapped, box = _measure_caption(height, width, text, draw, font_module, explicit_size)
+    if explicit_size is None and len(wrapped.split("\n")) > 3:
+        font, wrapped, box = _measure_caption(
+            height, width, text, draw, font_module, max(_MIN_FIT_FONT_SIZE, round(height * 0.04))
+        )
+    max_w, max_h = max(1, width - 16), max(1, height - 16)
+    if (box[2] - box[0]) <= max_w and (box[3] - box[1]) <= max_h:
+        return font, wrapped, box
+    hi = (explicit_size if explicit_size is not None else int(getattr(font, "size", 14))) - 1
+    if hi < _MIN_FIT_FONT_SIZE:
+        return font, wrapped, box
+    lo = _MIN_FIT_FONT_SIZE
+    best = _measure_caption(height, width, text, draw, font_module, lo)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        cand = _measure_caption(height, width, text, draw, font_module, mid)
+        cbox = cand[2]
+        if (cbox[2] - cbox[0]) <= max_w and (cbox[3] - cbox[1]) <= max_h:
+            best = cand
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
 def _caption_overlay(
-    width: int, height: int, text: str, draw_module: Any, font_module: Any
+    width: int,
+    height: int,
+    text: str,
+    draw_module: Any,
+    font_module: Any,
+    style: CaptionStyle | None = None,
 ) -> tuple[Any, int]:
-    font = _load_caption_font(height, font_module)
-    band_height = min(height, max(round(height * 0.25), round(font.size * 4.5) + 40))
+    resolved = style or CaptionStyle()
     from PIL import Image
 
-    overlay = Image.new("RGBA", (width, band_height), (0, 0, 0, 0))
-    draw = draw_module.Draw(overlay, "RGBA")
-    lines = _wrap_caption(text, font, draw, width * 0.9)
-    if len(lines) > 3:
-        font = _load_caption_font(height, font_module, size=max(12, round(height * 0.04)))
-        lines = _wrap_caption(text, font, draw, width * 0.9)
-    box = draw.multiline_textbbox((0, 0), "\n".join(lines), font=font, align="center", spacing=2)
-    x = max(8, (width - (box[2] - box[0])) // 2)
-    y = max(8, band_height - (box[3] - box[1]) - 28)
-    draw.rounded_rectangle(
-        (x - 10, y - 6, x + box[2] - box[0] + 10, y + box[3] - box[1] + 6), 8, fill=(0, 0, 0, 180)
+    probe_draw = draw_module.Draw(Image.new("RGBA", (1, 1), (0, 0, 0, 0)), "RGBA")
+    font, wrapped, box = _fit_caption_layout(
+        width, height, text, probe_draw, font_module, resolved.font_size
     )
+    box_w, box_h = box[2] - box[0], box[3] - box[1]
+    frame_y = _caption_frame_y(height, box_h, resolved)
+    strip_h = min(height, box_h + 24)
+    top = max(0, min(height - strip_h, frame_y - 12))
+    local_y = frame_y - top
+    overlay = Image.new("RGBA", (width, strip_h), (0, 0, 0, 0))
+    draw = draw_module.Draw(overlay, "RGBA")
+    x = max(8, (width - box_w) // 2)
+    alpha = 180 if resolved.box_opacity is None else round(resolved.box_opacity * 255)
+    if alpha > 0:
+        draw.rounded_rectangle(
+            (x - 10, local_y - 6, x + box_w + 10, local_y + box_h + 6),
+            8,
+            fill=(0, 0, 0, alpha),
+        )
     # The box is laid out in ink coordinates; draw the text so its ink, not its origin, lands at
     # (x, y). The origin sits box[0], box[1] away from the ink (the font's side bearing and the
     # space above the tallest glyph), which put the box above the text (#1431).
     draw.multiline_text(
-        (x - box[0], y - box[1]),
-        "\n".join(lines),
+        (x - box[0], local_y - box[1]),
+        wrapped,
         font=font,
         fill=(255, 255, 255, 255),
         align="center",
         spacing=2,
     )
-    return overlay, height - band_height
+    return overlay, top
 
 
 def _blend_caption(
