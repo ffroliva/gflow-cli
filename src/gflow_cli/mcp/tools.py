@@ -69,7 +69,7 @@ from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker, run_counted
-from gflow_cli.worker.queue import QueueRepository, mark_interrupted
+from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 log = structlog.get_logger()
 
@@ -509,6 +509,38 @@ def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
         log.warning("mcp.task.settle_failed", task_id=task_id, error_class=type(exc).__name__)
 
 
+def _completed_outputs(
+    store: DataStore, profile: str, task: QueueTask
+) -> tuple[str | None, str | None, int | None, list[str]]:
+    """Project id, workflow id, seed and every local file of a completed task (#1469)."""
+    if not task.flow_media_id:
+        return None, None, None, []
+    repo = DataRepository(store)
+    cp = task.checkpoint if isinstance(task.checkpoint, dict) else {}
+    catalog_op_id = cp.get("catalog_operation_id")
+    output_assets = repo.get_task_output_assets(
+        profile,
+        task.flow_media_id,
+        operation_id=catalog_op_id if isinstance(catalog_op_id, str) else None,
+        mode=task.task_type,
+    )
+    asset = next(
+        (out for out in output_assets if out.flow_media_id == task.flow_media_id), None
+    ) or repo.get_asset_by_flow_media_id(profile, task.flow_media_id)
+    if not output_assets and asset is not None:
+        output_assets = [asset]
+    files = list(
+        dict.fromkeys(
+            str(lf.path) for out in output_assets for lf in out.local_files if lf.path is not None
+        )
+    )
+    if asset is None:
+        return None, None, None, files
+    # The catalogued seed (#1013): Flow's own on the classic image paths, the
+    # requested one for video, a 0 placeholder on the agentic/agent-only arms.
+    return asset.flow_project_id, asset.flow_workflow_id, asset.seed, files
+
+
 def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
     """The tool reply for a finished task: what ``wait=true`` returns and ``tasks/get`` carries."""
     with DataStore.open(db_path) as store:
@@ -549,24 +581,9 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                     failed["flow_project_id"] = asset.flow_project_id
             return failed | codec.retirement_warnings(completed_task)
 
-        # Resolve local file paths from the asset catalog.
-        file_paths: list[str] = []
-        flow_project_id: str | None = None
-        flow_workflow_id: str | None = None
-        seed: int | None = None
-        if completed_task.flow_media_id:
-            asset = DataRepository(store).get_asset_by_flow_media_id(
-                profile,
-                completed_task.flow_media_id,
-            )
-            if asset:
-                flow_project_id = asset.flow_project_id
-                flow_workflow_id = asset.flow_workflow_id
-                # The catalogued seed (#1013): Flow's own on the classic image paths, the
-                # requested one for video, a 0 placeholder on the agentic/agent-only arms.
-                seed = asset.seed
-                if asset.local_files:
-                    file_paths = [str(lf.path) for lf in asset.local_files if lf.path is not None]
+        flow_project_id, flow_workflow_id, seed, file_paths = _completed_outputs(
+            store, profile, completed_task
+        )
 
     log.info(
         "mcp.tool.task_completed",
