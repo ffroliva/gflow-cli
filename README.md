@@ -64,6 +64,7 @@ gflow auth login --browser chrome
 | **VS Code** | `gflow mcp setup --target vscode` |
 | **Codex** | Skills: from a clone, `codex plugin marketplace add .` then `codex plugin add gflow@gflow-cli`; MCP: register `gflow mcp run` as a stdio server |
 | **Any MCP client** | command `uvx`, arguments `gflow-cli mcp run`; or `gflow serve` for Streamable HTTP at `/mcp` |
+| **OpenAI SDK code** | `gflow serve`, then `base_url="http://127.0.0.1:8000/v1"`: `POST /v1/images/generations` with Flow image models, `b64_json` responses ([docs/MCP.md](docs/MCP.md#openai-compatible-image-endpoint)) |
 
 The Claude Code plugin ships disabled, because enabling it starts a server that can spend your Veo credits. For a hard guarantee, register `gflow mcp run --no-spend`, which never registers the credit-spending tools. Full setup: [docs/MCP.md](docs/MCP.md).
 
@@ -165,7 +166,7 @@ Compared from each project's own README on 2026-11-19 (the kodelyx/flow-agent co
 | Extend past 8 s | Yes | Yes | Yes | — | Yes (to 148 s) | — |
 | Characters | Yes | Yes, with edit | Yes, with edit | — | Yes | Yes |
 | Upscale | Video 1080p, image 2K/4K | 1080p, 2K | — | — | 2K, 4K | 4K |
-| OpenAI-compatible API | No | — | — | **Yes** | — | — |
+| OpenAI-compatible API | Images (`POST /v1/images/generations` on `gflow serve`); video planned ([#1365](https://github.com/ffroliva/gflow-cli/issues/1365)) | — | — | **Yes** | — | — |
 | Pool credits across Google accounts | No (one profile per call; switch with `gflow auth use`) | — | — | **Yes** | — | — |
 | Spend lockout for agents (`--no-spend`) | **Yes** | — | — | — | — | — |
 | `charged` field on every error | **Yes** | — | — | — | — | — |
