@@ -341,6 +341,7 @@ def test_open_restricts_the_db_but_not_its_neighbours(tmp_path: Path) -> None:
     neighbour.touch()
     before = [acl(tmp_path), acl(neighbour)]
     db = tmp_path / "gflow.db"
+    db.touch()  # an existing database
     with DataStore.open(db):
         pass
     assert [acl(tmp_path), acl(neighbour)] == before
@@ -350,6 +351,21 @@ def test_open_restricts_the_db_but_not_its_neighbours(tmp_path: Path) -> None:
     user = me.decode("ascii", errors="replace").strip().lower()
     assert acl(db)[0].lower() == f"{user}:(f)"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["gflow.db", "sub"]
+    with DataStore.open(tmp_path / "new" / "gflow.db"):
+        pass
+    (tmp_path / "plain").mkdir()
+    assert acl(tmp_path / "new") == acl(tmp_path / "plain")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_survives_a_failed_acl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse() -> str:
+        raise OSError
+
+    monkeypatch.setattr(winsec, "_current_user_sid", refuse)
+    with capture_logs() as logs, DataStore.open(tmp_path / "gflow.db"):
+        pass
+    assert [entry["event"] for entry in logs] == ["file_acl_failed"]
 
 
 def test_harden_file_once_does_not_retry_a_failure(

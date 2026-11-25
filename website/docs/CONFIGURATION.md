@@ -389,7 +389,7 @@ $env:GFLOW_CLI_DB_PATH = "D:\gflow-data\gflow.db"     # PowerShell
 
 Use this when you want the DB on a different volume, outside `GFLOW_CLI_HOME`, or when running multiple isolated environments that share the same home dir.
 
-gflow restricts the database file to your user, so other accounts cannot share it; an existing directory keeps its permissions. FAT/exFAT volumes and some network shares cannot store file permissions. See [SECURITY.md](SECURITY.md#database-file-permissions).
+gflow restricts the database file to your user, so do not share one database between accounts; an existing directory keeps its permissions. FAT/exFAT volumes and some network shares cannot store file permissions. See [SECURITY.md](SECURITY.md#database-file-permissions).
 
 ### `GFLOW_CLI_HISTORY_PROMPTS`
 

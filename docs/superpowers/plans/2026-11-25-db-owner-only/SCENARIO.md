@@ -1,10 +1,9 @@
 # Scenario: owner-only `gflow.db` (#1437)
 
-This analysis was written after the first implementation and checked against it. The
-cause is proven, so the reproduction is ordinary tests rather than Gherkin:
+The cause is proven, so the reproduction is ordinary tests rather than Gherkin:
 `DataStore.open` in `src/gflow_cli/data/store.py` called `mkdir` and `sqlite3.connect`
-without setting permissions. Every caller opens the catalog through that method, so the
-fix is there.
+without setting permissions. Every writable open goes through that method, so the
+fix is there. Read-only opens create nothing and change nothing.
 
 ## Coverage map
 
@@ -31,17 +30,19 @@ fix is there.
 | 6 | D6 | The file is readable between creation and tightening | High | It is `0600` when SQLite connects, and created so | Unit (POSIX) |
 | 7 | D7 | `GFLOW_CLI_DB_PATH` is blank | High | `DataStoreError` (exit 16), no raw `ValueError` | Unit (both) |
 | 8 | D7 | Permissions cannot be changed (another owner, FAT volume) | High | A warning is logged and the open succeeds | Unit (both) |
-| 9 | D13 | The database is deleted and recreated under a long-running process on Windows | High | The new file gets its own ACL | Unit (Windows) |
-| 10 | D8 | The first run on Windows is elevated | High | No directory ACL is written, so the normal user keeps access | Covered by 2; an elevated run is not tested |
+| 9 | D13 | gflow recreates a deleted database in a long-running process on Windows | High | The new file gets its own ACL | Unit (Windows) |
+| 10 | D8 | The first run on Windows is elevated | High | No directory ACL is written, so the normal user keeps access | Unit (Windows); an elevated run is not tested |
 | 11 | D5 | Two processes open a missing database at once | Medium | The second sees an existing file and continues | Review probe |
 | 12 | D12 | A non-owner opens a shared database repeatedly | Low | One warning per open | Not tested |
 | 13 | D6 | Windows `-wal` and `-shm` files in a readable directory | Medium | Inherit the directory's ACL; documented limit | Not tested |
 
 ## Must-cover before merge (Critical + High)
 
-Rows 1 to 9 are covered by `tests/data/test_store.py`.
+Rows 1 to 9 are covered by `tests/data/test_store.py`. So is row 10, except for a
+real elevated run.
 
 ## Deferred (Medium + Low)
 
-Rows 12 and 13, and explicit grants that survive on an existing Windows database file.
+Rows 11 (checked by a probe, no test), 12 and 13; on Windows, a file that another process
+puts in place of the database after this process has restricted it; and explicit grants that survive on an existing Windows database file.
 Issue #1437 stays open for the Windows sidecars.

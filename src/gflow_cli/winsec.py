@@ -1,4 +1,4 @@
-"""Windows DACL hardening for secret-bearing directories (issue #472).
+"""Windows DACL hardening for secret-bearing directories and files (#472, #1437).
 
 POSIX mode bits (0700/0600) cover Unix; on Windows ``chmod`` is a no-op, so a
 profile created under a world-readable ``GFLOW_CLI_HOME`` inherits that
@@ -139,6 +139,11 @@ def harden_file_once(path: str) -> bool:
             timeout=10,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort, caller must proceed
-        logger.warning("file_acl_failed", error=type(exc).__name__)
+        # No stderr: icacls echoes the path.
+        logger.warning(
+            "file_acl_failed",
+            error=type(exc).__name__,
+            returncode=getattr(exc, "returncode", None),
+        )
         return False
     return True
