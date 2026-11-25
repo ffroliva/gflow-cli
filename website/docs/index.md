@@ -8,7 +8,7 @@
 uv tool install gflow-cli
 ```
 
-See [Installation](installation.md) for the prerequisites and the one-time browser step.
+See [Installation](installation.md) for the requirements and the one-time browser step.
 
 !!! warning "Read this before you install"
     gflow-cli is an **independent project, not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk. It works with any Google account that has Flow access, and every video generation bills your Flow credits (images spend none but count against a daily image quota).

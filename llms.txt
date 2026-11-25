@@ -50,7 +50,7 @@ This file is published at https://ffroliva.github.io/gflow-cli/llms.txt and in t
 
 ## Docs
 
-- [All key documentation in one file](https://ffroliva.github.io/gflow-cli/llms-full.txt): README, user guide, MCP guide, error reference and configuration reference as plain text
+- [All key documentation in one file](https://ffroliva.github.io/gflow-cli/llms-full.txt): README, user guide and error reference as plain text
 - [README](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/README.md): Project overview, install, 60-second quick start.
 - [User Guide](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/USER_GUIDE.md): Task-oriented walkthroughs — first setup, batch video, multi-image, log forensics, recovery, multi-account.
 - [Usage](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/USAGE.md): Command-by-command reference, including `gflow credits user|list`, manifest format, and exit codes.

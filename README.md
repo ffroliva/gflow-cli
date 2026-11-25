@@ -77,7 +77,7 @@ The Claude Code plugin ships disabled, because enabling it starts a server that 
 - a display for the one-time sign-in (on Linux servers, Xvfb);
 - a Google account with Flow access, in a [region where Google offers Flow](https://support.google.com/flow/answer/16353544).
 
-If PyPI, the Chromium download or Google is not reachable directly, read [Behind a proxy or a package mirror](docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror) first.
+If PyPI, the Chromium download or Google is not reachable directly, read [Behind a proxy or a package mirror](https://github.com/ffroliva/gflow-cli/blob/develop/docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror) first.
 
 Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x86_64 / Xvfb).
 
@@ -193,7 +193,7 @@ Compared from each project's own README on 2026-11-25. "—" means that README d
 
 **Which should I choose?**
 
-- Choose gflow-cli for a CLI and an MCP server in one PyPI package, with a spend lockout (`--no-spend`), a per-call credit cap and a `charged` field on every error.
+- Choose gflow-cli for a CLI and an MCP server in one PyPI package, with a spend lockout (`--no-spend`) and a `charged` field on every error.
 - Choose [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp) for its local web panel.
 - Choose [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent) for credit pooling across Google accounts.
 - Choose [crisng95/flowkit](https://github.com/crisng95/flowkit) for its Chrome extension and dashboards.
@@ -236,7 +236,7 @@ Python 3.11 or newer. `uv tool install gflow-cli` handles it for you.
 
 ### Is there a Google Flow API?
 
-Google does not publish a public Flow API. gflow-cli drives your own signed-in Flow session and exposes it as a command-line tool, MCP tools and an OpenAI-compatible image endpoint (`gflow serve`,`POST /v1/images/generations`).
+Google does not publish a public Flow API. gflow-cli drives your own signed-in Flow session and exposes it as a command-line tool, MCP tools and an OpenAI-compatible image endpoint (`gflow serve`, `POST /v1/images/generations`).
 
 ### Is there a Veo 3 CLI?
 
@@ -244,7 +244,7 @@ Yes. `gflow video t2v`, `i2v` and `r2v` generate Veo 3.1 video from the terminal
 
 ### Where is Google Flow available?
 
-Google lists the supported countries and territories in [Where you can use Google Flow](https://support.google.com/flow/answer/16353544). gflow-cli adds no regional access. If your network needs a proxy or a package mirror, see [Behind a proxy or a package mirror](docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror).
+Google lists the supported countries and territories in [Where you can use Google Flow](https://support.google.com/flow/answer/16353544). gflow-cli adds no regional access. If your network needs a proxy or a package mirror, see [Behind a proxy or a package mirror](https://github.com/ffroliva/gflow-cli/blob/develop/docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror).
 
 
 ## Examples
