@@ -9,7 +9,7 @@
 
 ## Why it exists
 
-Flow's web UI is fine for one-off clips. It's slow for real work — batches, character consistency across shots, reusing assets, or driving generation from a script or an agent. gflow-cli gives you the terminal surface for all of that, and an MCP server so your assistant can do it on your behalf.
+The Flow web UI is designed for interactive use. gflow-cli adds a terminal surface for batches, character consistency across shots, asset reuse, and generation driven from a script or an agent. It also adds an MCP server so an AI assistant can do the same on the user's behalf.
 
 ## The two ways to use it
 
@@ -19,7 +19,7 @@ Flow's web UI is fine for one-off clips. It's slow for real work — batches, ch
 
     ---
 
-    Script Veo and Imagen from the terminal: `gflow image`, `gflow video`, `gflow character`, `gflow movie`, `gflow batch`.
+    Script Veo and Imagen from the terminal: `gflow image`, `gflow video`, `gflow character`, `gflow movie`, `gflow run`.
 
     [:octicons-arrow-right-24: Onboarding](onboarding.md)
 
@@ -39,12 +39,12 @@ Flow's web UI is fine for one-off clips. It's slow for real work — batches, ch
 - **`gflow instructions`** — persistent, credit-free brief cards that steer look and tone across generations.
 - **Asset reuse by UUID** — reference an already-generated still in a video without re-uploading it.
 - **`--ui-mode`** — fails fast, *before* spending credits, when Flow's UI cohort isn't what the command needs.
-- **`GFLOW_CLI_JITTER_RANGE`** — configurable pacing so batch runs stop tripping rate limits.
+- **`GFLOW_CLI_JITTER_RANGE`** — configurable pacing so batch runs stay within Flow's rate limits.
 - **`movie.toml`** — direct a multi-scene sequence from one manifest.
 
 ## Requirements
 
-- A Google account with Flow access (a paid AI Pro/Ultra plan only affects credit allowances).
+- A Google account with Flow access (a paid AI Pro/Ultra plan affects credit allowances and tier-gated features such as 4K upscale).
 - `uv` (to install the tool) and a Chromium the browser transport can drive.
 - A display for the one-time browser login.
 
