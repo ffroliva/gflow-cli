@@ -33,12 +33,13 @@ fix is there. Read-only opens create nothing and change nothing.
 | 9 | D13 | gflow recreates a deleted database in a long-running process on Windows | High | The new file gets its own ACL | Unit (Windows) |
 | 10 | D8 | The first run on Windows is elevated | High | No directory ACL is written, so the normal user keeps access | Unit (Windows); an elevated run is not tested |
 | 11 | D5 | Two processes open a missing database at once | Medium | The second sees an existing file and continues | Review probe |
-| 12 | D12 | A non-owner opens a shared database repeatedly | Low | One warning per open | Not tested |
+| 14 | D5 | Two threads create the database at once | High | The second waits until the first has closed the new file | Unit (both) |
+| 12 | D12 | A non-owner opens a shared database repeatedly | Low | One warning per file it cannot tighten, on each open | Not tested |
 | 13 | D6 | Windows `-wal` and `-shm` files in a readable directory | Medium | Inherit the directory's ACL; documented limit | Not tested |
 
 ## Must-cover before merge (Critical + High)
 
-Rows 1 to 9 are covered by `tests/data/test_store.py`. So is row 10, except for a
+Rows 1 to 9 and 14 are covered by `tests/data/test_store.py`. So is row 10, except for a
 real elevated run.
 
 ## Deferred (Medium + Low)

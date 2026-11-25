@@ -6,6 +6,7 @@ import re
 import sqlite3
 import stat
 import sys
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,6 +31,10 @@ _ROUTE_MIGRATE = "data.migrate"
 logger = structlog.get_logger(__name__)
 
 
+#: One thread creates the file at a time; see ``_secure_store_files``.
+_create_lock = threading.Lock()
+
+
 def _secure_store_files(path: Path) -> None:
     """Create the database owner-only, or drop group/other access from an existing one.
 
@@ -43,12 +48,16 @@ def _secure_store_files(path: Path) -> None:
     # SQLite follows a symlinked database and keeps its sidecars beside the target.
     real = os.path.realpath(path)
     try:
-        # O_EXCL: opening and closing an EXISTING database would drop the POSIX locks
-        # another connection in this process holds on it.
-        os.close(os.open(real, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+        # On POSIX, closing any descriptor of a file drops this process's locks on it.
+        # O_EXCL never opens an existing database; the lock keeps another thread from
+        # connecting between this open and close.
+        with _create_lock:
+            os.close(os.open(real, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
         harden_file_once.cache_clear()  # a recreated file needs its own ACL
     except FileExistsError:
         pass
+    if not os.path.isfile(real):
+        return  # a directory or device is no database, so "<path>-wal" is no sidecar
     if sys.platform == "win32":
         harden_file_once(real)
         return
@@ -60,7 +69,11 @@ def _secure_store_files(path: Path) -> None:
         except FileNotFoundError:
             continue
         except OSError as exc:  # best-effort: the open must still work
-            logger.warning("data_store_chmod_failed", error=type(exc).__name__)
+            logger.warning(
+                "data_store_chmod_failed",
+                file=os.path.basename(target),
+                error=type(exc).__name__,
+            )
 
 
 def _utc_now() -> str:

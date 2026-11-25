@@ -142,7 +142,8 @@ Limits:
 - On Windows, the `-wal` and `-shm` files inherit the directory's ACL, and can remain after a crash. Use a directory that other users cannot read.
 - On Windows, permissions someone explicitly granted on an existing `gflow.db` file are kept.
 - Another account that shared the database through group, other, POSIX ACL or inherited Windows permissions loses access to it.
-- A database file that another account owns stays accessible to that account.
+- On POSIX, a database file that another account owns stays accessible to that account. On macOS, ACLs inherited from the directory are kept.
+- Use a directory that only your user can write to. An account that can write to it can replace the database or its name, and gflow then writes to the replacement.
 - FAT/exFAT volumes and some network shares do not store these permissions.
 
 Use full-disk encryption (FileVault / BitLocker / LUKS) if you store sensitive prompts and need at-rest protection.

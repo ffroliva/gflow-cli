@@ -13,6 +13,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import threading
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from gflow_cli import winsec
-from gflow_cli.data.store import DataStore, inspect_schema
+from gflow_cli.data.store import DataStore, _secure_store_files, inspect_schema
 from gflow_cli.errors import DataStoreError
 
 
@@ -276,12 +277,19 @@ def test_open_never_changes_something_that_is_not_the_database(tmp_path: Path) -
     folder = tmp_path / "folder"
     folder.mkdir()
     folder.chmod(0o2775)
+    sibling = tmp_path / "folder-wal"
+    sibling.touch()
+    sibling.chmod(0o644)
     with pytest.raises(DataStoreError):
         DataStore.open(folder)
     assert stat.S_IMODE(folder.stat().st_mode) == 0o2775
+    assert stat.S_IMODE(sibling.stat().st_mode) == 0o644
 
 
-def test_open_on_a_blank_path_is_a_data_store_error() -> None:
+def test_open_on_a_blank_path_is_a_data_store_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     with pytest.raises(DataStoreError):
         DataStore.open(Path())
 
@@ -299,6 +307,29 @@ def test_a_second_open_keeps_the_first_connections_locks(tmp_path: Path) -> None
             subprocess.run([sys.executable, "-c", outside, str(db)], check=True)  # noqa: S603
             # The outside close deletes the WAL only when it sees no lock of ours.
             assert (tmp_path / "gflow.db-wal").exists()
+
+
+def test_another_thread_waits_until_the_new_file_is_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On POSIX, closing any descriptor of a file drops the locks of the whole process."""
+    db = tmp_path / "gflow.db"
+    close = os.close
+    others: list[threading.Thread] = []
+    waited: list[bool] = []
+
+    def slow_close(fd: int) -> None:
+        if not others:
+            others.append(threading.Thread(target=_secure_store_files, args=(db,)))
+            others[0].start()
+            others[0].join(1)
+            waited.append(others[0].is_alive())
+        close(fd)
+
+    monkeypatch.setattr(os, "close", slow_close)
+    _secure_store_files(db)
+    others[0].join()
+    assert waited == [True]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
@@ -355,6 +386,9 @@ def test_open_restricts_the_db_but_not_its_neighbours(tmp_path: Path) -> None:
         pass
     (tmp_path / "plain").mkdir()
     assert acl(tmp_path / "new") == acl(tmp_path / "plain")
+    with pytest.raises(DataStoreError):
+        DataStore.open(tmp_path / "plain")
+    assert acl(tmp_path / "plain") == acl(tmp_path / "new")
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")

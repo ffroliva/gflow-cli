@@ -29,6 +29,9 @@ ACL_MARKER = ".gflow_acl_v1"
 
 _SID_RE = re.compile(rb"S-1-\d+(?:-\d+)+")
 
+#: A process without a console (an MCP server started by a GUI) would flash a window.
+_NO_WINDOW: int = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def _system32(executable: str) -> str:
     """Absolute path under System32 — a security control must not depend on a
@@ -49,6 +52,7 @@ def _current_user_sid() -> str:
         check=True,
         capture_output=True,
         timeout=10,
+        creationflags=_NO_WINDOW,
     )
     match = _SID_RE.search(out.stdout)
     if match is None:
@@ -138,6 +142,7 @@ def harden_file_once(path: str) -> bool:
             check=True,
             capture_output=True,
             timeout=10,
+            creationflags=_NO_WINDOW,
         )
     except Exception as exc:  # noqa: BLE001
         # Best-effort: the caller must proceed. No stderr: icacls echoes the path.
