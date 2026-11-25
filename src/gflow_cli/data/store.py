@@ -267,13 +267,17 @@ class DataStore:
         try:
             _secure_store_files(path)
             conn = sqlite3.connect(path, isolation_level=None)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-            store = cls(conn=conn, path=path)
-            store.apply_migrations()
-            return store
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA foreign_keys = ON")
+                conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+                store = cls(conn=conn, path=path)
+                store.apply_migrations()
+                return store
+            except BaseException:
+                conn.close()
+                raise
         except DataMigrationError:
             raise
         except (sqlite3.Error, OSError) as exc:
@@ -301,10 +305,10 @@ class DataStore:
                 conn.execute("PRAGMA query_only = ON")
                 conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
                 conn.execute("PRAGMA user_version").fetchone()  # probe
-            except sqlite3.Error:
+                return cls(conn=conn, path=path)
+            except BaseException:
                 conn.close()
                 raise
-            return cls(conn=conn, path=path)
         except (sqlite3.Error, OSError) as exc:
             raise DataStoreError(detail=str(exc), route="data.open_readonly") from exc
 
