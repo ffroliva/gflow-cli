@@ -83,8 +83,8 @@ Both Click CLI (`src/gflow_cli/cli.py`) and MCP Server (`src/gflow_cli/mcp/`) ar
 
 `gflow_video_transcribe(file, out_file, language, profile)` transcribes a local video or
 catalog UUID to timed SRT using the configured OpenAI-compatible `/audio/transcriptions`
-route. `gflow_video_captions(file, srt, language, out_file, profile)` burns an authored SRT
-into a local clip or transcribes first when `srt` is omitted. Both tools are direct,
+route. `gflow_video_captions(file, srt, language, out_file, profile, position, margin, font_size, box_opacity)` burns an authored SRT
+into a local clip or transcribes first when `srt` is omitted (`position`: `'bottom'`/`'top'`/`'middle'`, `margin` px from edge, explicit `font_size` px, `box_opacity` `0.0`–`1.0`). Both tools are direct,
 credit-free calls; output files stay inside `GFLOW_CLI_OUTPUT_DIR`. The Google Gemini default
 is refused before audio is sent. Configure an OpenAI, Groq, or local Whisper-compatible URL.
 
