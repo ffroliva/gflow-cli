@@ -1,7 +1,7 @@
 # Spike: `direct_http` multi-count (`count 2-4`) with a reference or character (#1455)
 
 **Date:** 2026-11-25 · **Profile:** `<profile>` (served `flow.google.com`)
-**Cost:** 11 image generations (daily image quota, zero Veo credits): 2 UI captures + 7 direct POST proofs + 1 setup `maseQ` upload ($0) + 1 `character create --image` ($0)
+**Cost:** 9 generation requests returning about 24 images from the daily image quota (zero Veo credits): 2 UI captures + 7 direct POST proofs, plus 1 setup `maseQ` upload ($0) and 1 `character create --image` ($0)
 
 ## Question
 
@@ -36,4 +36,4 @@ Both UI submits shared one `inner[4]` batch UUID and matched what `frame_builder
 ## Conclusions & unmeasured gaps
 
 - **Measured:** Flow's own multi-image submit repeats `entry[2]`, `entry[10]`, and the `entry[8]` chip identically across every entry in `inner[1]`, and direct `ogiZ0b` POSTs built by `build_ogiz0b_body()` return 2/2, 3/3, and 4/4 distinct `direct_http` images for both in-project `--ref` and `--reference-entity`, plus 2/2 for `@Name` mention resolution (which sends the exact same resolved entity frame).
-- **Not measured:** multiple refs, multiple characters, or a ref + character combined (still routed to `ui_automation`); and subprocess CLI E2E without an HTTP proxy (this host requires `GFLOW_CLI_BROWSER_PROXY`, which routes `DirectHttpTransport` to `ui_automation` per `docs/DIRECT_TRANSPORT.md`).
+- **Not measured:** multiple refs, multiple characters, or a ref + character combined (still routed to `ui_automation`); and the subprocess CLI e2e, which needs a host with no proxy configured: any proxy routes `DirectHttpTransport` to `ui_automation` (`docs/DIRECT_TRANSPORT.md`).

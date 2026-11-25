@@ -88,4 +88,4 @@ a median of 18.6 s from mint to reply, the warm UI transport 20.7 s. Flow's own 
 time dominates both. The case for the transport is that it does not depend on the
 composer's DOM, so selector changes and UI locale do not affect it.
 
-Evidence: [`docs/superpowers/spikes/2026-11-22-direct-image-gate0.md`](superpowers/spikes/2026-11-22-direct-image-gate0.md).
+Evidence: [`docs/superpowers/spikes/2026-11-22-direct-image-gate0.md`](superpowers/spikes/2026-11-22-direct-image-gate0.md); counts 2 to 4 with one reference or character: [`docs/superpowers/spikes/2026-11-25-direct-image-multi-count-ref-character.md`](superpowers/spikes/2026-11-25-direct-image-multi-count-ref-character.md).
