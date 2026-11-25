@@ -268,6 +268,11 @@ class VideoRecordingMixin(RecorderCore):
         record = outcome.record
         in_place = record.media_id == media_id
         if in_place and target is None:
+            # The extend did not finish, but the source is a finished clip: a row written
+            # pending at submit for a clip uploaded in this run must not stay pending.
+            self.repository.settle_pending_asset(
+                profile_name, media_id, "MEDIA_GENERATION_STATUS_SUCCESSFUL"
+            )
             return
         cloud_info = cloud_info_from_path(target) if target is not None else None
         local_path = target if isinstance(target, _Path) else None

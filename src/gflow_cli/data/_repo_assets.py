@@ -119,6 +119,15 @@ class AssetsRepo(RepositoryBase):
                 (status, workflow_id, profile_name, flow_media_id),
             )
 
+    def settle_pending_asset(self, profile_name: str, flow_media_id: str, status: str) -> None:
+        """Set ``status`` on this asset only while it is still ``pending``."""
+        with self._store.transaction(immediate=True):
+            self._store.conn.execute(
+                "UPDATE assets SET status = ? "
+                "WHERE profile_name = ? AND flow_media_id = ? AND status = 'pending'",
+                (status, profile_name, flow_media_id),
+            )
+
     def note_asset_extended(
         self, profile_name: str, flow_media_id: str, *, model_key: str | None, workflow_id: str
     ) -> bool:

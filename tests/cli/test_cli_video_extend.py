@@ -908,9 +908,13 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
     monkeypatch.setattr("gflow_cli.cli_video.FlowApiClient", lambda **_kw: fake)
     sources: list[str | None] = []
     notes: list[tuple[Any, ...]] = []
+    settled: list[str] = []
 
     class _Recorder:
         record_migrated_extend = OperationRecorder.record_migrated_extend
+        repository = SimpleNamespace(
+            settle_pending_asset=lambda *a: settled.append(a[1])  # a failed run settles it
+        )
 
         def record_started_extend(self, *, source_media_id: str | None, **_kw: Any) -> None:
             sources.append(source_media_id)
@@ -935,6 +939,7 @@ async def test_an_in_place_session_notes_the_clip_only_after_success(
         )
     assert sources == [MEDIA]
     assert notes == ([("p", MEDIA, "new-wf", "k")] if done else [])  # profile, id, workflow, key
+    assert settled == ([] if done else [MEDIA])
 
 
 @pytest.mark.asyncio
