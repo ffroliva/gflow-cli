@@ -119,7 +119,7 @@ _4K_EXPORT_HINT = (
     "Check your Flow project and credit balance before re-running (4K video upscaling spends "
     "credits). If it keeps failing, file a bug at https://github.com/ffroliva/gflow-cli/issues."
 )
-_SCALE_TOKEN_RE = re.compile(r"(?<![0-9A-Za-z])(?:4k|2160p)(?![0-9A-Za-z])", re.IGNORECASE)
+_SCALE_TOKEN_RE = re.compile(r"(?<![0-9a-z])(?:4k|2160p)(?![0-9a-z])", re.IGNORECASE)
 
 
 def _export_hint(scale: str) -> str:
