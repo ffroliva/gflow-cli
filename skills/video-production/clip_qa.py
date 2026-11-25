@@ -36,6 +36,7 @@ import re
 import statistics
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 FACE_CROP = "crop=iw*0.6:ih*0.75:iw*0.2:0,scale=320:240"
@@ -44,8 +45,7 @@ AV_DURATION_TOLERANCE = 0.1  # video vs audio stream length on an assembled cut
 
 
 def run(args: list[str], cwd: Path) -> str:
-    """ffmpeg, failing loudly. A silent failure here would leave the previous clip's
-    metadata file on disk and report ITS numbers as this clip's."""
+    """ffmpeg, failing loudly: a silent failure would surface later as missing output."""
     r = subprocess.run(args, capture_output=True, text=True, cwd=cwd)  # noqa: S603 - fixed ffmpeg args
     if r.returncode != 0:
         target = args[args.index("-i") + 1]
@@ -118,30 +118,28 @@ def probe_fps(clip: Path) -> float:
     return float(num) / float(den or 1)
 
 
+def frame_metadata(clip: Path, flag: str, filters: str) -> str:
+    """What the filter chain's closing print filter writes, kept out of the clip's folder.
+
+    The file is named relative to ffmpeg's cwd: a drive colon would end the filter option.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        run(
+            ["ffmpeg", "-v", "error", "-i", str(clip.resolve()), flag, f"{filters}:file=out.txt"]
+            + ["-f", "null", "-"],
+            Path(d),
+        )
+        return (Path(d) / "out.txt").read_text()
+
+
 def yavg(clip: Path, vf: str) -> list[float]:
     """Per-frame mean luma of the frame difference — how much moved between frames."""
-    d = clip.parent
-    m = d / "_m.txt"
-    m.unlink(missing_ok=True)  # never read a stale file if the next call misbehaves
-    run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            clip.name,
-            "-vf",
-            f"{vf},tblend=all_mode=difference,signalstats,"
-            f"metadata=print:key=lavfi.signalstats.YAVG:file={m.name}",
-            "-f",
-            "null",
-            "-",
-        ],
-        d,
+    text = frame_metadata(
+        clip,
+        "-vf",
+        f"{vf},tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
     )
-    vals = [float(x) for x in re.findall(r"YAVG=([0-9.]+)", m.read_text())]
-    m.unlink(missing_ok=True)
+    vals = [float(x) for x in re.findall(r"YAVG=([0-9.]+)", text)]
     if not vals:
         raise RuntimeError(f"no frame data from {clip.name} — check the filter: {vf}")
     return vals
@@ -151,31 +149,16 @@ def audio_envelope(clip: Path, fps: float) -> list[float]:
     """Per-VIDEO-frame loudness as LINEAR amplitude, by cutting the audio into frame-sized
     chunks. Linear, not dB: silence in dB is a large negative outlier that dominates a
     correlation, while in amplitude it is simply zero."""
-    d = clip.parent
-    a = d / "_a.txt"
-    a.unlink(missing_ok=True)
-    run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            clip.name,
-            "-af",
-            f"aresample=48000,asetnsamples={round(48000 / fps)}:p=0,astats=metadata=1:reset=1,"
-            f"ametadata=print:key=lavfi.astats.Overall.RMS_level:file={a.name}",
-            "-f",
-            "null",
-            "-",
-        ],
-        d,
+    text = frame_metadata(
+        clip,
+        "-af",
+        f"aresample=48000,asetnsamples={round(48000 / fps)}:p=0,astats=metadata=1:reset=1,"
+        "ametadata=print:key=lavfi.astats.Overall.RMS_level",
     )
     db = [
         -91.0 if x.lstrip("-") == "inf" else float(x)
-        for x in re.findall(r"RMS_level=(-?inf|-?[0-9.]+)", a.read_text())
+        for x in re.findall(r"RMS_level=(-?inf|-?[0-9.]+)", text)
     ]
-    a.unlink(missing_ok=True)
     return [10 ** (x / 20) for x in db]
 
 
@@ -308,25 +291,24 @@ def selftest(clip: Path, shift_s: float = 0.2) -> None:
         f"{clip.name} correlates at r={base['sync_r']} — too weak to test against. "
         "Pick a single with one person talking, not a busy two-shot."
     )
-    shifted = clip.parent / "_selftest.mp4"
-    run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            clip.name,
-            "-af",
-            f"adelay={int(shift_s * 1000)}:all=1",
-            "-c:v",
-            "copy",
-            shifted.name,
-        ],
-        clip.parent,
-    )
-    moved = measure(shifted)[1]
-    shifted.unlink(missing_ok=True)
+    with tempfile.TemporaryDirectory() as d:
+        shifted = Path(d) / "shifted.mp4"
+        run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(clip.resolve()),
+                "-af",
+                f"adelay={int(shift_s * 1000)}:all=1",
+                "-c:v",
+                "copy",
+                shifted.name,
+            ],
+            shifted.parent,
+        )
+        moved = measure(shifted)[1]
     drift = moved["sync_lag_s"] - base["sync_lag_s"]
     print(
         f"baseline {base['sync_lag_s']:+.3f}s (r={base['sync_r']}) -> "
