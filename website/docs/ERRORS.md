@@ -5,7 +5,8 @@ Problem Details object. `gflow ... --json` prints it as `{"status": "fail", "err
 and MCP tools return it as `{"status": "error", "error": {...}}`. Both carry the
 same members, and the worker queue persists the same members for a queued task.
 An MCP tool call that returns `status: "error"` (or `failed`, `rate_limited`,
-`invalid_tools`) also has `isError: true` on its result
+`invalid_tools`, or a `gflow_auth_status` status other than `authenticated`) also has
+`isError: true` on its result
 ([#1453](https://github.com/ffroliva/gflow-cli/issues/1453),
 [#1464](https://github.com/ffroliva/gflow-cli/issues/1464)).
 

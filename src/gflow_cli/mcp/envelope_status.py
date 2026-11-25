@@ -10,7 +10,19 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-FAILURE_STATUSES: frozenset[str] = frozenset({"error", "failed", "rate_limited", "invalid_tools"})
+from gflow_cli.auth.verification import FlowSessionOutcome
+
+_TOOL_FAILURES = frozenset({"error", "failed", "rate_limited", "invalid_tools"})
+
+# ``gflow_auth_status`` returns the probe's outcome as its status. Every outcome but
+# ``authenticated`` is a session the probe could not verify, which ``gflow auth status``
+# exits 1 for. ``throttled`` is its refusal to probe an account Flow is rate-limiting.
+_AUTH_FAILURES = frozenset(
+    {o.value for o in FlowSessionOutcome if o is not FlowSessionOutcome.AUTHENTICATED}
+    | {"throttled"}
+)
+
+FAILURE_STATUSES: frozenset[str] = _TOOL_FAILURES | _AUTH_FAILURES
 """Envelope ``status`` values that describe a failed tool call."""
 
 

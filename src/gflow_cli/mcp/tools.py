@@ -2165,7 +2165,8 @@ async def gflow_usage_stats(weeks: int = 12) -> dict[str, Any]:
     description=(
         "Non-interactive, credit-free Flow session probe (#497). Call this "
         "BEFORE a generation tool to fail fast on expired auth, before a long "
-        "blocking generation call. Never starts an interactive login flow. May boot a "
+        "blocking generation call. The result has isError true unless `status` is "
+        "`authenticated`. Never starts an interactive login flow. May boot a "
         "short-lived headless browser, which on flow.google.com is the usual path, and "
         "may take up to ~2 min on a slow network. Every session result also carries "
         "`wire: {status, build}`, the health of the direct (browser-free) credits read, "
