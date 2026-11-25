@@ -405,7 +405,8 @@ class FlowWorker:
                         try:
                             for i, img in enumerate(images, start=1):
                                 if output_file is not None:
-                                    if len(images) == 1:
+                                    # #1489: numbered whenever several were asked for
+                                    if req.count == 1:
                                         target = output_file
                                     else:
                                         target = numbered_path(output_file, i)

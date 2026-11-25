@@ -52,7 +52,7 @@ def test_codec_decodes_edit_payload_and_warns_retiring(tmp_path: Path) -> None:
         payload={"model": "omni-flash"},
         created_at="2026-11-24T00:00:00Z",
     )
-    warns = codec.retirement_warnings(task)
+    warns = codec.task_warnings(task)
     assert warns["warnings"][0]["type"] == "model_retiring"
 
 

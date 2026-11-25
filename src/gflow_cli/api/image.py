@@ -42,6 +42,7 @@ __all__ = [
     "ProjectBrief",
     "ThinkingLevel",
     "build_agent_brief_cards",
+    "IMAGES_MISSING_HINT",
     "images_missing_warning",
     "_build_batch_generate_images_body",
 ]
@@ -54,6 +55,12 @@ _WireList = list[object]
 _CLIENT_TOOL = "PINHOLE"
 _RECAPTCHA_APP_TYPE = "RECAPTCHA_APPLICATION_TYPE_WEB"
 _IMAGE_INPUT_TYPE_REFERENCE = "IMAGE_INPUT_TYPE_REFERENCE"
+
+
+IMAGES_MISSING_HINT = (
+    "Flow returned fewer images than requested. The returned images are kept; "
+    "check the project in Flow before requesting the rest."
+)
 
 
 def images_missing_warning(requested: int, returned: int) -> list[dict[str, Any]]:
