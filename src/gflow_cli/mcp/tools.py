@@ -576,7 +576,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
             if completed_task.status in ("pending", "processing"):
                 # Unfinished, not failed: another claimant may still complete it.
                 failed["task_status"] = completed_task.status
-            return failed | codec.retirement_warnings(completed_task)
+            return failed | codec.task_warnings(completed_task)
 
         flow_project_id, flow_workflow_id, seed, file_paths = _completed_outputs(
             store, profile, completed_task
@@ -598,7 +598,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
         "flow_workflow_id": flow_workflow_id,
         "seed": seed,
         "files": file_paths,
-    } | codec.retirement_warnings(completed_task)
+    } | codec.task_warnings(completed_task)
 
 
 async def _run_generation_task(
@@ -1078,7 +1078,8 @@ def _validate_image_ui_and_thinking(
         "clear it. On an agent-only "
         "composer (#799) only text-to-image runs, so reference_images and character "
         "references fail there too. "
-        "Returns local file paths to the generated images."
+        "Returns local file paths to the generated images; fewer than count adds images_missing "
+        "to warnings."
     ),
 )
 @_guarded

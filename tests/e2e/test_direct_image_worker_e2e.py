@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from gflow_cli.worker.codec import task_warnings
 from gflow_cli.worker.daemon import FlowWorker
 
 if TYPE_CHECKING:
@@ -119,6 +120,8 @@ async def test_the_worker_runs_a_queued_i2i_with_one_local_ref_at_count_two(
         ).fetchall()
         transports = [json.loads(r[0] or "{}").get("transport") for r in rows]
         assert transports.count("direct_http") == 2, transports
+        assert len((done.checkpoint or {})["media_ids"]) == 2  # what #1489 counts
+        assert task_warnings(done) == {}
         assert "ui_automation" not in transports, transports
         assert len(list(out_dir.iterdir())) == 2
     finally:

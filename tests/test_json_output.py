@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from gflow_cli import json_output
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.video import (
@@ -73,6 +75,24 @@ class TestImageResult:
             ref_count=3,
         )
         assert payload["ref_count"] == 3
+
+    @pytest.mark.parametrize(
+        ("requested", "warnings"),
+        [(1, None), (4, [{"type": "images_missing", "requested": 4, "returned": 1}])],
+    )
+    def test_warns_only_when_images_are_missing(
+        self, requested: int, warnings: list[dict[str, object]] | None
+    ) -> None:
+        payload = json_output.image_result(
+            command="image t2i",
+            project_id="proj-1",
+            model="NARWHAL",
+            images=[_img()],
+            saved_paths=[Path("out/a.png")],
+            requested=requested,
+        )
+        assert payload.get("warnings") == warnings
+        assert payload["count"] == 1
 
 
 class TestVideoResult:

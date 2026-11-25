@@ -572,6 +572,17 @@ class GenerationSurface(WorkspaceSurface):
                 instance=_make_instance(),
                 route=routes.batch_generate_images_url(project_id),
             )
+        if len(images) < req.count:
+            # #1489: these exist and may be billed, so the run keeps them instead of failing.
+            logger.warning(
+                "client.images_missing",
+                requested=req.count,
+                returned=len(images),
+                hint=(
+                    "Flow returned fewer images than requested. The returned images are kept; "
+                    "check the project in Flow before requesting the rest."
+                ),
+            )
         # getattr: a caller-owned transport may return image objects without the field.
         direct = any(getattr(img, "transport", None) == "direct_http" for img in images)
         telemetry.note_transport("direct" if direct else "ui")

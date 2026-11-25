@@ -67,6 +67,7 @@ async def test_mcp_generate_image_count_returns_all_files(
     files = [Path(f) for f in result.get("files", [])]
     assert len(files) == 2, result
     assert len(set(files)) == 2, files
+    assert "warnings" not in result, result  # #1489
     assert all(
         f.parent == out_dir.resolve() and f.is_file() and f.stat().st_size > 0 for f in files
     )

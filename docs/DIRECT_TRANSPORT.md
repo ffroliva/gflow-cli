@@ -55,6 +55,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Flow answers a redirect, HTTP 401 or HTTP 403 | no: it was sent once and refused | the request is submitted a second time, through `ui_automation`'s own page |
 | A timeout, a dropped connection or any other HTTP status | no | the run stops with a network error (`next_action: reconcile`); gflow does **not** resend, because Flow may have made the image |
 | Flow refuses the prompt | no | the same refusal error as the UI path |
+| The reply holds fewer images than requested | no | the returned images are saved and the run succeeds with a `client.images_missing` warning, as when the UI path reads Flow's reply ([USAGE](USAGE.md#json-output---json)) |
 | A `--ref` found in the local catalog (a media id, or a file used before) | yes: the selector routes it before any request | the request runs on `ui_automation`; the catalog may be stale, and the UI path proves the image still exists before it submits, refusing at $0 |
 
 A sent request is never resent on the direct transport: only a redirect, HTTP 401 or HTTP 403, which Flow refused without making anything, is submitted again, once, through `ui_automation`. Every rejected reply drops the cached session token, so a
