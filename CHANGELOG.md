@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation and tests
+
+- **Install prerequisites, proxy and mirror guidance, and AI-crawler metadata ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.md` lists the prerequisites before the install command and answers three more questions under question headings. `docs/USER_GUIDE.md` covers installing and signing in behind a proxy or a package mirror. `llms.txt` is split into short bullets, and the Pages deploy publishes `llms-full.txt`. The default output folder (`~/Downloads/gflow-cli`) is stated correctly in `AGENTS.md`, `docs/USAGE.md` and the website pages.
+
 ## [0.107.0] — 2026-11-25
 
 ### Added
@@ -39,7 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation and tests
 
-- **Install prerequisites, proxy and mirror guidance, and AI-crawler metadata ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.md` lists the prerequisites before the install command and answers three more questions under question headings. `docs/USER_GUIDE.md` covers installing and signing in behind a proxy or a package mirror. `llms.txt` is split into short bullets, and the Pages deploy publishes `llms-full.txt`. The default output folder (`~/Downloads/gflow-cli`) is stated correctly in `AGENTS.md`, `docs/USAGE.md` and the website pages.
 - **English documentation corrections ahead of the Chinese README ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.md`, `llms.txt`, `index.html`, `docs/INDEX.md` and `website/docs/index.md` state the locked Playwright version (1.61.0), the 29 MCP tools and the images-only OpenAI-compatible API accurately. The comparison table is re-read from each project's own README and dated. Three long README paragraphs are split into short sentences, and `tests/mcp/test_readme_counts.py` also guards the tool count in `llms.txt`.
 - **The `tests/test_e2e_env_redaction.py` inner pytest runs no longer inherit CI's shard filter.** Each inner run inherited `GFLOW_TEST_SHARD`, and its single generated file always belongs to shard 1, so its tests were deselected and the assertions failed whenever the outer file was assigned to another shard. A fixture now clears the variable for those runs.
 - **The same inner runs now import the repository's `tests` package wherever `--basetemp` points.** They found it only when their temporary directory sat inside the repository, so 15 tests failed with `No module named 'tests'` under a `--basetemp` outside it; the fixture now puts the repository root on `PYTHONPATH`.
