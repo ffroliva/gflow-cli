@@ -4,7 +4,8 @@
 The in-process tests build the ASGI app directly; this one proves the route is mounted by
 the command users run, with its real middleware stack, over a real socket. It runs with
 ``GFLOW_MCP_NO_SPEND=1`` and an empty ``GFLOW_CLI_HOME``: no browser, no profile, no Flow
-call, $0 — so it runs offline in CI.
+call, $0 — so it runs offline in CI. It runs from that empty home, so no ``.env`` in
+the checkout configures the daemon.
 """
 
 from __future__ import annotations
@@ -21,16 +22,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from tests.mcp.test_http_transport import _free_port  # pyright: ignore[reportPrivateUsage]
+
 PATH = "/v1/images/generations"
 #: Not a credential — a fixed literal for the auth test.
 TOKEN = "test-daemon-token"
 _TOKEN_VARS = ("GFLOW_CLI_DAEMON_TOKEN", "GFLOW_DAEMON_TOKEN")
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def _wait_for_port(proc: subprocess.Popen[str], port: int) -> None:
@@ -59,6 +56,7 @@ def _serve(home: Path, token: str | None = None) -> Iterator[httpx.Client]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        cwd=home,  # a .env in the developer's checkout must not configure this daemon
         text=True,
     )
     try:

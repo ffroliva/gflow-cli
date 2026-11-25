@@ -223,6 +223,16 @@ async def test_known_client_name_is_counted_and_unknown_becomes_other(
 
 
 @pytest.mark.asyncio
+async def test_openai_http_calls_are_counted_under_their_own_client(tmp_path: Path) -> None:
+    token = tools.telemetry_client.set("openai-http")
+    try:
+        await _success()  # no MCP session: the OpenAI route calls the tool directly
+    finally:
+        tools.telemetry_client.reset(token)
+    assert any(row[1:4] == ("mcp", "client", "openai-http") for row in _rows(tmp_path))
+
+
+@pytest.mark.asyncio
 async def test_missing_client_info_is_not_an_error(
     tmp_path: Path,
 ) -> None:

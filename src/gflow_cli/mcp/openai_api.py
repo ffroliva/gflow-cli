@@ -26,6 +26,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 import structlog
+from mcp.server.transport_security import DEFAULT_MAX_REQUEST_BODY_SIZE
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -36,8 +37,6 @@ from gflow_cli.mcp import openai_errors
 log = structlog.get_logger()
 
 PATH = "/v1/images/generations"
-#: The request body cap, the same 4 MiB the MCP SDK applies to ``/mcp``.
-MAX_BODY_BYTES = 4 * 1024 * 1024
 
 #: Flow's image aspects (``api.image.Aspect``) as width / height.
 _ASPECTS: dict[str, float] = {
@@ -51,7 +50,9 @@ _SIZE_RE = re.compile(r"^([1-9]\d*)x([1-9]\d*)$")
 _LOOPBACK_NAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 _MAX_COUNT = 4
 _ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-_FLOW_MODELS = "nano2 (default), nano2-lite, nano-pro, image4"
+_BAD_PARAMETER = "https://gflow-cli.dev/errors/bad-parameter"
+#: The telemetry client name these requests are counted under (they carry no MCP session).
+TELEMETRY_CLIENT = "openai-http"
 
 
 @dataclass(frozen=True)
@@ -84,12 +85,17 @@ class _RequestError(Exception):
         self.headers = headers
 
     def response(self) -> JSONResponse:
+        # Refused before the tool ran, so nothing was spent; 400s are gflow's bad-parameter.
+        extra = {"charged": "no"}
+        if self.status == 400:  # noqa: PLR2004
+            extra["gflow_type"] = _BAD_PARAMETER
         return openai_errors.error_response(
             self.status,
             self.message,
             type_=self.type_,
             code=self.code,
             param=self.param,
+            extra=extra,
             headers=self.headers,
         )
 
@@ -128,8 +134,8 @@ def _parse_model(fields: dict[str, Any]) -> str:
         Model.from_cli(model)
     except ValueError as exc:
         raise _RequestError(
-            f"{exc}. This endpoint is a facade over Google Flow and accepts Flow image "
-            f"models only: {_FLOW_MODELS}.",
+            f"{exc}. This endpoint is a facade over Google Flow and accepts Google Flow "
+            "image models only.",
             param="model",
         ) from exc
     return model
@@ -154,8 +160,13 @@ def parse_request(body: object) -> ImageRequest:
     prompt = fields.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
         raise _RequestError("prompt is required and must be a non-empty string.", param="prompt")
-    if _field(fields, "stream", False) is not False:
+    stream = fields.get("stream")
+    if stream is True:
         raise _RequestError("Streaming is not supported; omit stream.", param="stream")
+    if stream not in (None, False):  # 0 == False passes, as OpenAI's own server takes it
+        raise _RequestError(
+            f"stream must be a boolean, got {type(stream).__name__}.", param="stream"
+        )
     if _field(fields, "response_format", "b64_json") != "b64_json":
         raise _RequestError(
             "Only response_format 'b64_json' is supported: gflow returns the image bytes "
@@ -210,17 +221,15 @@ def _check_headers(request: Request, *, check_origin: bool) -> None:
 
 
 async def _read_json(request: Request) -> object:
-    too_large = _RequestError(
-        f"Request body exceeds {MAX_BODY_BYTES} bytes.", status=413, code="request_too_large"
-    )
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > MAX_BODY_BYTES:
-        raise too_large
     raw = bytearray()
-    async for chunk in request.stream():
+    async for chunk in request.stream():  # caps declared and chunked bodies alike
         raw += chunk
-        if len(raw) > MAX_BODY_BYTES:
-            raise too_large
+        if len(raw) > DEFAULT_MAX_REQUEST_BODY_SIZE:
+            raise _RequestError(
+                f"Request body exceeds {DEFAULT_MAX_REQUEST_BODY_SIZE} bytes.",
+                status=413,
+                code="request_too_large",
+            )
     try:
         return json.loads(raw)
     except (ValueError, RecursionError) as exc:
@@ -248,7 +257,7 @@ async def _images_response(result: dict[str, Any]) -> JSONResponse:
         log.warning("openai_api.images.unreadable", task_id=result.get("task_id"), error=str(exc))
         return openai_errors.error_response(
             500,
-            f"The image was generated but its file could not be read: {exc}",
+            "The image was generated but its file could not be read on the server.",
             type_="server_error",
             code="output_unreadable",
             extra=extra,
@@ -275,9 +284,13 @@ def _image_route(*, check_origin: bool) -> Route:
         except _RequestError as exc:
             return exc.response()
 
-        result = await tools.gflow_generate_image(
-            prompt=req.prompt, model=req.model, aspect=req.aspect, count=req.count, wait=True
-        )
+        token = tools.telemetry_client.set(TELEMETRY_CLIENT)
+        try:
+            result = await tools.gflow_generate_image(
+                prompt=req.prompt, model=req.model, aspect=req.aspect, count=req.count, wait=True
+            )
+        finally:
+            tools.telemetry_client.reset(token)
         if result.get("status") != "completed":
             log.warning("openai_api.images.failed", status=result.get("status"))
             return openai_errors.tool_failure(result)

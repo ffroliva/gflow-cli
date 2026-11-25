@@ -4,37 +4,30 @@ gflow has one error system: RFC 9457 problem details. The OpenAI-compatible faca
 invent a second one; it translates at the edge into the body OpenAI clients parse,
 ``{"error": {"message", "type", "param", "code"}}``, in OpenAI's vocabulary. gflow's own
 facts (``gflow_type``, ``exit_code``, ``charged``, ``retryable``, ``next_action``,
-``operation_id``, ``task_id``) ride along as extra keys inside ``error``, which OpenAI
-clients ignore.
+``operation_id``, ``retry_after``, ``task_id``) ride along as extra keys inside ``error``,
+which OpenAI clients ignore.
 
-Every error response also says ``x-should-retry: false`` unless gflow reports the failure
-as retryable with nothing charged: the official SDKs retry 5xx twice by default, and a
-retry of a generation that may have been billed spends again.
+Every error response says ``x-should-retry: false`` except the local token-bucket refusal:
+the official SDKs retry 5xx and 429 by default, and a retry of a generation that may have
+been billed, or that hit Flow's daily quota, spends again or fails again.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, cast
 
 from starlette.responses import JSONResponse
 
-ERROR_TYPES = frozenset(
-    {
-        "invalid_request_error",
-        "authentication_error",
-        "permission_error",
-        "rate_limit_error",
-        "server_error",
-    }
-)
-
 #: Seconds an OpenAI client should wait after a 429: one refill of the token bucket.
 RETRY_AFTER_SECONDS = 20
 
-_FACTS = ("exit_code", "charged", "retryable", "next_action", "operation_id")
+_FACTS = ("exit_code", "charged", "retryable", "next_action", "operation_id", "retry_after")
 _ERRORS = "https://gflow-cli.dev/errors/"
 _RENEW_HINT = " Run 'gflow auth renew' on the machine running gflow serve."
+_MISCONFIGURED_PREFIX = "The gflow serve daemon is misconfigured: "
+_UNFINISHED = frozenset({"pending", "processing"})
 
 
 @dataclass(frozen=True)
@@ -50,6 +43,10 @@ _RATE_LIMITED = OpenAIError(429, "rate_limit_error", "rate_limit_exceeded")
 # A 401/403 from Flow is about the daemon's saved Google session, not the caller's key.
 # Passing it through would make an OpenAI client rotate a daemon token that is fine.
 _UPSTREAM_AUTH = OpenAIError(502, "server_error", "upstream_auth_failed")
+# Flow refused the daemon's request (WAF, reCAPTCHA): the session is not the cause.
+_UPSTREAM_REJECTED = OpenAIError(502, "server_error", "upstream_rejected")
+_UPSTREAM_ERROR = OpenAIError(502, "server_error", "upstream_error")
+_MISCONFIGURED = OpenAIError(500, "server_error", "server_misconfigured")
 _TIMEOUT = OpenAIError(504, "server_error", "generation_timeout")
 
 #: gflow problem type → OpenAI error. A type not listed falls back on its HTTP status.
@@ -63,8 +60,20 @@ BY_GFLOW_TYPE: dict[str, OpenAIError] = {
     _ERRORS + "auth-missing": _UPSTREAM_AUTH,
     _ERRORS + "aisandbox-auth": _UPSTREAM_AUTH,
     _ERRORS + "auth-browser-rejected": _UPSTREAM_AUTH,
+    _ERRORS + "waf-rejection": _UPSTREAM_REJECTED,
+    _ERRORS + "recaptcha-mint": _UPSTREAM_REJECTED,
+    _ERRORS + "no-profile": _MISCONFIGURED,
+    _ERRORS + "no-default-profile": _MISCONFIGURED,
+    _ERRORS + "configuration": _MISCONFIGURED,
+    _ERRORS + "profile-access": _MISCONFIGURED,
+    _ERRORS + "profile-engine-downgrade": _MISCONFIGURED,
+    _ERRORS + "browser-engine-unavailable": _MISCONFIGURED,
     _ERRORS + "transport-timeout": _TIMEOUT,
 }
+
+#: bad-parameter refusals about the profile or project. The route never sends either, so
+#: these describe the daemon's environment (GFLOW_CLI_PROFILE, GFLOW_CLI_PROJECT).
+_DAEMON_PARAM_TITLES = frozenset({"Invalid Profile", "Default Project Belongs To Another Profile"})
 
 
 def _by_status(status: object) -> OpenAIError:
@@ -75,18 +84,20 @@ def _by_status(status: object) -> OpenAIError:
     if status == 429:  # noqa: PLR2004
         return _RATE_LIMITED
     if status < 500:  # noqa: PLR2004
-        return OpenAIError(status, "invalid_request_error", "invalid_value")
+        return _UPSTREAM_ERROR  # Flow's 4xx answers the daemon's request, not the caller's
     return OpenAIError(status, "server_error", "generation_failed")
 
 
 def classify(result: dict[str, Any]) -> OpenAIError:
     """The OpenAI error for a tool envelope that did not complete."""
-    status = result.get("status")
-    if status in ("pending", "processing"):
+    # ``task_status`` is how wait=True reports a row it left unfinished.
+    if result.get("status") in _UNFINISHED or result.get("task_status") in _UNFINISHED:
         return _TIMEOUT
-    if status == "rate_limited":
+    if result.get("status") == "rate_limited":
         return _RATE_LIMITED
     problem = _problem(result)
+    if problem.get("title") in _DAEMON_PARAM_TITLES:
+        return _MISCONFIGURED
     return BY_GFLOW_TYPE.get(str(problem.get("type"))) or _by_status(problem.get("status"))
 
 
@@ -111,37 +122,50 @@ def error_response(
     if not retry:
         all_headers["x-should-retry"] = "false"
     if status == 429:  # noqa: PLR2004
-        all_headers["retry-after"] = str(RETRY_AFTER_SECONDS)
+        all_headers.setdefault("retry-after", str(RETRY_AFTER_SECONDS))
     body = {"message": message, "type": type_, "param": param, "code": code, **(extra or {})}
     return JSONResponse({"error": body}, status_code=status, headers=all_headers)
+
+
+def _message(result: dict[str, Any], mapped: OpenAIError) -> str:
+    problem = _problem(result)
+    if mapped is _TIMEOUT and "type" not in problem:
+        return (
+            f"The generation did not finish while the request waited "
+            f"(task {result.get('task_id')}); it may still complete in Flow."
+        )
+    error = result.get("error")
+    text = problem.get("detail") or problem.get("message") or problem.get("title")
+    if not text and isinstance(error, str):
+        text = error
+    message = str(text or "Generation failed.")
+    if mapped is _UPSTREAM_AUTH:
+        return message + _RENEW_HINT
+    if mapped is _MISCONFIGURED:
+        return _MISCONFIGURED_PREFIX + message
+    return message
 
 
 def tool_failure(result: dict[str, Any]) -> JSONResponse:
     """Translate a ``gflow_generate_image`` envelope that did not complete."""
     mapped = classify(result)
     problem = _problem(result)
-    task_id = result.get("task_id")
-    if mapped is _TIMEOUT and "type" not in problem:
-        message = (
-            f"The generation did not finish while the request waited (task {task_id}); "
-            "it may still complete in Flow."
-        )
-    else:
-        error = result.get("error")
-        message = str(problem.get("message") or problem.get("detail") or error or "")
-        message = message or "Generation failed."
-    if mapped is _UPSTREAM_AUTH:
-        message += _RENEW_HINT
     extra = {k: problem[k] for k in _FACTS if problem.get(k) is not None}
     if "type" in problem:
         extra["gflow_type"] = problem["type"]
-    if task_id is not None:
+    if (task_id := result.get("task_id")) is not None:
         extra["task_id"] = task_id
-    retry = (
-        problem.get("retryable") is True
-        and problem.get("charged") == "no"
-        and mapped.status not in (502, 504)
-    )
+    headers: dict[str, str] = {}
+    retry_after = problem.get("retry_after")
+    if isinstance(retry_after, int | float) and not isinstance(retry_after, bool):
+        headers["retry-after"] = str(max(1, math.ceil(retry_after)))
     return error_response(
-        mapped.status, message, type_=mapped.type, code=mapped.code, extra=extra, retry=retry
+        mapped.status,
+        _message(result, mapped),
+        type_=mapped.type,
+        code=mapped.code,
+        extra=extra,
+        # Only the local bucket refused before anything ran, and it refills on its own.
+        retry=result.get("status") == "rate_limited",
+        headers=headers,
     )
