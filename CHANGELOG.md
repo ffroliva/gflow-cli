@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation and tests
+
+- **The MCP test fixture registers every tool module, as the server does at startup.** `tests/mcp/conftest.py`'s `mcp_server` imported only `tools` and `resources`, so `test_cli_parity.py::test_mapped_tools_are_registered` failed when run on its own (`gflow_edit_video` and `gflow_extend_video` unregistered) and passed only when another test had imported their modules. The fixture now calls `_register_surfaces()`.
+
 ## [0.107.0] — 2026-11-25
 
 ### Added

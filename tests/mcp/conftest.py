@@ -69,9 +69,8 @@ def set_image_tool(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, Any]]
 
 @pytest.fixture()
 def mcp_server():
-    """Return the MCPServer instance with all tools/resources registered."""
-    import gflow_cli.mcp.resources  # noqa: F401
-    import gflow_cli.mcp.tools  # noqa: F401
-    from gflow_cli.mcp.server import server
+    """Return the MCPServer instance with every tool module registered, as at startup."""
+    from gflow_cli.mcp.server import _register_surfaces, server  # noqa: PLC2701
 
+    _register_surfaces()
     return server
