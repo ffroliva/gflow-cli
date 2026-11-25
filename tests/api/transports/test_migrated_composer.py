@@ -5211,3 +5211,48 @@ async def test_a_clip_settled_from_the_listing_skips_the_result_url_grace_1484(
     )
     assert rec.is_done and rec.video_url is None
     assert time.monotonic() - started < 0.9, "waited the URL grace after the listing read"
+
+
+class _OtherEngineError(Exception):
+    """Stands in for patchright's Error, which is not a playwright Error subclass."""
+
+
+def _with_other_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    from playwright.async_api import Error as PwError
+
+    from gflow_cli.api import _engine
+
+    monkeypatch.setattr(_engine, "retryable_engine_errors", lambda: (PwError, _OtherEngineError))
+
+
+async def test_a_billed_clip_unreadable_under_another_engine_says_recover_it_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """patchright raises its own Error class; the free-recovery hint must still apply."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    _with_other_engine(monkeypatch)
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        raise _OtherEngineError("goto: Timeout 30000ms exceeded")
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    with pytest.raises(MediaDownloadError) as ei:
+        await MigratedComposer.clip_bytes(
+            FakePage(), GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3)
+        )
+    assert f"gflow data download {MEDIA_OURS}" in ei.value.remediation_hint
+
+
+async def test_a_finished_clip_adopted_from_the_listing_skips_the_url_grace_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No signed URL follows a listing read, so the adoption path must not wait for one."""
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
+    started = time.monotonic()
+    rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, VIDEO_URL))))
+    assert rec.is_done and rec.video_url is None
+    assert time.monotonic() - started < 0.45, "waited the URL grace after adopting"

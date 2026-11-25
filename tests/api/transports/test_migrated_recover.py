@@ -490,3 +490,31 @@ async def test_a_reply_requested_by_the_previous_load_is_charged_to_that_load_14
     response.request = stale  # type: ignore[attr-defined]
     await watch.on_response(response)
     assert watch.waiting, "a body lost by load 1 cut load 2 short"
+
+
+@pytest.mark.asyncio
+async def test_a_reload_failing_under_another_engine_is_the_typed_no_url_error_1484(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """patchright's Error is not playwright's; a reload timeout there must still end as
+    the typed no-signed-URL error."""
+    from playwright.async_api import Error as PwError
+
+    from gflow_cli.api import _engine
+
+    class _OtherEngineError(Exception):
+        pass
+
+    monkeypatch.setattr(_engine, "retryable_engine_errors", lambda: (PwError, _OtherEngineError))
+
+    class _ReloadFails(_SlowPage):
+        async def goto(self, url: str, **kw: Any) -> None:
+            if self.gotos:
+                self.gotos.append(url)
+                raise _OtherEngineError("page.goto: Timeout exceeded")
+            await super().goto(url, **kw)
+            for handler in list(self._handlers):
+                await handler(_Unreadable())
+
+    with pytest.raises(WireFormatError, match="no signed media URL"):
+        await _recover(_ReloadFails(reply_after_s=None), tmp_path, wait_s=0.3)

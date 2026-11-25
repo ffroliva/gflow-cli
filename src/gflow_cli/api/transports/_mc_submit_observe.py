@@ -367,8 +367,6 @@ class SubmitObserveMixin(MentionMixin):
                 _accept(rid, rec)
 
         def _accept(rid: str, rec: GenerationRecord) -> None:
-            if rid == LISTING_RPC:
-                rec = _without_listing_url(rec)
             workflow["id"] = rec.workflow_id
             log.info(
                 "migrated.video_adopted_from_listing"
@@ -380,7 +378,10 @@ class SubmitObserveMixin(MentionMixin):
                 status=rec.status,
             )
             submitted.set_result(rec)
-            _settle(rec)
+            if rid == LISTING_RPC and (rec.is_done or rec.is_failed):
+                status_watch.settle_from_listing(rec)  # no signed URL follows a listing
+            else:
+                _settle(rec)
 
         def _note_poll(rid: str, payload: Any) -> None:
             assert by_prompt is not None  # noqa: S101 - set in the same branch as `lost`
