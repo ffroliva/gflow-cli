@@ -74,9 +74,9 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
     """True only for a request whose every wire slot is measured.
 
     T2I with a measured model, any aspect, any count Flow offers (1-4: N entries in one
-    POST returned N images live), or one in-project reference or one named character with
-    one image, on the classic composer. No Agent instructions and no raw ``@`` left in the
-    prompt (a mention reaches here already resolved to a name).
+    POST returned N images live), or one in-project reference or one named character
+    (count 1-4), on the classic composer. No Agent instructions and no raw ``@`` left in
+    the prompt (a mention reaches here already resolved to a name).
     """
     return (
         request.model in _WIRE_MODEL
@@ -91,8 +91,8 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
 
 
 def _references_measured(request: GenerateImageRequest) -> bool:
-    """No refs, or the one measured I2I shape: a single in-project image with a display
-    name (the chip needs it), one output image, made or uploaded in this run.
+    """No refs, or the measured I2I shape: a single in-project image with a display name
+    (the chip needs it), count 1-4, made or uploaded in this run.
 
     Only a ref this run made (a ``batch:N`` row's image) or uploaded carries no
     ``local_path``; one found in the local catalog always does (the CLI's lookup and the
@@ -103,29 +103,17 @@ def _references_measured(request: GenerateImageRequest) -> bool:
     if not request.refs:
         return True
     (ref, *more) = request.refs
-    return (
-        not more
-        and ref.in_project
-        and bool(ref.display_name)
-        and not ref.local_path
-        and request.count == 1
-    )
+    return not more and ref.in_project and bool(ref.display_name) and not ref.local_path
 
 
 def _characters_measured(request: GenerateImageRequest) -> bool:
-    """No character, or the one measured shape: a single named character, no image
-    reference, one output image. A bare ``@Name`` mention arrives as the name alone; the
+    """No character, or the measured shape: a single named character, no image
+    reference, count 1-4. A bare ``@Name`` mention arrives as the name alone; the
     direct path looks its id up in the project before sending (:func:`_resolve_character`)."""
     ids, names = request.reference_entities, request.reference_entity_names
     if not ids and not names:
         return True
-    return (
-        len(ids) <= 1
-        and len(names) == 1
-        and bool(names[0])
-        and not request.refs
-        and request.count == 1
-    )
+    return len(ids) <= 1 and len(names) == 1 and bool(names[0]) and not request.refs
 
 
 async def _resolve_character(
