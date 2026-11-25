@@ -78,7 +78,7 @@ class GflowMCPServer(MCPServer):
     Every tool returns its envelope as a plain dict, so the SDK reports even a
     failure as a successful result. A plain ``tools/call`` whose
     ``structuredContent`` has a failure ``status`` (``envelope_status.FAILURE_STATUSES``,
-    the set ``tools.outcome_of`` counts for telemetry) is returned with
+    the set ``envelope_status.outcome_of`` counts for telemetry) is returned with
     ``isError: true``; ``structuredContent`` itself is unchanged. The check runs
     after ``super().call_tool``, so output-schema validation has already run, and
     it covers envelopes built outside ``_guarded`` too. Other statuses

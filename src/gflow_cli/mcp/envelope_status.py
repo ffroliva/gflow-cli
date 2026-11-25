@@ -2,7 +2,7 @@
 
 One definition serves two readers: the server's ``isError`` flag on a plain
 ``tools/call`` (``GflowMCPServer.call_tool``) and the telemetry outcome a tool
-call records (``tools.outcome_of``). Keeping them on one set means a status the
+call records (``outcome_of``). Keeping them on one set means a status the
 telemetry counts as a failure is never reported to the client as a success.
 """
 
@@ -34,3 +34,17 @@ def is_failure(envelope: object) -> bool:
     # envelope status, and testing it against the set would raise on an unhashable value.
     status = cast("dict[str, Any]", envelope).get("status")
     return isinstance(status, str) and status in FAILURE_STATUSES
+
+
+def outcome_of(result: dict[str, Any]) -> str:
+    """Return the stable telemetry outcome for an MCP result envelope."""
+    status = result.get("status")
+    if status == "pending":
+        return "queued"
+    if is_failure(result):
+        error = result.get("error")
+        code: Any = result.get("exit_code")
+        if code is None and isinstance(error, dict):
+            code = cast(dict[str, Any], error).get("exit_code")
+        return str(code) if code is not None else "error"
+    return "0"

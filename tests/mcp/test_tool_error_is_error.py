@@ -137,7 +137,7 @@ async def test_malformed_tools_argument_is_flagged(mcp_server: Any) -> None:
 
 
 async def test_is_error_and_telemetry_share_one_failure_set() -> None:
-    """Every status the server flags is one telemetry records as a failure, and back."""
+    """Every status the server flags is a telemetry failure; successes are neither."""
     from gflow_cli.mcp.envelope_status import FAILURE_STATUSES, is_failure
     from gflow_cli.mcp.tools import outcome_of
 
