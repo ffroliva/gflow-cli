@@ -467,7 +467,8 @@ class AssetsRepo(RepositoryBase):
             return []
         by_profile: dict[str, list[str]] = {}
         for row in rows:
-            by_profile.setdefault(str(row["profile_name"]), []).append(str(row["id"]))
+            profile = str(row["profile_name"])  # NOSONAR - sqlite3.Row takes a column name
+            by_profile.setdefault(profile, []).append(str(row["id"]))  # NOSONAR - same
         files_by_asset: dict[str, list[LocalFileRecord]] = {}
         for profile_name, asset_ids in by_profile.items():
             unique_ids = list(dict.fromkeys(asset_ids))
@@ -480,7 +481,7 @@ class AssetsRepo(RepositoryBase):
                 WHERE profile_name = ? AND asset_id IN ({placeholders})
                   AND superseded_at IS NULL  -- a pre-extend copy is never a live file (#1299)
                 ORDER BY created_at ASC, id ASC
-                """,  # noqa: S608 - placeholders only, values stay bound
+                """,  # noqa: S608 - only ? placeholders are interpolated
                 (profile_name, *unique_ids),
             ).fetchall()
             for file_row in file_rows:
