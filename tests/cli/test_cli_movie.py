@@ -1233,3 +1233,86 @@ class TestMovieInstructionsSync:
         client.get_agent_info.assert_awaited_once()
         client.patch_agent_info.assert_awaited_once()
         assert cache.signature is not None
+
+
+class TestMovieOutputDirResolution:
+    """#1516: default output_dir for `gflow movie run` resolves under videos/."""
+
+    def test_default_output_dir_uses_videos_subfolder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        from datetime import date
+
+        from gflow_cli import config
+
+        output_root = tmp_path / "gflow-out"
+        monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(output_root))
+        config.reset_settings()
+        manifest = _write_toml(tmp_path / "movie.toml", _VALID_MANIFEST)
+        expected = (output_root / "videos" / date.today().isoformat()).resolve()
+
+        captured: dict[str, Path] = {}
+
+        async def fake_run_movie(**kwargs: object) -> None:
+            out_dir = kwargs["out_dir"]
+            assert isinstance(out_dir, Path)
+            captured["out_dir"] = out_dir
+
+        def run_sync(fn: object, **_kwargs: object) -> None:
+            assert callable(fn)
+            coro = fn()
+            asyncio.run(coro)  # type: ignore[arg-type]
+
+        try:
+            dry = CliRunner().invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
+            assert dry.exit_code == 0, dry.output
+            unwrapped = "".join(dry.output.splitlines())
+            assert str(expected) in unwrapped
+
+            with (
+                patch("gflow_cli.cli_movie._resolve_profile", return_value="default"),
+                patch("gflow_cli.cli_movie._make_provider_dir", return_value=tmp_path / "profile"),
+                patch("gflow_cli.cli_movie._run_movie", side_effect=fake_run_movie),
+                patch("gflow_cli.cli_movie.run_with_handlers", side_effect=run_sync),
+            ):
+                live = CliRunner().invoke(cli_main, ["movie", "run", str(manifest)])
+
+            assert live.exit_code == 0, live.output
+            assert captured["out_dir"] == expected
+        finally:
+            config.reset_settings()
+
+    def test_manifest_and_cli_out_dir_override_default_videos_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gflow_cli import config
+
+        output_root = tmp_path / "gflow-out"
+        monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(output_root))
+        config.reset_settings()
+        manifest_dir = tmp_path / "manifest-out"
+        cli_dir = tmp_path / "cli-out"
+        manifest = _write_toml(
+            tmp_path / "movie.toml",
+            f'output_dir = "{manifest_dir.as_posix()}"\n{_VALID_MANIFEST}',
+        )
+        try:
+            from_manifest = CliRunner().invoke(
+                cli_main, ["movie", "run", str(manifest), "--dry-run"]
+            )
+            assert from_manifest.exit_code == 0, from_manifest.output
+            unwrapped_manifest = "".join(from_manifest.output.splitlines())
+            assert str(manifest_dir) in unwrapped_manifest
+            assert str(output_root / "videos") not in unwrapped_manifest
+
+            from_cli = CliRunner().invoke(
+                cli_main,
+                ["movie", "run", str(manifest), "--dry-run", "--out-dir", str(cli_dir)],
+            )
+            assert from_cli.exit_code == 0, from_cli.output
+            unwrapped_cli = "".join(from_cli.output.splitlines())
+            assert str(cli_dir) in unwrapped_cli
+            assert str(manifest_dir) not in unwrapped_cli
+        finally:
+            config.reset_settings()

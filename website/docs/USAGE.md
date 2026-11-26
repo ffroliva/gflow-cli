@@ -2703,7 +2703,7 @@ Refer to the complete [Movie Manifests Guide](MOVIE.md) for detailed syntax, cha
 ### Parameters
 
 * `MANIFEST`: Path to your `movie.toml` manifest file (required positional argument).
-* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Without it, the manifest's `output_dir` applies when set (the generated template sets `./out/my-movie`); otherwise the default is `<output root>/images/<YYYY-MM-DD>/`, where the output root is `GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`).
+* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Without it, the manifest's `output_dir` applies when set (the generated template sets `./out/my-movie`); otherwise the default is `<output root>/videos/<YYYY-MM-DD>/`, where the output root is `GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`).
 * `--profile NAME`: Specify Google Flow profile to use.
 * `--continue-on-error`: Skip failed scenes and continue generating subsequent scenes (default).
 * `--fail-fast`: Terminate immediately on the first failed scene generation.
