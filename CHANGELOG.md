@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Install prerequisites, proxy and mirror guidance, and AI-crawler metadata ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.md` lists the prerequisites before the install command and answers three more questions under question headings. `docs/USER_GUIDE.md` covers installing and signing in behind a proxy or a package mirror. `llms.txt` is split into short bullets, and the Pages deploy publishes `llms-full.txt`. The default output folder (`~/Downloads/gflow-cli`) is stated correctly in `AGENTS.md`, `docs/USAGE.md` and the website pages.
 - **Simplified Chinese README ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.zh-CN.md` translates the README and adds a section on installing and signing in behind a proxy or a package mirror. Both READMEs link to each other, the root-document and link audits cover the new file, and a test keeps its MCP tool count equal to the server's. The package metadata gains the `Natural Language :: Chinese (Simplified)` classifier.
+- **Social preview card ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** The landing page's `og:image` and `twitter:image` now point at a 1200x630 PNG served from the site root (`og-image.png`) in place of a WebP hosted on the `main` branch. `scripts/dev/render_social_card.py` renders it, and the 1280x640 repository social preview, from `docs/assets/social/card.html`.
 
 ## [0.107.0] — 2026-11-25
 
