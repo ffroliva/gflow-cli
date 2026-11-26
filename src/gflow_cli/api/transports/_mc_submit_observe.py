@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import structlog
-from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.transports._mc_common import (
@@ -1111,6 +1110,11 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
             if rid == LISTING_RPC and not got.done():
                 got.set_result(payload)
 
+    from gflow_cli.api._engine import retryable_engine_errors  # noqa: PLC0415 - as _common
+
+    if budget_s <= 0:  # goto(timeout=0) would wait without limit
+        return None
+    engine_errors = retryable_engine_errors()  # patchright's Error is a separate class
     end = time.monotonic() + budget_s
     tab: Page | None = None
     try:
@@ -1124,12 +1128,12 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
         return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
     # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
     # caller's exit 9, which names the project; this runs after Flow has billed.
-    except (TimeoutError, PlaywrightError) as exc:
+    except (TimeoutError, *engine_errors) as exc:
         log.warning(
             "migrated.video_listing_unanswered", budget_s=budget_s, error=type(exc).__name__
         )
         return None
     finally:
         if tab is not None:
-            with contextlib.suppress(PlaywrightError):
+            with contextlib.suppress(*engine_errors):
                 await tab.close()

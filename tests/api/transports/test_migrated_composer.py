@@ -5256,3 +5256,44 @@ async def test_a_finished_clip_adopted_from_the_listing_skips_the_url_grace_1484
     rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, VIDEO_URL))))
     assert rec.is_done and rec.video_url is None
     assert time.monotonic() - started < 0.45, "waited the URL grace after adopting"
+
+
+class _FailingTab:
+    """A listing tab whose load and close both raise another engine's error."""
+
+    def on(self, *_: Any) -> None:
+        pass
+
+    async def goto(self, *_: Any, **__: Any) -> None:
+        raise _OtherEngineError("goto: Timeout 30000ms exceeded")
+
+    async def close(self) -> None:
+        raise _OtherEngineError("Target closed")
+
+
+class _CountingContext:
+    def __init__(self, tab: Any) -> None:
+        self.tab = tab
+        self.opened = 0
+
+    async def new_page(self) -> Any:
+        self.opened += 1
+        return self.tab
+
+
+async def test_a_listing_tab_failing_under_another_engine_reads_as_no_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """patchright's errors are separate classes; the caller's exit 9 must still apply."""
+    _with_other_engine(monkeypatch)
+    page = FakePage()
+    page.context = _CountingContext(_FailingTab())
+    assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=5.0) is None
+
+
+async def test_a_spent_budget_opens_no_listing_tab_1484() -> None:
+    """goto(timeout=0) means no timeout at all, so a spent budget must not navigate."""
+    page = FakePage()
+    page.context = ctx = _CountingContext(_FailingTab())
+    assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=0.0) is None
+    assert ctx.opened == 0
