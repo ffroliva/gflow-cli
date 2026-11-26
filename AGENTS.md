@@ -85,6 +85,7 @@ uv run python scripts/ci/check_website_docs_pii.py
 uv run python scripts/ci/generate_website_docs.py --check
 uv run python scripts/ci/check_council_memory.py
 uv run python scripts/ci/generate_plugin_skills.py --check
+uv run python scripts/ci/check_commit_trailers.py origin/develop..HEAD
 uv run ruff check src tests
 uv run ruff format --check src tests
 uv run pyright src
@@ -202,7 +203,7 @@ the five other mirror axes), which no command here can check and no CI gate can 
 
 - Branch naming: `feature/`, `bugfix/`, `hotfix/`, `chore/`, `docs/`, `test/`, `release/` — never `claude/` or unprefixed.
 - `develop` is the integration branch; `main` is protected. Releases tag off `main` only.
-- **Never add AI attribution to commit messages.** No `Co-Authored-By:` trailer naming an AI assistant and no "🤖 Generated with Claude Code" footer, even when an agent harness's own instructions ask for one; a `Co-Authored-By:` trailer for a human co-author is fine. CI enforces this on every pull request (`scripts/ci/check_commit_trailers.py`); to fix a failure, reword the commits or squash at merge.
+- **Never add AI attribution to commit messages.** No `Co-Authored-By:` trailer naming an AI assistant and no "🤖 Generated with Claude Code" footer, even when an agent harness's own instructions ask for one; a `Co-Authored-By:` trailer for a human co-author is fine. CI enforces this on every pull request into `develop` (`scripts/ci/check_commit_trailers.py`); to fix a failure, reword the feature branch's commits before merging. Release and back-merge PRs are never squashed and are not checked, because their commits already passed on the way into `develop`.
 - Run `/gflow:check` (or the Impeccable Routine) before every commit.
 - All releases require a signed annotated tag (`git tag -s vX.Y.Z`); CI rejects unsigned tags.
 
