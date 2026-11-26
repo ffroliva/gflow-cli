@@ -5980,6 +5980,87 @@ async def test_a_body_guard_stray_after_the_submit_left_never_says_safe_to_rerun
     assert "Safe to re-run" not in (ei.value.remediation_hint or "")
 
 
+async def test_a_poll_passing_the_guard_does_not_count_as_the_submit_leaving_1518() -> None:
+    """Status polls go through the same guard. Only a submit rpc marks the run's submit as
+    gone, so a refusal of the run's first submit stays unbilled and retryable."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="wrong submit") if "wrong" in body else None
+
+    class _PollThenRefusedPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            poll = FakeRequest(_batch_url("jwpduf"), "f.req=poll")
+            own = FakeRequest(_batch_url("fZytfe"), "f.req=wrong")
+
+            async def go() -> None:
+                for request in (poll, own):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _PollThenRefusedPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=wrong")
+
+    with pytest.raises(WireFormatError, match="wrong submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, is_retryable(ei.value)) == ("no", True)
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_an_image_stray_after_the_image_submit_left_is_not_unbilled_1518() -> None:
+    """The image guard marks the run's submit as gone when it lets it through: a stray
+    aborted after that is possibly billed, never "safe to re-run"."""
+    from gflow_cli.api.transports import _mc_submit_observe as mso
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from tests.api.transports.test_migrated_images import REFERENCE, submit_body
+
+    class _ContinuingRoute(FakeRoute):
+        async def continue_(self) -> None:
+            self.outcome = "continue"
+
+    class _ImageStrayPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(
+                _batch_url("ogiZ0b"), submit_body(media=(REFERENCE,), model="NARWHAL")
+            )
+            stray = FakeRequest(_batch_url("ogiZ0b"), "")
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = _ContinuingRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _ImageStrayPage()
+    page.dom.prompt = "a blue cup"
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=(REFERENCE,)
+        )
+    assert page.route_outcomes == ["continue", "abort"]
+    assert (ei.value.charged, ei.value.remediation_hint) == ("maybe", mso.STRAY_AFTER_SUBMIT)
+
+
 async def test_a_clean_run_settles_without_waiting_for_the_guard_1518(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6035,6 +6116,8 @@ async def test_unguarded_verdict_during_terminal_timeout_is_raised_1518() -> Non
             request_check=check,
         )
     assert ei.value.charged == "maybe"
+    # The run's own clip, which Flow may still finish and bill, stays named.
+    assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
 
 
 async def test_image_result_arriving_during_refusal_wait_is_returned_1518(

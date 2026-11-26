@@ -136,14 +136,12 @@ CLIP_RECOVER_HINT = "recover with `gflow data download <media-id>`"
 
 
 def _note_finished(verdict: GFlowError, media_ids: Sequence[str], recover_hint: str) -> None:
-    """Keep media that finished and may be billed recoverable from the raised verdict."""
+    """Keep media that may be billed recoverable from the raised verdict."""
     verdict.charged, verdict.next_action = "maybe", "reconcile"
     if media_ids:
         setattr(verdict, "completed_media_ids", list(media_ids))  # noqa: B010
         hint = f" ({recover_hint})" if recover_hint else ""
-        verdict.detail = (
-            f"{verdict.detail}; finished and may be billed: {', '.join(media_ids)}{hint}"
-        )
+        verdict.detail = f"{verdict.detail}; media that may be billed: {', '.join(media_ids)}{hint}"
         # The message is built once in __init__; callers such as `video chain` copy str(exc).
         verdict.args = (f"{verdict.title}: {verdict.detail}",)
 
@@ -723,8 +721,12 @@ class SubmitObserveMixin(MentionMixin):
                     deadline=deadline,
                 )
             except Exception:
-                # A stray submit that left during the wait outranks how the wait ended.
-                await verdicts.raise_unguarded()
+                # A stray submit that left during the wait outranks how the wait ended;
+                # it keeps naming the run's own clip, which Flow may still finish and bill.
+                await verdicts.raise_unguarded(
+                    completed_media_ids=[submitted.result().media_id],
+                    recover_hint=CLIP_RECOVER_HINT,
+                )
                 raise
             # Listeners stay armed through the terminal wait; raise any unguarded verdict
             # recorded there so a late bad submit is not silently dropped (#1518), naming
