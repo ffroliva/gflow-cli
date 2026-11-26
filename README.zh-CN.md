@@ -113,7 +113,7 @@ gflow character create --project <project-id> --name "Aria" --face-prompt "..." 
 
 需要根据退出码分支的脚本，现在可以通过设置 `GFLOW_CLI_EXIT_CODES=2` 启用稳定的核心退出码（0 成功，1 错误，2 用法错误，3 认证，130 中断）。它将在以后的版本中成为默认值。详见 [ERRORS：稳定核心](docs/ERRORS.md#exit-codes-the-stable-core-opt-in-in-this-release)。
 
-> **为什么要用 `--browser chrome`？** 只有指定该参数，才会把登录凭据保存为真实 Chrome 账号配置（profile）——后续生成任务正是以这种模式打开的。在已安装 Chrome 的机器上，默认的 `auto` 也会自动选用它，详见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
+> **为什么要用 `--browser chrome`？** 只有指定该参数，才会把账号配置（profile）标记为真实 Chrome 配置——后续生成任务正是以这种方式打开它的。在已安装 Chrome 的机器上，默认的 `auto` 也会自动选用它，详见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
 
 > **从本地源码目录安装？** `uv tool install <路径>` **会忽略 `uv.lock`**，而是根据 `pyproject.toml` 中的版本范围解析依赖，因此可能装上本项目从未测试过的 Playwright 版本。Playwright 自带浏览器驱动，未经测试的小版本可能让生成悄无声息地卡住。请显式指定锁定的版本：
 >
@@ -221,7 +221,7 @@ gflow auth login --browser chrome
 | 角色 | 是 | 是，可编辑 | 是，可编辑 | — | 是 | 是 |
 | 超分 / 高清导出 | 视频 4K/1080p，图片 2K/4K | 1080p、2K | — | — | 2K、4K | 图片 2K/4K 导出；视频超分尚未移植 |
 | OpenAI 兼容 API | 图片（`gflow serve` 上的 `POST /v1/images/generations`）；视频计划中（[#1365](https://github.com/ffroliva/gflow-cli/issues/1365)） | — | — | 是 | — | — |
-| 多 Google 账号共享/轮询积分池 | 否（每次调用使用一个账号配置；用 `gflow auth use` 切换） | — | — | 是 | — | — |
+| 在多个 Google 账号间合并积分 | 否（每次调用使用一个账号配置；用 `gflow auth use` 切换） | — | — | 是 | — | — |
 | 禁止 Agent 花费积分（`--no-spend`） | 是 | — | — | — | — | — |
 | 每个错误都带 `charged` 字段 | 是 | — | — | — | — | — |
 | 单次调用积分上限 | 是（`--max-credits`，读取 Flow 自己的报价） | 是（`max_credits`） | — | — | — | — |
@@ -238,7 +238,7 @@ gflow auth login --browser chrome
 
 - 想要在一个 PyPI 包里同时获得命令行和 MCP 服务器，并带有零扣费安全开关（`--no-spend`）和每个错误上的 `charged` 字段：选 gflow-cli。
 - 想要本地网页面板：选 [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp)。
-- 想要多 Google 账号共享/轮询积分池：选 [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent)。
+- 想要在多个 Google 账号间合并积分：选 [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent)。
 - 想要 Chrome 扩展和仪表盘：选 [crisng95/flowkit](https://github.com/crisng95/flowkit)。
 
 完整的计划列表见 [#1367](https://github.com/ffroliva/gflow-cli/issues/1367)。如果发现表格中有错误，欢迎提交 issue 或 pull request 更正。
