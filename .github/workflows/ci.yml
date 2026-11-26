@@ -45,16 +45,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # AGENTS.md forbids AI attribution in commit messages. A pull request is checked
-      # against its base; a push has no base to compare with, so it is skipped. A PR into
-      # main is skipped too: its commits already passed this check on the way into develop,
-      # and develop's shared history cannot be reworded. It lives in this job because the
-      # job already checks out full history, which the base..HEAD range needs.
+      # AGENTS.md forbids AI attribution in commit messages. A pull request is checked on
+      # the commits that are on neither its base nor develop: for a PR into main (release,
+      # hotfix) that is only its own commits, since develop's history is already checked and
+      # cannot be reworded. A push has no base, so it is skipped. It lives in this job
+      # because the job already checks out full history, and it runs even if gitleaks fails.
       - name: No AI attribution in commit messages
-        if: github.event_name == 'pull_request' && github.base_ref != 'main'
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         env:
           BASE_REF: ${{ github.base_ref }}
-        run: python3 scripts/ci/check_commit_trailers.py "origin/${BASE_REF}..HEAD"
+        run: python3 scripts/ci/check_commit_trailers.py HEAD "^origin/${BASE_REF}" ^origin/develop
 
   # ── Security gate: dependency CVE audit against locked deps ──────────────
   deps-audit:
