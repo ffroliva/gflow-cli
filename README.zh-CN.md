@@ -6,7 +6,7 @@
 
 > **gflow-cli 是一个开源的 MCP 服务器和命令行工具，用于自动化 [Google Flow](https://labs.google/fx/tools/flow)。** 它可以在 Claude Code、Claude Desktop、Cursor、Codex、VS Code 或终端中生成 Veo 3.1 和 Omni 视频，以及 Nano Banana 和 Imagen 图片，费用计入你自己 Google 账号的 Flow 积分。可作为 Google Flow 命令行工具或 Veo MCP 服务器使用。通过 PyPI 安装：`uv tool install gflow-cli`（MIT 许可，支持 macOS、Windows 和 Linux）。
 
-> 本文是 [README.md](README.md) 的中文翻译，内容以英文版为准。命令、参数和程序输出保持英文。如发现翻译不准确，欢迎提交 [issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request。
+> 本文是 [README.md](README.md) 的中文翻译，内容以英文版为准；省略了徽章、统计数据、赞助者名单和 Star 历史，完整内容见英文版。命令、参数和程序输出保持英文。如发现翻译不准确，欢迎提交 [issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request。
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
@@ -39,7 +39,7 @@
 - **放大**：Flow 为该项目提供 4K 时，视频可放大到 4K，也可放大到 1080p 或导出 GIF；图片放大到 2K，Ultra 套餐可放大到 4K。
 - **批处理和流水线**：JSON 批量运行，后面的行可以基于前面的行生成（`gflow run`）；根据清单文件生成多场景影片（`gflow movie run`）；持久化的智能体模式（Agent Mode）指令卡（`gflow instructions`）。
 - **改写提示词**：`--tool creative-director` 以及另外两个内置提示词工具（`reverse-engineer`、`storyboard`），也可以使用你自己的工具（[TOOLS](docs/TOOLS.md)）。
-- **跟踪花费和媒体**：Veo 积分余额（`gflow credits`）、本地媒体目录（`gflow data`）、健康检查（`gflow doctor`），并可将输出保存到 S3、MinIO 或 Google Cloud Storage。
+- **跟踪花费和媒体**：Veo 积分余额（`gflow credits`）、本地媒体库（catalog，`gflow data`）、健康检查（`gflow doctor`），并可将输出保存到 S3、MinIO 或 Google Cloud Storage。
 
 即将推出的功能记录在 [#1367](https://github.com/ffroliva/gflow-cli/issues/1367)。
 
@@ -83,6 +83,10 @@ uv tool install gflow-cli
 uv tool run --from gflow-cli playwright install chromium     # 只需一次，约 150 MB
 # 可选扩展：'gflow-cli[tts]' 用于 `audio narrate`（Edge），'gflow-cli[chain]' 用于 `video chain`/`assemble`/`captions`
 # 以后：`gflow update` 原地升级（有新版本时，其他命令会显示提示）
+# Windows 上用 pip 安装的 0.99.0 或更早版本？请先手动升级一次（#1298）：
+#   关闭所有 gflow 进程，然后运行 <venv>\Scripts\python.exe -m pip install --upgrade gflow-cli
+#   （升级时保留你的扩展，例如 "gflow-cli[patchright]"，否则它们的固定版本不会更新）
+#   （--user 安装：py -3.X -m pip install --user --upgrade gflow-cli；见 https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md#gflow-update）
 
 # 2 · 登录（只需一次，会打开真实的 Chrome 窗口）
 # 使用代理（例如 Clash）？请先设置 GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:7897；详见下文“网络与地区”
@@ -90,7 +94,7 @@ gflow auth login --browser chrome
 
 # 检查会话（不消耗任何积分）
 gflow auth status
-gflow credits user          # Veo 积分余额（不消耗积分）
+gflow credits user          # Veo 积分余额（开启直接读取且已保存的会话被接受时不启动浏览器；不消耗积分）
 gflow capabilities          # gflow 在这里能驱动什么：每项能力为 yes/no/partial（不访问 Flow）
 gflow models list           # 图片和视频模型、别名、时长（不访问 Flow）
 gflow doctor                # 只读的预检：退出码 33 表示发现了需要处理的问题，不是程序崩溃
@@ -101,7 +105,7 @@ gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # 或者：
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
 # 或者创建一个可复用的角色（面部 + 身体参考），它需要一个项目 ID：
-# `gflow project create` 创建项目；`gflow project list` 列出本地目录中记录的项目
+# `gflow project create` 创建项目；`gflow project list` 列出本地媒体库中记录的项目
 gflow character create --project <project-id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
@@ -113,11 +117,19 @@ gflow character create --project <project-id> --name "Aria" --face-prompt "..." 
 
 > **为什么要用 `--browser chrome`？** 只有这种方式会把配置文件标记为真实 Chrome 配置文件，而之后的生成正是用这种方式打开它。默认的 `auto` 在安装了 Chrome 时会自动选择它，详见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
 
+> **从本地检出安装？** `uv tool install <路径>` **会忽略 `uv.lock`**，而是根据 `pyproject.toml` 中的版本范围解析依赖，因此可能装上本项目从未测试过的 Playwright 版本。Playwright 自带浏览器驱动，未经测试的小版本可能让生成悄无声息地卡住。请显式指定锁定的版本：
+>
+> ```bash
+> uv tool install --force --with playwright==1.61.0 .
+> ```
+>
+> 从 PyPI 安装（`uv tool install gflow-cli`）不受影响，因为发布的版本范围有上限。可以用 `uv tool run --from gflow-cli python -c "import importlib.metadata as m; print(m.version('playwright'))"` 查看实际安装的版本。
+
 完整的 10 分钟入门指南（包括故障排除和多账号配置）见 **[USER_GUIDE：Journey 1](docs/USER_GUIDE.md#journey-1--first-time-setup-10-minutes)**。
 
 ## 网络与地区
 
-只有在 PyPI、Chromium 下载或 Google 无法直接访问时，才需要阅读本节。gflow-cli 不提供任何地区访问能力：Google Flow 只在 Google 提供服务的地区可用，请以 Google 的官方页面[在哪些地区可以使用 Google Flow](https://support.google.com/flow/answer/16353544)为准。
+只有在 PyPI、Chromium 下载或 Google 无法直接访问时，才需要阅读本节。gflow-cli 不会改变 Google 对地区的限制，也不能让你在 Google 未提供服务的地区使用 Flow：Google Flow 只在 Google 提供服务的地区可用，请以 Google 的官方页面[在哪些地区可以使用 Google Flow](https://support.google.com/flow/answer/16353544)为准。
 
 **1. 软件包镜像。** 让 uv 使用镜像的 simple 索引地址：
 
@@ -128,9 +140,9 @@ uv tool install --default-index <镜像索引地址> gflow-cli
 uv tool run --default-index <镜像索引地址> --from gflow-cli playwright install chromium
 ```
 
-也可以用环境变量 `UV_DEFAULT_INDEX` 代替 `--default-index`。`<镜像索引地址>` 的一个例子是清华大学 TUNA 镜像：`https://pypi.tuna.tsinghua.edu.cn/simple`。Playwright 会读取 `PLAYWRIGHT_DOWNLOAD_HOST` 来决定一次性的 Chromium 下载地址。请使用你信任的镜像：它提供你安装的代码，也提供你用来登录 Google 的浏览器。gflow-cli 没有测试或认可任何镜像。
+也可以用环境变量 `UV_DEFAULT_INDEX` 代替 `--default-index`。`<镜像索引地址>` 是你所选镜像的 simple 索引地址。Playwright 会读取 `PLAYWRIGHT_DOWNLOAD_HOST` 来决定一次性的 Chromium 下载地址。请使用你信任的镜像：它提供你安装的代码，也提供你用来登录 Google 的浏览器。gflow-cli 没有测试或认可任何镜像。
 
-**2. 浏览器代理。** 在第一次登录之前，把 `GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:<端口>` 写入 `$GFLOW_CLI_HOME/.env` 或当前目录的 `.env`（例如本地 Clash 客户端监听 `http://127.0.0.1:7897`，并关闭其“系统代理”开关），同时把 `HTTPS_PROXY` 设置为同一个地址，供 gflow 自己的 HTTP 请求使用：浏览器只读取 `GFLOW_CLI_BROWSER_PROXY`，会忽略 `HTTPS_PROXY`，gflow 也不会把其中一个复制到另一个。
+**2. 浏览器代理。** 在第一次登录之前，把 `GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:<端口>` 写入 `$GFLOW_CLI_HOME/.env` 或当前目录的 `.env`（例如本地 Clash 客户端监听 `http://127.0.0.1:7897`，并关闭其“系统代理”开关），同时把 `HTTPS_PROXY` 设置为同一个地址，供 gflow 自己的 HTTP 请求使用。浏览器只读取 `GFLOW_CLI_BROWSER_PROXY`，会忽略 `HTTPS_PROXY`（仅 Linux 上的 Chromium 会读取代理环境变量，但不应依赖它）；gflow 也不会把其中一个复制到另一个。
 
 ```bash
 # macOS / Linux
@@ -156,7 +168,9 @@ gflow auth login --browser chrome
 }
 ```
 
-**3. 同一个出口，且代理不能要求密码。** 登录、续期和生成必须经过同一个代理出口，这样 Google 在一个会话中只会看到一个 IP（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md#what-it-deliberately-does-not-do)）。要求密码的代理会让 Flow 页面一直无法加载，所以 gflow 不接受带凭据（`user:pass@`）的代理地址：请在本地运行代理客户端，由它保存上游凭据（Clash 和 v2ray 默认就是这样工作的）。
+**3. 同一个出口，且代理不能要求密码。** 登录、续期和生成必须经过同一个代理出口，这样 Google 在一个会话中只会看到一个 IP（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md#what-it-deliberately-does-not-do)）。
+
+要求密码的代理会让 Flow 页面一直无法加载，所以 gflow 不接受带凭据（`user:pass@`）的代理地址：请在本地运行代理客户端，由它保存上游凭据（Clash 和 v2ray 默认就是这样工作的）。
 
 **4. 积分读取会变慢。** 无论使用哪种代理，`gflow credits user` 都通过浏览器读取余额。`gflow doctor` 会显示 `env.browser_proxy`。
 
@@ -187,9 +201,9 @@ gflow auth login --browser chrome
 - **只有视频消耗积分。** 生成图片不消耗积分（计入每日图片配额），场景拼接免费。
 - **不能花钱的服务器。** `gflow mcp run --no-spend` 不会注册任何消耗积分的工具，因此智能体根本无法调用它们。
 - **多片段运行先看费用。** `video chain`、`video extend` 和 `movie run` 支持 `--dry-run`，只显示计划而不提交；`chain` 和 `extend` 在花费积分前会先询问。
-- **绝不重复扣费。** 计费请求只发送一次，绝不自动重试；`gflow run --resume` 只重新生成本地目录中还没有的行。
+- **绝不重复扣费。** 计费请求只发送一次，绝不自动重试；`gflow run --resume` 只重新生成本地媒体库中还没有的行。
 - **每个错误都说明是否扣费。** 错误信息带有 `charged: yes | no | maybe` 和 `next_action`（`retry`、`reauth`、`reconcile`），在命令行的 `--json` 输出和 MCP 回复中都有（[ERRORS](docs/ERRORS.md)）。
-- **节奏接近真人。** gflow 使用真实的 Chrome 窗口，交互时间随机化，提交有节奏控制。它不轮换 IP，除非你设置否则不使用代理，默认也不伪造浏览器指纹（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)）。
+- **节奏接近真人。** gflow 使用真实的 Chrome 窗口，交互时间随机化，提交有节奏控制。它不轮换 IP，除非你自行设置，否则不使用代理，默认也不伪造浏览器指纹（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)）。
 - **出错时明确报告。** 当 Flow 的界面发生变化时，运行会以专门的退出码停止（选择器失效为退出码 23），而不是去猜测。
 
 ## gflow-cli 与其他 Google Flow 自动化工具相比如何？
@@ -275,7 +289,7 @@ Google 没有公开的 Flow API。gflow-cli 驱动你自己已登录的 Flow 会
 
 ### Google Flow 在哪些地区可用？
 
-Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/flow/answer/16353544)中列出了支持的国家和地区，请先在该页面查询你所在的地区。gflow-cli 不提供任何地区访问能力。如果你的网络需要代理或软件包镜像，见上文[网络与地区](#网络与地区)。
+Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/flow/answer/16353544)中列出了支持的国家和地区，请先在该页面查询你所在的地区。gflow-cli 不提供任何地区访问能力。如果你的网络需要代理或软件包镜像，见上文[网络与地区](#网络与地区)；代理或镜像只用于解决网络连通性，不会让账号获得所在地区本不具备的 Flow 使用权限。
 
 ## 示例
 
@@ -340,7 +354,9 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 - 文生图，以及基于本地文件的图生图；
 - 单段 `video extend`。
 
-其余功能在移植完成之前继续使用 labs 驱动（`GFLOW_CLI_FLOW_HOST`，见 [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)）。完整的支持范围见英文版 [README](README.md#architecture--current-limitations)。
+图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅智能体**编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当目录记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>` 会原地引用（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）。
+
+在移植完成之前，以下功能继续使用 labs 驱动：其他 UUID 媒体引用、没有名称的实体 ID、指令卡、Imagen 4，以及矩阵中的其余部分（`GFLOW_CLI_FLOW_HOST`，见 [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)）。
 
 **目前受阻的部分：** 视频生成的纯 HTTP 传输。在非 Chrome 浏览器下，视频上传接口返回 HTTP 401，并且需要一个本项目无法在无头浏览器中生成的 reCAPTCHA 令牌。早期的三种 HTTP 方案（`evaluate_fetch`、`bearer`、`sapisidhash`）保存在 `src/gflow_cli/api/transports/experimental/` 中用于研究，不在生产路径上。
 
@@ -374,13 +390,19 @@ gflow-cli 由一个人维护。每个版本都在真实的 Google Flow 上验证
 [![Sponsor $5 one-time](https://img.shields.io/badge/☕_sponsor-$5_one--time-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amount=5)
 [![Sponsor $5 a month](https://img.shields.io/badge/💖_sponsor-$5_a_month-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=monthly&amount=5)
 
-所有赞助档位及其权益：[docs/SPONSORS.md](docs/SPONSORS.md)。
+在工作中依赖 gflow-cli？每月的公司档位会把你的标识放在这里，Silver 及以上档位还享有优先处理 issue 的权益。所有赞助档位及其权益：[docs/SPONSORS.md](docs/SPONSORS.md)。
 
 在你的 fork 中修复了 gflow-cli 的问题？欢迎[提交 issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request，合并到上游的修复对所有人都有帮助。
 
 ## 许可证和法律声明
 
 [MIT 许可证](LICENSE) © 2026 Flavio Oliva（`ffroliva`）。MIT 许可证仅涵盖 `gflow-cli` 的代码，不授予对 Flow、Veo 模型输出或任何 Google 服务的任何权利。你的生成内容受 Google 自己的条款约束（Labs 附加条款以及任何套餐相关的订阅条款）。见 [DISCLAIMER](DISCLAIMER.md)。
+
+## 致谢
+
+- [`edge-tts`](https://github.com/rany2/edge-tts)，在私有云 API 之上构建社区 SDK 的设计灵感来源。
+- [`googleapis/python-genai`](https://github.com/googleapis/python-genai)，官方 Veo SDK，未来的提供方版本可能会与之对接。
+- [Keysight，*Google Labs – Flow AI with Veo3: A Network Traffic Analysis*](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis)，一份独立的抓包分析，帮助验证了路由模式。
 
 ---
 
