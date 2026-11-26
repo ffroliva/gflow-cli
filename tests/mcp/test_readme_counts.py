@@ -15,6 +15,7 @@ _ROOT = Path(__file__).resolve().parents[2]
     ("page", "pattern"),
     [
         ("README.md", r"\*\*(\d+) MCP tools\*\*"),
+        ("README.zh-CN.md", r"\*\*(\d+) 个 MCP 工具\*\*"),
         ("index.html", r"serving (\d+) tools"),
         ("llms.txt", r"MCP server with (\d+) tools"),
         ("llms.txt", r"against gflow-cli's (\d+)"),
