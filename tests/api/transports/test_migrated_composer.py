@@ -5364,6 +5364,9 @@ async def test_unguarded_request_check_verdict_during_terminal_wait_is_raised_15
         "reconcile",
         False,
     )
+    # The clip that finished stays recoverable from the error, in the field and the text.
+    assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
+    assert MEDIA in ei.value.detail
 
 
 async def test_unguarded_observed_body_problem_during_terminal_wait_is_raised_1518() -> None:
@@ -5608,8 +5611,9 @@ async def test_in_flight_guard_abort_completing_after_terminal_status_keeps_clip
         submit_rpcs=("fZytfe",),
         request_check=check,
     )
-    assert guard_task is not None and guard_task.done()
     assert rec.is_done and rec.media_id == MEDIA
+    assert guard_task is not None
+    await guard_task
     assert slow_route.outcome == "abort"
 
 
@@ -5709,25 +5713,20 @@ async def test_image_in_flight_guard_abort_during_recovery_keeps_images_1518() -
     images = await MigratedComposer().submit_images_and_observe(
         page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
     )
-    assert guard_task is not None and guard_task.done()
-    assert slow_route.outcome == "abort"
     assert [i.media_name for i in images] == [NEW_TILE]
+    assert guard_task is not None
+    await guard_task
+    assert slow_route.outcome == "abort"
 
 
-async def test_unrelated_in_flight_guard_does_not_delay_settled_clip_1518() -> None:
-    """#1518 review: an unrelated passing guard waiting in fallback must not stall settlement."""
+async def test_guard_that_starts_after_the_terminal_status_still_keeps_the_clip_1518() -> None:
+    """#1518 review: Playwright starts the route guard a few loop turns after the request
+    event, so the terminal status can land first. The settle waits for the guard's
+    judgment instead of raising the listener's pre-guard verdict."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    class _SlowFallbackRoute(FakeRoute):
-        def __init__(self, release: asyncio.Event) -> None:
-            super().__init__()
-            self.release = release
-            self.entered = asyncio.Event()
-
-        async def fallback(self) -> None:
-            self.entered.set()
-            await self.release.wait()
-            self.outcome = "fallback"
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray duplicate") if "stray-dup" in body else None
 
     page = RoutingPage()
     page.dom.prompt = "keep going"
@@ -5735,30 +5734,130 @@ async def test_unrelated_in_flight_guard_does_not_delay_settled_clip_1518() -> N
     page.scripted_responses = [
         (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
     ]
-    release_fallback = asyncio.Event()
-    slow_route = _SlowFallbackRoute(release_fallback)
+    route = FakeRoute()
 
     async def on_started(_started: Any) -> None:
-        other_req = FakeRequest(_batch_url("as29s"), "")
-        asyncio.create_task(page.routes[-1][1](slow_route, other_req))
-        await slow_route.entered.wait()
+        stray_req = FakeRequest(_batch_url("fZytfe"), "f.req=stray-dup")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(stray_req))
         page._fire_response(
             FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
         )
 
-    started_at = time.monotonic()
+        async def late_guard() -> None:
+            await asyncio.sleep(0.05)  # the guard has not started when the run settles
+            await page.routes[-1][1](route, stray_req)
+
+        asyncio.create_task(late_guard())
+
     rec = await MigratedComposer().submit_and_observe(
         page,
         poll_timeout_s=2.0,
         on_started=on_started,
         project_id=PROJ,
         submit_rpcs=("fZytfe",),
+        request_check=check,
     )
-    elapsed = time.monotonic() - started_at
-    release_fallback.set()
-    await asyncio.sleep(0)
     assert rec.is_done and rec.media_id == MEDIA
-    assert elapsed < 1.0
+    assert route.outcome == "abort"
+
+
+async def test_flagged_request_no_guard_judges_is_raised_after_the_wait_1518(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flagged request the guard never judges (one the route did not intercept) is
+    raised once GUARD_JUDGE_WAIT_S runs out, as possibly billed, naming the finished clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "GUARD_JUDGE_WAIT_S", 0.1)
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="unrouted stray") if "unrouted" in body else None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(FakeRequest(_batch_url("fZytfe"), "f.req=unrouted")))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    started_at = time.monotonic()
+    with pytest.raises(WireFormatError, match="unrouted stray") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert time.monotonic() - started_at < 1.5
+    assert ei.value.charged == "maybe"
+    assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
+
+
+async def test_unguarded_verdict_outranks_a_non_timeout_failure_of_the_wait_1518() -> None:
+    """Not only a timeout: whatever ends the terminal wait, a stray submit that left during
+    it is what the user must see, because it may be billed."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="late bad clip") if "late-bad" in body else None
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(FakeRequest(_batch_url("fZytfe"), "f.req=late-bad")))
+        raise RuntimeError("the wait failed for another reason")
+
+    with pytest.raises(WireFormatError, match="late bad clip"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+
+
+async def test_a_clean_run_settles_without_waiting_for_the_guard_1518(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With nothing flagged, the settle never waits: a healthy run pays nothing."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "GUARD_JUDGE_WAIT_S", 5.0)
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    started_at = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=on_started, project_id=PROJ, submit_rpcs=("fZytfe",)
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert time.monotonic() - started_at < 1.0
 
 
 async def test_unguarded_verdict_during_terminal_timeout_is_raised_1518() -> None:

@@ -1349,14 +1349,19 @@ async def _guard_image_submit(
     reference_ids: tuple[str, ...],
     model: ImageModel | None,
     entity_ids: tuple[str, ...] = (),
+    *,
+    on_judged: Callable[[bool], None] | None = None,
 ) -> str | None:
     """Abort an ``ogiZ0b`` submit that does not carry its references, before Flow acts.
 
     The observer path (``_image_body_problem`` in ``on_request``) only refuses to *report*
     such a run: by then Flow has generated it, spent quota and added an image (#913,
     SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
+    ``on_judged(aborted)`` runs before the route is settled (#1518).
     """
     problem = _image_body_problem(request_body(request), reference_ids, model, entity_ids)
+    if on_judged is not None:
+        on_judged(problem is not None)
     if problem is not None:
         await route.abort()
         return problem
