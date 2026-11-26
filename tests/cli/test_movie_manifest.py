@@ -624,3 +624,134 @@ def test_movie_omni12_long_duration_is_explicit(tmp_path: Path) -> None:
         path = _write_toml(tmp_path, _SCENE_HEAD + model + "duration = 15\n")
         with pytest.raises(ConfigurationError):
             MovieManifest.from_toml_path(path)
+
+
+# ---------------------------------------------------------------------------
+# #1520 — reject unknown keys across all fixed-schema movie.toml tables
+# ---------------------------------------------------------------------------
+
+_BASE_TOML = 'title = "T"\nproject = "p"\n'
+_MIN_SCENE = '[[scenes]]\nid = "s"\naction = "x"\n'
+
+
+@pytest.mark.parametrize(
+    ("toml_body", "expected_context", "expected_key"),
+    [
+        (f"{_BASE_TOML}bogus = 1\n{_MIN_SCENE}", "movie.toml", "bogus"),
+        (
+            f'{_BASE_TOML}[movie]\ncontinuity = "independent"\nextra = 1\n{_MIN_SCENE}',
+            r"\[movie\]",
+            "extra",
+        ),
+        (
+            f'{_BASE_TOML}[assemble]\noutput = "out.mp4"\nunknown_opt = true\n{_MIN_SCENE}',
+            r"\[assemble\]",
+            "unknown_opt",
+        ),
+        (f'{_BASE_TOML}[style]\nlook = "ink"\nmoody = "dark"\n{_MIN_SCENE}', r"\[style\]", "moody"),
+        (
+            f'{_BASE_TOML}[style.variants.warm]\nsuffix = "warm"\nextra = "nope"\n{_MIN_SCENE}',
+            r"\[style\.variants\.warm\]",
+            "extra",
+        ),
+        (f"{_BASE_TOML}[instructions]\nunknown = 1\n{_MIN_SCENE}", r"\[instructions\]", "unknown"),
+        (
+            f'{_BASE_TOML}[[instructions.card]]\ntitle = "A"\ntext = "B"\nextra = 1\n{_MIN_SCENE}',
+            r"instructions\.card\[0\]",
+            "extra",
+        ),
+        (
+            f'{_BASE_TOML}[[characters]]\nname = "A"\nappearance = "x"\n'
+            f'persona = "p"\n{_MIN_SCENE}',
+            r"characters\[0\]",
+            "persona",
+        ),
+        (
+            f'{_BASE_TOML}{_MIN_SCENE}initial_frame = "a.jpg"\nend_frame = "b.jpg"\n',
+            r"scenes\[0\]",
+            "initial_frame",
+        ),
+        (f"{_BASE_TOML}{_MIN_SCENE}count = 2\n", r"scenes\[0\]", "count"),
+        (
+            f"{_BASE_TOML}{_MIN_SCENE}[scenes.instructions]\nenabled = true\n",
+            r"scenes\[0\]\.instructions",
+            "enabled",
+        ),
+        (
+            (
+                f"{_BASE_TOML}{_MIN_SCENE}[scenes.instructions]\n"
+                '[[scenes.instructions.card]]\ntitle = "C"\ntext = "D"\nbad = 1\n'
+            ),
+            r"scenes\[0\]\.instructions\.card\[0\]",
+            "bad",
+        ),
+        (
+            (
+                f'{_BASE_TOML}[[characters]]\nname = "A"\nappearance = "x"\n'
+                '[[scenes]]\nid = "s"\naction = "x"\ncharacters = ["A"]\n'
+                '[[scenes.characters_detail]]\nname = "A"\nline = "hi"\nextra = "x"\n'
+            ),
+            r"scenes\[0\]\.characters_detail\[0\]",
+            "extra",
+        ),
+    ],
+)
+def test_unknown_keys_rejected_with_allowed_fields_1520(
+    tmp_path: Path, toml_body: str, expected_context: str, expected_key: str
+) -> None:
+    """#1520: fixed-schema movie.toml tables fail loudly on unknown keys with allowed fields."""
+    path = _write_toml(tmp_path, toml_body)
+    with pytest.raises(ConfigurationError, match=expected_context) as exc_info:
+        MovieManifest.from_toml_path(path)
+    msg = str(exc_info.value)
+    assert expected_key in msg
+    assert "allowed fields are:" in msg
+
+
+def test_movie_and_characters_detail_table_validation_1520(tmp_path: Path) -> None:
+    """[movie] and [[scenes.characters_detail]] reject wrong types cleanly and allow valid keys."""
+    for bad_toml in (
+        f'{_BASE_TOML}movie = "not-a-table"\n{_MIN_SCENE}',
+        (
+            f'{_BASE_TOML}[[characters]]\nname = "A"\nappearance = "x"\n'
+            '[[scenes]]\nid = "s"\naction = "x"\ncharacters = ["A"]\ncharacters_detail = "bad"\n'
+        ),
+        (
+            f'{_BASE_TOML}[[characters]]\nname = "A"\nappearance = "x"\n'
+            '[[scenes]]\nid = "s"\naction = "x"\ncharacters = ["A"]\ncharacters_detail = [1]\n'
+        ),
+    ):
+        with pytest.raises(ConfigurationError):
+            MovieManifest.from_toml_path(_write_toml(tmp_path, bad_toml))
+
+    valid_detail = (
+        f'{_BASE_TOML}[[characters]]\nname = "A"\nappearance = "x"\n'
+        '[[scenes]]\nid = "s"\naction = "x"\ncharacters = ["A"]\n'
+        '[[scenes.characters_detail]]\nname = "A"\nline = "Hello"\n'
+    )
+    manifest = MovieManifest.from_toml_path(_write_toml(tmp_path, valid_detail))
+    assert manifest.scenes[0].dialogue[0].speaker == "A"
+    assert manifest.scenes[0].dialogue[0].line == "Hello"
+
+
+def test_user_defined_style_and_character_variant_names_remain_valid_1520(tmp_path: Path) -> None:
+    """Custom variant names under [style.variants] and [characters.variants] stay open."""
+    toml = (
+        f"{_BASE_TOML}"
+        '[style.variants.noir_custom]\nsuffix = "Monochrome 16mm grain"\n'
+        '[[characters]]\nname = "A"\nappearance = "x"\n'
+        '[characters.variants]\nwinter_coat = "heavy wool coat"\n'
+        '[[scenes]]\nid = "s"\naction = "x"\nstyle_variant = "noir_custom"\n'
+    )
+    manifest = MovieManifest.from_toml_path(_write_toml(tmp_path, toml))
+    assert "noir_custom" in manifest.style.variants
+    assert manifest.characters["A"].variants == {"winter_coat": "heavy wool coat"}
+
+
+def test_movie_template_parses_under_strict_key_checks_1520(tmp_path: Path) -> None:
+    """The built-in `gflow movie template` output must remain valid under strict key checks."""
+    from gflow_cli.cli_movie import _TEMPLATE
+
+    path = _write_toml(tmp_path, _TEMPLATE)
+    manifest = MovieManifest.from_toml_path(path)
+    assert manifest.title == "My Short Film"

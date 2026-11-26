@@ -242,6 +242,22 @@ class TestMovieDryRun:
         assert "one per scene" not in result.output.lower()
         mock_client.assert_not_called()
 
+    def test_dry_run_rejects_unknown_scene_keys_1520(self, tmp_path: Path) -> None:
+        """#1520: unknown scene keys like initial_frame/end_frame fail with exit 11."""
+        runner = CliRunner()
+        toml = (
+            'title = "t"\nproject = "p"\n'
+            '[style]\nlook = "natural travel photograph"\n'
+            '[[scenes]]\nid = "s1"\naction = "A pavilion"\nframing = "wide"\n'
+            'duration = 4\ninitial_frame = "in/a.jpg"\nend_frame = "in/b.jpg"\n'
+        )
+        manifest = _write_toml(tmp_path / "movie.toml", toml)
+        result = runner.invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
+        assert result.exit_code == 11
+        assert "initial_frame" in result.output
+        assert "end_frame" in result.output
+        assert "allowed fields" in result.output
+
     def test_dry_run_no_api_calls(self, tmp_path: Path) -> None:
         """Dry-run must not invoke FlowApiClient."""
         runner = CliRunner()
