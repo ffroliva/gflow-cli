@@ -45,6 +45,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # AGENTS.md forbids AI attribution in commit messages. A pull request is checked
+      # against its base; a push has no base to compare with, so it is skipped.
+      - name: No AI attribution in commit messages
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/ci/check_commit_trailers.py "origin/${BASE_REF}..HEAD"
+
   # ── Security gate: dependency CVE audit against locked deps ──────────────
   deps-audit:
     name: Dependency audit (pip-audit)

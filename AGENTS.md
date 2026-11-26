@@ -202,7 +202,7 @@ the five other mirror axes), which no command here can check and no CI gate can 
 
 - Branch naming: `feature/`, `bugfix/`, `hotfix/`, `chore/`, `docs/`, `test/`, `release/` — never `claude/` or unprefixed.
 - `develop` is the integration branch; `main` is protected. Releases tag off `main` only.
-- **Never add AI attribution to commit messages.** `Co-Authored-By:` trailers are fine if the user asks for them; auto-generated "🤖 Generated with Claude Code" footers are not.
+- **Never add AI attribution to commit messages.** No `Co-Authored-By:` trailer naming an AI assistant and no "🤖 Generated with Claude Code" footer, even when an agent harness's own instructions ask for one; a `Co-Authored-By:` trailer for a human co-author is fine. CI enforces this on every pull request (`scripts/ci/check_commit_trailers.py`); to fix a failure, reword the commits or squash at merge.
 - Run `/gflow:check` (or the Impeccable Routine) before every commit.
 - All releases require a signed annotated tag (`git tag -s vX.Y.Z`); CI rejects unsigned tags.
 
