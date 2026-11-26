@@ -42,6 +42,7 @@ import re
 from typing import Any
 
 import click
+import pytest
 
 from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
@@ -242,6 +243,24 @@ def test_mapped_tools_are_registered(mcp_server: Any) -> None:
     registered = set(mcp_server._tool_manager._tools)
     missing = set(CLI_TO_MCP.values()) - registered
     assert not missing, f"CLI_TO_MCP references unregistered MCP tools: {sorted(missing)}"
+
+
+def test_conftest_imports_every_tool_module_the_server_registers(
+    mcp_server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """tests/mcp/conftest.py imports the tool modules by hand; keep it equal to startup.
+
+    A module registered by ``_register_surfaces()`` but missing from conftest is imported
+    later by whichever test touches it, possibly under a patched server, and the parity
+    test above then fails depending on test order.
+    """
+    from gflow_cli.mcp.server import _register_surfaces  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.delenv("GFLOW_MCP_NO_SPEND", raising=False)
+    before = set(mcp_server._tool_manager._tools)
+    _register_surfaces()
+    added = set(mcp_server._tool_manager._tools) - before
+    assert not added, f"add these tool modules to tests/mcp/conftest.py: {sorted(added)}"
 
 
 # --- Option-level parity ------------------------------------------------------
