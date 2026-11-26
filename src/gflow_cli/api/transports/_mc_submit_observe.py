@@ -69,7 +69,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from playwright.async_api import Locator, Page
 
@@ -83,6 +83,28 @@ log = structlog.get_logger(__name__)
 LISTING_REREADS_MAX = 3
 #: Minimum spacing between those reads while status replies keep getting lost.
 LISTING_REREAD_INTERVAL_S = 30.0
+
+
+def _raise_unguarded(
+    route_error: asyncio.Future[Any],
+    *verdict_lists: Sequence[GFlowError],
+) -> None:
+    """Raise the first unguarded verdict unless the route guard aborted the request."""
+    if route_error.done():
+        return
+    for verdicts in verdict_lists:
+        if verdicts:
+            raise verdicts[0]
+
+
+def _raise_if_refused(
+    route_error: asyncio.Future[Any],
+    *verdict_lists: Sequence[GFlowError],
+) -> None:
+    """Raise a route-guard refusal first, else any unguarded observer verdict."""
+    if route_error.done():
+        raise route_error.result()
+    _raise_unguarded(route_error, *verdict_lists)
 
 
 async def _aborted_by_check(
@@ -588,14 +610,9 @@ class SubmitObserveMixin(MentionMixin):
                     timeout=max(0.0, deadline - time.monotonic()),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-            if route_error.done():
-                # The request is inspected before its reply lands, so a wrong body is
-                # named as such and not as whatever the reply then says.
-                raise route_error.result()
-            if unguarded_verdicts:  # it left the browser unguarded: Flow may have billed it
-                raise unguarded_verdicts[0]
-            if observed:
-                raise observed[0]  # the route did not stop it: sent, and Flow bills it
+            # The request is inspected before its reply lands, so a wrong body is
+            # named as such and not as whatever the reply then says (#1320).
+            _raise_if_refused(route_error, unguarded_verdicts, observed)
             if not submitted.done() and lost:
                 where = MIGRATED_PROJECT_URL.format(project_id=project_id) if project_id else "Flow"
                 raise _outcome_unknown(
@@ -618,6 +635,9 @@ class SubmitObserveMixin(MentionMixin):
                 status_watch=status_watch,
                 deadline=deadline,
             )
+            # Listeners stay armed through the terminal wait; raise any unguarded verdict
+            # recorded there so a late bad submit is not silently dropped (#1518).
+            _raise_unguarded(route_error, unguarded_verdicts, observed)
             log.info(
                 "migrated.result",
                 status=final.status,
@@ -874,12 +894,11 @@ class SubmitObserveMixin(MentionMixin):
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if route_error.done():
-                raise route_error.result()
-            if unguarded_problem:  # it left the browser: Flow may have billed it
-                raise unguarded_problem[0]
+            _raise_if_refused(route_error, unguarded_problem)
             if body_lost.done():
-                return await _recover_images(page, request, baseline)
+                images = await _recover_images(page, request, baseline)
+                _raise_unguarded(route_error, unguarded_problem)
+                return images
             if result not in done:
                 raise _outcome_unknown(
                     f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "

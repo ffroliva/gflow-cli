@@ -5322,3 +5322,138 @@ async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
     assert rec.is_done
     assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
     assert len(reads) == 1, "read the listing while Flow was still polling"
+
+
+async def test_unguarded_request_check_verdict_during_terminal_wait_is_raised_1518() -> None:
+    """#1518: on_request stays registered while _finish_submitted waits for terminal status;
+    an unguarded request_check verdict recorded during that wait must be raised on settle."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="late wrong clip") if "late-wrong" in body else None
+
+    async def on_started(_started: Any) -> None:
+        listeners = page.listeners("request")
+        assert len(listeners) == 1
+        late_req = FakeRequest(_batch_url("fZytfe"), "f.req=late-wrong-clip")
+        for listener in listeners:
+            await _maybe_await(listener(late_req))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    from gflow_cli.errors import is_retryable
+
+    with pytest.raises(WireFormatError, match="late wrong clip") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert (ei.value.charged, ei.value.resolved_next_action(), is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+async def test_unguarded_observed_body_problem_during_terminal_wait_is_raised_1518() -> None:
+    """#1518: an unguarded submit body problem seen during _finish_submitted is also raised."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("eb1hJf"), _frame("eb1hJf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        late_req = FakeRequest(_batch_url("eb1hJf"), _i2v_body(media_id="wrong-media-id"))
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(late_req))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert ei.value.charged == "maybe"
+
+
+async def test_guarded_abort_during_terminal_wait_keeps_completed_clip_1518() -> None:
+    """#1518 + #1320: when the route guard aborts a stray request during _finish_submitted,
+    the settled billed clip returns without falsely raising the pre-guard shadow."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray duplicate") if "stray-dup" in body else None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        stray_req = FakeRequest(_batch_url("fZytfe"), "f.req=stray-dup")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(stray_req))
+        route = FakeRoute()
+        await page.routes[-1][1](route, stray_req)
+        page.route_outcomes.append(route.outcome)
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=on_started,
+        project_id=PROJ,
+        submit_rpcs=("fZytfe",),
+        request_check=check,
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert page.route_outcomes == ["fallback", "abort"]
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_unguarded_image_problem_during_grid_recovery_is_raised_1518() -> None:
+    """#1518 sibling: an unguarded image request observed while _recover_images polls the
+    grid must be raised instead of silently returning recovered tiles."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _LateImageSubmitPage(FakePage):
+        async def evaluate(self, expression: str, argument: Any = None) -> Any:
+            if "flow-image-tile" in expression and len(self.dom.grid_reads) == 1:
+                late_req = FakeRequest(_batch_url("ogiZ0b"), "")
+                for listener in self.listeners("request"):
+                    await _maybe_await(listener(late_req))
+            return await super().evaluate(expression, argument)
+
+    page = _LateImageSubmitPage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert ei.value.charged == "maybe"
