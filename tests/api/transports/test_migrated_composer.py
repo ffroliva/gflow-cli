@@ -5330,6 +5330,8 @@ async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
 ) -> None:
     """Flow polls while the clip runs; an evicted body is still a poll. Counting only
     readable frames read every eviction as silence and spent the listing reads early."""
+    from types import SimpleNamespace
+
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.15)
@@ -5340,14 +5342,32 @@ async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
         (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
         (_batch_url("jwpduf"), LOST_BODY),
     ]
-    tabs = _listing_tabs(page, _listing(_ours(3)))
+    jwpduf_fired = 0
+    orig_fire = page._fire_response
+
+    def track_fire(response: FakeResponse) -> None:
+        nonlocal jwpduf_fired
+        if "jwpduf" in response.url:
+            jwpduf_fired += 1
+        orig_fire(response)
+
+    page._fire_response = track_fire  # type: ignore[method-assign]
+    polls_at_read: list[int] = []
+
+    async def new_page() -> ListingTab:
+        polls_at_read.append(jwpduf_fired)
+        status = 3 if jwpduf_fired >= 9 else 2
+        return ListingTab(_listing(_ours(status)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
     composer = MigratedComposer()
     reads = _spy_listing_reads(composer)
     rec = await composer.submit_and_observe(
         page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
     )
     assert rec.is_done
-    assert len(tabs) == 1 and len(reads) == 1, "read the listing while Flow was still polling"
+    assert polls_at_read == [9], "read the listing while Flow was still polling"
+    assert len(reads) == 1
     assert reads[0][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
 
 
