@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation and tests
+
+- **Install prerequisites, proxy and mirror guidance, and AI-crawler metadata ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.md` lists the prerequisites before the install command and answers three more questions under question headings. `docs/USER_GUIDE.md` covers installing and signing in behind a proxy or a package mirror. `llms.txt` is split into short bullets, and the Pages deploy publishes `llms-full.txt`. The default output folder (`~/Downloads/gflow-cli`) is stated correctly in `AGENTS.md`, `docs/USAGE.md` and the website pages.
+
 ## [0.107.0] — 2026-11-25
 
 ### Added

@@ -9,6 +9,7 @@ on:
     paths:
       - "index.html"
       - "llms.txt"
+      - "README.md"
       - "sitemap.xml"
       - "website/**"
       - ".github/workflows/pages.yml"
@@ -45,6 +46,7 @@ jobs:
         run: |
           mkdir -p _site
           cp index.html llms.txt sitemap.xml _site/
+          tail -n +1 README.md docs/USER_GUIDE.md docs/ERRORS.md > _site/llms-full.txt
           cp -r website/site _site/docs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:

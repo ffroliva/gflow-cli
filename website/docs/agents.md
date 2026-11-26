@@ -1,6 +1,6 @@
 # Let your assistant drive it
 
-gflow-cli is built to be driven by an AI assistant. It ships an **MCP server**, so Claude, Cursor, or Copilot connects to it natively — no pasting docs, no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.
+gflow-cli is built to be driven by an AI assistant. It ships an **MCP server**, so Claude Code, Cursor, Codex, or VS Code connects to it natively — no pasting docs, no copying commands back and forth. CLI-to-MCP parity is enforced in CI: anything the terminal can do, your assistant can do.
 
 ## Start the server
 
