@@ -70,6 +70,9 @@ _NO_PROFILE = {
     "spike_session_oracle.py",
     # #1140: launches real Chrome on throwaway temp profiles only.
     "spike_disable_features_merge.py",
+    # #1511: an anonymous headless Chromium that screenshots a local HTML file; it
+    # never opens a gflow profile.
+    "render_social_card.py",
 }
 
 
