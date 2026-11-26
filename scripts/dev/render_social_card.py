@@ -2,6 +2,7 @@
 
 social-preview.png (1280x640) is uploaded by hand in repo Settings; og-image.png
 (1200x630) is served from the site root for og:image / twitter:image.
+Fonts are the host's system fonts, so render on one machine and review the PNGs.
 Run: uv run python scripts/dev/render_social_card.py
 """
 
