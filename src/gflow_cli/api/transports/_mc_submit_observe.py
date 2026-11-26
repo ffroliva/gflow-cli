@@ -151,21 +151,31 @@ def _note_finished(verdict: GFlowError, media_ids: Sequence[str], recover_hint: 
 async def _raise_if_refused(
     route_error: asyncio.Future[Any],
     verdicts: _VerdictTracker,
-    accepted: asyncio.Future[Any],
+    submit_left: asyncio.Event,
 ) -> None:
     """Raise a route-guard refusal first, else any unguarded observer verdict.
 
-    A refusal says nothing was billed and a retry is safe, which holds only while the
-    run's own submit has not been accepted (``accepted``). Once it has, the refused
-    request was a stray: Flow may be billing the accepted one, so a retry could pay twice.
+    A refusal says nothing was billed and a retry is safe, which holds only while no
+    submit of this run has left the browser (``submit_left``, set by the route guard when
+    it lets one through). Once one has, the refused request was a stray: Flow may be
+    billing the one that left, whether or not its reply has been read, so a retry could
+    pay twice.
     """
     if not route_error.done():
         await verdicts.raise_unguarded()
     if route_error.done():
         refusal: GFlowError = route_error.result()
-        if accepted.done() and not accepted.cancelled() and accepted.exception() is None:
+        if submit_left.is_set():
             refusal.charged, refusal.next_action, refusal.retryable = "maybe", "reconcile", False
+            refusal.remediation_hint = STRAY_AFTER_SUBMIT
         raise refusal
+
+
+#: The hint for a refusal once a submit of the run has left: never "safe to re-run".
+STRAY_AFTER_SUBMIT = (
+    "A stray request was blocked, but a submit of this run had already left the browser "
+    "and Flow may be billing it. Check the project in Flow before re-running."
+)
 
 
 async def _aborted_by_check(
@@ -354,6 +364,7 @@ class SubmitObserveMixin(MentionMixin):
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
         verdicts = _VerdictTracker(guarded=True)  # the batchexecute guard below sees every submit
+        submit_left = asyncio.Event()  # a submit of this run passed the guard: Flow may bill it
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
         submit_requests: list[tuple[Any, str]] = []
         submit_key: dict[str, str] = {}
@@ -611,6 +622,8 @@ class SubmitObserveMixin(MentionMixin):
                 )
             # Judged before the await, so a run settling meanwhile reads the right verdict.
             verdicts.judged(request, aborted=problem is not None)
+            if problem is None and rpcid in submit_rpcs:
+                submit_left.set()
             if problem is None:
                 # fallback, not continue_: an outer guard (extend) must still see it.
                 await route.fallback()
@@ -685,7 +698,7 @@ class SubmitObserveMixin(MentionMixin):
                 )
             # The request is inspected before its reply lands, so a wrong body is
             # named as such and not as whatever the reply then says (#1320).
-            await _raise_if_refused(route_error, verdicts, submitted)
+            await _raise_if_refused(route_error, verdicts, submit_left)
             if not submitted.done() and lost:
                 where = MIGRATED_PROJECT_URL.format(project_id=project_id) if project_id else "Flow"
                 raise _outcome_unknown(
@@ -906,6 +919,7 @@ class SubmitObserveMixin(MentionMixin):
 
         guarded = bool(reference_ids or entity_ids)
         verdicts = _VerdictTracker(guarded=guarded)
+        submit_left = asyncio.Event()  # the image submit passed the guard: Flow may bill it
         on_request = _image_request_listener(
             route_error,
             verdicts,
@@ -945,6 +959,11 @@ class SubmitObserveMixin(MentionMixin):
         def is_image_submit(url: str) -> bool:
             return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
+        def _judge_image(raw_request: Any, *, aborted: bool) -> None:
+            verdicts.judged(raw_request, aborted=aborted)
+            if not aborted:
+                submit_left.set()
+
         async def guard(route: Any, raw_request: Any) -> None:
             problem = await _guard_image_submit(
                 route,
@@ -952,7 +971,7 @@ class SubmitObserveMixin(MentionMixin):
                 reference_ids,
                 request.model,
                 entity_ids,
-                on_judged=lambda aborted: verdicts.judged(raw_request, aborted=aborted),
+                on_judged=lambda aborted: _judge_image(raw_request, aborted=aborted),
             )
             found = _image_body_references(request_body(raw_request))
             log.info(
@@ -981,7 +1000,7 @@ class SubmitObserveMixin(MentionMixin):
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            await _raise_if_refused(route_error, verdicts, result)
+            await _raise_if_refused(route_error, verdicts, submit_left)
             if body_lost.done():
                 try:
                     images = await _recover_images(page, request, baseline)

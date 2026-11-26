@@ -5324,6 +5324,15 @@ async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
     assert len(reads) == 1, "read the listing while Flow was still polling"
 
 
+#: Strong references to background tasks the #1518 tests start: asyncio keeps only weak ones.
+_BACKGROUND: set[asyncio.Task[Any]] = set()
+
+
+def _keep(task: asyncio.Task[Any]) -> None:
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+
+
 async def test_unguarded_request_check_verdict_during_terminal_wait_is_raised_1518() -> None:
     """#1518: on_request stays registered while _finish_submitted waits for terminal status;
     an unguarded request_check verdict recorded during that wait must be raised on settle."""
@@ -5606,7 +5615,7 @@ async def test_in_flight_guard_abort_completing_after_terminal_status_keeps_clip
             await asyncio.sleep(0.02)
             release_abort.set()
 
-        asyncio.create_task(finish_abort())
+        _keep(asyncio.create_task(finish_abort()))
 
     rec = await MigratedComposer().submit_and_observe(
         page,
@@ -5707,7 +5716,7 @@ async def test_image_in_flight_guard_abort_during_recovery_keeps_images_1518() -
                     await asyncio.sleep(0.02)
                     release_abort.set()
 
-                asyncio.create_task(finish_abort())
+                _keep(asyncio.create_task(finish_abort()))
             return await super().evaluate(expression, argument)
 
     page = _SlowGuardImagePage()
@@ -5753,7 +5762,7 @@ async def test_guard_that_starts_after_the_terminal_status_still_keeps_the_clip_
             await asyncio.sleep(0.05)  # the guard has not started when the run settles
             await page.routes[-1][1](route, stray_req)
 
-        asyncio.create_task(late_guard())
+        _keep(asyncio.create_task(late_guard()))
 
     rec = await MigratedComposer().submit_and_observe(
         page,
@@ -5863,7 +5872,7 @@ async def test_a_stray_abort_after_the_submit_was_accepted_is_not_reported_unbil
                 for u, text in self.scripted_responses:
                     self._fire_response(FakeResponse(u, text))
 
-            asyncio.get_event_loop().create_task(go())
+            _keep(asyncio.get_event_loop().create_task(go()))
 
     page = _StrayAfterAcceptPage()
     page.dom.prompt = "keep going"
@@ -5882,7 +5891,93 @@ async def test_a_stray_abort_after_the_submit_was_accepted_is_not_reported_unbil
             request_check=check,
         )
     assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, ei.value.next_action, is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+async def test_a_stray_abort_before_the_reply_arrives_is_not_reported_unbilled_1518() -> None:
+    """Flow bills once the clean submit leaves the browser, not when its reply is read: a
+    stray aborted before that reply lands must not be reported as safe to retry either."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray second submit") if "stray" in body else None
+
+    class _ReplyLaterPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(_batch_url("fZytfe"), "f.req=clean-submit")
+            stray = FakeRequest(_batch_url("fZytfe"), "f.req=stray")
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+                await asyncio.sleep(0.2)  # the clean submit's reply lands after the check
+                for u, text in self.scripted_responses:
+                    self._fire_response(FakeResponse(u, text))
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _ReplyLaterPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    with pytest.raises(WireFormatError, match="stray second submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
     assert (ei.value.charged, is_retryable(ei.value)) == ("maybe", False)
+
+
+async def test_a_body_guard_stray_after_the_submit_left_never_says_safe_to_rerun_1518() -> None:
+    """The body guard builds its refusal with the "billed nothing, safe to re-run" hint; once
+    the run's own submit has left, that hint is replaced, not just the charged fields."""
+    from gflow_cli.api.transports import _mc_submit_observe as mso
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _BodyStrayPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(_batch_url("eb1hJf"), _i2v_body())
+            stray = FakeRequest(_batch_url("eb1hJf"), _i2v_body(media_id="wrong-media-id"))
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _BodyStrayPage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", _i2v_body())
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert ei.value.charged == "maybe"
+    assert ei.value.remediation_hint == mso.STRAY_AFTER_SUBMIT
+    assert "Safe to re-run" not in (ei.value.remediation_hint or "")
 
 
 async def test_a_clean_run_settles_without_waiting_for_the_guard_1518(
@@ -5953,10 +6048,10 @@ async def test_image_result_arriving_during_refusal_wait_is_returned_1518(
     page = FakePage()
     page.dom.prompt = "a blue cup"
 
-    async def late_reply_during_check(route_error: Any, verdicts: Any, accepted: Any) -> None:
+    async def late_reply_during_check(route_error: Any, verdicts: Any, submit_left: Any) -> None:
         page._fire_response(FakeResponse(_batch_url("ogiZ0b"), _image_frame()))
         await asyncio.sleep(0)
-        await orig_check(route_error, verdicts, accepted)
+        await orig_check(route_error, verdicts, submit_left)
 
     monkeypatch.setattr(_mc_submit_observe, "_raise_if_refused", late_reply_during_check)
     images = await MigratedComposer().submit_images_and_observe(
