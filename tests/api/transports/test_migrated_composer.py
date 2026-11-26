@@ -5460,6 +5460,9 @@ async def test_unguarded_image_problem_during_grid_recovery_is_raised_1518() -> 
             page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
         )
     assert ei.value.charged == "maybe"
+    # The recovered image is named; `gflow data download` refuses images, so no hint.
+    assert getattr(ei.value, "completed_media_ids", None) == [NEW_TILE]
+    assert NEW_TILE in ei.value.detail and "data download" not in ei.value.detail
 
 
 async def test_guarded_abort_does_not_suppress_earlier_unguarded_verdict_1518() -> None:

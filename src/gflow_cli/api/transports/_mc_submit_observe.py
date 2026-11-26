@@ -116,7 +116,9 @@ class _VerdictTracker:
     def _awaiting_guard(self) -> bool:
         return self._guarded and any(req not in self._judged for req, _ in self._verdicts)
 
-    async def raise_unguarded(self, *, completed_media_ids: Sequence[str] = ()) -> None:
+    async def raise_unguarded(
+        self, *, completed_media_ids: Sequence[str] = (), recover_hint: str = ""
+    ) -> None:
         """Raise the first verdict whose request left unguarded, naming any finished media."""
         deadline = time.monotonic() + GUARD_JUDGE_WAIT_S
         while self._awaiting_guard() and (remaining := deadline - time.monotonic()) > 0:
@@ -125,18 +127,22 @@ class _VerdictTracker:
                 await asyncio.wait_for(self._changed.wait(), remaining)
         for request, verdict in self._verdicts:
             if not self._judged.get(request, False):
-                _note_finished(verdict, completed_media_ids)
+                _note_finished(verdict, completed_media_ids, recover_hint)
                 raise verdict
 
 
-def _note_finished(verdict: GFlowError, media_ids: Sequence[str]) -> None:
+#: How a finished clip is downloaded after a raised verdict (video only: images refuse it).
+CLIP_RECOVER_HINT = "recover with `gflow data download <media-id>`"
+
+
+def _note_finished(verdict: GFlowError, media_ids: Sequence[str], recover_hint: str) -> None:
     """Keep media that finished and may be billed recoverable from the raised verdict."""
     verdict.charged, verdict.next_action = "maybe", "reconcile"
     if media_ids:
         setattr(verdict, "completed_media_ids", list(media_ids))  # noqa: B010
+        hint = f" ({recover_hint})" if recover_hint else ""
         verdict.detail = (
-            f"{verdict.detail}; finished and may be billed: {', '.join(media_ids)} "
-            f"(recover with `gflow data download <media-id>`)"
+            f"{verdict.detail}; finished and may be billed: {', '.join(media_ids)}{hint}"
         )
 
 
@@ -700,7 +706,9 @@ class SubmitObserveMixin(MentionMixin):
             # Listeners stay armed through the terminal wait; raise any unguarded verdict
             # recorded there so a late bad submit is not silently dropped (#1518), naming
             # the clip that finished so it can still be downloaded.
-            await verdicts.raise_unguarded(completed_media_ids=[final.media_id])
+            await verdicts.raise_unguarded(
+                completed_media_ids=[final.media_id], recover_hint=CLIP_RECOVER_HINT
+            )
             log.info(
                 "migrated.result",
                 status=final.status,
