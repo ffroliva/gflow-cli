@@ -4,7 +4,7 @@
 
 > **gflow-cli 是一个开源的 MCP 服务器和命令行工具，用于自动化 [Google Flow](https://labs.google/fx/tools/flow)。** 它可以在 Claude Code、Claude Desktop、Cursor、Codex、VS Code 或终端中生成 Veo 3.1 和 Omni 视频，以及 Nano Banana 和 Imagen 图片，费用计入你自己 Google 账号的 Flow 积分。可作为 Google Flow 命令行工具或 Veo MCP 服务器使用。通过 PyPI 安装：`uv tool install gflow-cli`（MIT 许可，支持 macOS、Windows 和 Linux）。
 
-> 本文是 [README.md](README.md) 的中文翻译，内容以英文版为准；省略了徽章、统计数据、赞助者名单和 Star 历史，完整内容见英文版。命令、参数和程序输出保持英文。如发现翻译不准确，欢迎提交 [issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request。
+> 本文是 [README.md](README.md) 的中文翻译，内容以英文版为准；省略了部分徽章、统计数据、赞助者名单和 Star 历史，完整内容见英文版。命令、参数和程序输出保持英文。如发现翻译不准确，欢迎提交 [issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request。
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
@@ -115,7 +115,7 @@ gflow character create --project <project-id> --name "Aria" --face-prompt "..." 
 
 > **为什么要用 `--browser chrome`？** 只有这种方式会把配置文件标记为真实 Chrome 配置文件，而之后的生成正是用这种方式打开它。默认的 `auto` 在安装了 Chrome 时会自动选择它，详见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
 
-> **从本地检出安装？** `uv tool install <路径>` **会忽略 `uv.lock`**，而是根据 `pyproject.toml` 中的版本范围解析依赖，因此可能装上本项目从未测试过的 Playwright 版本。Playwright 自带浏览器驱动，未经测试的小版本可能让生成悄无声息地卡住。请显式指定锁定的版本：
+> **从本地源码目录安装？** `uv tool install <路径>` **会忽略 `uv.lock`**，而是根据 `pyproject.toml` 中的版本范围解析依赖，因此可能装上本项目从未测试过的 Playwright 版本。Playwright 自带浏览器驱动，未经测试的小版本可能让生成悄无声息地卡住。请显式指定锁定的版本：
 >
 > ```bash
 > uv tool install --force --with playwright==1.61.0 .
@@ -226,7 +226,7 @@ gflow auth login --browser chrome
 | 每个错误都带 `charged` 字段 | 是 | — | — | — | — | — |
 | 单次调用积分上限 | 是（`--max-credits`，读取 Flow 自己的报价） | 是（`max_credits`） | — | — | — | — |
 | 视频到视频编辑 | 是（`video edit`，flow.google.com；本地文件最多 5 个参考，或一个片段） | 是 | 是 | — | — | — |
-| 旁白音频 | 是（audio narrate：edge-tts 或 Gemini 语音） | 是 | — | — | — | 是 |
+| 旁白音频 | 是（`audio narrate`：edge-tts 或 Gemini 语音） | 是 | — | — | — | 是 |
 | 字幕 | 是（`video captions`，导出 `.srt`） | 是 | — | — | — | — |
 | 拼接片段 | 是，服务器端（`scene create`）或本地加配乐和旁白（`video assemble`） | 是，可加配乐和旁白 | — | — | 是（scene） | 是，可加配乐和旁白 |
 | 智能体模式批量生成图片 | 计划中（[#1361](https://github.com/ffroliva/gflow-cli/issues/1361)） | 是 | — | — | — | — |
@@ -291,9 +291,9 @@ Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/f
 
 ## 示例
 
-一条命令，得到真实的 Flow 输出。左：`gflow image t2i` 在你的媒体库中生成一张写实场景图。右：逐帧转换。
+一条命令，得到真实的 Flow 输出。左：`gflow image t2i` 在你的媒体库中生成一张写实场景图。右：帧间变换。
 
-![gflow-cli 示例：文生图，以及前后对比的逐帧转换](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/examples.webp)
+![gflow-cli 示例：文生图，以及前后对比的帧间变换](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/examples.webp)
 
 ## 演示
 
@@ -310,7 +310,7 @@ Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/f
 | 主题 | 阅读 |
 |---|---|
 | 🎯 **入门** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
-| **存储和目录** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
+| **存储和媒体库** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🎭 **角色** | [Characters](docs/CHARACTER.md)，可复用的主体（`gflow character`） |
 | 🤖 **智能体和自动化** | [Instructions](docs/INSTRUCTIONS.md)（`gflow instructions`，持久化指令卡） · [Movie](docs/MOVIE.md)（`gflow movie`，多场景清单） · [Tools](docs/TOOLS.md)（`--tool`，改写提示词） · [MCP server](docs/MCP.md)（`gflow mcp run` / `gflow serve`） |
 | 🔐 **认证和会话** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
@@ -344,7 +344,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
                               aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-**当前传输方式：** `ui_automation` 通过持久化的 Playwright Chromium 配置文件驱动 Flow。它是生产环境使用的传输方式，并在每个版本中端到端验证（见各版本的 `LIVE_VERIFICATION_*` 证据文件）。
+**当前传输方式：** `ui_automation` 通过持久化的 Playwright Chromium 配置文件驱动 Flow。它是生产环境使用的传输方式，并在每个版本中端到端验证（见各版本的 `LIVE_VERIFICATION_*` 实测验证记录）。
 
 **两个 Flow 前端：** Google 正在把账号从 `labs.google` 迁移到 `flow.google.com`（[#639](https://github.com/ffroliva/gflow-cli/issues/639)）。两者是同一个产品，但界面组件库和通信协议不同（使用 `batchexecute` 而不是 `aisandbox-pa`）。flow.google.com 驱动支持：
 
@@ -352,7 +352,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 - 文生图，以及基于本地文件的图生图；
 - 单段 `video extend`。
 
-图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅智能体**编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当目录记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>` 会原地引用（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）。
+图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅智能体**编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当本地媒体库记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>` 会原地引用（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）。
 
 在移植完成之前，以下功能继续使用 labs 驱动：其他 UUID 媒体引用、没有名称的实体 ID、指令卡、Imagen 4，以及矩阵中的其余部分（`GFLOW_CLI_FLOW_HOST`，见 [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)）。
 
@@ -388,7 +388,7 @@ gflow-cli 由一个人维护。每个版本都在真实的 Google Flow 上验证
 [![Sponsor $5 one-time](https://img.shields.io/badge/☕_sponsor-$5_one--time-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amount=5)
 [![Sponsor $5 a month](https://img.shields.io/badge/💖_sponsor-$5_a_month-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=monthly&amount=5)
 
-在工作中依赖 gflow-cli？每月的公司档位会把你的标识放在这里，Silver 及以上档位还享有优先处理 issue 的权益。所有赞助档位及其权益：[docs/SPONSORS.md](docs/SPONSORS.md)。
+在工作中依赖 gflow-cli？每月的公司档位会在英文版 README 展示你的标识，Silver 及以上档位还享有优先处理 issue 的权益。所有赞助档位及其权益：[docs/SPONSORS.md](docs/SPONSORS.md)。
 
 在你的 fork 中修复了 gflow-cli 的问题？欢迎[提交 issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request，合并到上游的修复对所有人都有帮助。
 
