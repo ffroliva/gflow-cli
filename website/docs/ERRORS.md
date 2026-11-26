@@ -161,7 +161,9 @@ place today:
   the tile and menu steps of `image upscale` and `video upscale` before the export click, and any failure of a reference upload (an upload is never a billed
   generation); `next_action` keeps the class default. A raw
   browser-driver timeout is not a gflow error and still reads `maybe`. A submit the route
-  guard aborts in the browser reads `no` / `retry`. A failure at or after the click keeps
+  guard aborts in the browser reads `no` / `retry`, unless a submit of the same run
+  had already left the browser: that refusal reads `maybe` / `reconcile`, since Flow may be
+  billing the one that left (#1518). A failure at or after the click keeps
   the class default. On the labs (`labs.google`) composer, a selector drift found while
   configuring settings, the prompt, navigation, video settings, the video editor mode or
   a character reads `no` as well

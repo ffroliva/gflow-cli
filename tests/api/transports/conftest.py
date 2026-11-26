@@ -30,6 +30,15 @@ def _fast_ui_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(factory, "_DETECT_POLL_INTERVAL_S", 0.0)
 
 
+@pytest.fixture(autouse=True)
+def _short_guard_judge_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fake pages mostly install no route guard, so a flagged request is never judged and
+    a settling run would wait the full 5 s for it (#1518)."""
+    from gflow_cli.api.transports import _mc_submit_observe
+
+    monkeypatch.setattr(_mc_submit_observe, "GUARD_JUDGE_WAIT_S", 0.3)
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Run every test that takes ``page`` on its module's event loop.
 

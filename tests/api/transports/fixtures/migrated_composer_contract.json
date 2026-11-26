@@ -51,8 +51,8 @@
     "read_chips": "function (self, page: 'Page', *, chip: 'str' = '.mention-chip') -> 'list[dict[str, str]]' sha=4530247a2ccedfb3",
     "reference_existing": "function (self, page: 'Page', project_id: 'str', request: 'GenerateImageRequest', *, name_resolver: 'Callable[[str], str | None] | None' = None) -> 'tuple[str, ...]' sha=8fb9a1d97c81eba0",
     "send_prompt": "function (self, page: 'Page', prompt: 'str', *, append: 'bool' = False) -> 'None' sha=da72d766802c433e",
-    "submit_and_observe": "function (self, page: 'Page', *, poll_timeout_s: 'float', on_started: 'VideoStartedCallback | None', project_id: 'str | None', expect_media_id: 'str | None' = None, expect_end_media_id: 'str | None' = None, expect_reference_ids: 'tuple[str, ...]' = (), submit_rpcs: 'tuple[str, ...]' = ('YhhmEf', 'eb1hJf', 'MZZa6b', 'nprQif'), submit_selector: 'str | None' = None, request_check: 'Callable[[str, str], GFlowError | None] | None' = None, adopt_ids: 'tuple[str, ...]' = (), adopt_prompt: 'str | None' = None) -> 'GenerationRecord' sha=8d4f7daeeb076f6e",
-    "submit_images_and_observe": "function (self, page: 'Page', request: 'GenerateImageRequest', *, reference_ids: 'tuple[str, ...]' = (), entity_ids: 'tuple[str, ...]' = ()) -> 'list[GeneratedImage]' sha=3fa86bdd9665e91b",
+    "submit_and_observe": "function (self, page: 'Page', *, poll_timeout_s: 'float', on_started: 'VideoStartedCallback | None', project_id: 'str | None', expect_media_id: 'str | None' = None, expect_end_media_id: 'str | None' = None, expect_reference_ids: 'tuple[str, ...]' = (), submit_rpcs: 'tuple[str, ...]' = ('YhhmEf', 'eb1hJf', 'MZZa6b', 'nprQif'), submit_selector: 'str | None' = None, request_check: 'Callable[[str, str], GFlowError | None] | None' = None, adopt_ids: 'tuple[str, ...]' = (), adopt_prompt: 'str | None' = None) -> 'GenerationRecord' sha=613132d5d9aa97f6",
+    "submit_images_and_observe": "function (self, page: 'Page', request: 'GenerateImageRequest', *, reference_ids: 'tuple[str, ...]' = (), entity_ids: 'tuple[str, ...]' = ()) -> 'list[GeneratedImage]' sha=6bc7b2b9995157dc",
     "upload": "function (self, page: 'Page', project_id: 'str', image_path: 'Path') -> 'tuple[str, str]' sha=f33460601b0af4b8"
   },
   "module_names": {
@@ -118,7 +118,7 @@
     "_count": "function (label: 'str') -> 're.Pattern[str]' sha=d080ef44271ee33d",
     "_duration": "function (label: 'str') -> 're.Pattern[str]' sha=bb3f8153a1522b98",
     "_first_uuid": "function (text: 'str') -> 'str | None' sha=49d33dac68bcc1d0",
-    "_guard_image_submit": "function (route: 'Any', request: 'Any', reference_ids: 'tuple[str, ...]', model: 'ImageModel | None', entity_ids: 'tuple[str, ...]' = ()) -> 'str | None' sha=bb80a47dc88ba4b3",
+    "_guard_image_submit": "function (route: 'Any', request: 'Any', reference_ids: 'tuple[str, ...]', model: 'ImageModel | None', entity_ids: 'tuple[str, ...]' = (), *, on_judged: 'Callable[[bool], None] | None' = None) -> 'str | None' sha=41cb23ccbc47f581",
     "_i2v_body_problem": "function (body: 'str', rpcid: 'str', media_id: 'str', end_media_id: 'str | None' = None) -> 'str | None' sha=c7dde3b0b1e0fffc",
     "_image_body_problem": "function (body: 'str', reference_ids: 'tuple[str, ...]', model: 'ImageModel | None' = None, entity_ids: 'tuple[str, ...]' = ()) -> 'str | None' sha=f9f69190ab30f73e",
     "_image_body_references": "function (body: 'str') -> 'tuple[set[str], set[str]] | None' sha=894cd344b1672362",
