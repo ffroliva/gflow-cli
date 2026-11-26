@@ -32,6 +32,8 @@ from scripts.ci import check_commit_trailers as trailers
         "Co-authored-by: Windsurf <windsurf@codeium.com>",
         "Co-authored-by: Cursor <1+cursor[bot]@users.noreply.github.com>",
         "Co-authored-by: Droid <1+factory-droid[bot]@users.noreply.github.com>",
+        "Co-authored-by: coderabbitai[bot] <1+coderabbitai[bot]@users.noreply.github.com>",
+        "Co-authored-by: Autofix <1+github-advanced-security[bot]@users.noreply.github.com>",
     ],
 )
 def test_an_ai_attribution_line_is_reported(line: str) -> None:
@@ -97,8 +99,25 @@ def test_main_without_arguments_reads_commits_on_no_remote_develop(
         return ""
 
     monkeypatch.setattr(trailers, "_git_log", fake_log)
+    monkeypatch.setattr(trailers, "_has_remote_develop", lambda: True)
     assert trailers.main([]) == 0
     assert seen == [["HEAD", "--not", "--remotes=*/develop"]]
+
+
+def test_main_without_arguments_refuses_when_no_remote_develop_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(trailers, "_has_remote_develop", lambda: False)
+    monkeypatch.setattr(trailers, "_git_log", lambda revisions: pytest.fail("read history"))
+    assert trailers.main([]) == 2
+
+
+def test_main_reports_a_missing_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_git(revisions: list[str]) -> str:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(trailers, "_git_log", no_git)
+    assert trailers.main(["HEAD"]) == 2
 
 
 def test_main_reports_a_bad_range_without_a_traceback() -> None:

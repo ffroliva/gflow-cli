@@ -32,7 +32,8 @@ _AI_DOMAIN = re.compile(
 _SHARED_DOMAIN = re.compile(r"(^|\.)(github|google)\.com$", re.IGNORECASE)
 _BOT_LOGIN = re.compile(
     r"^(\d+\+)?((claude|copilot|gemini|codex|chatgpt)"
-    r"|[\w.-]*(claude|copilot|devin|jules|codex|gemini|chatgpt|cursor|factory)[\w.-]*\[bot\])$",
+    r"|[\w.-]*(claude|copilot|devin|jules|codex|gemini|chatgpt|cursor|factory|coderabbit"
+    r"|github-advanced-security|github-code-quality)[\w.-]*\[bot\])$",
     re.IGNORECASE,
 )
 _TRAILER = re.compile(r"^co-authored-by:", re.IGNORECASE)
@@ -71,6 +72,16 @@ def offending_lines(message: str) -> list[str]:
     return found
 
 
+def _has_remote_develop() -> bool:
+    return bool(
+        subprocess.run(  # noqa: S603 - fixed argv, no shell
+            ["git", "for-each-ref", "--count=1", "refs/remotes/*/develop"],  # noqa: S607
+            capture_output=True,
+            encoding="utf-8",
+        ).stdout.strip()
+    )
+
+
 def _git_log(revisions: list[str]) -> str:
     # -z separates commits with NUL, which git never stores in a message.
     return subprocess.run(  # noqa: S603 - fixed argv, no shell
@@ -84,8 +95,13 @@ def _git_log(revisions: list[str]) -> str:
 
 def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]  # cp1252 consoles
-    argv = argv or ["HEAD", "--not", "--remotes=*/develop"]
     try:
+        if not argv:
+            # With no remote develop, --not would exclude nothing and read all history.
+            if not _has_remote_develop():
+                print("no remote develop branch: git fetch it, or pass a range", file=sys.stderr)
+                return 2
+            argv = ["HEAD", "--not", "--remotes=*/develop"]
         log = _git_log(argv)
     except subprocess.CalledProcessError as exc:
         print(f"git log {' '.join(argv)} failed: {exc.stderr.strip()}", file=sys.stderr)
