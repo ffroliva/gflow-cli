@@ -24,6 +24,14 @@ from scripts.ci import check_commit_trailers as trailers
         "Co-authored-by: claude[bot] <1+claude[bot]@users.noreply.github.com>",
         "Co-Authored-By: Claude noreply@anthropic.com",
         "🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+        "🤖 Generated with [opencode](https://opencode.ai)",
+        "Generated with Claude Code.",
+        "Co-Authored-By: Claude (noreply@anthropic.com)",
+        "Co-authored-by: Amp <amp@ampcode.com>",
+        "Co-Authored-By: opencode <noreply@opencode.ai>",
+        "Co-authored-by: Windsurf <windsurf@codeium.com>",
+        "Co-authored-by: Cursor <1+cursor[bot]@users.noreply.github.com>",
+        "Co-authored-by: Droid <1+factory-droid[bot]@users.noreply.github.com>",
     ],
 )
 def test_an_ai_attribution_line_is_reported(line: str) -> None:
@@ -79,8 +87,18 @@ def test_main_reports_an_ai_author(
     assert "author Claude <noreply@anthropic.com>" in capsys.readouterr().out
 
 
-def test_main_without_a_range_prints_usage() -> None:
-    assert trailers.main([]) == 2
+def test_main_without_arguments_reads_commits_on_no_remote_develop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[list[str]] = []
+
+    def fake_log(revisions: list[str]) -> str:
+        seen.append(revisions)
+        return ""
+
+    monkeypatch.setattr(trailers, "_git_log", fake_log)
+    assert trailers.main([]) == 0
+    assert seen == [["HEAD", "--not", "--remotes=*/develop"]]
 
 
 def test_main_reports_a_bad_range_without_a_traceback() -> None:

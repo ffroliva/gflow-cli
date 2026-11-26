@@ -223,14 +223,14 @@ uv run python scripts/ci/check_website_docs_pii.py    # no private identifiers i
 uv run python scripts/ci/generate_website_docs.py --check  # website mirror in sync
 uv run python scripts/ci/check_council_memory.py      # council memory slugs resolve both ways
 uv run python scripts/ci/generate_plugin_skills.py --check  # shipped plugin skills match skills/
-uv run python scripts/ci/check_commit_trailers.py origin/develop..HEAD  # no AI attribution in branch commits
+uv run python scripts/ci/check_commit_trailers.py  # no AI attribution in branch commits
 uv run ruff check src tests          # lint
 uv run ruff format --check src tests # formatting
 uv run pyright src                   # type-check (strict on src/gflow_cli/)
 uv run pytest -q --cov=gflow_cli      # tests + coverage
 ```
 
-CI runs all of them on every push (this list is kept identical to AGENTS.md's; a shorter
+CI runs all of them (the commit-trailer check on pull requests only; this list is kept identical to AGENTS.md's; a shorter
 copy once shipped a stale website mirror to a green local run and a red CI). Documentation is part of the merge gate: update
 the relevant docs for behavior, workflow, configuration, architecture, or
 operator-facing changes. If no documentation change is needed, state that in
@@ -259,7 +259,7 @@ contributor is blocked for lacking the plugin.
 
 ### SonarCloud quality gate
 
-On top of the eleven gates, CI runs a **SonarCloud** analysis whose quality gate must be
+On top of the twelve gates, CI runs a **SonarCloud** analysis whose quality gate must be
 **green** before a PR is merge-ready — the target is **zero new issues** on changed code
 (new bugs, vulnerabilities, and code smells = 0; coverage of new lines ≥ 80%; security
 hotspots reviewed = 100%). The local `--cov-fail-under=80` gate already pre-empts the
