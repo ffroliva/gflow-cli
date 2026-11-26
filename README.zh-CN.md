@@ -142,7 +142,7 @@ uv tool run --default-index <镜像索引地址> --from gflow-cli playwright ins
 
 也可以用环境变量 `UV_DEFAULT_INDEX` 代替 `--default-index`。`<镜像索引地址>` 是你所选镜像的 simple 索引地址。Playwright 会读取 `PLAYWRIGHT_DOWNLOAD_HOST` 来决定一次性的 Chromium 下载地址。请使用你信任的镜像：它提供你安装的代码，也提供你用来登录 Google 的浏览器。gflow-cli 没有测试或认可任何镜像。
 
-**2. 浏览器代理。** 在第一次登录之前，把 `GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:<端口>` 写入 `$GFLOW_CLI_HOME/.env` 或当前目录的 `.env`（例如本地 Clash 客户端监听 `http://127.0.0.1:7897`，并关闭其“系统代理”开关），同时把 `HTTPS_PROXY` 设置为同一个地址，供 gflow 自己的 HTTP 请求使用。浏览器只读取 `GFLOW_CLI_BROWSER_PROXY`，会忽略 `HTTPS_PROXY`（仅 Linux 上的 Chromium 会读取代理环境变量，但不应依赖它）；gflow 也不会把其中一个复制到另一个。
+**2. 浏览器代理。** 在第一次登录之前，把 `GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:<端口>` 写入 `$GFLOW_CLI_HOME/.env` 或当前目录的 `.env`（例如本地 Clash 客户端监听 `http://127.0.0.1:7897`，并关闭其“系统代理”开关），同时在进程环境变量中把 `HTTPS_PROXY` 设置为同一个地址，供 gflow 自己的 HTTP 请求使用（它不是 `GFLOW_CLI_` 开头的设置，写入 `.env` 不会生效）。浏览器只读取 `GFLOW_CLI_BROWSER_PROXY`，会忽略 `HTTPS_PROXY`（仅 Linux 上的 Chromium 会读取代理环境变量，但不应依赖它）；gflow 也不会把其中一个复制到另一个。
 
 ```bash
 # macOS / Linux
@@ -151,7 +151,7 @@ export HTTPS_PROXY=http://127.0.0.1:7897
 gflow auth login --browser chrome
 ```
 
-通过 MCP 客户端使用时，客户端不会读取你 Shell 所在目录的 `.env`，请把变量写入 `$GFLOW_CLI_HOME/.env` 或客户端配置的 `env` 块：
+通过 MCP 客户端使用时，客户端不会读取你 Shell 所在目录的 `.env`。请把 `HTTPS_PROXY` 写入客户端配置的 `env` 块（它是进程环境变量，写在 `.env` 中不会生效）；`GFLOW_CLI_BROWSER_PROXY` 既可以写在 `env` 块中，也可以写入 `$GFLOW_CLI_HOME/.env`：
 
 ```json
 {
