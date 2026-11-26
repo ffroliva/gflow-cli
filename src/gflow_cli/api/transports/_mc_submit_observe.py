@@ -144,6 +144,8 @@ def _note_finished(verdict: GFlowError, media_ids: Sequence[str], recover_hint: 
         verdict.detail = (
             f"{verdict.detail}; finished and may be billed: {', '.join(media_ids)}{hint}"
         )
+        # The message is built once in __init__; callers such as `video chain` copy str(exc).
+        verdict.args = (f"{verdict.title}: {verdict.detail}",)
 
 
 async def _raise_if_refused(

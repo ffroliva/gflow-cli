@@ -5366,7 +5366,9 @@ async def test_unguarded_request_check_verdict_during_terminal_wait_is_raised_15
     )
     # The clip that finished stays recoverable from the error, in the field and the text.
     assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
-    assert MEDIA in ei.value.detail
+    assert MEDIA in ei.value.detail and "data download" in ei.value.detail
+    # `video chain` wraps str(exc), so the message must carry the clip id too.
+    assert MEDIA in str(ei.value)
 
 
 async def test_unguarded_observed_body_problem_during_terminal_wait_is_raised_1518() -> None:
