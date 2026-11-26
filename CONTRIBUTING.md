@@ -223,6 +223,7 @@ uv run python scripts/ci/check_website_docs_pii.py    # no private identifiers i
 uv run python scripts/ci/generate_website_docs.py --check  # website mirror in sync
 uv run python scripts/ci/check_council_memory.py      # council memory slugs resolve both ways
 uv run python scripts/ci/generate_plugin_skills.py --check  # shipped plugin skills match skills/
+uv run python scripts/ci/check_commit_trailers.py origin/develop..HEAD  # no AI attribution in branch commits
 uv run ruff check src tests          # lint
 uv run ruff format --check src tests # formatting
 uv run pyright src                   # type-check (strict on src/gflow_cli/)

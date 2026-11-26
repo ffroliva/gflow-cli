@@ -23,7 +23,7 @@ PYTHONUTF8=1 uv run python scripts/ci/check_website_docs_pii.py
 PYTHONUTF8=1 uv run python scripts/ci/generate_website_docs.py --check
 PYTHONUTF8=1 uv run python scripts/ci/check_council_memory.py
 PYTHONUTF8=1 uv run python scripts/ci/generate_plugin_skills.py --check
-PYTHONUTF8=1 uv run python scripts/ci/check_commit_trailers.py HEAD ^origin/develop
+PYTHONUTF8=1 uv run python scripts/ci/check_commit_trailers.py origin/develop..HEAD
 ```
 
 `generate_website_docs.py --check` fails on either half of the published-site contract:

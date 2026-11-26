@@ -8,7 +8,7 @@ a ``Co-authored-by:`` trailer.
 
 The arguments are passed to ``git log``. Run manually:
 
-    python scripts/ci/check_commit_trailers.py HEAD ^origin/develop
+    python scripts/ci/check_commit_trailers.py origin/develop..HEAD
 """
 
 from __future__ import annotations
@@ -18,21 +18,33 @@ import subprocess
 import sys
 
 _EMAIL = re.compile(r"[^\s<>@]+@[^\s<>@]+")
-# An AI vendor's domain, matched on a whole domain label so raider.com passes.
-_AI_DOMAIN = re.compile(r"@([\w-]+\.)*(anthropic|openai|cursor|aider)\.", re.IGNORECASE)
-# A bot's local part, only on the shared domains bots use, so jules@example.fr passes.
-_AI_BOT = re.compile(
-    r"(claude|copilot|devin-ai|jules|codex|gemini|chatgpt)[^@]*@([\w-]+\.)*(github|google)\.com$",
+# An AI vendor's own domain (or a subdomain of it), so raider.com and cursor.example.org pass.
+_AI_DOMAIN = re.compile(
+    r"@([\w-]+\.)*(anthropic\.com|openai\.com|cursor\.com|aider\.chat)$", re.IGNORECASE
+)
+# On the shared domains bots use (github.com, google.com), only an exact bot login or a
+# "[bot]" account counts, so a human login such as 12345+claudette passes.
+_SHARED_DOMAIN = re.compile(r"(^|\.)(github|google)\.com$", re.IGNORECASE)
+_BOT_LOGIN = re.compile(
+    r"^(\d+\+)?((claude|copilot|gemini|codex|chatgpt)"
+    r"|[\w.-]*(claude|copilot|devin|jules|codex|gemini|chatgpt)[\w.-]*\[bot\])$",
     re.IGNORECASE,
 )
 _TRAILER = re.compile(r"^co-authored-by:", re.IGNORECASE)
 # The footer's own shape, so a bullet that mentions it in prose passes.
-_FOOTER = re.compile(r"^(\U0001f916\s*)?generated with \[claude code\]", re.IGNORECASE)
+_FOOTER = re.compile(r"^(\U0001f916️?\s*)?generated with \[?claude code\]?\s*(\(|$)", re.IGNORECASE)
+
+
+def _is_ai_address(email: str) -> bool:
+    local, _, domain = email.rpartition("@")
+    if _AI_DOMAIN.search(email):
+        return True
+    return bool(_SHARED_DOMAIN.search(domain) and _BOT_LOGIN.match(local))
 
 
 def is_ai_email(text: str) -> bool:
     """Return whether ``text`` contains an e-mail address that belongs to an AI assistant."""
-    return any(_AI_DOMAIN.search(e) or _AI_BOT.search(e) for e in _EMAIL.findall(text))
+    return any(_is_ai_address(e) for e in _EMAIL.findall(text))
 
 
 def offending_lines(message: str) -> list[str]:
