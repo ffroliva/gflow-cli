@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gflow-cli social card</title>
+<style>
+  :root { --ground:#0e1014; --surface:#161a21; --hair:#272d38; --ink:#ecebe5; --muted:#a3aab4;
+    --accent:#ffb03a; --on-accent:#0e1014;
+    --mono:ui-monospace,"Cascadia Code","SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,Roboto,Helvetica,Arial,sans-serif; }
+  * { box-sizing:border-box; margin:0; }
+  html,body { width:100%; height:100%; background:var(--ground); }
+  body { font-family:var(--sans); color:var(--ink); display:flex; flex-direction:column;
+    justify-content:space-between; padding:6vh 6vw; border-left:1.2vh solid var(--accent); }
+  .brand { font-family:var(--mono); font-weight:600; font-size:5.6vh; letter-spacing:-.02em; color:var(--accent); }
+  h1 { font-family:var(--mono); font-weight:600; font-size:9.6vh; line-height:1.08; letter-spacing:-.025em; max-width:20ch; }
+  .sub { font-size:4vh; color:var(--muted); margin-top:2.6vh; line-height:1.35; }
+  .install { align-self:flex-start; font-family:var(--mono); font-size:4.2vh; background:var(--surface);
+    border:1px solid var(--hair); border-radius:1.2vh; padding:2vh 3vh; }
+  .install b { color:var(--accent); font-weight:600; }
+  .foot { font-size:3.4vh; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div class="brand">gflow-cli</div>
+  <div>
+    <h1>Google Flow from your terminal and your AI agent</h1>
+    <p class="sub">MCP server and CLI for Veo 3.1, Omni and Nano Banana</p>
+  </div>
+  <div class="install"><b>$</b> uv tool install gflow-cli</div>
+  <div class="foot">Open source, MIT · Not affiliated with Google</div>
+</body>
+</html>

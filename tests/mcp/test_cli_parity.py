@@ -37,8 +37,12 @@ MCP spend gate: see ``test_paid_commands_agree_between_cli_and_mcp``.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import re
+import textwrap
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import click
@@ -242,6 +246,37 @@ def test_mapped_tools_are_registered(mcp_server: Any) -> None:
     registered = set(mcp_server._tool_manager._tools)
     missing = set(CLI_TO_MCP.values()) - registered
     assert not missing, f"CLI_TO_MCP references unregistered MCP tools: {sorted(missing)}"
+
+
+def test_conftest_imports_every_module_the_server_registers() -> None:
+    """tests/mcp/conftest.py imports the registering modules by hand; keep it equal to startup.
+
+    A module that ``_register_surfaces()`` imports but conftest does not is imported later
+    by whichever test touches it, possibly under a patched server, and the parity test
+    above then fails depending on test order. Compared from source, so the result does not
+    depend on what an earlier test already imported.
+    """
+    from gflow_cli.mcp import server as server_module
+
+    register = server_module._register_surfaces  # pyright: ignore[reportPrivateUsage]
+    source = textwrap.dedent(inspect.getsource(register))
+    registered = _mcp_modules(ast.walk(ast.parse(source)))
+    assert registered, "no gflow_cli.mcp import found in _register_surfaces(); update this test"
+    # Module level only: an import inside the fixture runs too late to beat a patched server.
+    conftest = Path(__file__).with_name("conftest.py").read_text(encoding="utf-8")
+    missing = sorted(registered - _mcp_modules(ast.parse(conftest).body))
+    assert not missing, f"import these at module level in tests/mcp/conftest.py: {missing}"
+
+
+def _mcp_modules(nodes: Iterable[ast.AST]) -> set[str]:
+    """The ``gflow_cli.mcp.X`` modules named by either import form among ``nodes``."""
+    found: set[str] = set()
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            found |= {a.name for a in node.names if a.name.startswith("gflow_cli.mcp.")}
+        elif isinstance(node, ast.ImportFrom) and node.module == "gflow_cli.mcp":
+            found |= {f"gflow_cli.mcp.{a.name}" for a in node.names}
+    return found
 
 
 # --- Option-level parity ------------------------------------------------------
