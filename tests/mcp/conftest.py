@@ -24,6 +24,8 @@ import gflow_cli.mcp.prompts
 import gflow_cli.mcp.resources
 import gflow_cli.mcp.tools  # noqa: F401
 import gflow_cli.mcp.video_captions_tools  # noqa: F401
+import gflow_cli.mcp.video_edit_tools  # noqa: F401
+import gflow_cli.mcp.video_extend_tools  # noqa: F401
 from tests.mcp.openai_fakes import PNG, FakeTool
 
 
@@ -69,8 +71,7 @@ def set_image_tool(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, Any]]
 
 @pytest.fixture()
 def mcp_server():
-    """Return the MCPServer instance with every tool module registered, as at startup."""
-    from gflow_cli.mcp.server import _register_surfaces, server  # noqa: PLC2701
+    """Return the MCPServer instance; every tool module is registered by the imports above."""
+    from gflow_cli.mcp.server import server
 
-    _register_surfaces()
     return server
