@@ -69,7 +69,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator
 
     from playwright.async_api import Locator, Page
 
@@ -85,26 +85,69 @@ LISTING_REREADS_MAX = 3
 LISTING_REREAD_INTERVAL_S = 30.0
 
 
-def _raise_unguarded(
-    route_error: asyncio.Future[Any],
-    *verdict_lists: Sequence[GFlowError],
-) -> None:
-    """Raise the first unguarded verdict unless the route guard aborted the request."""
-    if route_error.done():
-        return
-    for verdicts in verdict_lists:
-        if verdicts:
-            raise verdicts[0]
+class _VerdictTracker:
+    """Correlates listener verdicts with route-guard aborts by request identity (#1518).
+
+    The request event fires before the route guard (#1320): a verdict recorded there is
+    kept only as the backstop for a request no guard aborted. Tracking by request identity
+    ensures aborting a later request B never suppresses an earlier unguarded verdict for
+    request A, and awaiting in-flight guard tasks ensures a still-aborting guard is not
+    mistaken for an unguarded request when the terminal wait settles.
+    """
+
+    def __init__(self) -> None:
+        self._verdicts: list[tuple[Any, GFlowError]] = []
+        self._aborted: list[Any] = []
+        self._in_flight: set[asyncio.Task[Any]] = set()
+
+    def record(self, request: Any, verdict: GFlowError) -> None:
+        if any(request is aborted for aborted in self._aborted):
+            return
+        self._verdicts.append((request, verdict))
+
+    def mark_aborted(self, request: Any) -> None:
+        if not any(request is aborted for aborted in self._aborted):
+            self._aborted.append(request)
+        self._verdicts = [(req, err) for req, err in self._verdicts if req is not request]
+
+    @contextlib.contextmanager
+    def guard_in_flight(self) -> Generator[None]:
+        task = asyncio.current_task()
+        if task is not None:
+            self._in_flight.add(task)
+        try:
+            yield
+        finally:
+            if task is not None:
+                self._in_flight.discard(task)
+
+    async def raise_unguarded(self) -> None:
+        """Await any in-flight guard aborts, then raise the first unguarded verdict."""
+        if self._verdicts or self._in_flight:
+            # Yield once so a guard task scheduled right after the request event can enter.
+            await asyncio.sleep(0)
+            current = asyncio.current_task()
+            while True:
+                pending = tuple(t for t in self._in_flight if t is not current)
+                if not pending:
+                    break
+                done, _ = await asyncio.wait(pending, timeout=5.0)
+                if not done:
+                    break
+        if self._verdicts:
+            raise self._verdicts[0][1]
 
 
-def _raise_if_refused(
+async def _raise_if_refused(
     route_error: asyncio.Future[Any],
-    *verdict_lists: Sequence[GFlowError],
+    verdicts: _VerdictTracker,
 ) -> None:
     """Raise a route-guard refusal first, else any unguarded observer verdict."""
     if route_error.done():
         raise route_error.result()
-    _raise_unguarded(route_error, *verdict_lists)
+    await verdicts.raise_unguarded()
+    if route_error.done():
+        raise route_error.result()
 
 
 async def _aborted_by_check(
@@ -113,6 +156,8 @@ async def _aborted_by_check(
     rpcid: str | None,
     body: str,
     route_error: asyncio.Future[GFlowError],
+    *,
+    on_aborted: Callable[[], None] | None = None,
 ) -> bool:
     """Abort a request ``request_check`` refuses, in the browser, and record it unsent.
 
@@ -123,6 +168,8 @@ async def _aborted_by_check(
     if verdict is None:
         return False
     await route.abort()
+    if on_aborted is not None:
+        on_aborted()
     log.warning("migrated.request_refused_before_send", rpc=rpcid)
     if not route_error.done():
         verdict.charged = "no"
@@ -145,32 +192,32 @@ def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
 
 def _image_request_listener(
     route_error: asyncio.Future[WireFormatError],
+    verdicts: _VerdictTracker,
     *,
     guarded: bool,
     problem_of: Callable[[Any], str | None],
-) -> tuple[Callable[[Any], None], list[WireFormatError]]:
-    """The image submit's request listener, and the problems it saw on a guarded run.
+) -> Callable[[Any], None]:
+    """The image submit's request listener, feeding ``verdicts`` (#1518).
 
     A guarded run's verdict belongs to the route guard, which the request event precedes:
     setting ``route_error`` here would end the wait and unroute the guard before it
     aborts, letting the submit out (#1320). So on a guarded run the listener only records
-    the problem, the backstop for a submit no guard saw, raised once the run settles."""
-    unguarded: list[WireFormatError] = []
+    the problem in ``verdicts``, the backstop for a submit no guard saw, raised once the
+    run settles."""
 
     def on_request(raw_request: Any) -> None:
         url = str(getattr(raw_request, "url", ""))
-        if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+        if url_rpcid(url) != IMAGE_SUBMIT_RPC:
             return
         problem = problem_of(raw_request)
         if problem is None:
             return
         sent = WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
-        if guarded:
-            unguarded.append(sent)
-        else:
+        verdicts.record(raw_request, sent)
+        if not guarded and not route_error.done():
             route_error.set_result(sent)
 
-    return on_request, unguarded
+    return on_request
 
 
 def ogiz0b_reply_images(text: str, request: GenerateImageRequest) -> list[GeneratedImage]:
@@ -288,9 +335,7 @@ class SubmitObserveMixin(MentionMixin):
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
-        unguarded_verdicts: list[GFlowError] = []
-        # Body problems the observer saw; raised only if the route guard did not stop them.
-        observed: list[GFlowError] = []
+        verdicts = _VerdictTracker()
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
         submit_requests: list[tuple[Any, str]] = []
         submit_key: dict[str, str] = {}
@@ -302,7 +347,7 @@ class SubmitObserveMixin(MentionMixin):
 
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
-            if "batchexecute" not in url or route_error.done():
+            if "batchexecute" not in url:
                 return
             # The URL `rpcids` param is the normal carrier and is tried first. The
             # body fallback exists because the interpolation submit has been reported
@@ -323,7 +368,7 @@ class SubmitObserveMixin(MentionMixin):
                     # The guard below judges first and aborts; ending the wait here would
                     # unroute it before it runs (#1320). Kept as the backstop for a request
                     # no guard saw, raised once the run settles.
-                    unguarded_verdicts.append(verdict)
+                    verdicts.record(request, verdict)
                     return
             if rpcid in submit_rpcs:
                 submit_requests.append((request, rpcid))
@@ -344,7 +389,8 @@ class SubmitObserveMixin(MentionMixin):
                 # aborts the same request unsent and names it so. A problem only the
                 # observer saw means the route missed it and Flow got the request.
                 if problem is not None:
-                    observed.append(WireFormatError(detail=problem, route=f"batchexecute:{rpcid}"))
+                    err = WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
+                    verdicts.record(request, err)
                 return
             # An unwatched rpcid is RECORDED (`seen_submit_rpcs`, above) but never
             # adopted as our submit. Adopting by body content was tried and removed:
@@ -515,37 +561,47 @@ class SubmitObserveMixin(MentionMixin):
         async def guard(route: Any, request: Any) -> None:
             """Abort a wrong submit BEFORE it leaves the browser (#1178): the observer
             above only sees a request already on its way to Flow, which bills it."""
-            rpcid: str | None = None
-            try:
-                body = request_body(request)
-                rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
-                if await _aborted_by_check(route, request_check, rpcid, body, route_error):
-                    return
-                problem = (
-                    _submit_body_problem(
+            with verdicts.guard_in_flight():
+                rpcid: str | None = None
+                try:
+                    body = request_body(request)
+                    rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
+                    if await _aborted_by_check(
+                        route,
+                        request_check,
                         rpcid,
                         body,
-                        expect_media_id=expect_media_id,
-                        expect_end_media_id=expect_end_media_id,
-                        expect_reference_ids=expect_reference_ids,
+                        route_error,
+                        on_aborted=lambda: verdicts.mark_aborted(request),
+                    ):
+                        return
+                    problem = (
+                        _submit_body_problem(
+                            rpcid,
+                            body,
+                            expect_media_id=expect_media_id,
+                            expect_end_media_id=expect_end_media_id,
+                            expect_reference_ids=expect_reference_ids,
+                        )
+                        if rpcid is not None and rpcid in submit_rpcs
+                        else None
                     )
-                    if rpcid is not None and rpcid in submit_rpcs
-                    else None
-                )
-            except Exception as exc:  # noqa: BLE001 - an unsettled route hangs the page
-                problem = (
-                    f"migrated host: the {rpcid} submit could not be checked ({type(exc).__name__})"
-                    if rpcid is not None and rpcid in submit_rpcs
-                    else None
-                )
-            if problem is None:
-                # fallback, not continue_: an outer guard (extend) must still see it.
-                await route.fallback()
-                return
-            await route.abort()
-            log.warning("migrated.submit_refused_before_send", rpc=rpcid)
-            if not route_error.done():
-                route_error.set_result(_aborted_before_send(problem, str(rpcid)))
+                except Exception as exc:  # noqa: BLE001 - an unsettled route hangs the page
+                    problem = (
+                        f"migrated host: the {rpcid} submit could not be checked "
+                        f"({type(exc).__name__})"
+                        if rpcid is not None and rpcid in submit_rpcs
+                        else None
+                    )
+                if problem is None:
+                    # fallback, not continue_: an outer guard (extend) must still see it.
+                    await route.fallback()
+                    return
+                await route.abort()
+                verdicts.mark_aborted(request)
+                log.warning("migrated.submit_refused_before_send", rpc=rpcid)
+                if not route_error.done():
+                    route_error.set_result(_aborted_before_send(problem, str(rpcid)))
 
         # Both are ALWAYS armed, t2v included: a stale End chip makes the app submit
         # `nprQif` on a run that asked for no end frame. The route guard is where refusing
@@ -612,7 +668,7 @@ class SubmitObserveMixin(MentionMixin):
                 )
             # The request is inspected before its reply lands, so a wrong body is
             # named as such and not as whatever the reply then says (#1320).
-            _raise_if_refused(route_error, unguarded_verdicts, observed)
+            await _raise_if_refused(route_error, verdicts)
             if not submitted.done() and lost:
                 where = MIGRATED_PROJECT_URL.format(project_id=project_id) if project_id else "Flow"
                 raise _outcome_unknown(
@@ -637,7 +693,7 @@ class SubmitObserveMixin(MentionMixin):
             )
             # Listeners stay armed through the terminal wait; raise any unguarded verdict
             # recorded there so a late bad submit is not silently dropped (#1518).
-            _raise_unguarded(route_error, unguarded_verdicts, observed)
+            await verdicts.raise_unguarded()
             log.info(
                 "migrated.result",
                 status=final.status,
@@ -823,8 +879,10 @@ class SubmitObserveMixin(MentionMixin):
         baseline = None if grid is None else {*grid, *reference_ids, *entity_ids}
 
         guarded = bool(reference_ids or entity_ids)
-        on_request, unguarded_problem = _image_request_listener(
+        verdicts = _VerdictTracker()
+        on_request = _image_request_listener(
             route_error,
+            verdicts,
             guarded=guarded,
             problem_of=lambda raw: _image_body_problem(
                 request_body(raw), reference_ids, request.model, entity_ids
@@ -862,23 +920,25 @@ class SubmitObserveMixin(MentionMixin):
             return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
         async def guard(route: Any, raw_request: Any) -> None:
-            problem = await _guard_image_submit(
-                route, raw_request, reference_ids, request.model, entity_ids
-            )
-            found = _image_body_references(request_body(raw_request))
-            log.info(
-                "migrated.image_submit_guarded",
-                outcome="aborted" if problem else "passed",
-                references=len(reference_ids),
-                characters=len(entity_ids),
-                # What the body actually carried, per slot (#723: extras rode slot 2).
-                body_media=None if found is None else len(found[0]),
-                body_characters=None if found is None else len(found[1]),
-            )
-            if problem is None:
-                return
-            if not route_error.done():
-                route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
+            with verdicts.guard_in_flight():
+                problem = await _guard_image_submit(
+                    route, raw_request, reference_ids, request.model, entity_ids
+                )
+                found = _image_body_references(request_body(raw_request))
+                log.info(
+                    "migrated.image_submit_guarded",
+                    outcome="aborted" if problem else "passed",
+                    references=len(reference_ids),
+                    characters=len(entity_ids),
+                    # What the body actually carried, per slot (#723: extras rode slot 2).
+                    body_media=None if found is None else len(found[0]),
+                    body_characters=None if found is None else len(found[1]),
+                )
+                if problem is None:
+                    return
+                verdicts.mark_aborted(raw_request)
+                if not route_error.done():
+                    route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
 
         page.on("request", on_request)
         page.on("response", on_response)
@@ -894,10 +954,10 @@ class SubmitObserveMixin(MentionMixin):
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            _raise_if_refused(route_error, unguarded_problem)
+            await _raise_if_refused(route_error, verdicts)
             if body_lost.done():
                 images = await _recover_images(page, request, baseline)
-                _raise_unguarded(route_error, unguarded_problem)
+                await verdicts.raise_unguarded()
                 return images
             if result not in done:
                 raise _outcome_unknown(

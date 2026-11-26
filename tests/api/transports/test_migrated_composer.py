@@ -5457,3 +5457,258 @@ async def test_unguarded_image_problem_during_grid_recovery_is_raised_1518() -> 
             page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
         )
     assert ei.value.charged == "maybe"
+
+
+async def test_guarded_abort_does_not_suppress_earlier_unguarded_verdict_1518() -> None:
+    """#1518 review: aborting request B must only remove B's shadow, never A's unguarded verdict."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        if "unguarded-a" in body:
+            return WireFormatError(detail="unguarded request A")
+        if "guarded-b" in body:
+            return WireFormatError(detail="guarded request B")
+        return None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        req_a = FakeRequest(_batch_url("fZytfe"), "f.req=unguarded-a")
+        req_b = FakeRequest(_batch_url("fZytfe"), "f.req=guarded-b")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(req_a))
+            await _maybe_await(listener(req_b))
+        route_b = FakeRoute()
+        await page.routes[-1][1](route_b, req_b)
+        page.route_outcomes.append(route_b.outcome)
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    with pytest.raises(WireFormatError, match="unguarded request A") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action(), is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+async def test_unguarded_verdict_after_earlier_guarded_abort_is_still_raised_1518() -> None:
+    """#1518 review: an earlier route_error must not mute a later unguarded request C."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        if "guarded-b" in body:
+            return WireFormatError(detail="guarded request B")
+        if "unguarded-c" in body:
+            return WireFormatError(detail="unguarded request C")
+        return None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        req_b = FakeRequest(_batch_url("fZytfe"), "f.req=guarded-b")
+        req_c = FakeRequest(_batch_url("fZytfe"), "f.req=unguarded-c")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(req_b))
+        route_b = FakeRoute()
+        await page.routes[-1][1](route_b, req_b)
+        page.route_outcomes.append(route_b.outcome)
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(req_c))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    with pytest.raises(WireFormatError, match="unguarded request C") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert ei.value.charged == "maybe"
+
+
+async def test_in_flight_guard_abort_completing_after_terminal_status_keeps_clip_1518() -> None:
+    """#1518 review: if _finish_submitted returns while guard's route.abort() is still pending,
+    the check waits for the in-flight abort rather than raising the listener's pre-guard shadow."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray duplicate") if "stray-dup" in body else None
+
+    class _SlowAbortRoute(FakeRoute):
+        def __init__(self, release: asyncio.Event) -> None:
+            super().__init__()
+            self.release = release
+            self.abort_entered = asyncio.Event()
+
+        async def abort(self) -> None:
+            self.abort_entered.set()
+            await self.release.wait()
+            self.outcome = "abort"
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+    release_abort = asyncio.Event()
+    slow_route = _SlowAbortRoute(release_abort)
+    guard_task: asyncio.Task[Any] | None = None
+
+    async def on_started(_started: Any) -> None:
+        nonlocal guard_task
+        stray_req = FakeRequest(_batch_url("fZytfe"), "f.req=stray-dup")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(stray_req))
+        guard_task = asyncio.create_task(page.routes[-1][1](slow_route, stray_req))
+        await slow_route.abort_entered.wait()
+        # Terminal status lands BEFORE slow_route.abort() resumes and sets route_error.
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+        async def finish_abort() -> None:
+            await asyncio.sleep(0.02)
+            release_abort.set()
+
+        asyncio.create_task(finish_abort())
+
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=on_started,
+        project_id=PROJ,
+        submit_rpcs=("fZytfe",),
+        request_check=check,
+    )
+    assert guard_task is not None and guard_task.done()
+    assert rec.is_done and rec.media_id == MEDIA
+    assert slow_route.outcome == "abort"
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_image_guarded_abort_does_not_suppress_earlier_unguarded_problem_1518() -> None:
+    """#1518 review (image sibling): a guarded abort of B must not hide unguarded problem A."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _MixedImagePage(RoutingPage):
+        injected = False
+
+        def _fire_submit(self) -> None:
+            FakePage._fire_submit(self)
+
+        async def evaluate(self, expression: str, argument: Any = None) -> Any:
+            if (
+                not self.injected
+                and "flow-image-tile" in expression
+                and len(self.dom.grid_reads) == 1
+            ):
+                self.injected = True
+                req_a = FakeRequest(_batch_url("ogiZ0b"), "")
+                req_b = FakeRequest(_batch_url("ogiZ0b"), "")
+                for listener in self.listeners("request"):
+                    await _maybe_await(listener(req_a))
+                    await _maybe_await(listener(req_b))
+                route_b = FakeRoute()
+                await self.routes[-1][1](route_b, req_b)
+                self.route_outcomes.append(route_b.outcome)
+            return await super().evaluate(expression, argument)
+
+    page = _MixedImagePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert page.route_outcomes == ["abort"]
+    assert ei.value.charged == "maybe"
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_image_in_flight_guard_abort_during_recovery_keeps_images_1518() -> None:
+    """#1518 review (image sibling): pending guard abort clears its verdict before return."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _SlowImageAbortRoute(FakeRoute):
+        def __init__(self, release: asyncio.Event) -> None:
+            super().__init__()
+            self.release = release
+            self.abort_entered = asyncio.Event()
+
+        async def abort(self) -> None:
+            self.abort_entered.set()
+            await self.release.wait()
+            self.outcome = "abort"
+
+    release_abort = asyncio.Event()
+    slow_route = _SlowImageAbortRoute(release_abort)
+    guard_task: asyncio.Task[Any] | None = None
+
+    class _SlowGuardImagePage(RoutingPage):
+        injected = False
+
+        def _fire_submit(self) -> None:
+            FakePage._fire_submit(self)
+
+        async def evaluate(self, expression: str, argument: Any = None) -> Any:
+            nonlocal guard_task
+            if (
+                not self.injected
+                and "flow-image-tile" in expression
+                and len(self.dom.grid_reads) == 1
+            ):
+                self.injected = True
+                req = FakeRequest(_batch_url("ogiZ0b"), "")
+                for listener in self.listeners("request"):
+                    await _maybe_await(listener(req))
+                guard_task = asyncio.create_task(self.routes[-1][1](slow_route, req))
+                await slow_route.abort_entered.wait()
+
+                async def finish_abort() -> None:
+                    await asyncio.sleep(0.02)
+                    release_abort.set()
+
+                asyncio.create_task(finish_abort())
+            return await super().evaluate(expression, argument)
+
+    page = _SlowGuardImagePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+    )
+    assert guard_task is not None and guard_task.done()
+    assert slow_route.outcome == "abort"
+    assert [i.media_name for i in images] == [NEW_TILE]
