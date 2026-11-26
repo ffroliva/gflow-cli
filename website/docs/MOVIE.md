@@ -304,7 +304,7 @@ For each scene, `gflow movie` merges global manifest cards with scene overrides 
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--profile <name>` | default profile | Chrome profile to drive (must be a `chrome`-strategy profile). |
-| `--out-dir <dir>` | manifest `output_dir` | Override the output directory. |
+| `--out-dir <dir>` | manifest `output_dir`, else `<output root>/videos/<YYYY-MM-DD>/` | Override the output directory. |
 | `--dry-run` | off | Print the pending video operation plan; make **no** API calls. |
 | `--fail-fast` / `--continue-on-error` | continue | Stop on the first scene failure, or attempt the rest (default). |
 | `--stitch` | off | After generating, hard-concat all clips into one preview mp4 (ffmpeg, no transitions). |
