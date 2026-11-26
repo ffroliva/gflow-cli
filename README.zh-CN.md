@@ -1,5 +1,3 @@
-<!-- mcp-name: io.github.ffroliva/gflow-cli -->
-
 # gflow-cli：Google Flow 的 MCP 服务器和命令行工具（Veo 3.1、Omni、Nano Banana）
 
 [English](README.md) | **简体中文**
