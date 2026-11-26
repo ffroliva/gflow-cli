@@ -4,6 +4,12 @@
 
 **gflow-cli** is an open-source MCP server and CLI for [Google Flow](https://labs.google/fx/tools/flow): it generates **Veo 3.1** and **Omni** video and **Nano Banana** and **Imagen** images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or the terminal, instead of clicking through the web UI. And because it ships an MCP server, you can point an AI assistant at it and let the agent drive the generations for you.
 
+```bash
+uv tool install gflow-cli
+```
+
+See [Installation](installation.md) for the requirements and the one-time browser step.
+
 !!! warning "Read this before you install"
     gflow-cli is an **independent project, not affiliated with Google**. It drives a headed browser on *your own* Google Flow session, so treat it as your own account risk. It works with any Google account that has Flow access, and every video generation bills your Flow credits (images spend none but count against a daily image quota).
 
@@ -27,7 +33,7 @@ The Flow web UI is designed for interactive use. gflow-cli adds a terminal surfa
 
     ---
 
-    Run `gflow mcp run` and point Claude, Cursor, or Copilot at it. The agent picks the models, prompt tooling, and settings.
+    Run `gflow mcp run` and point Claude Code, Cursor, Codex, or VS Code at it. The agent picks the models, prompt tooling, and settings.
 
     [:octicons-arrow-right-24: Agent-driven](agents.md)
 
