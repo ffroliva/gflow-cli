@@ -932,7 +932,7 @@ class SubmitObserveMixin(MentionMixin):
 def _without_listing_url(rec: GenerationRecord) -> GenerationRecord:
     """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); without it
     the download takes the clip route, which fetches a signed one."""
-    return replace(rec, video_url=None)
+    return replace(rec, video_url=None)  # NOSONAR(python:S5886) replace() keeps the type
 
 
 @dataclass
@@ -961,6 +961,7 @@ class _StatusWatch:
     def note_unreadable(self, rpcid: str | None) -> None:
         if rpcid in STATUS_RPCS and self.workflow and not self.settled:
             self.status_lost.set()
+            self.seen.set()  # an evicted poll is still Flow polling, not silence
 
     def settle_from_listing(self, rec: GenerationRecord) -> None:
         """Settle on a terminal listing record; no signed URL can follow it."""
@@ -977,23 +978,25 @@ class _StatusWatch:
         self.settle(rec)
 
     async def went_quiet(self, window_s: float, deadline: float) -> bool:
-        """Wait until no readable status frame arrives for ``window_s``; ``False`` if the
+        """Wait until no status poll, readable or not, arrives for ``window_s``; ``False`` if the
         run settles or the deadline passes first. Flow polls every ~5 s while it works."""
         while not self.settled and time.monotonic() < deadline:
             self.seen.clear()
-            await self.wait_until(self.seen, min(window_s, deadline - time.monotonic()))
+            await self.wait_until(self.seen, min(time.monotonic() + window_s, deadline))
             if not self.seen.is_set():
                 return not self.settled and time.monotonic() < deadline
         return False
 
-    async def wait_until(self, event: asyncio.Event, timeout: float) -> None:
-        if self.settled or timeout <= 0:
+    async def wait_until(self, event: asyncio.Event, until: float) -> None:
+        """Wait for ``event``, the run settling, or the monotonic time ``until``."""
+        left_s = until - time.monotonic()
+        if self.settled or left_s <= 0:
             return
         task = asyncio.create_task(event.wait())
         try:
             await asyncio.wait(
                 {self.terminal, self.done_no_url, task},
-                timeout=timeout,
+                timeout=left_s,
                 return_when=asyncio.FIRST_COMPLETED,
             )
         finally:
@@ -1017,15 +1020,15 @@ class _ListingRecovery:
         return bool(self.project_id) and self.reads < LISTING_REREADS_MAX
 
     async def read_if_due(self, deadline: float) -> None:
-        """Read once the interval since the last read is up, unless a readable poll comes
-        first; the last read is kept for the poll deadline."""
+        """Read once the interval since the last read is up, unless a poll comes first;
+        the last read is kept for the poll deadline."""
         if self.reads >= LISTING_REREADS_MAX - 1:
             return
         # Flow sends no poll after the terminal one, so a loss inside the interval waits
         # it out rather than leaving the finished clip to the deadline read.
         due_in = LISTING_REREAD_INTERVAL_S - (time.monotonic() - self.last_read)
         watch = self.status_watch
-        await watch.wait_until(watch.seen, min(due_in, deadline - time.monotonic()))
+        await watch.wait_until(watch.seen, min(time.monotonic() + due_in, deadline))
         if not watch.seen.is_set():
             await self.read(min(LISTING_READ_BUDGET_S, deadline - time.monotonic()))
 
@@ -1072,7 +1075,7 @@ async def _finish_submitted(
             await maybe
     listing = _ListingRecovery(composer, page, resolved_project_id, first.workflow_id, status_watch)
     while not status_watch.settled and time.monotonic() < deadline:
-        await status_watch.wait_until(status_watch.status_lost, deadline - time.monotonic())
+        await status_watch.wait_until(status_watch.status_lost, deadline)
         # Once a status body is lost, polls going quiet is the sign the lost one was the
         # terminal poll: Flow sends none after it.
         if status_watch.status_lost.is_set() and await status_watch.went_quiet(
@@ -1126,7 +1129,7 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
             timeout=budget_s * 1000,
         )
         return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
-    # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
+    # Engine TimeoutErrors are not the builtin one. Any failure here leaves the
     # caller's exit 9, which names the project; this runs after Flow has billed.
     except (TimeoutError, *engine_errors) as exc:
         log.warning(

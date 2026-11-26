@@ -113,6 +113,25 @@ class _As29sWatch:
             return
         _collect(text, media_id=self.media_id, into=self.found)
 
+    async def wait_out(self, page: Page, deadline: float) -> None:
+        """Wait while this load can still bring the record, or until ``deadline``."""
+        loop = asyncio.get_running_loop()
+        while self.waiting and loop.time() < deadline:
+            await page.wait_for_timeout(500)
+
+
+async def _open_route(page: Page, url: str, *, timeout_s: float, reload: bool) -> bool:
+    """Load the clip route; ``False`` when a reload fails, which only had the rest of the
+    wait. A failed first load raises."""
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+    except _engine.retryable_engine_errors():  # patchright's Error is a separate class
+        if not reload:
+            raise
+        log.warning("migrated.recover_reload_failed")
+        return False
+    return True
+
 
 async def _await_signed_record(
     page: Page, *, media_id: str, project_id: str, wait_s: float
@@ -133,11 +152,9 @@ async def _await_signed_record(
         # Total time is capped at the first navigation's timeout plus ``wait_s``: the wait
         # starts once the route has loaded, and a reload spends what is left of it.
         while not watch.found and watch.attempt < _SIGNED_URL_ATTEMPTS:
-            nav_timeout_s = _NAVIGATION_TIMEOUT_S
-            if deadline is not None:
-                nav_timeout_s = deadline - loop.time()
-                if nav_timeout_s <= 0:
-                    break
+            nav_timeout_s = _NAVIGATION_TIMEOUT_S if deadline is None else deadline - loop.time()
+            if nav_timeout_s <= 0:
+                break
             watch.attempt += 1
             log.info(
                 "migrated.recover_navigate",
@@ -145,24 +162,16 @@ async def _await_signed_record(
                 media_id=media_id,
                 attempt=watch.attempt,
             )
-            try:
-                await page.goto(
-                    _clip_url(project_id, media_id),
-                    wait_until="domcontentloaded",
-                    timeout=nav_timeout_s * 1000,
-                )
-            except _engine.retryable_engine_errors():  # patchright's Error is a separate class
-                if deadline is None:
-                    raise
-                # A reload only has what is left of the wait; running out is "no URL".
-                log.warning("migrated.recover_reload_failed", attempt=watch.attempt)
-                break
+            url = _clip_url(project_id, media_id)
+            if not await _open_route(
+                page, url, timeout_s=nav_timeout_s, reload=deadline is not None
+            ):
+                break  # running out of wait on a reload is "no URL"
             if deadline is None:
                 deadline = loop.time() + wait_s
             # A healthy load keeps the whole remaining budget: re-opening the route would
             # cancel an as29s still in flight. Only an observed unreadable body reloads.
-            while watch.waiting and loop.time() < deadline:
-                await page.wait_for_timeout(500)
+            await watch.wait_out(page, deadline)
     finally:
         page.remove_listener("request", watch.on_request)
         page.remove_listener("response", watch.on_response)

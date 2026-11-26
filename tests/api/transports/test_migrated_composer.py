@@ -5297,3 +5297,28 @@ async def test_a_spent_budget_opens_no_listing_tab_1484() -> None:
     page.context = ctx = _CountingContext(_FailingTab())
     assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=0.0) is None
     assert ctx.opened == 0
+
+
+async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flow polls while the clip runs; an evicted body is still a poll. Counting only
+    readable frames read every eviction as silence and spent the listing reads early."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.15)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 8, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    reads = _clip_done_after(page, done_at_s=0.4)
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done
+    assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
+    assert len(reads) == 1, "read the listing while Flow was still polling"
