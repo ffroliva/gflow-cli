@@ -308,6 +308,125 @@ class TestRecoverClip:
 
         assert page._handlers == []  # noqa: SLF001 - asserting cleanup
 
+    @pytest.mark.asyncio
+    async def test_reloads_the_clip_route_when_the_first_as29s_body_is_evicted_1484(
+        self, tmp_path: Path
+    ) -> None:
+        """#1484: `as29s` is sent once as the clip route loads; if Chrome evicts its body on
+        the first load, sitting idle on the page never triggers a second `as29s`, whereas
+        re-opening the route does."""
+
+        class _EvictedFirstLoad(FakePage):
+            async def goto(self, url: str, **_: Any) -> None:
+                self.gotos.append(url)
+                if len(self.gotos) == 1:
+                    for handler in list(self._handlers):
+                        await handler(_Unreadable())
+                    return
+                for text in self.frames:
+                    for handler in list(self._handlers):
+                        await handler(_Frame(text))
+
+        page = _EvictedFirstLoad()
+        clip = await _recover(page, tmp_path, wait_s=0.3)
+
+        assert clip.media_id == MEDIA_ID
+        expected_url = MIGRATED_CLIP_URL.format(project_id=PROJECT_ID, media_id=MEDIA_ID)
+        assert page.gotos == [expected_url, expected_url]
+
+    @pytest.mark.asyncio
+    async def test_a_late_as29s_on_a_healthy_load_is_not_cut_short_by_a_reload_1484(
+        self, tmp_path: Path
+    ) -> None:
+        """A cold profile or slow link answers late; re-opening the route would cancel the
+        reply still in flight, so only an observed unreadable body earns a reload."""
+        page = _SlowPage(reply_after_s=0.2)
+        clip = await _recover(page, tmp_path, wait_s=0.3)
+
+        assert clip.media_id == MEDIA_ID
+        assert len(page.gotos) == 1
+
+    @pytest.mark.asyncio
+    async def test_the_wait_budget_starts_after_the_route_has_loaded_1484(
+        self, tmp_path: Path
+    ) -> None:
+        """Navigation time must not eat the wait for the reply that follows it."""
+        page = _SlowPage(navigate_s=0.2, reply_after_s=0.05)
+        clip = await _recover(page, tmp_path, wait_s=0.15)
+
+        assert clip.media_id == MEDIA_ID
+
+    @pytest.mark.asyncio
+    async def test_a_body_failing_from_the_previous_load_does_not_abort_the_next_1484(
+        self, tmp_path: Path
+    ) -> None:
+        """A read still pending from load 1 fails once load 2 commits; that is load 1's
+        failure and must not cut load 2 short."""
+
+        class _StaleFailure(_SlowPage):
+            async def goto(self, url: str, **kw: Any) -> None:
+                if not self.gotos:
+                    self.gotos.append(url)
+                    for handler in list(self._handlers):
+                        asyncio.ensure_future(handler(_FailsOnNextLoad(self)))
+                        await handler(_Unreadable())
+                    await asyncio.sleep(0)
+                    return
+                self.next_load.set()
+                await super().goto(url, **kw)
+
+        page = _StaleFailure(reply_after_s=0.1)
+        clip = await _recover(page, tmp_path, wait_s=0.3)
+
+        assert clip.media_id == MEDIA_ID
+        assert len(page.gotos) == 2
+
+    @pytest.mark.asyncio
+    async def test_the_error_names_the_loads_and_includes_navigation_time(
+        self, tmp_path: Path
+    ) -> None:
+        page = _SlowPage(navigate_s=0.0, reply_after_s=None)
+        with pytest.raises(WireFormatError, match=r"after 1 load\(s\).*including navigation"):
+            await _recover(page, tmp_path, wait_s=0.05)
+
+
+class _SlowPage(FakePage):
+    """Navigation takes ``navigate_s``; the `as29s` reply lands ``reply_after_s`` later."""
+
+    def __init__(self, *, navigate_s: float = 0.0, reply_after_s: float | None) -> None:
+        super().__init__()
+        self.navigate_s = navigate_s
+        self.reply_after_s = reply_after_s
+        self.next_load = asyncio.Event()
+        self._reply_at: float | None = None
+
+    async def goto(self, url: str, **_: Any) -> None:
+        self.gotos.append(url)
+        await asyncio.sleep(self.navigate_s)
+        loop = asyncio.get_running_loop()
+        self._reply_at = None if self.reply_after_s is None else loop.time() + self.reply_after_s
+
+    async def wait_for_timeout(self, _ms: float) -> None:
+        await asyncio.sleep(0.01)
+        if self._reply_at is not None and asyncio.get_running_loop().time() >= self._reply_at:
+            self._reply_at = None
+            for text in self.frames:
+                for handler in list(self._handlers):
+                    await handler(_Frame(text))
+
+
+class _FailsOnNextLoad:
+    """An `as29s` body whose read is still pending when the next load commits."""
+
+    url = _Unreadable.url
+
+    def __init__(self, page: _SlowPage) -> None:
+        self._page = page
+
+    async def text(self) -> str:
+        await self._page.next_load.wait()
+        raise RuntimeError("body discarded by the next navigation")
+
 
 @pytest.mark.asyncio
 async def test_recover_clip_refuses_an_unsafe_media_id_before_any_page_work(
@@ -320,3 +439,82 @@ async def test_recover_clip_refuses_an_unsafe_media_id_before_any_page_work(
     with pytest.raises(ValueError, match="Unsafe"):
         await recover_clip(page, project_id="p", media_id="../escape", out_dir=tmp_path)
     assert list(tmp_path.iterdir()) == []
+
+
+class _UnreadableFor(_Unreadable):
+    """A lost `as29s` body whose request names ``media_id``."""
+
+    def __init__(self, media_id: str) -> None:
+        self.request = type("Req", (), {"post_data": f'[["as29s","[\\"{media_id}\\"]"]]'})()
+
+
+@pytest.mark.asyncio
+async def test_a_reload_that_times_out_is_the_typed_no_url_error_1484(tmp_path: Path) -> None:
+    """A late reload gets only what is left of the wait; its timeout must keep the typed
+    error and its remediation, not surface as a raw Playwright error."""
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    class _ReloadTimesOut(_SlowPage):
+        reload_timeouts_ms: list[float]
+
+        async def goto(self, url: str, **kw: Any) -> None:
+            if self.gotos:
+                self.gotos.append(url)
+                self.reload_timeouts_ms.append(kw["timeout"])
+                raise PlaywrightTimeoutError("page.goto: Timeout 12ms exceeded")
+            await super().goto(url, **kw)
+            for handler in list(self._handlers):
+                await handler(_UnreadableFor(MEDIA_ID))
+
+    page = _ReloadTimesOut(reply_after_s=None)
+    page.reload_timeouts_ms = []
+    with pytest.raises(WireFormatError, match=r"no signed media URL .* after 2 load\(s\)"):
+        await _recover(page, tmp_path, wait_s=0.3)
+    # The reload spends only what is left of the wait, never a fresh navigation timeout.
+    assert len(page.reload_timeouts_ms) == 1 and 0 < page.reload_timeouts_ms[0] <= 300
+
+
+@pytest.mark.asyncio
+async def test_a_reply_requested_by_the_previous_load_is_charged_to_that_load_1484() -> None:
+    """The loss belongs to the load that SENT the request, even when its response handler
+    only starts after the next load began."""
+    from gflow_cli.api.transports.migrated_recover import _As29sWatch
+
+    watch = _As29sWatch(MEDIA_ID)
+    watch.attempt = 1
+    watch.on_request(type("Req", (), {"url": _Unreadable.url})())  # another request
+    stale = type("Req", (), {"url": _Unreadable.url})()
+    watch.on_request(stale)
+    watch.attempt = 2
+    response = _Unreadable()
+    response.request = stale  # type: ignore[attr-defined]
+    await watch.on_response(response)
+    assert watch.waiting, "a body lost by load 1 cut load 2 short"
+
+
+@pytest.mark.asyncio
+async def test_a_reload_failing_under_another_engine_is_the_typed_no_url_error_1484(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """patchright's Error is not playwright's; a reload timeout there must still end as
+    the typed no-signed-URL error."""
+    from playwright.async_api import Error as PwError
+
+    from gflow_cli.api import _engine
+
+    class _OtherEngineError(Exception):
+        pass
+
+    monkeypatch.setattr(_engine, "retryable_engine_errors", lambda: (PwError, _OtherEngineError))
+
+    class _ReloadFails(_SlowPage):
+        async def goto(self, url: str, **kw: Any) -> None:
+            if self.gotos:
+                self.gotos.append(url)
+                raise _OtherEngineError("page.goto: Timeout exceeded")
+            await super().goto(url, **kw)
+            for handler in list(self._handlers):
+                await handler(_Unreadable())
+
+    with pytest.raises(WireFormatError, match="no signed media URL"):
+        await _recover(_ReloadFails(reply_after_s=None), tmp_path, wait_s=0.3)

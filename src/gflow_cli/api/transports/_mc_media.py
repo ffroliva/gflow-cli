@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import structlog
-from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.transports._common import (
     expired_link_hint,
@@ -112,13 +111,14 @@ class MediaMixin:
         caller that has finished with the page may reach this."""
         if record.video_url:
             return await MigratedComposer.fetch_mp4(page, record)
+        from gflow_cli.api._engine import retryable_engine_errors  # noqa: PLC0415 - cycle
         from gflow_cli.api.transports import migrated_recover  # noqa: PLC0415 - cycle
 
         try:
             _, body = await migrated_recover.read_clip(
                 page, project_id=record.project_id, media_id=record.media_id
             )
-        except (GFlowError, PlaywrightError, TimeoutError) as exc:
+        except (GFlowError, TimeoutError, *retryable_engine_errors()) as exc:
             raise MediaDownloadError(
                 media_id=record.media_id,
                 detail=(

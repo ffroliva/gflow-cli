@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import structlog
-from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.transports._mc_common import (
@@ -77,6 +77,12 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import VideoStartedCallback
 
 log = structlog.get_logger(__name__)
+
+#: At most this many ``Zzl0ze`` reads recover one run whose status replies are lost
+#: (#1484), the last read at the poll deadline included; each opens a second tab.
+LISTING_REREADS_MAX = 3
+#: Minimum spacing between those reads while status replies keep getting lost.
+LISTING_REREAD_INTERVAL_S = 30.0
 
 
 async def _aborted_by_check(
@@ -337,15 +343,11 @@ class SubmitObserveMixin(MentionMixin):
         terminal: asyncio.Future[GenerationRecord] = loop.create_future()
         done_no_url: asyncio.Future[GenerationRecord] = loop.create_future()
         workflow: dict[str, str] = {}
+        status_watch = _StatusWatch(terminal, done_no_url, workflow)
         # The submit rpc whose reply body was lost, while a status poll may still name it.
         lost: dict[str, str] = {}
 
-        def _settle(rec: GenerationRecord) -> None:
-            if rec.is_failed or (rec.is_done and rec.video_url):
-                if not terminal.done():
-                    terminal.set_result(rec)
-            elif rec.is_done and not done_no_url.done():
-                done_no_url.set_result(rec)
+        _settle = status_watch.settle
 
         def _adopt(rid: str, payload: Any) -> None:
             carrying = generation_records_carrying(rid, payload, adopt_ids)
@@ -375,7 +377,10 @@ class SubmitObserveMixin(MentionMixin):
                 status=rec.status,
             )
             submitted.set_result(rec)
-            _settle(rec)
+            if rid == LISTING_RPC and (rec.is_done or rec.is_failed):
+                status_watch.settle_from_listing(rec)  # no signed URL follows a listing
+            else:
+                _settle(rec)
 
         def _note_poll(rid: str, payload: Any) -> None:
             assert by_prompt is not None  # noqa: S101 - set in the same branch as `lost`
@@ -424,6 +429,7 @@ class SubmitObserveMixin(MentionMixin):
                     if rpcid in submit_rpcs
                     else next((r for q, r in submit_requests if q is sent), None)
                 )
+                status_watch.note_unreadable(rpcid)
                 if sub is None or submitted.done():
                     return
                 if adopt_prompt is not None and project_id and "key" in submit_key:
@@ -480,12 +486,7 @@ class SubmitObserveMixin(MentionMixin):
                     else:
                         _adopt(rid, payload)
                 elif rid in STATUS_RPCS and workflow:
-                    try:
-                        rec = generation_record(rid, payload, workflow_id=workflow["id"])
-                    except WireFormatError:
-                        continue
-                    log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
-                    _settle(rec)
+                    status_watch.note_frame(rid, payload)
 
         page.on("response", on_response)
 
@@ -608,19 +609,14 @@ class SubmitObserveMixin(MentionMixin):
                     f"migrated host: no {'/'.join(submit_rpcs)} reply within "
                     f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
-            first = submitted.result()
-            started = VideoStarted(
-                media_id=first.media_id,
-                project_id=project_id or first.project_id,
-                flow_operation_id=first.workflow_id,
-                workflow_id=first.workflow_id,
-            )
-            if on_started is not None:
-                maybe = on_started(started)
-                if asyncio.iscoroutine(maybe):
-                    await maybe
-            final = await self._await_terminal(
-                terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
+            final = await _finish_submitted(
+                self,
+                page,
+                first=submitted.result(),
+                project_id=project_id,
+                on_started=on_started,
+                status_watch=status_watch,
+                deadline=deadline,
             )
             log.info(
                 "migrated.result",
@@ -933,6 +929,170 @@ class SubmitObserveMixin(MentionMixin):
             return done_no_url.result()
 
 
+def _without_listing_url(rec: GenerationRecord) -> GenerationRecord:
+    """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); without it
+    the download takes the clip route, which fetches a signed one."""
+    return replace(rec, video_url=None)  # NOSONAR(S5886) - replace() keeps the type
+
+
+@dataclass
+class _StatusWatch:
+    """Tracks post-submit ``jwpduf``/``as29s`` health and recovers from ``Zzl0ze`` (#1484)."""
+
+    terminal: asyncio.Future[GenerationRecord]
+    done_no_url: asyncio.Future[GenerationRecord]
+    workflow: dict[str, str]
+    #: Set once a status body is lost; stays set, since a later readable frame can be a
+    #: stale running one while the terminal poll that matters was the one lost.
+    status_lost: asyncio.Event = field(default_factory=asyncio.Event)
+    seen: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def settled(self) -> bool:
+        return self.terminal.done() or self.done_no_url.done()
+
+    def settle(self, rec: GenerationRecord) -> None:
+        if rec.is_failed or (rec.is_done and rec.video_url):
+            if not self.terminal.done():
+                self.terminal.set_result(rec)
+        elif rec.is_done and not self.done_no_url.done():
+            self.done_no_url.set_result(rec)
+
+    def note_unreadable(self, rpcid: str | None) -> None:
+        if rpcid in STATUS_RPCS and self.workflow and not self.settled:
+            self.status_lost.set()
+            self.seen.set()  # an evicted poll is still Flow polling, not silence
+
+    def settle_from_listing(self, rec: GenerationRecord) -> None:
+        """Settle on a terminal listing record; no signed URL can follow it."""
+        if not self.terminal.done():
+            self.terminal.set_result(_without_listing_url(rec))
+
+    def note_frame(self, rid: str, payload: Any) -> None:
+        try:
+            rec = generation_record(rid, payload, workflow_id=self.workflow["id"])
+        except WireFormatError:
+            return
+        self.seen.set()
+        log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
+        self.settle(rec)
+
+    async def went_quiet(self, window_s: float, deadline: float) -> bool:
+        """Wait until no status poll, readable or not, arrives for ``window_s``; ``False`` if the
+        run settles or the deadline passes first. Flow polls every ~5 s while it works."""
+        while not self.settled and time.monotonic() < deadline:
+            self.seen.clear()
+            await self.wait_until(self.seen, min(time.monotonic() + window_s, deadline))
+            if not self.seen.is_set():
+                return not self.settled and time.monotonic() < deadline
+        return False
+
+    async def wait_until(self, event: asyncio.Event, until: float) -> None:
+        """Wait for ``event``, the run settling, or the monotonic time ``until``."""
+        left_s = until - time.monotonic()
+        if self.settled or left_s <= 0:
+            return
+        task = asyncio.create_task(event.wait())
+        try:
+            await asyncio.wait(
+                {self.terminal, self.done_no_url, task},
+                timeout=left_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            task.cancel()
+
+
+@dataclass
+class _ListingRecovery:
+    """Settles a run from ``Zzl0ze`` when its status replies are lost, at a bounded rate."""
+
+    composer: SubmitObserveMixin
+    page: Page
+    project_id: str | None
+    workflow_id: str
+    status_watch: _StatusWatch
+    reads: int = 0
+    last_read: float = float("-inf")
+
+    @property
+    def can_read(self) -> bool:
+        return bool(self.project_id) and self.reads < LISTING_REREADS_MAX
+
+    async def read_if_due(self, deadline: float) -> None:
+        """Read once the interval since the last read is up, unless a poll comes first;
+        the last read is kept for the poll deadline."""
+        if self.reads >= LISTING_REREADS_MAX - 1:
+            return
+        # Flow sends no poll after the terminal one, so a loss inside the interval waits
+        # it out rather than leaving the finished clip to the deadline read.
+        due_in = LISTING_REREAD_INTERVAL_S - (time.monotonic() - self.last_read)
+        watch = self.status_watch
+        await watch.wait_until(watch.seen, min(time.monotonic() + due_in, deadline))
+        if not watch.seen.is_set():
+            await self.read(min(LISTING_READ_BUDGET_S, deadline - time.monotonic()))
+
+    async def read(self, budget_s: float) -> None:
+        """Read ``Zzl0ze`` once and settle the run if the listing reports it terminal."""
+        if not self.can_read or self.status_watch.settled or budget_s <= 0:
+            return
+        self.reads += 1
+        self.last_read = time.monotonic()
+        assert self.project_id is not None  # noqa: S101 - checked by can_read
+        listing = await self.composer._read_listing(self.page, self.project_id, budget_s=budget_s)
+        if listing is None or self.status_watch.settled:
+            return
+        try:
+            rec = generation_record(LISTING_RPC, listing, workflow_id=self.workflow_id)
+        except WireFormatError:
+            return
+        if rec.is_done or rec.is_failed:
+            log.info("migrated.status", rpc=LISTING_RPC, status=rec.status, bytes=rec.size_bytes)
+            self.status_watch.settle_from_listing(rec)
+
+
+async def _finish_submitted(
+    composer: SubmitObserveMixin,
+    page: Page,
+    *,
+    first: GenerationRecord,
+    project_id: str | None,
+    on_started: VideoStartedCallback | None,
+    status_watch: _StatusWatch,
+    deadline: float,
+) -> GenerationRecord:
+    """Fire ``on_started``, then wait for a terminal poll or recover from ``Zzl0ze`` (#1484)."""
+    resolved_project_id = project_id or first.project_id
+    started = VideoStarted(
+        media_id=first.media_id,
+        project_id=resolved_project_id,
+        flow_operation_id=first.workflow_id,
+        workflow_id=first.workflow_id,
+    )
+    if on_started is not None:
+        maybe = on_started(started)
+        if asyncio.iscoroutine(maybe):
+            await maybe
+    listing = _ListingRecovery(composer, page, resolved_project_id, first.workflow_id, status_watch)
+    while not status_watch.settled and time.monotonic() < deadline:
+        await status_watch.wait_until(status_watch.status_lost, deadline)
+        # Once a status body is lost, polls going quiet is the sign the lost one was the
+        # terminal poll: Flow sends none after it.
+        if status_watch.status_lost.is_set() and await status_watch.went_quiet(
+            RESULT_URL_GRACE_S, deadline
+        ):
+            await listing.read_if_due(deadline)
+    # A last look past the poll deadline (up to LISTING_READ_BUDGET_S more): the clip is
+    # billed, and the listing is the only record left once its polls stopped arriving.
+    await listing.read(LISTING_READ_BUDGET_S)
+    return await composer._await_terminal(
+        status_watch.terminal,
+        status_watch.done_no_url,
+        deadline=deadline,
+        workflow_id=first.workflow_id,
+    )
+
+
 async def read_project_listing(page: Page, project_id: str, *, budget_s: float) -> Any | None:
     """The project's ``Zzl0ze`` payload, read in a second tab; ``None`` if none came.
 
@@ -953,6 +1113,11 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
             if rid == LISTING_RPC and not got.done():
                 got.set_result(payload)
 
+    from gflow_cli.api._engine import retryable_engine_errors  # noqa: PLC0415 - as _common
+
+    if budget_s <= 0:  # goto(timeout=0) would wait without limit
+        return None
+    engine_errors = retryable_engine_errors()  # patchright's Error is a separate class
     end = time.monotonic() + budget_s
     tab: Page | None = None
     try:
@@ -964,14 +1129,14 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
             timeout=budget_s * 1000,
         )
         return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
-    # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
+    # Engine TimeoutErrors are not the builtin one. Any failure here leaves the
     # caller's exit 9, which names the project; this runs after Flow has billed.
-    except (TimeoutError, PlaywrightError) as exc:
+    except (TimeoutError, *engine_errors) as exc:
         log.warning(
             "migrated.video_listing_unanswered", budget_s=budget_s, error=type(exc).__name__
         )
         return None
     finally:
         if tab is not None:
-            with contextlib.suppress(PlaywrightError):
+            with contextlib.suppress(*engine_errors):
                 await tab.close()
