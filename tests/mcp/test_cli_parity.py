@@ -37,12 +37,13 @@ MCP spend gate: see ``test_paid_commands_agree_between_cli_and_mcp``.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import re
+from pathlib import Path
 from typing import Any
 
 import click
-import pytest
 
 from gflow_cli._cli_helpers import spends_credits_decision
 from gflow_cli.cli import main
@@ -245,22 +246,30 @@ def test_mapped_tools_are_registered(mcp_server: Any) -> None:
     assert not missing, f"CLI_TO_MCP references unregistered MCP tools: {sorted(missing)}"
 
 
-def test_conftest_imports_every_tool_module_the_server_registers(
-    mcp_server: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """tests/mcp/conftest.py imports the tool modules by hand; keep it equal to startup.
+def test_conftest_imports_every_module_the_server_registers() -> None:
+    """tests/mcp/conftest.py imports the registering modules by hand; keep it equal to startup.
 
-    A module registered by ``_register_surfaces()`` but missing from conftest is imported
-    later by whichever test touches it, possibly under a patched server, and the parity
-    test above then fails depending on test order.
+    A module that ``_register_surfaces()`` imports but conftest does not is imported later
+    by whichever test touches it, possibly under a patched server, and the parity test
+    above then fails depending on test order. Compared from source, so the result does not
+    depend on what an earlier test already imported.
     """
-    from gflow_cli.mcp.server import _register_surfaces  # pyright: ignore[reportPrivateUsage]
-
-    monkeypatch.delenv("GFLOW_MCP_NO_SPEND", raising=False)
-    before = set(mcp_server._tool_manager._tools)
-    _register_surfaces()
-    added = set(mcp_server._tool_manager._tools) - before
-    assert not added, f"add these tool modules to tests/mcp/conftest.py: {sorted(added)}"
+    server_tree = ast.parse(inspect.getsource(mcp_server._register_surfaces))  # pyright: ignore[reportPrivateUsage]
+    registered = {
+        f"gflow_cli.mcp.{alias.name}"
+        for node in ast.walk(server_tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "gflow_cli.mcp"
+        for alias in node.names
+    }
+    conftest = Path(__file__).with_name("conftest.py").read_text(encoding="utf-8")
+    imported = {
+        alias.name
+        for node in ast.walk(ast.parse(conftest))
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    missing = sorted(registered - imported)
+    assert registered and not missing, f"import these in tests/mcp/conftest.py: {missing}"
 
 
 # --- Option-level parity ------------------------------------------------------
