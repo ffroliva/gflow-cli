@@ -4,7 +4,7 @@
 
 > **gflow-cli 是一个开源的 MCP 服务器和命令行工具，用于自动化 [Google Flow](https://labs.google/fx/tools/flow)。** 它可以在 Claude Code、Claude Desktop、Cursor、Codex、VS Code 或终端中生成 Veo 3.1 和 Omni 视频，以及 Nano Banana 和 Imagen 图片，费用计入你自己 Google 账号的 Flow 积分。可作为 Google Flow 命令行工具或 Veo MCP 服务器使用。通过 PyPI 安装：`uv tool install gflow-cli`（MIT 许可，支持 macOS、Windows 和 Linux）。
 
-> 本文是 [README.md](README.md) 的中文翻译，内容以英文版为准；省略了部分徽章、统计数据、赞助者名单和 Star 历史，完整内容见英文版。命令、参数和程序输出保持英文。如发现翻译不准确，欢迎提交 [issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request。
+> 本文是 [README.md](README.md) 的中文翻译，内容以英文版为准；省略了部分状态徽章、统计数据、赞助者名单和 Star 历史，完整内容见英文版。命令、参数和程序输出保持英文。如发现翻译不准确，欢迎提交 [issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request。
 
 [![PyPI version](https://img.shields.io/pypi/v/gflow-cli.svg)](https://pypi.org/project/gflow-cli/)
 [![CI](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/ffroliva/gflow-cli/actions/workflows/ci.yml)
@@ -20,8 +20,8 @@
 | | |
 |---|---|
 | **它是什么** | 一个 Python 包，同时是 Google Flow 的命令行工具（`gflow`）和 MCP 服务器（`gflow mcp run`、`gflow serve`） |
-| **面向智能体** | **29 个 MCP 工具**，外加资源和提示词，支持 stdio 和 Streamable HTTP；已在[官方 MCP Registry](https://registry.modelcontextprotocol.io/) 中登记为 `io.github.ffroliva/gflow-cli` |
-| **面向终端** | 70 多个命令，退出码有明确类型，大多数支持 `--json` 输出；`gflow --help --json` 可为智能体输出完整命令树 |
+| **面向 Agent** | **29 个 MCP 工具**，外加资源和提示词，支持 stdio 和 Streamable HTTP；已在[官方 MCP Registry](https://registry.modelcontextprotocol.io/) 中登记为 `io.github.ffroliva/gflow-cli` |
+| **面向终端** | 70 多个命令，退出码有明确类型，大多数支持 `--json` 输出；`gflow --help --json` 可为 Agent 输出完整命令树 |
 | **视频模型** | Veo 3.1 Lite、Fast 和 Quality；Omni Flash 和 Omni 1.2 Flash（最长 15 秒，最多 7 张参考图） |
 | **图片模型** | Nano Banana 2.1、Nano Banana Pro、Nano Banana 2 Lite、Imagen 4 |
 | **适用于** | Claude Code（插件）、Claude Desktop、Cursor、VS Code、Codex、任意 MCP 客户端、Shell 脚本和 CI |
@@ -31,11 +31,11 @@
 ## gflow-cli 能做什么？
 
 - **生成视频**：文生视频、带首帧和尾帧的图生视频，以及参考图生视频，支持 Veo 3.1 和 Omni（`gflow video t2v | i2v | r2v`，或用 `gflow video generate` 自动选择模式）。
-- **制作长视频**：`gflow video extend --segments N` 可将片段延长到超过 Flow 的 8 秒上限，衔接连贯；`gflow video chain` 将镜头逐帧串联；`gflow scene create` 在服务器端免费拼接片段。
+- **制作长视频**：`gflow video extend --segments N` 可将片段延长到超过 Flow 的 8 秒上限，衔接连贯；`gflow video chain` 通过首尾帧串联镜头；`gflow scene create` 在服务器端免费拼接片段。
 - **生成图片**：文生图和图生图，每次 1 到 4 张，五种画面比例（`gflow image t2i | i2i`）。
 - **保持角色一致**：`gflow character create` 创建可复用的 Flow 角色（面部、身体、声音），提示词中可用 `@Name` 引用。
-- **放大**：Flow 为该项目提供 4K 时，视频可放大到 4K，也可放大到 1080p 或导出 GIF；图片放大到 2K，Ultra 套餐可放大到 4K。
-- **批处理和流水线**：JSON 批量运行，后面的行可以基于前面的行生成（`gflow run`）；根据清单文件生成多场景影片（`gflow movie run`）；持久化的智能体模式（Agent Mode）指令卡（`gflow instructions`）。
+- **超分与高清导出**：只要 Flow 对该视频提供 4K 选项，即可超分至 4K，也支持导出 1080p 或 GIF；图片可超分至 2K，Ultra 套餐支持 4K。
+- **批处理和流水线**：JSON 批量生成，后续条目可直接引用前面条目生成的图片（`gflow run`）；根据清单文件生成多场景影片（`gflow movie run`）；持久化的 Agent Mode 指令卡（`gflow instructions`）。
 - **改写提示词**：`--tool creative-director` 以及另外两个内置提示词工具（`reverse-engineer`、`storyboard`），也可以使用你自己的工具（[TOOLS](docs/TOOLS.md)）。
 - **跟踪花费和媒体**：Veo 积分余额（`gflow credits`）、本地媒体库（catalog，`gflow data`）、健康检查（`gflow doctor`），并可将输出保存到 S3、MinIO 或 Google Cloud Storage。
 
@@ -113,7 +113,7 @@ gflow character create --project <project-id> --name "Aria" --face-prompt "..." 
 
 需要根据退出码分支的脚本，现在可以通过设置 `GFLOW_CLI_EXIT_CODES=2` 启用稳定的核心退出码（0 成功，1 错误，2 用法错误，3 认证，130 中断）。它将在以后的版本中成为默认值。详见 [ERRORS：稳定核心](docs/ERRORS.md#exit-codes-the-stable-core-opt-in-in-this-release)。
 
-> **为什么要用 `--browser chrome`？** 只有这种方式会把配置文件标记为真实 Chrome 配置文件，而之后的生成正是用这种方式打开它。默认的 `auto` 在安装了 Chrome 时会自动选择它，详见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
+> **为什么要用 `--browser chrome`？** 只有指定该参数，才会把登录凭据保存为真实 Chrome 账号配置（profile）——后续生成任务正是以这种模式打开的。在已安装 Chrome 的机器上，默认的 `auto` 也会自动选用它，详见 [docs/AUTHENTICATION.md](docs/AUTHENTICATION.md)。
 
 > **从本地源码目录安装？** `uv tool install <路径>` **会忽略 `uv.lock`**，而是根据 `pyproject.toml` 中的版本范围解析依赖，因此可能装上本项目从未测试过的 Playwright 版本。Playwright 自带浏览器驱动，未经测试的小版本可能让生成悄无声息地卡住。请显式指定锁定的版本：
 >
@@ -129,16 +129,16 @@ gflow character create --project <project-id> --name "Aria" --face-prompt "..." 
 
 只有在 PyPI、Chromium 下载或 Google 无法直接访问时，才需要阅读本节。gflow-cli 不会改变 Google 对地区的限制，也不能让你在 Google 未提供服务的地区使用 Flow：Google Flow 只在 Google 提供服务的地区可用，请以 Google 的官方页面[在哪些地区可以使用 Google Flow](https://support.google.com/flow/answer/16353544)为准。
 
-**1. 软件包镜像。** 让 uv 使用镜像的 simple 索引地址：
+**1. 软件包镜像。** 让 uv 使用 PyPI 镜像源地址：
 
 ```bash
-uv tool install --default-index <镜像索引地址> gflow-cli
-# pip：pip install -i <镜像索引地址> gflow-cli
+uv tool install --default-index <PyPI 镜像源地址> gflow-cli
+# pip：pip install -i <PyPI 镜像源地址> gflow-cli
 # 浏览器安装这一步同样通过 uv 解析 gflow-cli，因此要传入同样的参数：
-uv tool run --default-index <镜像索引地址> --from gflow-cli playwright install chromium
+uv tool run --default-index <PyPI 镜像源地址> --from gflow-cli playwright install chromium
 ```
 
-也可以用环境变量 `UV_DEFAULT_INDEX` 代替 `--default-index`。`<镜像索引地址>` 是你所选镜像的 simple 索引地址。Playwright 会读取 `PLAYWRIGHT_DOWNLOAD_HOST` 来决定一次性的 Chromium 下载地址。请使用你信任的镜像：它提供你安装的代码，也提供你用来登录 Google 的浏览器。gflow-cli 没有测试或认可任何镜像。
+也可以用环境变量 `UV_DEFAULT_INDEX` 代替 `--default-index`。`<PyPI 镜像源地址>` 是你所选镜像站的 PyPI simple 索引地址。Playwright 会读取 `PLAYWRIGHT_DOWNLOAD_HOST` 来决定一次性的 Chromium 下载地址。请使用你信任的镜像：它提供你安装的代码，也提供你用来登录 Google 的浏览器。gflow-cli 没有测试或认可任何镜像。
 
 **2. 浏览器代理。** 在第一次登录之前，把 `GFLOW_CLI_BROWSER_PROXY=http://127.0.0.1:<端口>` 写入 `$GFLOW_CLI_HOME/.env` 或当前目录的 `.env`（例如本地 Clash 客户端监听 `http://127.0.0.1:7897`，并关闭其“系统代理”开关），同时在进程环境变量中把 `HTTPS_PROXY` 设置为同一个地址，供 gflow 自己的 HTTP 请求使用（它不是 `GFLOW_CLI_` 开头的设置，写入 `.env` 不会生效）。浏览器只读取 `GFLOW_CLI_BROWSER_PROXY`，会忽略 `HTTPS_PROXY`（仅 Linux 上的 Chromium 会读取代理环境变量，但不应依赖它）；gflow 也不会把其中一个复制到另一个。
 
@@ -197,9 +197,9 @@ gflow auth login --browser chrome
 ## gflow-cli 如何保护我的 Flow 积分和账号？
 
 - **只有视频消耗积分。** 生成图片不消耗积分（计入每日图片配额），场景拼接免费。
-- **不能花钱的服务器。** `gflow mcp run --no-spend` 不会注册任何消耗积分的工具，因此智能体根本无法调用它们。
+- **零扣费安全模式。** `gflow mcp run --no-spend` 不会注册任何消耗积分的工具，因此 Agent 根本无法调用它们。
 - **多片段运行先看费用。** `video chain`、`video extend` 和 `movie run` 支持 `--dry-run`，只显示计划而不提交；`chain` 和 `extend` 在花费积分前会先询问。
-- **绝不重复扣费。** 计费请求只发送一次，绝不自动重试；`gflow run --resume` 只重新生成本地媒体库中还没有的行。
+- **绝不重复扣费。** 计费请求只发送一次，绝不自动重试；`gflow run --resume` 只重新生成本地媒体库中还没有的条目。
 - **每个错误都说明是否扣费。** 错误信息带有 `charged: yes | no | maybe` 和 `next_action`（`retry`、`reauth`、`reconcile`），在命令行的 `--json` 输出和 MCP 回复中都有（[ERRORS](docs/ERRORS.md)）。
 - **节奏接近真人。** gflow 使用真实的 Chrome 窗口，交互时间随机化，提交有节奏控制。它不轮换 IP，除非你自行设置，否则不使用代理，默认也不伪造浏览器指纹（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)）。
 - **出错时明确报告。** 当 Flow 的界面发生变化时，运行会以专门的退出码停止（选择器失效为退出码 23），而不是去猜测。
@@ -219,26 +219,26 @@ gflow auth login --browser chrome
 | 视频、图片、首尾帧、参考图 | 是 | 是 | 是 | 文生视频、图生视频、文生图 | 是 | 是 |
 | 延长到 8 秒以上 | 是 | 是 | 是 | — | 是（最长 148 秒） | — |
 | 角色 | 是 | 是，可编辑 | 是，可编辑 | — | 是 | 是 |
-| 放大 | 视频 4K/1080p，图片 2K/4K | 1080p、2K | — | — | 2K、4K | 图片 2K/4K 导出；视频放大尚未移植 |
+| 超分 / 高清导出 | 视频 4K/1080p，图片 2K/4K | 1080p、2K | — | — | 2K、4K | 图片 2K/4K 导出；视频超分尚未移植 |
 | OpenAI 兼容 API | 图片（`gflow serve` 上的 `POST /v1/images/generations`）；视频计划中（[#1365](https://github.com/ffroliva/gflow-cli/issues/1365)） | — | — | 是 | — | — |
-| 在多个 Google 账号间合并积分 | 否（每次调用使用一个配置文件；用 `gflow auth use` 切换） | — | — | 是 | — | — |
-| 禁止智能体花费积分（`--no-spend`） | 是 | — | — | — | — | — |
+| 多 Google 账号共享/轮询积分池 | 否（每次调用使用一个账号配置；用 `gflow auth use` 切换） | — | — | 是 | — | — |
+| 禁止 Agent 花费积分（`--no-spend`） | 是 | — | — | — | — | — |
 | 每个错误都带 `charged` 字段 | 是 | — | — | — | — | — |
 | 单次调用积分上限 | 是（`--max-credits`，读取 Flow 自己的报价） | 是（`max_credits`） | — | — | — | — |
-| 视频到视频编辑 | 是（`video edit`，flow.google.com；本地文件最多 5 个参考，或一个片段） | 是 | 是 | — | — | — |
+| 视频编辑（基于已有视频改绘） | 是（`video edit`，flow.google.com；支持上传本地视频并带最多 5 张参考图，或直接编辑已有片段） | 是 | 是 | — | — | — |
 | 旁白音频 | 是（`audio narrate`：edge-tts 或 Gemini 语音） | 是 | — | — | — | 是 |
 | 字幕 | 是（`video captions`，导出 `.srt`） | 是 | — | — | — | — |
 | 拼接片段 | 是，服务器端（`scene create`）或本地加配乐和旁白（`video assemble`） | 是，可加配乐和旁白 | — | — | 是（scene） | 是，可加配乐和旁白 |
-| 智能体模式批量生成图片 | 计划中（[#1361](https://github.com/ffroliva/gflow-cli/issues/1361)） | 是 | — | — | — | — |
+| Agent Mode 批量生成图片 | 计划中（[#1361](https://github.com/ffroliva/gflow-cli/issues/1361)） | 是 | — | — | — | — |
 | 网页控制面板 | 计划中（[#1364](https://github.com/ffroliva/gflow-cli/issues/1364)） | 是 | — | — | — | 是 |
-| 机器可读的自我描述 | `capabilities`、`--help --json`、`models`、`llms.txt`、智能体技能 | — | — | — | — | 智能体技能 |
+| 机器可读的自我描述 | `capabilities`、`--help --json`、`models`、`llms.txt`、Agent 技能 | — | — | — | — | Agent 技能 |
 | 每个版本都在真实 Flow 上实测 | 是（自 v0.54.0 起） | — | — | — | — | — |
 
 **我该选哪个？**
 
-- 想要在一个 PyPI 包里同时获得命令行和 MCP 服务器，并带有禁止花费的开关（`--no-spend`）和每个错误上的 `charged` 字段：选 gflow-cli。
+- 想要在一个 PyPI 包里同时获得命令行和 MCP 服务器，并带有零扣费安全开关（`--no-spend`）和每个错误上的 `charged` 字段：选 gflow-cli。
 - 想要本地网页面板：选 [GTAI-1/flow-mcp](https://github.com/GTAI-1/flow-mcp)。
-- 想要在多个 Google 账号间合并积分：选 [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent)。
+- 想要多 Google 账号共享/轮询积分池：选 [kodelyx/flow-agent](https://github.com/kodelyx/flow-agent)。
 - 想要 Chrome 扩展和仪表盘：选 [crisng95/flowkit](https://github.com/crisng95/flowkit)。
 
 完整的计划列表见 [#1367](https://github.com/ffroliva/gflow-cli/issues/1367)。如果发现表格中有错误，欢迎提交 issue 或 pull request 更正。
@@ -261,7 +261,7 @@ gflow auth login --browser chrome
 
 工具本身免费。生成视频消耗你的 Flow 积分；生成图片不消耗积分，但计入每日图片配额。
 
-### AI 智能体会不经询问就花掉我的积分吗？
+### AI Agent 会不经询问就花掉我的积分吗？
 
 注册 `gflow mcp run --no-spend` 时不会：消耗积分的工具根本不会被注册。Claude Code 插件默认也处于禁用状态。
 
@@ -271,7 +271,7 @@ gflow auth login --browser chrome
 
 ### 除了 labs.google，它也支持 flow.google.com 吗？
 
-支持。它可以驱动 Flow 的两个前端，并根据 Flow 为你的账号提供的域名自动选择驱动。在 flow.google.com 上，它支持基于本地文件的文生视频、图生视频和参考图生视频；还支持 Nano Banana 图片生成、单段延长、图片和视频放大，以及通过 `@Name` 引用角色。尚未移植的功能继续使用 labs 驱动（[架构与当前限制](#架构与当前限制)）。
+支持。它可以驱动 Flow 的两个前端，并根据 Flow 为你的账号提供的域名自动选择驱动。在 flow.google.com 上，它支持基于本地文件的文生视频、图生视频和参考图生视频；还支持 Nano Banana 图片生成、单段延长、图片和视频超分，以及通过 `@Name` 引用角色。尚未移植的功能继续使用 labs 驱动（[架构与当前限制](#架构与当前限制)）。
 
 ### 需要哪个 Python 版本？
 
@@ -299,7 +299,7 @@ Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/f
 
 ![gflow image t2i 运行一个 9:16 提示词，输出 structlog 日志，并把 PNG 写入磁盘](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/example-run.gif)
 
-在已登录的 Flow 配置文件上运行一次 `gflow image t2i "..." --aspect 9:16 --model nano2`。终端实时输出本次运行的 `structlog` JSON 日志，然后列出写入的 PNG 文件。Chromium 在后台静默驱动 Flow 编辑器。
+在已登录的 Flow 账号配置（profile）上运行一次 `gflow image t2i "..." --aspect 9:16 --model nano2`。终端实时输出本次运行的 `structlog` JSON 日志，然后列出写入的 PNG 文件。Chromium 在后台静默驱动 Flow 编辑器。
 
 ## 文档
 
@@ -312,25 +312,25 @@ Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/f
 | 🎯 **入门** | [User Guide](docs/USER_GUIDE.md) · [Usage](docs/USAGE.md) · [Configuration](docs/CONFIGURATION.md) |
 | **存储和媒体库** | [External Storage](docs/EXTERNAL_STORAGE.md) · [Data Layer](docs/DATA_LAYER.md) |
 | 🎭 **角色** | [Characters](docs/CHARACTER.md)，可复用的主体（`gflow character`） |
-| 🤖 **智能体和自动化** | [Instructions](docs/INSTRUCTIONS.md)（`gflow instructions`，持久化指令卡） · [Movie](docs/MOVIE.md)（`gflow movie`，多场景清单） · [Tools](docs/TOOLS.md)（`--tool`，改写提示词） · [MCP server](docs/MCP.md)（`gflow mcp run` / `gflow serve`） |
+| 🤖 **Agent 与自动化** | [Instructions](docs/INSTRUCTIONS.md)（`gflow instructions`，持久化指令卡） · [Movie](docs/MOVIE.md)（`gflow movie`，多场景清单） · [Tools](docs/TOOLS.md)（`--tool`，改写提示词） · [MCP server](docs/MCP.md)（`gflow mcp run` / `gflow serve`） |
 | 🔐 **认证和会话** | [Authentication](docs/AUTHENTICATION.md) · [Known issues](KNOWN_ISSUES.md) |
 | 📣 **从哪里安装** | [Marketplaces](docs/MARKETPLACES.md)（每个渠道及其实际提供的内容） · [Container](docs/CONTAINER.md)（为什么镜像只能自检而不能生成） |
 | 🏗️ **内部实现** | [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Usage data notice](docs/TELEMETRY.md) · [Debugging](docs/DEBUGGING.md) |
 | 📦 **版本发布** | [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · [Release protocol](RELEASE.md) · [Project status](docs/PROJECT_STATUS.md) |
 | 🤝 **参与贡献** | [Contributing](CONTRIBUTING.md) · [Development](docs/DEVELOPMENT.md) · [GitHub workflow](docs/GITHUB.md) |
 
-## 面向 AI 智能体和大语言模型
+## 面向 AI Agent 和大语言模型
 
-gflow-cli 提供四个智能体入口，请选择你的工具最先读取的那个。
+gflow-cli 提供四个 Agent 入口，请选择你的工具最先读取的那个。
 
 | 文件 | 面向 | 工具 |
 |---|---|---|
-| [**AGENTS.md**](AGENTS.md) | 通用编程智能体规范 | Cursor · Codex · Aider · Antigravity · Jules · Devin · Windsurf · Zed · Warp · opencode · Copilot |
+| [**AGENTS.md**](AGENTS.md) | 通用编程 Agent 规范 | Cursor · Codex · Aider · Antigravity · Jules · Devin · Windsurf · Zed · Warp · opencode · Copilot |
 | [**CLAUDE.md**](CLAUDE.md) | Claude Code 自动加载的项目记忆 | Claude Code |
 | [**llms.txt**](llms.txt) | 供大语言模型阅读的摘要（llmstxt.org 格式） | 粘贴到 ChatGPT、Claude 或 Gemini 中让模型快速了解本项目 |
 | [`skills/gflow-cli/SKILL.md`](skills/gflow-cli/SKILL.md) | Claude Code 技能 | 软链接到 `~/.claude/skills/` |
 
-智能体也可以直接从命令行读取完整命令树：`gflow --help --json`。
+Agent 也可以直接从命令行读取完整命令树：`gflow --help --json`。
 
 连接 MCP 客户端的方法见[连接 AI 客户端](#连接-ai-客户端)。
 
@@ -344,7 +344,7 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
                               aisandbox-pa.googleapis.com  (Google's private Flow API)
 ```
 
-**当前传输方式：** `ui_automation` 通过持久化的 Playwright Chromium 配置文件驱动 Flow。它是生产环境使用的传输方式，并在每个版本中端到端验证（见各版本的 `LIVE_VERIFICATION_*` 实测验证记录）。
+**当前传输方式：** `ui_automation` 通过持久化的 Playwright Chromium 账号配置（profile）驱动 Flow。它是生产环境使用的传输方式，并在每个版本中端到端验证（见各版本的 `LIVE_VERIFICATION_*` 实测验证记录）。
 
 **两个 Flow 前端：** Google 正在把账号从 `labs.google` 迁移到 `flow.google.com`（[#639](https://github.com/ffroliva/gflow-cli/issues/639)）。两者是同一个产品，但界面组件库和通信协议不同（使用 `batchexecute` 而不是 `aisandbox-pa`）。flow.google.com 驱动支持：
 
@@ -352,11 +352,11 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 - 文生图，以及基于本地文件的图生图；
 - 单段 `video extend`。
 
-图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅智能体**编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当本地媒体库记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>` 会原地引用（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）。
+图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅 Agent** 编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当本地媒体库记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>` 会原地引用（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）。
 
 在移植完成之前，以下功能继续使用 labs 驱动：其他 UUID 媒体引用、没有名称的实体 ID、指令卡、Imagen 4，以及矩阵中的其余部分（`GFLOW_CLI_FLOW_HOST`，见 [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)）。
 
-**目前受阻的部分：** 视频生成的纯 HTTP 传输。在非 Chrome 浏览器下，视频上传接口返回 HTTP 401，并且需要一个本项目无法在无头浏览器中生成的 reCAPTCHA 令牌。早期的三种 HTTP 方案（`evaluate_fetch`、`bearer`、`sapisidhash`）保存在 `src/gflow_cli/api/transports/experimental/` 中用于研究，不在生产路径上。
+**目前受阻的部分：** 视频生成的纯 HTTP 传输。在非 Chrome 浏览器下，视频上传接口返回 HTTP 401，并且需要一个本项目无法在无头浏览器中生成的 reCAPTCHA 令牌。早期的三种 HTTP 方案（`evaluate_fetch`、`bearer`、`sapisidhash`）保存在 `src/gflow_cli/api/transports/experimental/` 中用于研究，未用于正式生成链路。
 
 **你可以如何帮助：** 如果你曾在真实 Chrome 会话之外调用过 `aisandbox-pa.googleapis.com`，或者了解 Google 在这里的反机器人机制，请提交 issue。可用的 REST 传输将支持无服务器部署和真正的横向并发。详见 [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation)。
 
@@ -372,12 +372,12 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 除单次生成外：
 
 - `gflow movie` 渲染多场景清单；
-- `gflow instructions` 管理持久化的智能体模式（Agent Mode）指令卡（不消耗积分）；
+- `gflow instructions` 管理持久化的 Agent Mode 指令卡（不消耗积分）；
 - `gflow character` 管理可复用的主体；
 - `gflow scene` 在服务器端免费拼接；
 - `--tool` 应用提示词改写工具。
 
-MCP 服务器（`gflow mcp run` 使用 stdio，`gflow serve` 使用 Streamable HTTP）向 AI 智能体开放核心功能。命令行与 MCP 的一致性由 CI 强制保证。
+MCP 服务器（`gflow mcp run` 使用 stdio，`gflow serve` 使用 Streamable HTTP）向 AI Agent 开放核心功能。命令行与 MCP 的一致性由 CI 强制保证。
 
 完整的里程碑历史见 [CHANGELOG.md](CHANGELOG.md)，项目方向见 [ROADMAP.md](ROADMAP.md)。
 
@@ -388,7 +388,7 @@ gflow-cli 由一个人维护。每个版本都在真实的 Google Flow 上验证
 [![Sponsor $5 one-time](https://img.shields.io/badge/☕_sponsor-$5_one--time-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=one-time&amount=5)
 [![Sponsor $5 a month](https://img.shields.io/badge/💖_sponsor-$5_a_month-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ffroliva/sponsorships?frequency=monthly&amount=5)
 
-在工作中依赖 gflow-cli？每月的公司档位会在英文版 README 展示你的标识，Silver 及以上档位还享有优先处理 issue 的权益。所有赞助档位及其权益：[docs/SPONSORS.md](docs/SPONSORS.md)。
+在工作中依赖 gflow-cli？每月的公司赞助档位会在英文版 README 展示贵司 Logo，Silver 及以上档位还享有优先处理 issue 的权益。所有赞助档位及其权益：[docs/SPONSORS.md](docs/SPONSORS.md)。
 
 在你的 fork 中修复了 gflow-cli 的问题？欢迎[提交 issue](https://github.com/ffroliva/gflow-cli/issues) 或 pull request，合并到上游的修复对所有人都有帮助。
 
