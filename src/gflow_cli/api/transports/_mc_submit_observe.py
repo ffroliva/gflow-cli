@@ -151,13 +151,21 @@ def _note_finished(verdict: GFlowError, media_ids: Sequence[str], recover_hint: 
 async def _raise_if_refused(
     route_error: asyncio.Future[Any],
     verdicts: _VerdictTracker,
+    accepted: asyncio.Future[Any],
 ) -> None:
-    """Raise a route-guard refusal first, else any unguarded observer verdict."""
+    """Raise a route-guard refusal first, else any unguarded observer verdict.
+
+    A refusal says nothing was billed and a retry is safe, which holds only while the
+    run's own submit has not been accepted (``accepted``). Once it has, the refused
+    request was a stray: Flow may be billing the accepted one, so a retry could pay twice.
+    """
+    if not route_error.done():
+        await verdicts.raise_unguarded()
     if route_error.done():
-        raise route_error.result()
-    await verdicts.raise_unguarded()
-    if route_error.done():
-        raise route_error.result()
+        refusal: GFlowError = route_error.result()
+        if accepted.done() and not accepted.cancelled() and accepted.exception() is None:
+            refusal.charged, refusal.next_action, refusal.retryable = "maybe", "reconcile", False
+        raise refusal
 
 
 async def _aborted_by_check(
@@ -677,7 +685,7 @@ class SubmitObserveMixin(MentionMixin):
                 )
             # The request is inspected before its reply lands, so a wrong body is
             # named as such and not as whatever the reply then says (#1320).
-            await _raise_if_refused(route_error, verdicts)
+            await _raise_if_refused(route_error, verdicts, submitted)
             if not submitted.done() and lost:
                 where = MIGRATED_PROJECT_URL.format(project_id=project_id) if project_id else "Flow"
                 raise _outcome_unknown(
@@ -973,7 +981,7 @@ class SubmitObserveMixin(MentionMixin):
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            await _raise_if_refused(route_error, verdicts)
+            await _raise_if_refused(route_error, verdicts, result)
             if body_lost.done():
                 try:
                     images = await _recover_images(page, request, baseline)

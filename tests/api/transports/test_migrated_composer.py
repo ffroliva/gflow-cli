@@ -5838,6 +5838,53 @@ async def test_unguarded_verdict_outranks_a_non_timeout_failure_of_the_wait_1518
         )
 
 
+async def test_a_stray_abort_after_the_submit_was_accepted_is_not_reported_unbilled_1518() -> None:
+    """The run's own submit was accepted (Flow is making and billing it) when the guard
+    aborts a stray second submit. That abort must not be reported as "nothing billed,
+    safe to retry": a retry would pay for the clip twice."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray second submit") if "stray" in body else None
+
+    class _StrayAfterAcceptPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(_batch_url("fZytfe"), "f.req=clean-submit")
+            stray = FakeRequest(_batch_url("fZytfe"), "f.req=stray")
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+                for u, text in self.scripted_responses:
+                    self._fire_response(FakeResponse(u, text))
+
+            asyncio.get_event_loop().create_task(go())
+
+    page = _StrayAfterAcceptPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    with pytest.raises(WireFormatError, match="stray second submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, is_retryable(ei.value)) == ("maybe", False)
+
+
 async def test_a_clean_run_settles_without_waiting_for_the_guard_1518(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5906,10 +5953,10 @@ async def test_image_result_arriving_during_refusal_wait_is_returned_1518(
     page = FakePage()
     page.dom.prompt = "a blue cup"
 
-    async def late_reply_during_check(route_error: Any, verdicts: Any) -> None:
+    async def late_reply_during_check(route_error: Any, verdicts: Any, accepted: Any) -> None:
         page._fire_response(FakeResponse(_batch_url("ogiZ0b"), _image_frame()))
         await asyncio.sleep(0)
-        await orig_check(route_error, verdicts)
+        await orig_check(route_error, verdicts, accepted)
 
     monkeypatch.setattr(_mc_submit_observe, "_raise_if_refused", late_reply_during_check)
     images = await MigratedComposer().submit_images_and_observe(
