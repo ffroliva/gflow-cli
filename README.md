@@ -109,7 +109,7 @@ gflow image t2i "a hot air balloon over Tokyo at sunrise"
 # or:
 gflow video t2v "Slow cinematic push-in on a sunlit forest clearing" --aspect 16:9
 # or mint a reusable Character (face + body reference); it needs a project id:
-# `gflow project create` makes a project and `gflow project list` shows yours
+# `gflow project create` makes a project; `gflow project list` shows the projects recorded in the local catalog
 gflow character create --project <project-id> --name "Aria" --face-prompt "..." --body-prompt "..."
 ```
 
