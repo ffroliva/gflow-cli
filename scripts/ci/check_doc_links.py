@@ -18,6 +18,7 @@ from pathlib import Path
 # Files we audit for this release. Add new entries when new docs land.
 FILES: tuple[str, ...] = (
     "README.md",
+    "README.zh-CN.md",
     "AGENTS.md",
     "llms.txt",
     "CLAUDE.md",
