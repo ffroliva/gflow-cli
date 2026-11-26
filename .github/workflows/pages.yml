@@ -9,7 +9,9 @@ on:
     paths:
       - "index.html"
       - "llms.txt"
+      - "README.md"
       - "sitemap.xml"
+      - "docs/assets/social/og-image.png"
       - "website/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
@@ -44,7 +46,8 @@ jobs:
       - name: Assemble site (landing at /, docs at /docs)
         run: |
           mkdir -p _site
-          cp index.html llms.txt sitemap.xml _site/
+          cp index.html llms.txt sitemap.xml docs/assets/social/og-image.png _site/
+          tail -n +1 README.md docs/USER_GUIDE.md docs/ERRORS.md > _site/llms-full.txt
           cp -r website/site _site/docs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:

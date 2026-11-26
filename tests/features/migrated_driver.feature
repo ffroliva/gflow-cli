@@ -56,3 +56,10 @@ Feature: migrated-host driver
     And the editor hands the session to flow.google.com after entering the project
     When gflow video t2v runs with an 8 s request
     Then the run fails with exit 36 and the remediation names the switch
+
+  Scenario: a terminal status poll whose body Chrome evicts is recovered from the project listing (#1484)
+    Given the editor hands the session to flow.google.com after entering the project
+    And the terminal status poll body is unreadable while the project listing records the finished clip
+    When gflow video t2v runs with an 8 s request
+    Then the migrated composer applies the settings and submits
+    And the result reports success with that workflow id

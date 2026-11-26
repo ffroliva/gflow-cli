@@ -599,6 +599,13 @@ class FakeResponse:
         return self._text
 
 
+class _NoSecondTab:
+    async def new_page(self) -> Any:
+        from playwright.async_api import Error as PlaywrightError
+
+        raise PlaywrightError("this fake page opens no second tab")
+
+
 class FakePage:
     """Resolves the fixed set of CSS the composer is allowed to use."""
 
@@ -618,6 +625,9 @@ class FakePage:
         self.scripted_request: tuple[str | None, str] | None = (
             None  # (rpcid, body); None = bare URL
         )
+        # No second tab unless a test supplies one: the listing read fails closed on a
+        # Playwright error, as it does when the browser refuses a new page.
+        self.context: Any = _NoSecondTab()
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
@@ -2214,7 +2224,8 @@ async def test_with_no_status_match_the_listing_in_a_second_tab_adopts_1112(
     rec, started = await _observe_lost(
         [(_batch_url("jwpduf"), LOST_BODY)], poll_timeout_s=2.0, tab=tab
     )
-    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url == VIDEO_URL
+    # The listing's URL is not kept (#948): the download takes the clip route.
+    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url is None
     assert len(started) == 1
     assert tab.gotos == [mc.MIGRATED_PROJECT_URL.format(project_id=PROJ)] and tab.closed
 
@@ -4883,3 +4894,431 @@ async def test_a_request_check_verdict_is_aborted_by_the_guard_and_reads_unsent(
         )
     assert page.route_outcomes == ["abort"]
     assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
+
+
+async def test_a_lost_terminal_status_poll_recovers_the_finished_clip_from_the_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1484: once the clip finishes, Flow's frontend stops polling `jwpduf`. When Chrome
+    evicts the terminal `jwpduf` body after a successful submit, waiting out the full
+    600 s poll timeout drops a finished clip; re-reading `Zzl0ze` settles it."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tab = ListingTab(_listing(_ours(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    started: list[Any] = []
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=5.0,
+        on_started=started.append,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert [(s.media_id, s.workflow_id) for s in started] == [(MEDIA_OURS, WF_OURS)]
+    assert tab.closed
+
+
+async def test_an_intermediate_lost_status_poll_with_a_readable_poll_opens_no_listing_tab_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1484: if the clip is still running when one `jwpduf` body is evicted, the next 5 s
+    poll arrives and settles the run without opening a second tab."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.2)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(3, VIDEO_URL))),
+    ]
+    tabs = {"n": 0}
+
+    async def new_page() -> ListingTab:
+        tabs["n"] += 1
+        return ListingTab(_listing(_ours(3)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url == VIDEO_URL
+    assert tabs["n"] == 0
+
+
+async def test_a_poll_timeout_re_reads_the_listing_before_raising_exit_9_1484() -> None:
+    """#1484: if the poll deadline expires because the page stopped delivering status polls
+    without an observed body-read error, check `Zzl0ze` once before raising exit 9."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+    ]
+    tab = ListingTab(_listing(_ours(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=0.1,
+        on_started=None,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert tab.closed
+
+
+class _LatePollsPage(FakePage):
+    """Fires ``late`` responses ``spacing_s`` apart once submit's own replies are out."""
+
+    def __init__(self, late: list[tuple[str, str]], *, spacing_s: float = 0.1) -> None:
+        super().__init__()
+        self.late, self.spacing_s = late, spacing_s
+
+    def _fire_submit(self) -> None:
+        super()._fire_submit()
+        loop = asyncio.get_event_loop()
+        for i, (url, text) in enumerate(self.late, start=1):
+            loop.call_later(i * self.spacing_s, self._fire_response, FakeResponse(url, text))
+
+
+def _listing_tabs(page: FakePage, *listings: str) -> list[ListingTab]:
+    """Each read of the listing opens the next tab; the last one repeats."""
+    from types import SimpleNamespace
+
+    opened: list[ListingTab] = []
+
+    async def new_page() -> ListingTab:
+        opened.append(ListingTab(listings[min(len(opened), len(listings) - 1)]))
+        return opened[-1]
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    return opened
+
+
+async def test_a_loss_cleared_by_a_readable_poll_keeps_the_recovery_watching_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost `jwpduf` and a readable running `as29s` on one tick cleared the loss before
+    the loop looked; it read that as a timeout and stopped watching, so the later lost
+    terminal poll went unnoticed and a finished clip waited blind for the deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.02)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.2)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(2))),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(2)), _listing(_ours(3)))
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert time.monotonic() - started < 2.0, "settled only at the poll deadline"
+    assert len(tabs) == 2
+
+
+async def test_a_clip_settled_from_the_listing_carries_no_listing_url_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); the
+    download must go through the clip route, which fetches a signed one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.02)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    _listing_tabs(page, _listing(_ours(3, "https://lh3.googleusercontent.com/unsigned")))
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_repeated_lost_polls_re_read_the_listing_a_bounded_number_of_times_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 6, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(2)))
+    with pytest.raises(TransportTimeoutError):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
+        )
+    assert len(tabs) == 2  # one within the interval, one final read at the deadline
+
+
+async def test_the_default_fake_page_cannot_open_a_listing_tab() -> None:
+    """The listing read must fail closed on a Playwright error, not on AttributeError."""
+    from playwright.async_api import Error as PlaywrightError
+
+    with pytest.raises(PlaywrightError):
+        await FakePage().context.new_page()
+
+
+def _clip_done_after(page: FakePage, done_at_s: float) -> list[float]:
+    """Each listing read reports the clip running until ``done_at_s`` after the call."""
+    from types import SimpleNamespace
+
+    start = time.monotonic()
+    reads: list[float] = []
+
+    async def new_page() -> ListingTab:
+        reads.append(time.monotonic() - start)
+        status = 3 if reads[-1] >= done_at_s else 2
+        return ListingTab(_listing(_ours(status)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    return reads
+
+
+async def test_early_losses_leave_the_deadline_read_for_the_finished_clip_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losses while the clip still runs must not spend every listing read: the read at
+    the poll deadline is the last chance for a billed clip whose terminal poll was lost."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 5, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
+    reads = _clip_done_after(page, done_at_s=0.45)
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS
+    assert len(reads) == _mc_submit_observe.LISTING_REREADS_MAX
+
+
+async def test_a_loss_inside_the_read_interval_reads_once_the_interval_is_up_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flow sends no poll after the terminal one: a loss inside the interval must still be
+    followed by a read when the interval ends, not only at the poll deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.3)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.1)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
+    reads = _clip_done_after(page, done_at_s=0.15)
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done
+    assert time.monotonic() - started < 1.5, "read only at the poll deadline"
+    assert len(reads) == 2
+
+
+async def test_a_clip_adopted_from_the_listing_carries_no_listing_url_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adoption path after a lost submit reply has the same unsigned lh3 URL (#948)."""
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    lh3 = "https://lh3.googleusercontent.com/unsigned"
+    rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, lh3))))
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_a_stale_running_frame_after_a_lost_terminal_poll_still_reads_the_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A readable running frame landing after the evicted terminal poll used to clear the
+    loss; Flow then sends nothing more and the finished clip waited for the deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(2))),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(3)))
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS
+    assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
+    assert len(tabs) == 1
+
+
+async def test_a_clip_settled_from_the_listing_skips_the_result_url_grace_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No as29s with a signed URL follows a listing read, so waiting for one is dead time."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    _listing_tabs(page, _listing(_ours(3)))
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=5.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.video_url is None
+    assert time.monotonic() - started < 0.9, "waited the URL grace after the listing read"
+
+
+class _OtherEngineError(Exception):
+    """Stands in for patchright's Error, which is not a playwright Error subclass."""
+
+
+def _with_other_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    from playwright.async_api import Error as PwError
+
+    from gflow_cli.api import _engine
+
+    monkeypatch.setattr(_engine, "retryable_engine_errors", lambda: (PwError, _OtherEngineError))
+
+
+async def test_a_billed_clip_unreadable_under_another_engine_says_recover_it_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """patchright raises its own Error class; the free-recovery hint must still apply."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    _with_other_engine(monkeypatch)
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        raise _OtherEngineError("goto: Timeout 30000ms exceeded")
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    with pytest.raises(MediaDownloadError) as ei:
+        await MigratedComposer.clip_bytes(
+            FakePage(), GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3)
+        )
+    assert f"gflow data download {MEDIA_OURS}" in ei.value.remediation_hint
+
+
+async def test_a_finished_clip_adopted_from_the_listing_skips_the_url_grace_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No signed URL follows a listing read, so the adoption path must not wait for one."""
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
+    started = time.monotonic()
+    rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, VIDEO_URL))))
+    assert rec.is_done and rec.video_url is None
+    assert time.monotonic() - started < 0.45, "waited the URL grace after adopting"
+
+
+class _FailingTab:
+    """A listing tab whose load and close both raise another engine's error."""
+
+    def on(self, *_: Any) -> None:
+        pass
+
+    async def goto(self, *_: Any, **__: Any) -> None:
+        raise _OtherEngineError("goto: Timeout 30000ms exceeded")
+
+    async def close(self) -> None:
+        raise _OtherEngineError("Target closed")
+
+
+class _CountingContext:
+    def __init__(self, tab: Any) -> None:
+        self.tab = tab
+        self.opened = 0
+
+    async def new_page(self) -> Any:
+        self.opened += 1
+        return self.tab
+
+
+async def test_a_listing_tab_failing_under_another_engine_reads_as_no_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """patchright's errors are separate classes; the caller's exit 9 must still apply."""
+    _with_other_engine(monkeypatch)
+    page = FakePage()
+    page.context = _CountingContext(_FailingTab())
+    assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=5.0) is None
+
+
+async def test_a_spent_budget_opens_no_listing_tab_1484() -> None:
+    """goto(timeout=0) means no timeout at all, so a spent budget must not navigate."""
+    page = FakePage()
+    page.context = ctx = _CountingContext(_FailingTab())
+    assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=0.0) is None
+    assert ctx.opened == 0
+
+
+async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flow polls while the clip runs; an evicted body is still a poll. Counting only
+    readable frames read every eviction as silence and spent the listing reads early."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.15)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 8, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    reads = _clip_done_after(page, done_at_s=0.4)
+    started = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done
+    assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
+    assert len(reads) == 1, "read the listing while Flow was still polling"

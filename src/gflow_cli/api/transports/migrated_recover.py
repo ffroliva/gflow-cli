@@ -29,13 +29,14 @@ need is locale-dependent.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import structlog
 
+from gflow_cli.api import _engine
 from gflow_cli.api.transports._common import get_signed_media, retry_the_recovery_hint
 from gflow_cli.api.transports.batchexecute import generation_record, parse_frames
 from gflow_cli.exceptions import WireFormatError
@@ -52,6 +53,14 @@ MIGRATED_CLIP_URL = "https://flow.google.com/project/{project_id}/edit/{media_id
 #: How long to wait for the app's own ``as29s`` status call after the route loads.
 #: Measured: the reply lands within a few seconds: this is slack, not a poll budget.
 SIGNED_URL_WAIT_S = 45.0
+
+#: Route loads within :data:`SIGNED_URL_WAIT_S` (#1484). ``as29s`` is sent once as the clip
+#: route loads; if Chrome evicts that reply body, an already loaded page will not send a
+#: second ``as29s`` without re-opening the route.
+_SIGNED_URL_ATTEMPTS = 3
+
+#: Timeout for the first load of the clip route; the wait budget starts after it.
+_NAVIGATION_TIMEOUT_S = 90.0
 
 _ROUTE = "batchexecute:as29s"
 
@@ -70,6 +79,62 @@ def _clip_url(project_id: str, media_id: str) -> str:
     return MIGRATED_CLIP_URL.format(project_id=project_id, media_id=media_id)
 
 
+@dataclass
+class _As29sWatch:
+    """Collects this clip's ``as29s`` record and notes which load lost its body."""
+
+    media_id: str
+    found: dict[str, Any] = field(default_factory=dict[str, Any])
+    attempt: int = 0
+    unreadable_on: int = 0
+    #: The load each as29s request was sent on; a loss belongs to that load.
+    sent_on: dict[Any, int] = field(default_factory=dict[Any, int])
+
+    @property
+    def waiting(self) -> bool:
+        """Still no record, and the current load has not lost its ``as29s`` body."""
+        return not self.found and self.unreadable_on != self.attempt
+
+    def on_request(self, request: Any) -> None:
+        if "as29s" in str(getattr(request, "url", "")):
+            self.sent_on[request] = self.attempt
+
+    async def on_response(self, response: Any) -> None:
+        url = str(getattr(response, "url", ""))
+        if self.found or "batchexecute" not in url:
+            return
+        load = self.sent_on.get(getattr(response, "request", None), self.attempt)
+        try:
+            text = await response.text()
+        except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
+            # Any lost as29s counts: its request does not name the clip (live e2e, #1484).
+            if "as29s" in url and load == self.attempt:
+                self.unreadable_on = load
+            return
+        _collect(text, media_id=self.media_id, into=self.found)
+
+    async def wait_out(self, page: Page, deadline: float) -> None:
+        """Wait while this load can still bring the record, or until ``deadline``."""
+        loop = asyncio.get_running_loop()
+        while self.waiting and loop.time() < deadline:
+            await page.wait_for_timeout(500)
+
+
+async def _open_route(
+    page: Page, url: str, *, timeout_s: float, reload: bool, attempt: int
+) -> bool:
+    """Load the clip route; ``False`` when a reload fails, which only had the rest of the
+    wait. A failed first load raises."""
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+    except _engine.retryable_engine_errors():  # patchright's Error is a separate class
+        if not reload:
+            raise
+        log.warning("migrated.recover_reload_failed", attempt=attempt)
+        return False
+    return True
+
+
 async def _await_signed_record(
     page: Page, *, media_id: str, project_id: str, wait_s: float
 ) -> dict[str, Any]:
@@ -79,31 +144,45 @@ async def _await_signed_record(
     only source of a freshly signed URL, because signed URLs expire and are therefore
     never persisted in the catalog.
     """
-    found: dict[str, Any] = {}
-
-    async def on_response(response: Any) -> None:
-        if found or "batchexecute" not in str(getattr(response, "url", "")):
-            return
-        try:
-            text = await response.text()
-        except Exception:  # noqa: BLE001 - an aborted/streamed body is not our frame
-            return
-        _collect(text, media_id=media_id, into=found)
-
-    page.on("response", on_response)
+    watch = _As29sWatch(media_id)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    deadline: float | None = None
+    page.on("request", watch.on_request)
+    page.on("response", watch.on_response)
     try:
-        log.info("migrated.recover_navigate", project_id=project_id, media_id=media_id)
-        await page.goto(
-            _clip_url(project_id, media_id), wait_until="domcontentloaded", timeout=90_000
-        )
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + wait_s
-        while not found and loop.time() < deadline:
-            await page.wait_for_timeout(500)
+        # Total time is capped at the first navigation's timeout plus ``wait_s``: the wait
+        # starts once the route has loaded, and a reload spends what is left of it.
+        while not watch.found and watch.attempt < _SIGNED_URL_ATTEMPTS:
+            nav_timeout_s = _NAVIGATION_TIMEOUT_S if deadline is None else deadline - loop.time()
+            if nav_timeout_s <= 0:
+                break
+            watch.attempt += 1
+            log.info(
+                "migrated.recover_navigate",
+                project_id=project_id,
+                media_id=media_id,
+                attempt=watch.attempt,
+            )
+            url = _clip_url(project_id, media_id)
+            if not await _open_route(
+                page,
+                url,
+                timeout_s=nav_timeout_s,
+                reload=deadline is not None,
+                attempt=watch.attempt,
+            ):
+                break  # running out of wait on a reload is "no URL"
+            if deadline is None:
+                deadline = loop.time() + wait_s
+            # A healthy load keeps the whole remaining budget: re-opening the route would
+            # cancel an as29s still in flight. Only an observed unreadable body reloads.
+            await watch.wait_out(page, deadline)
     finally:
-        page.remove_listener("response", on_response)
+        page.remove_listener("request", watch.on_request)
+        page.remove_listener("response", watch.on_response)
 
-    if not found:
+    if not watch.found:
         # #877: the class-default remediation on WireFormatError is written for
         # generation payloads — "check request payload parameters or retry with a
         # simpler prompt text" — and this command has neither a payload nor a prompt.
@@ -111,8 +190,9 @@ async def _await_signed_record(
         # so the remaining causes really are about the clip.
         raise WireFormatError(
             detail=(
-                f"migrated host: no signed media URL for {media_id} within "
-                f"{wait_s:.0f}s of opening its clip route."
+                f"migrated host: no signed media URL for {media_id} after {watch.attempt} "
+                f"load(s) of its clip route ({loop.time() - started:.0f}s including "
+                f"navigation; {wait_s:.0f}s wait once the route loaded)."
             ),
             remediation_hint=(
                 "Flow did not report a media URL for this clip. Open the project in "
@@ -123,7 +203,7 @@ async def _await_signed_record(
             ),
             route=_ROUTE,
         )
-    return found
+    return watch.found
 
 
 def _collect(text: str, *, media_id: str, into: dict[str, Any]) -> None:
