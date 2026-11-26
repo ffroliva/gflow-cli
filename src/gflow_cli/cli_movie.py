@@ -262,6 +262,7 @@ def run(
         cli_override=out_dir_override,
         config_value=manifest.output_dir,
         output_root=settings.output_dir,
+        kind="videos",
     )
 
     state_path = MovieState.state_path_for(manifest_path)
