@@ -64,7 +64,7 @@ async def _rate_limited() -> dict[str, Any]:
 
 @tools._guarded
 async def _invalid_tools() -> dict[str, Any]:
-    return {"status": "invalid_tools", "error": "bad tool"}
+    return {"status": "invalid_tools", "error": tools._bad_param("Invalid Tools", "bad")["error"]}
 
 
 @tools._guarded
