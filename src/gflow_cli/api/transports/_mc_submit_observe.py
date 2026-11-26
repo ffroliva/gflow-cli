@@ -98,7 +98,7 @@ class _VerdictTracker:
     def __init__(self) -> None:
         self._verdicts: list[tuple[Any, GFlowError]] = []
         self._aborted: list[Any] = []
-        self._in_flight: set[asyncio.Task[Any]] = set()
+        self._in_flight: dict[asyncio.Task[Any], Any] = {}
 
     def record(self, request: Any, verdict: GFlowError) -> None:
         if any(request is aborted for aborted in self._aborted):
@@ -111,27 +111,36 @@ class _VerdictTracker:
         self._verdicts = [(req, err) for req, err in self._verdicts if req is not request]
 
     @contextlib.contextmanager
-    def guard_in_flight(self) -> Generator[None]:
+    def guard_in_flight(self, request: Any) -> Generator[None]:
         task = asyncio.current_task()
         if task is not None:
-            self._in_flight.add(task)
+            self._in_flight[task] = request
         try:
             yield
         finally:
             if task is not None:
-                self._in_flight.discard(task)
+                self._in_flight.pop(task, None)
+
+    def _matching_in_flight(self) -> tuple[asyncio.Task[Any], ...]:
+        current = asyncio.current_task()
+        return tuple(
+            task
+            for task, req in self._in_flight.items()
+            if task is not current and any(req is v_req for v_req, _ in self._verdicts)
+        )
 
     async def raise_unguarded(self) -> None:
-        """Await any in-flight guard aborts, then raise the first unguarded verdict."""
-        if self._verdicts or self._in_flight:
+        """Await matching in-flight guard aborts, then raise the first unguarded verdict."""
+        if self._verdicts:
             # Yield once so a guard task scheduled right after the request event can enter.
             await asyncio.sleep(0)
-            current = asyncio.current_task()
-            while True:
-                pending = tuple(t for t in self._in_flight if t is not current)
-                if not pending:
+            deadline = time.monotonic() + 5.0
+            while self._verdicts:
+                pending = self._matching_in_flight()
+                remaining = deadline - time.monotonic()
+                if not pending or remaining <= 0:
                     break
-                done, _ = await asyncio.wait(pending, timeout=5.0)
+                done, _ = await asyncio.wait(pending, timeout=remaining)
                 if not done:
                     break
         if self._verdicts:
@@ -561,7 +570,7 @@ class SubmitObserveMixin(MentionMixin):
         async def guard(route: Any, request: Any) -> None:
             """Abort a wrong submit BEFORE it leaves the browser (#1178): the observer
             above only sees a request already on its way to Flow, which bills it."""
-            with verdicts.guard_in_flight():
+            with verdicts.guard_in_flight(request):
                 rpcid: str | None = None
                 try:
                     body = request_body(request)
@@ -682,15 +691,19 @@ class SubmitObserveMixin(MentionMixin):
                     f"migrated host: no {'/'.join(submit_rpcs)} reply within "
                     f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
-            final = await _finish_submitted(
-                self,
-                page,
-                first=submitted.result(),
-                project_id=project_id,
-                on_started=on_started,
-                status_watch=status_watch,
-                deadline=deadline,
-            )
+            try:
+                final = await _finish_submitted(
+                    self,
+                    page,
+                    first=submitted.result(),
+                    project_id=project_id,
+                    on_started=on_started,
+                    status_watch=status_watch,
+                    deadline=deadline,
+                )
+            except TransportTimeoutError:
+                await verdicts.raise_unguarded()
+                raise
             # Listeners stay armed through the terminal wait; raise any unguarded verdict
             # recorded there so a late bad submit is not silently dropped (#1518).
             await verdicts.raise_unguarded()
@@ -920,7 +933,7 @@ class SubmitObserveMixin(MentionMixin):
             return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
         async def guard(route: Any, raw_request: Any) -> None:
-            with verdicts.guard_in_flight():
+            with verdicts.guard_in_flight(raw_request):
                 problem = await _guard_image_submit(
                     route, raw_request, reference_ids, request.model, entity_ids
                 )
@@ -949,17 +962,21 @@ class SubmitObserveMixin(MentionMixin):
                 page, submit, disabled="migrated host: image submit stayed disabled (host=migrated)"
             )
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
-            done, _ = await asyncio.wait(
+            await asyncio.wait(
                 {result, route_error, body_lost},
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             await _raise_if_refused(route_error, verdicts)
             if body_lost.done():
-                images = await _recover_images(page, request, baseline)
+                try:
+                    images = await _recover_images(page, request, baseline)
+                except TransportTimeoutError:
+                    await verdicts.raise_unguarded()
+                    raise
                 await verdicts.raise_unguarded()
                 return images
-            if result not in done:
+            if not result.done():
                 raise _outcome_unknown(
                     f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
                     f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"

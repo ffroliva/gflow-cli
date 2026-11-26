@@ -5712,3 +5712,103 @@ async def test_image_in_flight_guard_abort_during_recovery_keeps_images_1518() -
     assert guard_task is not None and guard_task.done()
     assert slow_route.outcome == "abort"
     assert [i.media_name for i in images] == [NEW_TILE]
+
+
+async def test_unrelated_in_flight_guard_does_not_delay_settled_clip_1518() -> None:
+    """#1518 review: an unrelated passing guard waiting in fallback must not stall settlement."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _SlowFallbackRoute(FakeRoute):
+        def __init__(self, release: asyncio.Event) -> None:
+            super().__init__()
+            self.release = release
+            self.entered = asyncio.Event()
+
+        async def fallback(self) -> None:
+            self.entered.set()
+            await self.release.wait()
+            self.outcome = "fallback"
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+    release_fallback = asyncio.Event()
+    slow_route = _SlowFallbackRoute(release_fallback)
+
+    async def on_started(_started: Any) -> None:
+        other_req = FakeRequest(_batch_url("as29s"), "")
+        asyncio.create_task(page.routes[-1][1](slow_route, other_req))
+        await slow_route.entered.wait()
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    started_at = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=on_started,
+        project_id=PROJ,
+        submit_rpcs=("fZytfe",),
+    )
+    elapsed = time.monotonic() - started_at
+    release_fallback.set()
+    await asyncio.sleep(0)
+    assert rec.is_done and rec.media_id == MEDIA
+    assert elapsed < 1.0
+
+
+async def test_unguarded_verdict_during_terminal_timeout_is_raised_1518() -> None:
+    """#1518 review: an unguarded verdict seen before terminal timeout wins over timeout."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="late bad clip") if "late-bad" in body else None
+
+    async def on_started(_started: Any) -> None:
+        late_req = FakeRequest(_batch_url("fZytfe"), "f.req=late-bad")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(late_req))
+
+    with pytest.raises(WireFormatError, match="late bad clip") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=0.05,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert ei.value.charged == "maybe"
+
+
+async def test_image_result_arriving_during_refusal_wait_is_returned_1518(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1518 review: if the image reply lands while _raise_if_refused awaits, return it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "IMAGE_REPLY_BUDGET_S", 0.01)
+    orig_check = _mc_submit_observe._raise_if_refused
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+
+    async def late_reply_during_check(route_error: Any, verdicts: Any) -> None:
+        page._fire_response(FakeResponse(_batch_url("ogiZ0b"), _image_frame()))
+        await asyncio.sleep(0)
+        await orig_check(route_error, verdicts)
+
+    monkeypatch.setattr(_mc_submit_observe, "_raise_if_refused", late_reply_during_check)
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup")
+    )
+    assert len(images) == 1
