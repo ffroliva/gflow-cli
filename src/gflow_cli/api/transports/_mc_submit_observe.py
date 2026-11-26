@@ -707,7 +707,8 @@ class SubmitObserveMixin(MentionMixin):
             # recorded there so a late bad submit is not silently dropped (#1518), naming
             # the clip that finished so it can still be downloaded.
             await verdicts.raise_unguarded(
-                completed_media_ids=[final.media_id], recover_hint=CLIP_RECOVER_HINT
+                completed_media_ids=[final.media_id] if final.is_done else [],
+                recover_hint=CLIP_RECOVER_HINT,
             )
             log.info(
                 "migrated.result",
