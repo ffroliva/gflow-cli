@@ -932,7 +932,7 @@ class SubmitObserveMixin(MentionMixin):
 def _without_listing_url(rec: GenerationRecord) -> GenerationRecord:
     """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); without it
     the download takes the clip route, which fetches a signed one."""
-    return replace(rec, video_url=None)  # NOSONAR(python:S5886) replace() keeps the type
+    return replace(rec, video_url=None)  # NOSONAR(S5886) - replace() keeps the type
 
 
 @dataclass

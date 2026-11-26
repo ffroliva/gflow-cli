@@ -120,7 +120,9 @@ class _As29sWatch:
             await page.wait_for_timeout(500)
 
 
-async def _open_route(page: Page, url: str, *, timeout_s: float, reload: bool) -> bool:
+async def _open_route(
+    page: Page, url: str, *, timeout_s: float, reload: bool, attempt: int
+) -> bool:
     """Load the clip route; ``False`` when a reload fails, which only had the rest of the
     wait. A failed first load raises."""
     try:
@@ -128,7 +130,7 @@ async def _open_route(page: Page, url: str, *, timeout_s: float, reload: bool) -
     except _engine.retryable_engine_errors():  # patchright's Error is a separate class
         if not reload:
             raise
-        log.warning("migrated.recover_reload_failed")
+        log.warning("migrated.recover_reload_failed", attempt=attempt)
         return False
     return True
 
@@ -164,7 +166,11 @@ async def _await_signed_record(
             )
             url = _clip_url(project_id, media_id)
             if not await _open_route(
-                page, url, timeout_s=nav_timeout_s, reload=deadline is not None
+                page,
+                url,
+                timeout_s=nav_timeout_s,
+                reload=deadline is not None,
+                attempt=watch.attempt,
             ):
                 break  # running out of wait on a reload is "no URL"
             if deadline is None:
