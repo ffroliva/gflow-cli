@@ -62,6 +62,23 @@ def test_direct_can_serve_excluded_shapes(kwargs: dict[str, object]) -> None:
     assert direct_can_serve(req) is False
 
 
+@pytest.mark.parametrize("model", [Model.HARBOR_SEAL, Model.GEM_PIX_2])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"count": 2},
+        {"aspect": Aspect.LANDSCAPE},
+        {"refs": (ImageRef(name="r", in_project=True, display_name="r"),)},
+        {"reference_entities": ("entity-1",), "reference_entity_names": ("Alice",)},
+        {"reference_entity_names": ("Alice",)},
+    ],
+)
+def test_new_models_with_an_unmeasured_slot_route_to_the_ui(
+    model: Model, kwargs: dict[str, object]
+) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", model=model, **kwargs)) is False
+
+
 def test_ogiz0b_reply_images_success() -> None:
     payload = image_payload()
     frame_json = json.dumps(
@@ -203,7 +220,7 @@ async def test_direct_http_unsupported_shape_falls_back_to_ui(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     # A model with no measured wire name: refused by the selector, before any HTTP work.
-    req = GenerateImageRequest(prompt="a blue cup", model=Model.GEM_PIX_2)
+    req = GenerateImageRequest(prompt="a blue cup", model=Model.IMAGEN_3_5)
     await transport.generate_images(project_id="proj-123", request=req)
 
     assert ui_called
@@ -673,10 +690,19 @@ async def test_direct_http_setup_stores_profile_dir(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "wire"),
+    [
+        # NARWHAL is sent as BELUGA on flow.google.com; Flow no longer lists NARWHAL (#958).
+        (Model.NARWHAL, "BELUGA"),
+        # Measured live on direct ogiZ0b, 2026-11-27 (#1549).
+        (Model.HARBOR_SEAL, "HARBOR_SEAL"),
+        (Model.GEM_PIX_2, "GEM_PIX_2"),
+    ],
+)
 async def test_direct_http_sends_the_migrated_wire_model(
-    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, model: Model, wire: str
 ) -> None:
-    """NARWHAL is sent as BELUGA on flow.google.com; Flow no longer lists NARWHAL (#958)."""
     monkeypatch.setattr(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
@@ -691,11 +717,21 @@ async def test_direct_http_sends_the_migrated_wire_model(
         return httpx.Response(200, text=_valid_ogiz0b_text())
 
     transport._http_transport = httpx.MockTransport(handler)
-    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
-    assert builder.call_args.kwargs["model"] == "BELUGA"
+    await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x", model=model)
+    )
+    assert builder.call_args.kwargs["model"] == wire
 
 
-@pytest.mark.parametrize("model", [m for m in Model if m is not Model.NARWHAL])
+_MEASURED_MODELS = (Model.NARWHAL, Model.HARBOR_SEAL, Model.GEM_PIX_2)
+
+
+@pytest.mark.parametrize("model", _MEASURED_MODELS)
+def test_a_model_with_a_measured_wire_name_is_served(model: Model) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", model=model))
+
+
+@pytest.mark.parametrize("model", [m for m in Model if m not in _MEASURED_MODELS])
 def test_a_model_with_no_measured_migrated_wire_name_is_not_served(model: Model) -> None:
     assert not direct_can_serve(GenerateImageRequest(prompt="x", model=model))
 

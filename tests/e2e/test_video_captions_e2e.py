@@ -270,6 +270,73 @@ async def test_mcp_tool_burns_styled_top_caption(
     _assert_caption_pixels(clip, Path(result["output_file"]), region="top")
 
 
+_CJK_FONTS = (
+    r"C:\Windows\Fonts\msyh.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+)
+
+
+def _frames(path: Path) -> list[np.ndarray]:
+    av = pytest.importorskip("av")
+    with av.open(str(path)) as video:
+        return [frame.to_ndarray(format="rgb24") for frame in video.decode(video=0)]
+
+
+@pytest.mark.skipif(not any(Path(p).is_file() for p in _CJK_FONTS), reason="no CJK font")
+def test_installed_cli_burns_cjk_glyphs_not_missing_glyph_boxes(
+    installed_cli: InstalledCli, clip_files: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # #1535: Chinese burned as tofu. Same-length text that no font can draw is the control:
+    # before the fix both rendered as identical rows of boxes.
+    clip, _ = clip_files
+    outputs = []
+    for name, text in (("cjk", "中文字幕"), ("tofu", "\U0010fffd" * 4)):
+        srt = tmp_path / f"{name}.srt"
+        srt.write_text(f"1\n00:00:00,200 --> 00:00:01,000\n{text}\n", encoding="utf-8")
+        output = tmp_path / f"{name}.mp4"
+        result = subprocess.run(
+            [str(installed_cli.python), "-m", "gflow_cli", "video", "captions", str(clip)]
+            + ["--srt", str(srt), "--out-file", str(output), "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            env=RedactedEnv({**os.environ, "GFLOW_CLI_OUTPUT_DIR": str(tmp_path / "out")}),
+        )
+        assert result.returncode == 0, result.stderr
+        _assert_caption_pixels(clip, output)
+        outputs.append(_frames(output))
+    diff = max(float(np.mean(np.abs(a.astype(float) - b))) for a, b in zip(*outputs, strict=True))
+    assert diff > 1, "CJK caption rendered the same as missing-glyph boxes"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not any(Path(p).is_file() for p in _CJK_FONTS), reason="no CJK font")
+async def test_mcp_tool_burns_cjk_glyphs_not_missing_glyph_boxes(
+    clip_files: tuple[Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #1535, MCP twin of the CLI test above: same control, through gflow_video_captions.
+    from gflow_cli.config import reset_settings
+    from gflow_cli.mcp.video_captions_tools import gflow_video_captions
+
+    clip, _ = clip_files
+    outputs = []
+    for name, text in (("cjk", "中文字幕"), ("tofu", "\U0010fffd" * 4)):
+        srt = tmp_path / f"{name}.srt"
+        srt.write_text(f"1\n00:00:00,200 --> 00:00:01,000\n{text}\n", encoding="utf-8")
+        monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path / f"mcp-{name}"))
+        reset_settings()
+        result = await gflow_video_captions(str(clip), srt=str(srt))
+        reset_settings()
+        assert result["status"] == "ok", result
+        output = Path(result["output_file"])
+        _assert_caption_pixels(clip, output)
+        outputs.append(_frames(output))
+    diff = max(float(np.mean(np.abs(a.astype(float) - b))) for a, b in zip(*outputs, strict=True))
+    assert diff > 1, "CJK caption rendered the same as missing-glyph boxes"
+
+
 @pytest.mark.asyncio
 async def test_default_endpoint_error_reaches_cli_and_mcp(
     installed_cli: InstalledCli,

@@ -609,6 +609,79 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
     assert sum(glyph is not None and glyph != tofu for glyph in glyphs) >= 15
 
 
+#: Fonts that draw all of Chinese, Hangul and kana (YaHei has no Hangul; Malgun has all three).
+_CJK_FONT_PATHS = (
+    r"C:\Windows\Fonts\malgun.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+)
+
+
+@pytest.mark.skipif(
+    not any(Path(p).is_file() for p in _CJK_FONT_PATHS), reason="no CJK font on this host"
+)
+def test_caption_font_renders_cjk_when_a_cjk_font_is_installed() -> None:
+    # #1535: Segoe UI / Arial / DejaVu came first and drew every CJK character as tofu.
+    from PIL import Image, ImageDraw, ImageFont
+
+    draw = ImageDraw.Draw(Image.new("RGB", (1280, 720)))
+    font, _, _ = service._measure_caption(1280, 720, "中文字幕 한국어 かな", draw, ImageFont, None)
+    tofu = bytes(font.getmask("\U0010ffff"))
+    assert all(bytes(font.getmask(c)) != tofu for c in "中文字幕한국어かな")
+
+
+class _CoverageFont:
+    """Draws ASCII; draws CJK and combining accents only when its path says ``cjk``; never
+    draws emoji."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def getmask(self, text: str) -> bytes:
+        if text == "\U0010ffff" or ord(text) > 0xFFFF:
+            return b"tofu"
+        if (ord(text) > 0x2FFF or 0x300 <= ord(text) <= 0x36F) and "cjk" not in self.path:
+            return b"tofu"
+        if "broken" in self.path:
+            raise OSError("bad glyph table")
+        return text.encode()
+
+
+class _CoverageFontModule:
+    @staticmethod
+    def truetype(path: str, size: int) -> _CoverageFont:
+        return _CoverageFont(path)
+
+    @staticmethod
+    def load_default(size: int) -> _CoverageFont:
+        return _CoverageFont("default")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hello", "latin"),  # Latin keeps the first installed font, as before
+        ("字幕 한국어", "cjk"),
+        ("中文 😀", "cjk"),  # an emoji no font draws must not send CJK back to tofu
+        ("﻿中文‎字‍", "cjk"),  # BOM / LRM / ZWJ need no glyph
+        ("Hi️", "latin"),  # a variation selector needs no glyph
+        ("zhōng", "cjk"),  # a combining accent does: it burns as a box otherwise
+        ("Hi 字", "cjk"),  # the latin font misses 字; "broken" raises and is skipped
+        ("😀", "latin"),  # nothing covers it: the earliest installed font
+    ],
+)
+def test_caption_font_picks_the_installed_font_that_draws_the_text(
+    text: str, expected: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fonts = ("latin", "broken", "cjk")  # "broken" raises from getmask and is skipped
+    monkeypatch.setattr(service, "_CAPTION_FONTS_NT", fonts)
+    monkeypatch.setattr(service, "_CAPTION_FONTS_POSIX", fonts)
+    monkeypatch.setattr(service.Path, "is_file", lambda _self: True)
+    assert service._load_caption_font(720, _CoverageFontModule, text=text).path == expected
+
+
 @pytest.mark.parametrize(
     ("width", "height", "expected_initial", "expected_fallback"),
     [(1920, 1080, 49, 43), (1280, 720, 32, 29)],
@@ -1306,8 +1379,10 @@ def test_caption_overlay_explicit_font_size_skips_auto_shrink(
     loaded_sizes: list[int] = []
     real_load = service._load_caption_font
 
-    def record_load(h: int, font_module: Any = None, *, size: int | None = None) -> Any:
-        font = real_load(h, font_module, size=size)
+    def record_load(
+        h: int, font_module: Any = None, *, size: int | None = None, text: str = ""
+    ) -> Any:
+        font = real_load(h, font_module, size=size, text=text)
         loaded_sizes.append(font.size)
         return font
 
