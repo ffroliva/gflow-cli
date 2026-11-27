@@ -59,6 +59,7 @@ _ALLOWED_RPCIDS = frozenset({"nzlxg", "HTrJv", "pGCYOe"})
 _ROUTE = "credits_wire"
 _THROTTLED_HINT = "Flow is throttling this account; wait a minute, then read the balance again."
 _THROTTLE_DEFAULT_S = 60.0
+_SIGNED_OUT_TTL_S = 300.0
 _BUILD = re.compile(r"boq_[A-Za-z0-9._-]{1,80}")  # cfb2h is scraped from remote HTML
 _CONNECT_S = 3.0
 _TOTAL_S = 5.0
@@ -104,15 +105,40 @@ class _Tokens:
 Tokens = _Tokens
 
 
-# Per process, per profile: the shell's tokens, profiles Flow said are signed out (with the
-# reason it gave), throttle windows (monotonic deadline, the status that opened it), and one
-# lock each.
+# Per process, per profile: the shell's tokens, profiles Flow said are signed out (monotonic
+# deadline, the reason it gave), throttle windows (monotonic deadline, the status that opened
+# it), and one lock each.
 _tokens: dict[Path, _Tokens] = {}
-_signed_out: dict[Path, WireFallbackReason] = {}
+_signed_out: dict[Path, tuple[float, WireFallbackReason]] = {}
 _throttled: dict[Path, tuple[float, int]] = {}
 _locks: dict[Path, asyncio.Lock] = {}
 _clock = time.monotonic
 _reqid = 1000 + secrets.randbelow(9000)  # the app's own counter starts at a random 4 digits
+
+
+def _mark_signed_out(profile_dir: Path, reason: WireFallbackReason) -> None:
+    _signed_out[profile_dir] = (_clock() + _SIGNED_OUT_TTL_S, reason)
+
+
+def _active_signed_out(profile_dir: Path) -> tuple[float, WireFallbackReason] | None:
+    marked = _signed_out.get(profile_dir)
+    if marked is None or marked[0] - _clock() <= 0:
+        return None
+    return marked
+
+
+def _restore_signed_out(
+    profile_dir: Path, previous: tuple[float, WireFallbackReason] | None
+) -> None:
+    if previous is not None and profile_dir not in _signed_out:
+        _signed_out[profile_dir] = previous
+
+
+def _proxy_configured(settings: Settings) -> bool:
+    # A proxy anywhere (gflow's, the environment's, the OS's) means the browser and a
+    # direct request may leave by different routes; the session cookies must not.
+    # Ignore urllib's "no" pseudo-entry (NO_PROXY with no proxy URL configured).
+    return bool(settings.browser_proxy) or any(k != "no" for k in getproxies())
 
 
 def reset_state() -> None:
@@ -158,8 +184,11 @@ def _throttled_error(status: int, retry_after: float) -> RateLimitError | Networ
 
 def _gate(profile_dir: Path) -> None:
     """Refuse a read this profile must not make: signed out, or inside a throttle window."""
-    if (reason := _signed_out.get(profile_dir)) is not None:
-        raise WireReadUnavailable(reason)  # never DISABLED: that one names the kill switch
+    if (marked := _signed_out.get(profile_dir)) is not None:
+        deadline, reason = marked
+        if deadline - _clock() > 0:
+            raise WireReadUnavailable(reason)  # never DISABLED: that one names the kill switch
+        del _signed_out[profile_dir]
     if (window := _throttled.get(profile_dir)) is not None:
         deadline, status = window
         if (remaining := deadline - _clock()) > 0:
@@ -179,7 +208,7 @@ def _check(response: httpx.Response, profile_dir: Path, *, rpcid: str = "nzlxg")
     if 300 <= status < 400:
         raise WireReadUnavailable(WireFallbackReason.REDIRECT)
     if status == 401:
-        _signed_out[profile_dir] = WireFallbackReason.HTTP_401
+        _mark_signed_out(profile_dir, WireFallbackReason.HTTP_401)
         raise WireReadUnavailable(WireFallbackReason.HTTP_401)
     if status in (429, 503):
         window = parse_retry_after(response) or _THROTTLE_DEFAULT_S
@@ -265,7 +294,7 @@ async def _shell_tokens(
         response = await _send(client, client.build_request("GET", f"{_ORIGIN}/", headers=nav))
         _check(response, profile_dir)
         if not (at := _wiz(response.text, "SNlM0e")):
-            _signed_out[profile_dir] = WireFallbackReason.SIGNED_OUT_SHELL
+            _mark_signed_out(profile_dir, WireFallbackReason.SIGNED_OUT_SHELL)
             raise WireReadUnavailable(WireFallbackReason.SIGNED_OUT_SHELL)
         tokens = _Tokens(at, _wiz(response.text, "FdrFJe"), _wiz(response.text, "cfb2h"))
         _tokens[profile_dir] = tokens
@@ -316,12 +345,12 @@ async def _execute_direct_rpc(
     profile_dir: Path,
     rpcid: str,
     payload: list[Any] | None = None,
+    *,
+    settings: Settings | None = None,
 ) -> tuple[httpx.Response, float]:
     require_in_home(profile_dir)  # before anything reads the profile (row 19)
     _gate(profile_dir)
-    if get_settings().browser_proxy or getproxies():
-        # A proxy anywhere (gflow's, the environment's, the OS's) means the browser and a
-        # direct request may leave by different routes; the session cookies must not.
+    if _proxy_configured(settings or get_settings()):
         raise WireReadUnavailable(WireFallbackReason.PROXY_CONFIGURED)
     if (ua := _user_agent(profile_dir)) is None:
         raise WireReadUnavailable(WireFallbackReason.NO_CHROME_VERSION)
@@ -357,9 +386,9 @@ async def _execute_direct_rpc(
     return response, time.perf_counter() - started
 
 
-async def read_credits(profile_dir: Path) -> CreditsInfo:
+async def read_credits(profile_dir: Path, *, settings: Settings | None = None) -> CreditsInfo:
     """The balance over the wire, or :class:`WireReadUnavailable`. Never starts a browser."""
-    response, elapsed = await _execute_direct_rpc(profile_dir, "nzlxg")
+    response, elapsed = await _execute_direct_rpc(profile_dir, "nzlxg", settings=settings)
     frames = [payload for rpcid, payload in parse_frames(response.text) if rpcid == "nzlxg"]
     try:
         info = CreditsInfo.from_nzlxg(frames[0] if frames else None)
@@ -430,10 +459,11 @@ async def direct_restore_media(profile_dir: Path, media_id: str, project_id: str
 
 
 def session_recovered(profile_dir: Path) -> None:
-    """A renewal Flow authenticated (``renewed`` or ``labs_unverified``): lift the signed-out
-    mark and the cached ``at`` so the next read tries the wire once more. If the cookies did
-    not change, that read marks the profile again. A page read does not lift it (the wire
-    would send the same cookies), and a throttle window is time-based."""
+    """A renewal Flow authenticated (including ``labs_unverified`` / ``labs_stale``): lift
+    the signed-out mark and cached ``at`` so the next read tries the wire once more. If the
+    cookies did not change, that read marks the profile again for the TTL window. A page
+    read does not lift it immediately (the wire would send the same cookies), and a throttle
+    window is time-based."""
     _signed_out.pop(profile_dir, None)
     _tokens.pop(profile_dir, None)
 
@@ -444,21 +474,24 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
     An explicit question, so it asks Flow afresh: one shell GET and one ``nzlxg`` POST, under
     every rule ``read_credits`` keeps, plus the kill switch / macOS default and the proxy rule
     from ``settings`` (the caller's, else the global ones). A profile already marked signed out
-    is asked again; a throttle window is honoured and sends nothing. Returns only ``status``
-    (``accepted``, ``throttled``, or a :class:`WireFallbackReason` value), ``build`` (Flow's
-    build label, when read) and, when throttled, ``retry_after`` in seconds; never a cookie,
-    token, id or URL. Raises only ``SecurityError`` (a profile outside GFLOW_CLI_HOME).
+    is asked again, while non-Flow failures (cookie store, proxy, network, throttle) preserve
+    any prior mark. Returns only ``status`` (``accepted``, ``throttled``, or a
+    :class:`WireFallbackReason` value), ``build`` (Flow's build label, when read) and, when
+    throttled, ``retry_after`` in seconds; never a cookie, token, id or URL. Raises only
+    ``SecurityError`` (a profile outside GFLOW_CLI_HOME).
     """
     settings = settings or get_settings()
     if not settings.wire_reads:
         return {"status": WireFallbackReason.DISABLED.value, "build": None}
-    if settings.browser_proxy:
+    if _proxy_configured(settings):
         return {"status": WireFallbackReason.PROXY_CONFIGURED.value, "build": None}
     require_in_home(profile_dir)
-    _signed_out.pop(profile_dir, None)  # re-ask; a still-signed-out shell marks it again
-    _tokens.pop(profile_dir, None)  # a fresh shell GET, so `build` is current
+    previous = _active_signed_out(profile_dir)
+    session_recovered(profile_dir)  # re-ask with fresh tokens; non-Flow failures restore below
+    succeeded = False
     try:
-        await read_credits(profile_dir)
+        await read_credits(profile_dir, settings=settings)
+        succeeded = True
     except WireReadUnavailable as exc:
         return {"status": exc.reason.value, "build": None}
     except (RateLimitError, NetworkError):  # only ever the throttle window here
@@ -470,6 +503,9 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
     except Exception as exc:  # noqa: BLE001 - a health probe reports and never fails a caller
         log.warning("wire.health_unexpected", error_type=type(exc).__name__)
         return {"status": WireFallbackReason.UNEXPECTED.value, "build": None}
+    finally:
+        if not succeeded:
+            _restore_signed_out(profile_dir, previous)
     tokens = _tokens.get(profile_dir)
     bl = tokens.bl if tokens else None
     return {"status": "accepted", "build": bl if bl and _BUILD.fullmatch(bl) else None}

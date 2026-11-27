@@ -83,6 +83,8 @@ def test_every_other_status_is_info_and_never_flips_exit_33(
     assert finding.severity == "info"
     assert finding.summary.startswith(f"status={status} build=unknown")
     assert hint in finding.remediation
+    if status == "proxy_configured":
+        assert "environment/system proxy" in finding.remediation
     assert doctor.DoctorReport(findings=(finding,)).overall_status == "ok"
 
 
