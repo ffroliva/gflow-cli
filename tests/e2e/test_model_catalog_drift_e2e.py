@@ -40,7 +40,9 @@ def test_doctor_compares_the_live_model_catalog(
 
     assert proc.returncode in (0, 33), proc.stderr[-2000:]  # 33: findings, possibly unrelated
     [check] = [c for c in json.loads(proc.stdout)["checks"] if c["check"] == "models.catalog_drift"]
-    assert check["severity"] in ("pass", "warn"), check
+    # info is allowed only for Flow having added a model (nothing skipped): the read still ran
+    assert check["severity"] in ("pass", "warn", "info"), check
+    assert not check["summary"].startswith("skipped"), check
     if check["severity"] == "pass":
         assert check["summary"].endswith("families, all mapped"), check
     else:

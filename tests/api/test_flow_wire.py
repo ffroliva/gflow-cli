@@ -1029,3 +1029,15 @@ async def test_a_catalog_reply_without_htrjv_is_unparseable(profile: Path, flow:
     with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_model_catalog(profile)
     assert _reason(exc) is WireFallbackReason.UNPARSEABLE
+
+
+async def test_an_undecodable_catalog_frame_is_unparseable(profile: Path, flow: _Flow) -> None:
+    import json
+
+    frame = [["wrb.fr", "HTrJv", "{not json", None, None, None, "generic"]]
+    reply = ")]}'\n" + json.dumps(frame) + "\n"
+    flow.rpc = lambda _r: httpx.Response(200, text=reply)
+
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_model_catalog(profile)
+    assert _reason(exc) is WireFallbackReason.UNPARSEABLE

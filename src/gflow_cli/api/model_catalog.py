@@ -195,21 +195,45 @@ def parse_htrjv_families(payload: object) -> list[ModelFamily]:
     return found
 
 
-def catalog_drift(families: Sequence[ModelFamily]) -> list[str]:
-    """How ``families`` differ from gflow's mapping, one line each; empty when they agree.
-
-    Reported: a family neither mapped nor ignored, a mapped or ignored family that is gone, an
-    image wire key its family no longer lists, and a retirement date gflow does not carry.
-    """
-    by_key = {family.key: family for family in families}
+def _mapped_keys() -> dict[str, str]:
     mapped = {key: model.value for model, key in FAMILY_KEY.items()}
-    mapped |= {key: model.value for model, (key, _) in IMAGE_FAMILY.items()}
-    expected_dates = {FAMILY_KEY[model]: when for model, when in RETIRES_ON.items()}
-    drift = [
+    return mapped | {key: model.value for model, (key, _) in IMAGE_FAMILY.items()}
+
+
+def catalog_news(families: Sequence[ModelFamily]) -> list[str]:
+    """What Flow added that gflow does not map: a family, or a key inside an image family.
+
+    A subset of :func:`catalog_drift`. A user cannot map a new model themselves, so
+    ``gflow doctor`` reports these as information; what Flow removed is a warning.
+    """
+    mapped = _mapped_keys()
+    news = [
         f"added family {family.key} ({family.display_name}): not mapped in gflow"
         for family in families
         if family.key not in mapped and family.key not in IGNORED_FAMILIES
     ]
+    by_key = {family.key: family for family in families}
+    news += [
+        f"family {key} lists {usage}: gflow has no mapping for it"
+        for _, (key, wire) in IMAGE_FAMILY.items()
+        if key in by_key
+        for usage in by_key[key].usages
+        if usage != wire
+    ]
+    return news
+
+
+def catalog_drift(families: Sequence[ModelFamily]) -> list[str]:
+    """How ``families`` differ from gflow's mapping, one line each; empty when they agree.
+
+    Reported: a family neither mapped nor ignored, a mapped or ignored family that is gone, an
+    image wire key its family no longer lists (or one it lists that gflow does not map), and a
+    retirement date gflow does not carry. :func:`catalog_news` is the part Flow added.
+    """
+    by_key = {family.key: family for family in families}
+    mapped = _mapped_keys()
+    expected_dates = {FAMILY_KEY[model]: when for model, when in RETIRES_ON.items()}
+    drift = catalog_news(families)
     drift += [
         f"removed family {key}: gflow maps {model}"
         for key, model in mapped.items()

@@ -7,7 +7,8 @@ decoded by ``CreditsInfo.from_nzlxg``), ``HTrJv`` (the model catalog, #1550) or 
 (media trash/restore mutations, #1363). Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
 
 A failure raises :class:`WireReadUnavailable` carrying only an enum reason, and the caller
-(``services/credits.py`` or ``services/media_trash.py``) falls back to the browser instead.
+(``services/credits.py`` or ``services/media_trash.py``; ``services/doctor.py`` skips its catalog
+check) falls back to the browser instead.
 Back-pressure is the exception: HTTP 429 and 503 raise the page path's own ``RateLimitError``
 / ``NetworkError`` and, for credits reads, open a per-profile window (Retry-After, else 60 s) in
 which every read of that profile re-raises with nothing sent, because a page load would send the
@@ -380,7 +381,7 @@ async def read_model_catalog(profile_dir: Path) -> object:
     """
     response, _ = await _execute_direct_rpc(profile_dir, "HTrJv")
     frames = [payload for rpcid, payload in parse_frames(response.text) if rpcid == "HTrJv"]
-    if not frames:
+    if not frames or frames[0] is None:  # no frame, or its inner JSON did not decode
         _tokens.pop(profile_dir, None)
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
     return frames[0]

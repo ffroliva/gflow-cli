@@ -155,8 +155,33 @@ def test_drift_names_an_image_wire_key_flow_dropped() -> None:
         for f in _baseline()
     ]
     assert catalog_drift(families) == [
-        "family harbor_seal no longer lists HARBOR_SEAL: gflow sends it for HARBOR_SEAL"
+        "family harbor_seal lists HARBOR_SEAL_2: gflow has no mapping for it",
+        "family harbor_seal no longer lists HARBOR_SEAL: gflow sends it for HARBOR_SEAL",
     ]
+
+
+def test_drift_names_an_unmapped_key_inside_an_image_family() -> None:
+    from gflow_cli.api.model_catalog import catalog_drift, catalog_news
+
+    families = [
+        _family("harbor_seal", usages=("HARBOR_SEAL", "HARBOR_SEAL_PRO"))
+        if f.key == "harbor_seal"
+        else f
+        for f in _baseline()
+    ]
+    line = "family harbor_seal lists HARBOR_SEAL_PRO: gflow has no mapping for it"
+    assert catalog_drift(families) == [line]
+    assert catalog_news(families) == [line]
+
+
+def test_news_is_only_what_flow_added() -> None:
+    from gflow_cli.api.model_catalog import catalog_news
+
+    assert catalog_news(_baseline()) == []
+    assert catalog_news([*_baseline(), _family("veo_4")]) == [
+        "added family veo_4 (veo_4): not mapped in gflow"
+    ]
+    assert catalog_news([f for f in _baseline() if f.key != "veo_3_1_lite"]) == []
 
 
 def test_drift_names_new_moved_and_dropped_retirement_dates() -> None:

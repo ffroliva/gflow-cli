@@ -2,8 +2,9 @@
 
 The comparison itself is ``api.model_catalog.catalog_drift`` (tests/api/test_model_catalog.py);
 the read is ``flow_wire.read_model_catalog`` (tests/api/test_flow_wire.py). Here the read is
-stubbed, so only the finding is under test: drift is a warning (exit 33), and every state in
-which nothing could be compared is info, sent under the direct read's own rules.
+stubbed, so only the finding is under test: a removed family or key is a warning (exit 33), an
+added one is info, and every state in which nothing could be compared is info, sent under the
+direct read's own rules.
 """
 
 from __future__ import annotations
@@ -65,15 +66,54 @@ def test_a_catalog_that_matches_passes(read: _Read) -> None:
     assert read.seen == [get_settings().profile_subdir("denon")]
 
 
-def test_drift_is_a_warning_naming_each_difference(read: _Read) -> None:
+def test_a_family_flow_added_is_info_not_a_warning(read: _Read) -> None:
+    """Users cannot map a new model themselves: it must not turn doctor's exit into 33."""
     extra = ["Veo 4", [["veo_4_t2v"]], True, "veo_4"]
     read.payload = [[*_recorded(), extra]]
 
     [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
 
-    assert finding.severity == "warn"
+    assert finding.severity == "info"
+    assert not finding.summary.startswith("skipped")
     assert "added family veo_4 (Veo 4): not mapped in gflow" in finding.summary
     assert "gflow update" in finding.remediation
+
+
+def test_a_family_flow_removed_is_a_warning(read: _Read) -> None:
+    read.payload = [[f for f in _recorded() if f[3] != "veo_3_1_lite"]]  # type: ignore[index]
+
+    [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
+
+    assert finding.severity == "warn"
+    assert "removed family veo_3_1_lite" in finding.summary
+
+
+def test_a_removal_with_an_addition_is_a_warning_naming_both(read: _Read) -> None:
+    extra = ["Veo 4", [["veo_4_t2v"]], True, "veo_4"]
+    kept = [f for f in _recorded() if f[3] != "veo_3_1_lite"]  # type: ignore[index]
+    read.payload = [[*kept, extra]]
+
+    [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
+
+    assert finding.severity == "warn"
+    assert "removed family veo_3_1_lite" in finding.summary
+    assert "added family veo_4" in finding.summary
+
+
+def test_an_undecodable_catalog_is_skipped_as_unparseable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def raises(_profile_dir: Path) -> object:
+        raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
+
+    monkeypatch.setattr(flow_wire, "read_model_catalog", raises)
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _flag: "denon")
+
+    [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
+
+    assert finding.severity == "info"
+    assert "unparseable" in finding.summary
+    assert "format changed" not in finding.summary
 
 
 def test_a_reply_with_no_families_is_a_warning(read: _Read) -> None:

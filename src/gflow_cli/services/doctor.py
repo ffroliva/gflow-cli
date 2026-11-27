@@ -515,8 +515,8 @@ _WIRE_HINTS = {
     "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
     " credits read through the browser",
     "proxy_configured": "the direct read is skipped while a proxy is configured"
-    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); credits read through the"
-    " browser",
+    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); credits and media trash"
+    " read through the browser",
     "throttled": "Flow is throttling this account; wait a minute, then re-run: gflow doctor",
 }
 
@@ -558,8 +558,9 @@ def check_model_catalog(settings: Settings, profile: str | None = None) -> list[
     """Flow's live model catalog against gflow's mapping (#1550), read for ``profile``.
 
     One ``HTrJv`` POST under the direct read's rules (default profile unless named; the
-    nightly canary names its own). Drift is ``warn``: gflow's model list is behind Flow's.
-    A catalog that could not be read is ``info``: nothing was compared.
+    nightly canary names its own). A mapped family or key Flow removed is ``warn``; one Flow
+    added is ``info``, since no user can map it. A catalog that could not be read is ``info``:
+    nothing was compared.
     """
     if not settings.wire_reads:
         reason = "direct reads are off (GFLOW_CLI_WIRE_READS=0, or the macOS default)"
@@ -588,7 +589,10 @@ def check_model_catalog(settings: Settings, profile: str | None = None) -> list[
         return [_finding(_MODEL_CATALOG, "warn", summary, update)]
     if drift := model_catalog.catalog_drift(families):
         summary = f"{len(drift)} difference(s) from gflow's model mapping: " + "; ".join(drift)
-        return [_finding(_MODEL_CATALOG, "warn", summary, update)]
+        news = model_catalog.catalog_news(families)
+        return [
+            _finding(_MODEL_CATALOG, "info" if len(news) == len(drift) else "warn", summary, update)
+        ]
     return [_finding(_MODEL_CATALOG, "pass", f"{len(families)} families, all mapped")]
 
 
