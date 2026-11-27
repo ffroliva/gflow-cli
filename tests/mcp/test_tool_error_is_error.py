@@ -72,7 +72,18 @@ def _probe_server() -> GflowMCPServer:
 
     @probe.tool(name="invalid_tools")
     async def invalid_tools() -> dict[str, Any]:
-        return {"status": "invalid_tools", "error": "Each item in 'tools' must be ..."}
+        return {
+            "status": "invalid_tools",
+            "error": {
+                "type": "https://gflow-cli.dev/errors/bad-parameter",
+                "title": "Invalid Tools",
+                "status": 400,
+                "detail": "Item 0 in 'tools' is invalid.",
+                "charged": "no",
+                "next_action": "fix_input",
+                "retryable": False,
+            },
+        }
 
     @probe.tool(name="ok")
     async def ok() -> dict[str, Any]:
@@ -128,12 +139,22 @@ async def test_malformed_tools_argument_is_flagged(mcp_server: Any) -> None:
     with patch("gflow_cli.mcp.tools._resolve_and_validate_profile", return_value="default"):
         async with Client(mcp_server, mode="2026-07-28") as client:
             result = await client.call_tool(
-                "gflow_generate_image", {"prompt": "a cat", "tools": [{"options": {"x": "y"}}]}
+                "gflow_generate_image",
+                {"prompt": "a cat", "tools": [{"options": {"secret_opt_key": "secret-val"}}]},
             )
 
     assert result.is_error is True
     assert result.structured_content is not None
     assert result.structured_content["status"] == "invalid_tools"
+    err = result.structured_content["error"]
+    assert isinstance(err, dict)
+    assert err["type"] == "https://gflow-cli.dev/errors/bad-parameter"
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "fix_input", False)
+    assert "secret-val" not in str(result.structured_content)
+    assert "secret_opt_key" not in str(result.structured_content)
+    text = " ".join(getattr(c, "text", "") for c in result.content)
+    assert "secret-val" not in text
+    assert "secret_opt_key" not in text
 
 
 async def test_is_error_and_telemetry_share_one_failure_set() -> None:

@@ -328,7 +328,7 @@ class TestToolExecution:
 
     @pytest.mark.asyncio
     async def test_generate_image_rejects_malformed_tools(self) -> None:
-        """A malformed `tools` item returns a clean invalid_tools error."""
+        """A malformed `tools` item returns a structured invalid_tools RFC 9457 error."""
         from unittest.mock import patch
 
         from gflow_cli.mcp.tools import gflow_generate_image
@@ -340,7 +340,13 @@ class TestToolExecution:
         ):
             result = await gflow_generate_image(prompt="a cat", tools=[{"options": {"style": "x"}}])
         assert result["status"] == "invalid_tools"
-        assert "tools" in result["error"]
+        err = result["error"]
+        assert isinstance(err, dict)
+        assert err["type"] == "https://gflow-cli.dev/errors/bad-parameter"
+        assert err["status"] == 400
+        assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "fix_input", False)
+        assert "Item 0" in err["detail"]
+        assert "tools" in err["detail"]
 
     @pytest.mark.asyncio
     async def test_generate_video_adapts_tools_to_specs(self) -> None:

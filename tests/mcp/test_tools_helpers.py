@@ -430,3 +430,65 @@ def test_format_mcp_error_without_remediation_hint() -> None:
     formatted = _format_mcp_error(exc)
     assert formatted == "[GFlowError] Something failed"
     assert "(Remediation:" not in formatted
+
+
+def test_adapt_tools_returns_structured_bad_param_without_echoing_input() -> None:
+    """#1478: invalid_tools returns structured problem details and logs only error type/loc."""
+    import structlog.testing
+
+    from gflow_cli.mcp.tools import _adapt_tools
+
+    with structlog.testing.capture_logs() as logs:
+        res = _adapt_tools(
+            [
+                {"name": "creative-director", "options": {}},
+                {"name": "BAD!TOKEN", "options": {"secret_option_key": 123}},
+            ]
+        )
+
+    assert isinstance(res, dict)
+    assert res["status"] == "invalid_tools"
+    err = res["error"]
+    assert isinstance(err, dict)
+    assert err["type"] == "https://gflow-cli.dev/errors/bad-parameter"
+    assert err["status"] == 400
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("no", "fix_input", False)
+    assert "Item 1" in err["detail"]
+    assert "BAD!TOKEN" not in str(res)
+    assert "secret_option_key" not in str(res)
+    assert "123" not in str(res)
+
+    warn = [entry for entry in logs if entry.get("event") == "mcp.tool.invalid_tools"]
+    assert len(warn) == 1
+    assert warn[0]["index"] == 1
+    assert warn[0]["errors"] == [
+        {"type": "string_pattern_mismatch", "loc": ["name"]},
+        {"type": "string_type", "loc": ["options"]},
+    ]
+    assert "BAD!TOKEN" not in str(warn[0])
+    assert "secret_option_key" not in str(warn[0])
+    assert "123" not in str(warn[0])
+
+
+def test_task_payload_missing_row_returns_indeterminate_problem_details(tmp_path: Path) -> None:
+    """#1478: missing task row returns structured indeterminate error + task_id."""
+    from gflow_cli.data.store import DataStore
+    from gflow_cli.mcp import openai_errors
+    from gflow_cli.mcp.tools import task_payload
+
+    db = tmp_path / "empty_queue.db"
+    with DataStore.open(db):
+        pass
+
+    payload = task_payload("default", "task-missing-42", db)
+    assert payload["status"] == "error"
+    assert payload["task_id"] == "task-missing-42"
+    err = payload["error"]
+    assert isinstance(err, dict)
+    assert err["type"] == "https://gflow-cli.dev/errors/indeterminate-outcome"
+    assert (err["charged"], err["next_action"], err["retryable"]) == ("maybe", "reconcile", False)
+    assert "task-missing-42" in err["detail"]
+
+    resp = openai_errors.tool_failure(payload)
+    assert resp.status_code == 500
+    assert resp.headers["x-should-retry"] == "false"
