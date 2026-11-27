@@ -141,6 +141,33 @@ class TestEnvOverrides:
         monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
         assert Settings().headless is True
 
+    def test_browser_visibility_defaults_auto(self, clean_env: None) -> None:
+        assert Settings().browser_visibility == "auto"
+
+    def test_headless_alias_maps_true_and_false(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
+        s_true = Settings()
+        assert s_true.browser_visibility == "headless"
+        assert s_true.headless is True
+
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
+        s_false = Settings()
+        assert s_false.browser_visibility == "headed"
+        assert s_false.headless is False
+
+    def test_explicit_visibility_wins_over_alias(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_VISIBILITY", "headed")
+        assert Settings().browser_visibility == "headed"
+
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_VISIBILITY", "headless")
+        assert Settings().browser_visibility == "headless"
+
 
 class TestDerivedPaths:
     def test_profile_subdir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
