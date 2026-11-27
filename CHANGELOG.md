@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The experimental `direct_http` image transport now serves Nano Banana 2 Lite (`nano2-lite`, `HARBOR_SEAL`) and Nano Banana Pro (`nano-pro`, `GEM_PIX_2`) ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)).** Both were generated live by a direct `ogiZ0b` request, for the measured shape only: 9:16, one image, no reference and no character (the CLI default aspect is 9:16; the MCP image tool defaults to 1:1, so over MCP pass `aspect="9:16"`). Every other shape of these models takes the UI path. Previously both were routed to the UI transport because their wire names had not been measured. `imagen4` is still routed to the UI transport.
+
 ### Fixed
 
 - **`gflow video captions` draws Chinese, Japanese and Korean text instead of missing-glyph boxes ([#1535](https://github.com/ffroliva/gflow-cli/issues/1535)).** The caption font was the first installed font in a fixed list: Segoe UI or Arial on Windows, and DejaVu Sans ahead of Noto Sans CJK on Linux. None of those draws CJK, and Pillow does no font fallback. `_load_caption_font` now takes the cue's text and returns the first installed font that draws every character of it, ignoring invisible and combining marks. When none draws every character, it returns the font that draws the most. CJK-capable fonts are added to each platform's list. A Latin caption keeps its previous font unless that font lacks one of its characters. The MCP tool `gflow_video_captions` shares the service.

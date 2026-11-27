@@ -17,7 +17,7 @@ import structlog
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api._engine import mint_evaluate_kwargs
-from gflow_cli.api.image import ImageRef, Model
+from gflow_cli.api.image import Aspect, ImageRef, Model
 from gflow_cli.api.recaptcha import TokenMinter
 from gflow_cli.api.transports._common import flow_host_kind
 from gflow_cli.api.transports._mc_common import _first_uuid  # pyright: ignore[reportPrivateUsage]
@@ -38,10 +38,15 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# The model name an ogiZ0b body carries on flow.google.com. Only BELUGA is measured (the
-# page sends it for "Nano Banana 2.1", which replaced NARWHAL in Flow's catalogue, #958);
-# every other model routes to the UI transport until its wire name is captured.
-_WIRE_MODEL: dict[Model, str] = {Model.NARWHAL: "BELUGA"}
+# The model name an ogiZ0b body carries on flow.google.com. BELUGA is what the page sends
+# for "Nano Banana 2.1", which replaced NARWHAL in Flow's catalogue (#958); HARBOR_SEAL and
+# GEM_PIX_2 were generated live on direct ogiZ0b (#1549). Every other model routes to the UI
+# transport until its wire name is measured.
+_WIRE_MODEL: dict[Model, str] = {
+    Model.NARWHAL: "BELUGA",
+    Model.HARBOR_SEAL: "HARBOR_SEAL",
+    Model.GEM_PIX_2: "GEM_PIX_2",
+}
 
 _ORIGIN = "https://flow.google.com"
 _MINT_BUDGET_S = 10.0  # how long a freshly navigated page gets to load reCAPTCHA
@@ -73,13 +78,16 @@ _UPLOAD_MIME = {
 def direct_can_serve(request: GenerateImageRequest) -> bool:
     """True only for a request whose every wire slot is measured.
 
-    T2I with a measured model, any aspect, any count Flow offers (1-4: N entries in one
-    POST returned N images live), or one in-project reference or one named character
-    (count 1-4), on the classic composer. No Agent instructions and no raw ``@`` left in
+    T2I with ``BELUGA`` (Nano Banana 2.1), any aspect, any count Flow offers (1-4: N entries
+    in one POST returned N images live), or one in-project reference or one named character
+    (count 1-4), on the classic composer. ``HARBOR_SEAL`` and ``GEM_PIX_2`` were measured
+    only as plain portrait text-to-image, count 1: any other shape of those two models
+    takes the UI path. No Agent instructions and no raw ``@`` left in
     the prompt (a mention reaches here already resolved to a name).
     """
     return (
         request.model in _WIRE_MODEL
+        and _model_shape_measured(request)
         and _references_measured(request)
         and _characters_measured(request)
         and not request.ref_paths
@@ -87,6 +95,19 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
         and request.thinking_level is None
         and "@" not in request.prompt
         and resolve_ui_mode(request.ui_mode) is not UiMode.AGENTIC
+    )
+
+
+def _model_shape_measured(request: GenerateImageRequest) -> bool:
+    """``BELUGA`` has every slot measured; the later models only the default text-to-image."""
+    if request.model is Model.NARWHAL:
+        return True
+    return (
+        request.aspect is Aspect.PORTRAIT
+        and request.count == 1
+        and not request.refs
+        and not request.reference_entities
+        and not request.reference_entity_names
     )
 
 
