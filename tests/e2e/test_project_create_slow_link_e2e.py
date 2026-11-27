@@ -183,6 +183,7 @@ async def test_a_covered_new_project_button_is_drift_and_creates_nothing(
 
         assert exit_code_for(exc.value) == 23
         assert exc.value.charged == "no"
+        assert "it is covered by div" in str(exc.value)  # #1557: the occluder is named
     finally:
         await page.close()
     page = await client._checkout_page()  # noqa: SLF001

@@ -53,6 +53,17 @@ class _Loc:
             raise mc.PlaywrightTimeoutError(f"waiting for {self.sel}")
 
     async def click(self, **_: Any) -> None:
+        # Playwright runs a registered locator handler before an action when its overlay
+        # is visible; a promo still up afterwards intercepts the click (#1557).
+        if self.sel == mc.PROMO_DIALOG_CLOSE:  # a handler's own action runs no handlers
+            self.page.clicks.append(self.sel)
+            self.page.present[self.sel] = False
+            return
+        for sel, handler in list(self.page.locator_handlers.items()):
+            if self.page.present.get(sel, False):
+                await handler(_Loc(self.page, sel))
+        if self.page.present.get(mc.PROMO_DIALOG_CLOSE, False):
+            raise mc.PlaywrightTimeoutError("Locator.click: Timeout 15000ms exceeded")
         if self.page.click_times_out:
             if self.page.click_sends_first:  # the click dispatched, then Playwright timed out
                 self.page.send_create_request()
@@ -85,6 +96,11 @@ class _Loc:
     async def count(self) -> int:
         return 1 if self.page.present.get(self.sel, False) else 0
 
+    async def evaluate(self, _js: str) -> dict[str, Any]:
+        if self.page.present.get(mc.PROMO_DIALOG_CLOSE, False):
+            return {"visible": True, "occluder": "div.g1-promo-dialog-backdrop"}
+        return {"visible": True}
+
 
 class FakePage:
     def __init__(self, *, url: str = "about:blank") -> None:
@@ -107,7 +123,16 @@ class FakePage:
         self.action_timeouts: list[Any] = []
         self.url_waits: list[Any] = []
         self._handlers: list[Any] = []
+        self.locator_handlers: dict[str, Any] = {}
+        self.locator_handlers_disabled = False  # a promo the handler cannot close
         self.keyboard = self
+
+    async def add_locator_handler(self, locator: _Loc, handler: Any, **_: Any) -> None:
+        if not self.locator_handlers_disabled:
+            self.locator_handlers[locator.sel] = handler
+
+    async def remove_locator_handler(self, locator: _Loc) -> None:
+        self.locator_handlers.pop(locator.sel, None)
 
     def send_create_request(self) -> None:
         for h in list(self.request_handlers):
@@ -205,6 +230,32 @@ async def test_create_click_timeout_is_typed_drift_charging_nothing(
     assert exit_code_for(exc.value) == 23
     assert exc.value.charged == "no"
     assert "--project" in exc.value.remediation_hint
+
+
+async def test_create_closes_the_bonus_promo_before_clicking_new_project() -> None:
+    # #1557: Flow's bonus-credit promo renders after the page settles and its backdrop
+    # takes the new-project click. It is closed through its close control, never answered.
+    page = _page_creating(title="x")
+    page.present[mc.PROMO_DIALOG_CLOSE] = True
+
+    info = await mc.create_project(page, "x", timeout_s=1.0)  # type: ignore[arg-type]
+
+    assert info.project_id == PID
+    assert page.clicks == [mc.PROMO_DIALOG_CLOSE, mc.NEW_PROJECT_BUTTON]
+    assert page.locator_handlers == {}  # not left on the pooled page
+
+
+async def test_create_click_blocked_by_an_overlay_names_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mc, "CREATE_LATE_REQUEST_GRACE_S", 0.1)
+    page = _page_creating()
+    page.click_times_out = True
+    page.present[mc.PROMO_DIALOG_CLOSE] = True
+    page.locator_handlers_disabled = True
+
+    with pytest.raises(UiSelectorDriftError, match="g1-promo-dialog-backdrop"):
+        await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
 
 
 async def test_create_click_timeout_after_the_request_left_is_outcome_unknown() -> None:
