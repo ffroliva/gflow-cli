@@ -88,7 +88,8 @@ _SECRET_TEXT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # reCAPTCHA Enterprise tokens (`maseQ` carries one). A shape, not a length: a
     # generic "120+ token chars" rule would also erase Flow media ids, which recovery
     # messages must name. Last, so it cannot cut a Bearer token or an address in two.
-    (re.compile(r"0cAF[A-Za-z0-9_-]{100,}"), _REDACTED_TOKEN),
+    # Matches both 0cAF (modern) and 03AF (v3/legacy) enterprise token prefixes.
+    (re.compile(r"(?:0cAF|03AF)[A-Za-z0-9_-]{100,}"), _REDACTED_TOKEN),
 )
 # Any whitespace-delimited token carrying signed-query material — covers full
 # URLs and bare "path?X-Goog-Signature=..." fragments alike.
@@ -154,7 +155,7 @@ def redact_error_detail(detail: str) -> str:
 
     Applied to ``GFlowError.to_problem_details()['detail']`` on the FAILED
     operation write path. Scrubs bearer/SAPISIDHASH/cookie-pair secrets, URL credentials,
-    flow.google.com's ``at`` XSRF value and ``0cAF…`` reCAPTCHA tokens, and account
+    flow.google.com's ``at`` XSRF value and ``0cAF…`` / ``03AF…`` reCAPTCHA tokens, and account
     addresses; drops URLs carrying signed-query material and ``lh*…/asb/`` capability
     links; and truncates post-redaction as defense-in-depth against a scrub bypass.
     """

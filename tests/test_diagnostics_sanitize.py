@@ -223,3 +223,16 @@ def test_canary_secrets_never_survive_reduction() -> None:
         results.append(reduce_error_body({"error": {"message": canary, canary: 1}}))
     for result in results:
         assert not _leaked(result)
+
+
+def test_redact_error_detail_sanitizes_canary_tokens() -> None:
+    """Free-text error details scrub 03AF and 0cAF canary tokens."""
+    from gflow_cli.data.redaction import redact_error_detail
+
+    long_canary_03 = CANARY_TOKEN + "x" * 100
+    long_canary_0c = "0cAF" + CANARY_TOKEN[4:] + "x" * 100
+    detail = f"Error: {long_canary_03} and {long_canary_0c}"
+    scrubbed = redact_error_detail(detail)
+    assert CANARY_TOKEN not in scrubbed
+    assert "0cAF" not in scrubbed
+    assert "<redacted:token>" in scrubbed
