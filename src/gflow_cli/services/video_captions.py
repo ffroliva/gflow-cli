@@ -666,7 +666,7 @@ def _measure_caption(
     font_module: Any,
     size: int | None,
 ) -> tuple[Any, str, tuple[int, int, int, int]]:
-    font = _load_caption_font(height, font_module, size=size)
+    font = _load_caption_font(height, font_module, size=size, text=text)
     # Never wrap wider than the ink may reach (see _fit_caption_layout); narrow frames hit this.
     wrap_w = min(width * 0.9, max(1, width - 2 * _edge_inset(width)))
     wrapped = "\n".join(_wrap_caption(text, font, draw, wrap_w))
@@ -823,30 +823,57 @@ def _wrap_caption(text: str, font: Any, draw: Any, max_width: float) -> list[str
     return lines
 
 
+_CAPTION_FONTS_NT = (
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"C:\Windows\Fonts\arial.ttf",
+    # #1535: CJK-capable faces; Pillow does no font linking, so Segoe UI draws CJK as tofu.
+    r"C:\Windows\Fonts\msyh.ttc",
+    r"C:\Windows\Fonts\YuGothM.ttc",
+    r"C:\Windows\Fonts\malgun.ttf",
+    r"C:\Windows\Fonts\simhei.ttf",
+)
+_CAPTION_FONTS_POSIX = (
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+)
+
+
+def _covers(font: Any, text: str) -> bool:
+    tofu = bytes(font.getmask("\U0010ffff"))
+    return all(bytes(font.getmask(char)) != tofu for char in set(text) if not char.isspace())
+
+
 def _load_caption_font(
-    height: int, image_font_module: Any | None = None, *, size: int | None = None
+    height: int,
+    image_font_module: Any | None = None,
+    *,
+    size: int | None = None,
+    text: str = "",
 ) -> Any:
+    """The first installed font that draws every character of ``text`` (#1535).
+
+    Falls back to the first installed font when none covers it, as before."""
     if image_font_module is None:
         from PIL import ImageFont
 
         image_font_module = ImageFont
 
     resolved_size = size if size is not None else max(14, round(height * 0.045))
-    candidates = (
-        [r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\arial.ttf"]
-        if os.name == "nt"
-        else [
-            "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
-            "/Library/Fonts/Arial Unicode.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        ]
-    )
-    for candidate in candidates:
-        if Path(candidate).is_file():
-            try:
-                return image_font_module.truetype(candidate, size=resolved_size)
-            except OSError:
-                continue
-    return image_font_module.load_default(size=resolved_size)
+    first: Any = None
+    for candidate in _CAPTION_FONTS_NT if os.name == "nt" else _CAPTION_FONTS_POSIX:
+        if not Path(candidate).is_file():
+            continue
+        try:
+            font = image_font_module.truetype(candidate, size=resolved_size)
+        except OSError:
+            continue
+        if _covers(font, text):
+            return font
+        first = first or font
+    return first or image_font_module.load_default(size=resolved_size)

@@ -609,6 +609,62 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
     assert sum(glyph is not None and glyph != tofu for glyph in glyphs) >= 15
 
 
+_CJK_FONT_PATHS = (
+    r"C:\Windows\Fonts\msyh.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+)
+
+
+@pytest.mark.skipif(
+    not any(Path(p).is_file() for p in _CJK_FONT_PATHS), reason="no CJK font on this host"
+)
+def test_caption_font_renders_cjk_when_a_cjk_font_is_installed() -> None:
+    # #1535: Segoe UI / Arial / DejaVu came first and drew every CJK character as tofu.
+    from PIL import Image, ImageDraw, ImageFont
+
+    draw = ImageDraw.Draw(Image.new("RGB", (1280, 720)))
+    font, _, _ = service._measure_caption(1280, 720, "中文字幕 한국어 かな", draw, ImageFont, None)
+    tofu = bytes(font.getmask("\U0010ffff"))
+    assert all(bytes(font.getmask(c)) != tofu for c in "中文字幕한국어かな")
+
+
+class _CoverageFont:
+    """Covers CJK only when its path names a CJK-capable face."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self.cjk = any(k in path for k in ("msyh", "malgun", "CJK", "Unicode"))
+
+    def getmask(self, text: str) -> bytes:
+        return (
+            b"tofu"
+            if text == "\U0010ffff" or (ord(text) > 0x2FFF and not self.cjk)
+            else (text.encode())
+        )
+
+
+class _CoverageFontModule:
+    @staticmethod
+    def truetype(path: str, size: int) -> _CoverageFont:
+        return _CoverageFont(path)
+
+    @staticmethod
+    def load_default(size: int) -> _CoverageFont:
+        return _CoverageFont("default")
+
+
+def test_caption_font_skips_installed_fonts_that_lack_the_texts_glyphs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(service.Path, "is_file", lambda _self: True)
+    latin = service._load_caption_font(720, _CoverageFontModule, text="Hello")
+    cjk = service._load_caption_font(720, _CoverageFontModule, text="字幕 한국어")
+    # Latin captions keep the first installed font, as before; CJK skips the ones without glyphs.
+    assert latin.path == service._load_caption_font(720, _CoverageFontModule).path
+    assert cjk.cjk
+
+
 @pytest.mark.parametrize(
     ("width", "height", "expected_initial", "expected_fallback"),
     [(1920, 1080, 49, 43), (1280, 720, 32, 29)],
@@ -1306,8 +1362,10 @@ def test_caption_overlay_explicit_font_size_skips_auto_shrink(
     loaded_sizes: list[int] = []
     real_load = service._load_caption_font
 
-    def record_load(h: int, font_module: Any = None, *, size: int | None = None) -> Any:
-        font = real_load(h, font_module, size=size)
+    def record_load(
+        h: int, font_module: Any = None, *, size: int | None = None, text: str = ""
+    ) -> Any:
+        font = real_load(h, font_module, size=size, text=text)
         loaded_sizes.append(font.size)
         return font
 
