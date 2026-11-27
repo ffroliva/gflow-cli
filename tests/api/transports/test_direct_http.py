@@ -62,6 +62,28 @@ def test_direct_can_serve_excluded_shapes(kwargs: dict[str, object]) -> None:
     assert direct_can_serve(req) is False
 
 
+@pytest.mark.parametrize("model", [Model.HARBOR_SEAL, Model.GEM_PIX_2])
+def test_new_models_go_direct_only_for_the_measured_shape(model: Model) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", model=model)) is True
+
+
+@pytest.mark.parametrize("model", [Model.HARBOR_SEAL, Model.GEM_PIX_2])
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"count": 2},
+        {"aspect": Aspect.LANDSCAPE},
+        {"refs": (ImageRef(name="r", in_project=True, display_name="r"),)},
+        {"reference_entities": ("entity-1",), "reference_entity_names": ("Alice",)},
+        {"reference_entity_names": ("Alice",)},
+    ],
+)
+def test_new_models_with_an_unmeasured_slot_route_to_the_ui(
+    model: Model, kwargs: dict[str, object]
+) -> None:
+    assert direct_can_serve(GenerateImageRequest(prompt="x", model=model, **kwargs)) is False
+
+
 def test_ogiz0b_reply_images_success() -> None:
     payload = image_payload()
     frame_json = json.dumps(

@@ -102,7 +102,8 @@ def test_a_model_with_no_measured_wire_name_never_goes_direct(
 ) -> None:
     """Imagen 4 has no measured wire name: routed to the UI transport before any POST, so
     nothing it produces (if the UI serves it at all) is recorded as direct."""
-    _t2i(e2e_env, tmp_path / "imagen.jpg", "--model", "imagen4")
+    proc = _t2i(e2e_env, tmp_path / "imagen.jpg", "--model", "imagen4")
+    assert proc.returncode in {0, 11, 36}, f"gflow image t2i failed (exit {proc.returncode})"
     assert "direct_http" not in _image_transports(e2e_env)
 
 
