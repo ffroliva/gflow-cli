@@ -195,9 +195,10 @@ flight within about 90 s.
 
 Readings, each from one observation:
 
-- **A burst can open a short refusal window** for the account: fourteen generations in about 90 s
-  were followed by a refusal even on a fresh page. Production needs a concurrency cap (4 measured
-  clean) and pacing, not 8 at once.
+- **A burst was followed by a short refusal window** once: fourteen generations in about 90 s
+  were followed by a refusal even on a fresh page. A later re-run at a faster pace did not
+  reproduce it (see below), so the cause is unexplained; neither 8 in flight nor any cap is shown
+  to cause or prevent it. A concurrency cap and pacing remain design inputs, not measured limits.
 - **A page whose token was refused kept being refused** after 20 quiet minutes, while fresh pages
   on the same account were accepted at the same moment, in both visibilities. After a refusal,
   the retry must come from a **new page**; the headed fallback's relaunch provides one.

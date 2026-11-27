@@ -91,6 +91,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import httpx  # noqa: E402
 
+from gflow_cli.api import flow_wire  # noqa: E402
 from gflow_cli.api.transports import direct_http as dh  # noqa: E402
 from gflow_cli.api.transports.batchexecute import (  # noqa: E402
     find_record,
@@ -216,6 +217,8 @@ class Wire:
             resp = await self.hx.send(req)
         except httpx.HTTPError as exc:
             return None, f"{type(exc).__name__}: {exc}", round((time.perf_counter() - t0) * 1000)
+        if resp.status_code in (400, 401, 403):  # a rejected POST may mean a stale `at`
+            flow_wire.forget_tokens(self.profile_dir)
         return resp.status_code, resp.text, round((time.perf_counter() - t0) * 1000)
 
     async def send_body(
@@ -227,6 +230,8 @@ class Wire:
             resp = await self.hx.send(req)
         except httpx.HTTPError as exc:
             return None, f"{type(exc).__name__}: {exc}", round((time.perf_counter() - t0) * 1000)
+        if resp.status_code in (400, 401, 403):  # a rejected POST may mean a stale `at`
+            flow_wire.forget_tokens(self.profile_dir)
         return resp.status_code, resp.text, round((time.perf_counter() - t0) * 1000)
 
     async def credits(self, project_id: str) -> int | None:
@@ -455,10 +460,15 @@ async def phase_upscale(
     status, text, _ = await wire.rpc("jwpduf", [None, None, [[f"{wf}_upsampled"]]], project_id)
     pre = _summarise("jwpduf", status, text, f"{wf}_upsampled")
     # Measured 2026-11-27: an unknown derived id answers a stub (status 4, no media id).
-    exists = pre.get("media_id") is not None
-    _log("upscale_precheck", exists=exists, **pre)
-    if exists:
-        _log("upscale_submit", outcome="skipped: already upscaled, pick another clip")
+    absent_stub = (
+        status == 200
+        and not pre.get("errors")
+        and pre.get("flow_status") == 4
+        and pre.get("media_id") is None
+    )
+    _log("upscale_precheck", absent_stub=absent_stub, **pre)
+    if not absent_stub:  # an existing export, or an inconclusive reply: never submit on it
+        _log("upscale_submit", outcome="skipped: precheck did not prove the record absent")
         return
     token, mint_ms = await wire.mint(project_id, "VIDEO_GENERATION")
     item: list[Any] = [None] * 32
@@ -474,7 +484,8 @@ async def phase_upscale(
     s = _summarise("p0UkFb", status, text)
     _log("upscale_submit", mint_ms=mint_ms, post_ms=ms, credits_before=before, **s)
     up = s.get("workflow_id")
-    if status != 200 or not up:
+    if status != 200 or not up:  # refused or unknown: never resent, but record the balance
+        _log("upscale_credits", before=before, after=await wire.credits(project_id))
         return
     _log("upscale_poll", **await _poll(wire, project_id, up))
     await _read_and_download(wire, project_id, up, "upscale")
@@ -511,8 +522,9 @@ async def phase_spend(
         credits_before=before,
         **s,
     )
-    if status != 200 or not s.get("workflow_id"):
-        return  # refused, or unknown: never resent
+    if status != 200 or not s.get("workflow_id"):  # refused or unknown: never resent
+        _log(f"spend_{mode}_credits", before=before, after=await wire.credits(project_id))
+        return
     _log(f"spend_{mode}_poll", **await _poll(wire, project_id, s["workflow_id"]))
     await _read_and_download(wire, project_id, s["workflow_id"], f"spend_{mode}")
     _log(f"spend_{mode}_credits", before=before, after=await wire.credits(project_id))
@@ -749,12 +761,24 @@ async def run_cross_project(wire: Wire, page: Any, home: str, other: str, n: int
     from gflow_cli.api.recaptcha import TokenMinter
     from gflow_cli.api.transports.batchexecute import image_records
     from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
+    from gflow_cli.errors import RecaptchaError
 
+    if home == other:
+        _log("cross_project", verdict="REFUSED: --cross-project must name a different project")
+        return
     minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
     for i in range(1, n + 1):
         parked = page.url
         t0 = time.perf_counter()
-        token = await minter.mint("IMAGE_GENERATION")
+        deadline = time.monotonic() + 10  # the enterprise script may still be loading
+        while True:
+            try:
+                token = await minter.mint("IMAGE_GENERATION")
+                break
+            except RecaptchaError:
+                if time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(0.5)
         mint_ms = round((time.perf_counter() - t0) * 1000)
         body = build_ogiz0b_body(
             prompt="a lighthouse on a rocky coast, ink and watercolor",
