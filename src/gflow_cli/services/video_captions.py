@@ -842,18 +842,22 @@ _CAPTION_FONTS_POSIX = (
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
 )
-#: Invisible or combining marks (BOM, LRM, ZWJ, VS16) that no font needs a glyph for.
-_NO_GLYPH_CATEGORIES = frozenset({"Cf", "Mn", "Me"})
+
+
+def _needs_glyph(char: str) -> bool:
+    # Format characters (BOM, LRM, ZWJ) and variation selectors (VS16) draw nothing; combining
+    # accents do draw, and burn as a box in a font that lacks them.
+    return not (
+        char.isspace()
+        or unicodedata.category(char) == "Cf"
+        or unicodedata.name(char, "").startswith("VARIATION SELECTOR")
+    )
 
 
 def _coverage(font: Any, text: str) -> tuple[int, int]:
     """(characters drawn, characters needing a glyph) for ``text`` in ``font``."""
     tofu = bytes(font.getmask("\U0010ffff"))
-    chars = [
-        c
-        for c in set(text)
-        if not c.isspace() and unicodedata.category(c) not in _NO_GLYPH_CATEGORIES
-    ]
+    chars = [c for c in set(text) if _needs_glyph(c)]
     return sum(bytes(font.getmask(c)) != tofu for c in chars), len(chars)
 
 

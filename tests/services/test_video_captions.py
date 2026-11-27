@@ -609,10 +609,13 @@ def test_caption_font_renders_latin_diacritics_and_cyrillic() -> None:
     assert sum(glyph is not None and glyph != tofu for glyph in glyphs) >= 15
 
 
+#: Fonts that draw all of Chinese, Hangul and kana (YaHei has no Hangul; Malgun has all three).
 _CJK_FONT_PATHS = (
-    r"C:\Windows\Fonts\msyh.ttc",
+    r"C:\Windows\Fonts\malgun.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
 )
 
 
@@ -630,7 +633,8 @@ def test_caption_font_renders_cjk_when_a_cjk_font_is_installed() -> None:
 
 
 class _CoverageFont:
-    """Draws ASCII; draws CJK only when its path says ``cjk``; never draws emoji."""
+    """Draws ASCII; draws CJK and combining accents only when its path says ``cjk``; never
+    draws emoji."""
 
     def __init__(self, path: str) -> None:
         self.path = path
@@ -638,7 +642,7 @@ class _CoverageFont:
     def getmask(self, text: str) -> bytes:
         if text == "\U0010ffff" or ord(text) > 0xFFFF:
             return b"tofu"
-        if ord(text) > 0x2FFF and "cjk" not in self.path:
+        if (ord(text) > 0x2FFF or 0x300 <= ord(text) <= 0x36F) and "cjk" not in self.path:
             return b"tofu"
         if "broken" in self.path:
             raise OSError("bad glyph table")
@@ -662,6 +666,9 @@ class _CoverageFontModule:
         ("字幕 한국어", "cjk"),
         ("中文 😀", "cjk"),  # an emoji no font draws must not send CJK back to tofu
         ("﻿中文‎字‍", "cjk"),  # BOM / LRM / ZWJ need no glyph
+        ("Hi️", "latin"),  # a variation selector needs no glyph
+        ("zhōng", "cjk"),  # a combining accent does: it burns as a box otherwise
+        ("Hi 字", "cjk"),  # the latin font misses 字; "broken" raises and is skipped
         ("😀", "latin"),  # nothing covers it: the earliest installed font
     ],
 )

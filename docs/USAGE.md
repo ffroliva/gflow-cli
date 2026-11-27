@@ -339,8 +339,9 @@ gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language COD
 first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
 burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. For
 each cue it picks the first installed system font that draws every character of the cue.
-For Chinese, Japanese and Korean that is the first installed of Microsoft YaHei, Yu Gothic,
-Malgun Gothic and SimHei on Windows, Noto Sans CJK on Linux, and Arial Unicode on macOS.
+For Chinese, Japanese and Korean the candidates are Microsoft YaHei, Yu Gothic, Malgun
+Gothic and SimHei on Windows, tried in that order (Korean lands on Malgun Gothic, the one
+with Hangul), Noto Sans CJK on Linux, and Arial Unicode on macOS.
 When no installed font draws every character (an emoji beside Chinese text, say), it uses
 the one that draws the most. CJK text still needs one of those fonts on the machine. By default, captions sit near the bottom (`--position bottom --margin 28`)
 with auto-sized text and a translucent dark pill (`~0.7` opacity); long cues that
