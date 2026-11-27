@@ -30,10 +30,11 @@ import secrets
 import sys
 import threading
 import time
+import urllib.request
 from dataclasses import dataclass
 from enum import StrEnum
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlencode
 from urllib.request import getproxies
 
@@ -49,6 +50,7 @@ from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import FlowApiError, NetworkError, RateLimitError, SecurityError
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
 log = structlog.get_logger(__name__)
@@ -112,6 +114,7 @@ _tokens: dict[Path, _Tokens] = {}
 _signed_out: dict[Path, tuple[float, WireFallbackReason]] = {}
 _throttled: dict[Path, tuple[float, int]] = {}
 _locks: dict[Path, asyncio.Lock] = {}
+_accepted_seq: dict[Path, int] = {}
 _clock = time.monotonic
 _reqid = 1000 + secrets.randbelow(9000)  # the app's own counter starts at a random 4 digits
 
@@ -134,11 +137,34 @@ def _restore_signed_out(
         _signed_out[profile_dir] = previous
 
 
+def _has_proxy_entry(proxies: Mapping[str, str]) -> bool:
+    return any(k != "no" and bool(v) for k, v in proxies.items())
+
+
+def _native_os_proxies() -> Mapping[str, str]:
+    if sys.platform == "win32":
+        getter = getattr(urllib.request, "getproxies_registry", None)
+    elif sys.platform == "darwin":
+        getter = getattr(urllib.request, "getproxies_macosx_sysconf", None)
+    else:
+        return {}
+    return cast("Mapping[str, str]", getter()) if callable(getter) else {}
+
+
 def _proxy_configured(settings: Settings) -> bool:
     # A proxy anywhere (gflow's, the environment's, the OS's) means the browser and a
     # direct request may leave by different routes; the session cookies must not.
-    # Ignore urllib's "no" pseudo-entry (NO_PROXY with no proxy URL configured).
-    return bool(settings.browser_proxy) or any(k != "no" for k in getproxies())
+    if settings.browser_proxy:
+        return True
+    proxies = getproxies()
+    if _has_proxy_entry(proxies):
+        return True
+    # CPython's getproxies() skips the OS proxy lookup whenever env contains NO_PROXY alone.
+    return bool(
+        "no" in proxies
+        and getproxies is urllib.request.getproxies
+        and _has_proxy_entry(_native_os_proxies())
+    )
 
 
 def reset_state() -> None:
@@ -147,6 +173,7 @@ def reset_state() -> None:
     _signed_out.clear()
     _throttled.clear()
     _locks.clear()
+    _accepted_seq.clear()
 
 
 def _user_agent(profile_dir: Path) -> str | None:
@@ -398,6 +425,7 @@ async def read_credits(profile_dir: Path, *, settings: Settings | None = None) -
             # Only the numeric status: a real rate-limit code shows up here before we act on it.
             log.info("credits.wire_rpc_error", codes=codes)
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE) from None
+    _accepted_seq[profile_dir] = _accepted_seq.get(profile_dir, 0) + 1
     log.info("credits.wire_read", ms=round(elapsed * 1000))
     return info
 
@@ -487,6 +515,7 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
         return {"status": WireFallbackReason.PROXY_CONFIGURED.value, "build": None}
     require_in_home(profile_dir)
     previous = _active_signed_out(profile_dir)
+    accepted_before = _accepted_seq.get(profile_dir, 0)
     session_recovered(profile_dir)  # re-ask with fresh tokens; non-Flow failures restore below
     succeeded = False
     try:
@@ -504,7 +533,7 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
         log.warning("wire.health_unexpected", error_type=type(exc).__name__)
         return {"status": WireFallbackReason.UNEXPECTED.value, "build": None}
     finally:
-        if not succeeded:
+        if not succeeded and _accepted_seq.get(profile_dir, 0) == accepted_before:
             _restore_signed_out(profile_dir, previous)
     tokens = _tokens.get(profile_dir)
     bl = tokens.bl if tokens else None

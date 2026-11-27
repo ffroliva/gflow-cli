@@ -1190,3 +1190,92 @@ async def test_health_calls_session_recovered_before_probing(
 
     assert (await flow_wire.health(profile))["status"] == "accepted"
     assert calls == [profile]
+
+
+async def test_no_proxy_env_does_not_hide_native_os_proxy(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1242 review: NO_PROXY alone must not bypass an active native OS proxy."""
+    import sys
+    import urllib.request
+
+    for name in (
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "ALL_PROXY",
+        "https_proxy",
+        "http_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NO_PROXY", "localhost")
+    monkeypatch.setattr(flow_wire, "getproxies", urllib.request.getproxies)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    os_proxies: dict[str, str] = {"https": "http://127.0.0.1:8888"}
+    monkeypatch.setattr(urllib.request, "getproxies_registry", lambda: os_proxies, raising=False)
+
+    assert await flow_wire.health(profile) == {"status": "proxy_configured", "build": None}
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.PROXY_CONFIGURED
+
+    os_proxies.clear()
+    assert (await flow_wire.health(profile))["status"] == "accepted"
+
+
+async def test_overlapping_failed_health_probe_does_not_undo_newer_recovery(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1242 review: an older failing health() probe must not restore a recovered mark."""
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable):
+        await flow_wire.read_credits(profile)
+
+    probe_a_waiting = asyncio.Event()
+    release_probe_a = asyncio.Event()
+    calls = 0
+
+    async def fake_read_cookies(_p: Path) -> list[tuple[str, str]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            probe_a_waiting.set()
+            await release_probe_a.wait()
+            raise CookieStoreUnreadable("locked")
+        return list(_FAKE_COOKIES)
+
+    monkeypatch.setattr(flow_wire, "_read_cookies", fake_read_cookies)
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+
+    probe_a = asyncio.create_task(flow_wire.health(profile))
+    await probe_a_waiting.wait()
+
+    # Newer probe B succeeds while probe A is stuck reading cookies.
+    assert (await flow_wire.health(profile))["status"] == "accepted"
+
+    release_probe_a.set()
+    assert (await probe_a)["status"] == "store_unreadable"
+
+    # Recovery from probe B must remain active for subsequent credit reads.
+    assert profile not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+    assert (await flow_wire.read_credits(profile)).credits == 42
+
+    # When both overlapping probes fail before reaching Flow, the prior mark stays intact.
+    flow_wire._mark_signed_out(profile, WireFallbackReason.SIGNED_OUT_SHELL)  # pyright: ignore[reportPrivateUsage]
+    probe_c_waiting = asyncio.Event()
+    release_probe_c = asyncio.Event()
+
+    async def both_fail(_p: Path) -> list[tuple[str, str]]:
+        if not probe_c_waiting.is_set():
+            probe_c_waiting.set()
+            await release_probe_c.wait()
+        raise CookieStoreUnreadable("locked")
+
+    monkeypatch.setattr(flow_wire, "_read_cookies", both_fail)
+    probe_c = asyncio.create_task(flow_wire.health(profile))
+    await probe_c_waiting.wait()
+    assert (await flow_wire.health(profile))["status"] == "store_unreadable"
+    release_probe_c.set()
+    assert (await probe_c)["status"] == "store_unreadable"
+    assert flow_wire._active_signed_out(profile) is not None  # pyright: ignore[reportPrivateUsage]
