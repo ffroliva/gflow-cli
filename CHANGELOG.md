@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The experimental `direct_http` image transport now serves Nano Banana 2 Lite (`nano2-lite`, `HARBOR_SEAL`) and Nano Banana Pro (`nano-pro`, `GEM_PIX_2`) ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)).** Both were generated live by a direct `ogiZ0b` request; previously they were routed to the UI transport because their wire names had not been measured. `imagen4` is still routed to the UI transport.
+
 ### Fixed
 
 - **MCP `invalid_tools` and missing-task envelopes now carry structured RFC 9457 error objects without echoing caller input ([#1478](https://github.com/ffroliva/gflow-cli/issues/1478)).** `_adapt_tools` previously returned the raw Pydantic `ValidationError` string in `error` and logged `str(exc)` (including `input_value`); it now returns the `bad-parameter` problem object (`charged: "no"`, `next_action: "fix_input"`, `retryable: false`) naming only the offending item index and expected `{'name', 'options'}` shape, and logs only each error's `type` and top-level field location. `task_payload` when a task row is missing after execution now returns `task_id` and an `indeterminate-outcome` error object (`charged: "maybe"`, `next_action: "reconcile"`, `retryable: false`) instead of a bare string.

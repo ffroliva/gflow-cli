@@ -38,10 +38,15 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# The model name an ogiZ0b body carries on flow.google.com. Only BELUGA is measured (the
-# page sends it for "Nano Banana 2.1", which replaced NARWHAL in Flow's catalogue, #958);
-# every other model routes to the UI transport until its wire name is captured.
-_WIRE_MODEL: dict[Model, str] = {Model.NARWHAL: "BELUGA"}
+# The model name an ogiZ0b body carries on flow.google.com. BELUGA is what the page sends
+# for "Nano Banana 2.1", which replaced NARWHAL in Flow's catalogue (#958); HARBOR_SEAL and
+# GEM_PIX_2 were generated live on direct ogiZ0b (#1549). Every other model routes to the UI
+# transport until its wire name is measured.
+_WIRE_MODEL: dict[Model, str] = {
+    Model.NARWHAL: "BELUGA",
+    Model.HARBOR_SEAL: "HARBOR_SEAL",
+    Model.GEM_PIX_2: "GEM_PIX_2",
+}
 
 _ORIGIN = "https://flow.google.com"
 _MINT_BUDGET_S = 10.0  # how long a freshly navigated page gets to load reCAPTCHA
