@@ -159,21 +159,17 @@ def test_3xx_401_403_after_send_are_indeterminate(status: int) -> None:
 
 
 def test_timeout_after_send_is_indeterminate() -> None:
-    outcome = classify_reply("ogiZ0b", status=None, body=None, cause="TimeoutException on POST")
+    outcome = classify_reply("ogiZ0b", status=None, body=None)
     assert isinstance(outcome, Indeterminate)
     assert outcome.rpcid == "ogiZ0b"
     assert outcome.status is None
-    assert "TimeoutException" in outcome.cause
+    assert outcome.cause == "timeout after send"
 
 
 def test_refused_auto_retries_once_headless() -> None:
     outcome = RefusedNotBilled(rpcid="ogiZ0b", reason="PUBLIC_ERROR_UNUSUAL_ACTIVITY")
     step = next_step(outcome, setting=VisibilitySetting.AUTO, retried=False)
     assert step == RetryDirect(BrowserVisibility.HEADLESS)
-
-    # String setting also accepted
-    step_str = next_step(outcome, setting="auto", retried=False)
-    assert step_str == RetryDirect(BrowserVisibility.HEADLESS)
 
 
 def test_refused_retry_is_headed_only_under_explicit_headed() -> None:
@@ -301,18 +297,16 @@ def test_launch_visibility_mappings() -> None:
     assert launch_visibility(VisibilitySetting.AUTO) == BrowserVisibility.HEADLESS
     assert launch_visibility(VisibilitySetting.HEADLESS) == BrowserVisibility.HEADLESS
     assert launch_visibility(VisibilitySetting.HEADED) == BrowserVisibility.HEADED
-    assert launch_visibility("auto") == BrowserVisibility.HEADLESS
-    assert launch_visibility("headless") == BrowserVisibility.HEADLESS
-    assert launch_visibility("headed") == BrowserVisibility.HEADED
 
 
-def test_recaptcha_token_source_protocol() -> None:
+@pytest.mark.asyncio
+async def test_recaptcha_token_source_protocol() -> None:
     class DummySource:
         async def mint(self, action: str) -> str:
             return f"token_{action}"
 
     source: RecaptchaTokenSource = DummySource()
-    assert isinstance(source, RecaptchaTokenSource)
+    assert await source.mint("action") == "token_action"
 
 
 def test_constants_and_types() -> None:
@@ -322,3 +316,126 @@ def test_constants_and_types() -> None:
     assert not hasattr(refusal, "body")
     accepted = Accepted(body="z")
     assert not hasattr(accepted, "reason")
+
+
+def test_null_or_malformed_inner_payload_is_indeterminate() -> None:
+    # Inner payload is "null" (batchexecute parse gives (rpcid, None))
+    body_null = ')]}\'\n[["wrb.fr","ogiZ0b","null",null,null,null,"generic"]]\n'
+    outcome_null = classify_reply("ogiZ0b", 200, body_null)
+    assert isinstance(outcome_null, Indeterminate)
+    assert outcome_null.rpcid == "ogiZ0b"
+
+    # Inner payload is malformed JSON (batchexecute parse gives (rpcid, None))
+    body_malformed = ')]}\'\n[["wrb.fr","ogiZ0b","{malformed json",null,null,null,"generic"]]\n'
+    outcome_malformed = classify_reply("ogiZ0b", 200, body_malformed)
+    assert isinstance(outcome_malformed, Indeterminate)
+    assert outcome_malformed.rpcid == "ogiZ0b"
+
+
+def test_unusual_activity_for_another_rpc_does_not_refuse_this_one() -> None:
+    # An UNUSUAL_ACTIVITY error frame for a different rpcid next to this rpc's accepted
+    # frame -> Accepted
+    err_frame = [
+        "wrb.fr",
+        "other_rpc",
+        None,
+        None,
+        None,
+        [
+            7,
+            None,
+            [["type.googleapis.com/google.rpc.ErrorInfo", ["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]],
+        ],
+        "generic",
+    ]
+    accepted_frame = [
+        "wrb.fr",
+        "ogiZ0b",
+        json.dumps([1, 2, 3]),
+        None,
+        None,
+        None,
+        "generic",
+    ]
+    body = f")]}}'\n\n100\n{json.dumps([err_frame, accepted_frame])}\n"
+    outcome = classify_reply("ogiZ0b", 200, body)
+    assert isinstance(outcome, Accepted)
+    assert not isinstance(outcome, RefusedNotBilled)
+
+
+def test_mixed_error_frames_for_rpc_are_indeterminate_in_either_order() -> None:
+    unusual_frame = [
+        "wrb.fr",
+        "ogiZ0b",
+        None,
+        None,
+        None,
+        [
+            7,
+            None,
+            [["type.googleapis.com/google.rpc.ErrorInfo", ["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]],
+        ],
+        "generic",
+    ]
+    status_5_frame = [
+        "wrb.fr",
+        "ogiZ0b",
+        None,
+        None,
+        None,
+        [5],
+        "generic",
+    ]
+
+    # Order 1: UNUSUAL_ACTIVITY first, then [5] -> Indeterminate
+    body_order_1 = f")]}}'\n\n100\n{json.dumps([unusual_frame, status_5_frame])}\n"
+    outcome_1 = classify_reply("ogiZ0b", 200, body_order_1)
+    assert isinstance(outcome_1, Indeterminate)
+    assert not isinstance(outcome_1, RefusedNotBilled)
+
+    # Order 2: [5] first, then UNUSUAL_ACTIVITY -> Indeterminate
+    body_order_2 = f")]}}'\n\n100\n{json.dumps([status_5_frame, unusual_frame])}\n"
+    outcome_2 = classify_reply("ogiZ0b", 200, body_order_2)
+    assert isinstance(outcome_2, Indeterminate)
+    assert not isinstance(outcome_2, RefusedNotBilled)
+
+
+def test_reason_containing_unusual_activity_is_not_a_refusal() -> None:
+    # A reason containing "UNUSUAL_ACTIVITY" as substring is Indeterminate, not RefusedNotBilled
+    err_frame = [
+        "wrb.fr",
+        "ogiZ0b",
+        None,
+        None,
+        None,
+        [
+            7,
+            None,
+            [["type.googleapis.com/google.rpc.ErrorInfo", ["NOT_PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]],
+        ],
+        "generic",
+    ]
+    body = f")]}}'\n\n100\n{json.dumps([err_frame])}\n"
+    outcome = classify_reply("ogiZ0b", 200, body)
+    assert isinstance(outcome, Indeterminate)
+    assert not isinstance(outcome, RefusedNotBilled)
+
+
+def test_submit_policy_types_and_signatures() -> None:
+    import inspect
+    from typing import Literal, get_type_hints
+
+    # classify_reply has no cause parameter
+    sig = inspect.signature(classify_reply)
+    assert "cause" not in sig.parameters
+
+    # RecaptchaTokenSource is not @runtime_checkable
+    assert not getattr(RecaptchaTokenSource, "_is_runtime_protocol", False)
+
+    # Stop.kind is Literal["waf_final", "reconcile", "reauth"]
+    hints = get_type_hints(Stop)
+    assert hints["kind"] == Literal["waf_final", "reconcile", "reauth"]
+
+    # launch_visibility and next_step take VisibilitySetting only (not | str)
+    assert get_type_hints(launch_visibility)["setting"] is VisibilitySetting
+    assert get_type_hints(next_step)["setting"] is VisibilitySetting

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from gflow_cli.api.transports.batchexecute import (
+    UNUSUAL_ACTIVITY_REASON,
     find_record,
     image_records,
     parse_frames,
@@ -98,19 +99,22 @@ class FallbackUi:
     visibility: BrowserVisibility
 
 
+StopKind = Literal["waf_final", "reconcile", "reauth"]
+
+
 @dataclass(frozen=True)
 class Stop:
     """Terminal state requiring specific operator or caller remediation."""
 
-    kind: str  # "waf_final" | "reconcile" | "reauth"
+    kind: Literal["waf_final", "reconcile", "reauth"]
 
 
 RetryStep = Done | RetryDirect | FallbackUi | Stop
 
 
-def launch_visibility(setting: VisibilitySetting | str) -> BrowserVisibility:
+def launch_visibility(setting: VisibilitySetting) -> BrowserVisibility:
     """Map a visibility setting to the concrete launch visibility for a direct retry."""
-    if setting in (VisibilitySetting.HEADED, "headed"):
+    if setting == VisibilitySetting.HEADED:
         return BrowserVisibility.HEADED
     return BrowserVisibility.HEADLESS
 
@@ -135,8 +139,6 @@ def classify_reply(
     rpcid: str,
     status: int | None,
     body: str | None = None,
-    *,
-    cause: str | None = None,
 ) -> SubmitOutcome:
     """Classify an HTTP response from a batchexecute submission into a SubmitOutcome.
 
@@ -147,7 +149,7 @@ def classify_reply(
     Indeterminate.
     """
     if status is None:
-        return Indeterminate(rpcid=rpcid, cause=cause or "timeout after send", status=None)
+        return Indeterminate(rpcid=rpcid, cause="timeout after send", status=None)
 
     raw_body = body or ""
     errors = rpc_errors(raw_body)
@@ -162,18 +164,21 @@ def classify_reply(
             )
 
     if status != 200:
-        return Indeterminate(rpcid=rpcid, cause=cause or f"HTTP {status}", status=status)
+        return Indeterminate(rpcid=rpcid, cause=f"HTTP {status}", status=status)
 
-    for err in matching_errors:
-        unusual = next((r for r in err.reasons if "UNUSUAL_ACTIVITY" in r), None)
-        if unusual is not None:
+    if len(matching_errors) == 1:
+        err = matching_errors[0]
+        if any(r == UNUSUAL_ACTIVITY_REASON for r in err.reasons):
             if _has_generation_record(raw_body):
                 return Indeterminate(
                     rpcid=rpcid,
                     cause="refusal error frame accompanied by generation record",
                     status=status,
                 )
-            return RefusedNotBilled(rpcid=rpcid, reason=unusual)
+            return RefusedNotBilled(rpcid=rpcid, reason=UNUSUAL_ACTIVITY_REASON)
+
+    if matching_errors:
+        err = matching_errors[0]
         return Indeterminate(
             rpcid=rpcid,
             cause=f"rpc error: {err.reasons or [err.code]}",
@@ -181,7 +186,8 @@ def classify_reply(
         )
 
     frames = parse_frames(raw_body)
-    if not any(f[0] == rpcid for f in frames):
+    matching_frames = [f for f in frames if f[0] == rpcid and f[1] is not None]
+    if not matching_frames:
         return Indeterminate(
             rpcid=rpcid,
             cause="unparseable reply or missing rpc frame",
@@ -194,7 +200,7 @@ def classify_reply(
 def next_step(
     outcome: SubmitOutcome,
     *,
-    setting: VisibilitySetting | str,
+    setting: VisibilitySetting,
     retried: bool,
 ) -> RetryStep:
     """Compute the next action to take given the current submit outcome."""
@@ -212,7 +218,7 @@ def next_step(
     if outcome.auth:
         return Stop("reauth")
 
-    if setting in (VisibilitySetting.HEADLESS, "headless"):
+    if setting == VisibilitySetting.HEADLESS:
         return FallbackUi(BrowserVisibility.HEADLESS)
     return FallbackUi(BrowserVisibility.HEADED)
 
@@ -236,7 +242,6 @@ def starts_exceed(
     return count > limit
 
 
-@runtime_checkable
 class RecaptchaTokenSource(Protocol):
     """Port for minting reCAPTCHA Enterprise action tokens."""
 

@@ -1,38 +1,69 @@
-"""Verify that pure domain modules import no Playwright or httpx."""
+"""Verify that pure domain modules isolate Playwright, patchright, and httpx."""
 
 from __future__ import annotations
 
-import ast
+import importlib
+import subprocess
+import sys
 from pathlib import Path
 
-SUBMIT_POLICY_PATH = (
-    Path(__file__).resolve().parents[1] / "src" / "gflow_cli" / "api" / "submit_policy.py"
+import pytest
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    [
+        "gflow_cli.api.submit_policy",
+        "gflow_cli.api.generation_route",
+    ],
 )
-FORBIDDEN = {"playwright", "httpx"}
+def test_domain_modules_import_no_playwright_patchright_or_httpx(module_name: str) -> None:
+    """Task 3 domain rule: pure domain modules must not import Playwright, patchright or httpx."""
+    if module_name == "gflow_cli.api.generation_route":
+        route_path = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "gflow_cli"
+            / "api"
+            / "generation_route.py"
+        )
+        if not route_path.exists():
+            pytest.skip("generation_route.py does not exist yet (created in Task 4)")
+
+    code = (
+        f"import {module_name}; "
+        "import sys; "
+        "forbidden = {'playwright', 'patchright', 'httpx'}; "
+        "loaded = forbidden & sys.modules.keys(); "
+        "assert not loaded, f'Forbidden modules loaded: {loaded}'"
+    )
+    res = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 0, (
+        f"Subprocess import check failed for {module_name}:\n"
+        f"stdout: {res.stdout}\nstderr: {res.stderr}"
+    )
 
 
-def test_submit_policy_imports_no_playwright_or_httpx() -> None:
-    """Task 3 domain rule: submit_policy is pure domain with no Playwright, httpx or I/O."""
-    assert SUBMIT_POLICY_PATH.exists(), f"{SUBMIT_POLICY_PATH} does not exist"
-    content = SUBMIT_POLICY_PATH.read_text(encoding="utf-8")
-    tree = ast.parse(content, filename=str(SUBMIT_POLICY_PATH))
-
-    offences: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                top = alias.name.split(".")[0]
-                if top in FORBIDDEN:
-                    offences.append(f"line {node.lineno}: import {alias.name}")
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                top = node.module.split(".")[0]
-                if top in FORBIDDEN:
-                    offences.append(f"line {node.lineno}: from {node.module} import ...")
-
-    assert not offences, "submit_policy.py imports forbidden modules:\n" + "\n".join(offences)
-
-
-def test_submit_policy_and_generation_route_import_no_playwright_or_httpx() -> None:
-    """Coordinator alias: generation_route moves to Task 4; this verifies submit_policy."""
-    test_submit_policy_imports_no_playwright_or_httpx()
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Aspect",
+        "AssetInfo",
+        "FlowApiClient",
+        "FlowApiError",
+        "GenerateVideoRequest",
+        "Mode",
+        "ProjectInfo",
+        "Tier",
+    ],
+)
+def test_api_reexports(name: str) -> None:
+    """Every current public re-export from gflow_cli.api remains importable."""
+    api_module = importlib.import_module("gflow_cli.api")
+    val = getattr(api_module, name)
+    assert val is not None
