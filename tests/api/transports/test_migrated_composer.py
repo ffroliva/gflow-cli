@@ -5007,6 +5007,24 @@ class _LatePollsPage(FakePage):
             loop.call_later(i * self.spacing_s, self._fire_response, FakeResponse(url, text))
 
 
+def _spy_listing_reads(composer: Any) -> list[tuple[float, float]]:
+    """Record ``(monotonic_ts, budget_s)`` for every ``_read_listing`` call.
+
+    When ``poll_timeout_s < LISTING_READ_BUDGET_S``, in-loop reads arrive with
+    ``budget_s < LISTING_READ_BUDGET_S``, whereas the deadline read passes
+    ``LISTING_READ_BUDGET_S`` directly (#1530).
+    """
+    reads: list[tuple[float, float]] = []
+    orig = composer._read_listing
+
+    async def spy(page: Any, project_id: str, *, budget_s: float) -> Any | None:
+        reads.append((time.monotonic(), budget_s))
+        return await orig(page, project_id, budget_s=budget_s)
+
+    composer._read_listing = spy
+    return reads
+
+
 def _listing_tabs(page: FakePage, *listings: str) -> list[ListingTab]:
     """Each read of the listing opens the next tab; the last one repeats."""
     from types import SimpleNamespace
@@ -5039,13 +5057,14 @@ async def test_a_loss_cleared_by_a_readable_poll_keeps_the_recovery_watching_148
         (_batch_url("as29s"), _frame("as29s", _ours(2))),
     ]
     tabs = _listing_tabs(page, _listing(_ours(2)), _listing(_ours(3)))
-    started = time.monotonic()
-    rec = await MigratedComposer().submit_and_observe(
-        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
     )
     assert rec.workflow_id == WF_OURS and rec.is_done
-    assert time.monotonic() - started < 2.0, "settled only at the poll deadline"
-    assert len(tabs) == 2
+    assert len(tabs) == 2 and len(reads) == 2
+    assert reads[1][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
 
 
 async def test_a_clip_settled_from_the_listing_carries_no_listing_url_1484(
@@ -5137,7 +5156,7 @@ async def test_a_loss_inside_the_read_interval_reads_once_the_interval_is_up_148
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Flow sends no poll after the terminal one: a loss inside the interval must still be
-    followed by a read when the interval ends, not only at the poll deadline."""
+    followed by a read when the interval ends, not only at the poll deadline (#1530)."""
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
@@ -5145,14 +5164,16 @@ async def test_a_loss_inside_the_read_interval_reads_once_the_interval_is_up_148
     page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.1)
     page.dom.prompt = "a crane"
     page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
-    reads = _clip_done_after(page, done_at_s=0.15)
-    started = time.monotonic()
-    rec = await MigratedComposer().submit_and_observe(
-        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    tabs = _listing_tabs(page, _listing(_ours(2)), _listing(_ours(3)))
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
     )
     assert rec.is_done
-    assert time.monotonic() - started < 1.5, "read only at the poll deadline"
-    assert len(reads) == 2
+    assert len(tabs) == 2 and len(reads) == 2
+    assert reads[1][0] - reads[0][0] >= 0.25, "second read fired before the interval elapsed"
+    assert reads[1][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "read only at the poll deadline"
 
 
 async def test_a_clip_adopted_from_the_listing_carries_no_listing_url_1484(
@@ -5182,22 +5203,25 @@ async def test_a_stale_running_frame_after_a_lost_terminal_poll_still_reads_the_
         (_batch_url("as29s"), _frame("as29s", _ours(2))),
     ]
     tabs = _listing_tabs(page, _listing(_ours(3)))
-    started = time.monotonic()
-    rec = await MigratedComposer().submit_and_observe(
-        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
     )
     assert rec.is_done and rec.workflow_id == WF_OURS
-    assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
-    assert len(tabs) == 1
+    assert len(tabs) == 1 and len(reads) == 1
+    assert reads[0][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
 
 
 async def test_a_clip_settled_from_the_listing_skips_the_result_url_grace_1484(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No as29s with a signed URL follows a listing read, so waiting for one is dead time."""
+    import structlog.testing
+
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
-    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
     page = FakePage()
     page.dom.prompt = "a crane"
     page.scripted_responses = [
@@ -5205,12 +5229,12 @@ async def test_a_clip_settled_from_the_listing_skips_the_result_url_grace_1484(
         (_batch_url("jwpduf"), LOST_BODY),
     ]
     _listing_tabs(page, _listing(_ours(3)))
-    started = time.monotonic()
-    rec = await MigratedComposer().submit_and_observe(
-        page, poll_timeout_s=5.0, on_started=None, project_id=PROJ
-    )
+    with structlog.testing.capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=5.0, on_started=None, project_id=PROJ
+        )
     assert rec.is_done and rec.video_url is None
-    assert time.monotonic() - started < 0.9, "waited the URL grace after the listing read"
+    assert not any(e.get("event") == "migrated.result_url_not_observed" for e in logs)
 
 
 class _OtherEngineError(Exception):
@@ -5250,12 +5274,14 @@ async def test_a_finished_clip_adopted_from_the_listing_skips_the_url_grace_1484
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No signed URL follows a listing read, so the adoption path must not wait for one."""
+    import structlog.testing
+
     monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
     monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
-    started = time.monotonic()
-    rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, VIDEO_URL))))
+    with structlog.testing.capture_logs() as logs:
+        rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, VIDEO_URL))))
     assert rec.is_done and rec.video_url is None
-    assert time.monotonic() - started < 0.45, "waited the URL grace after adopting"
+    assert not any(e.get("event") == "migrated.result_url_not_observed" for e in logs)
 
 
 class _FailingTab:
@@ -5304,6 +5330,8 @@ async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
 ) -> None:
     """Flow polls while the clip runs; an evicted body is still a poll. Counting only
     readable frames read every eviction as silence and spent the listing reads early."""
+    from types import SimpleNamespace
+
     from gflow_cli.api.transports.migrated_composer import MigratedComposer
 
     monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.15)
@@ -5314,14 +5342,33 @@ async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
         (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
         (_batch_url("jwpduf"), LOST_BODY),
     ]
-    reads = _clip_done_after(page, done_at_s=0.4)
-    started = time.monotonic()
-    rec = await MigratedComposer().submit_and_observe(
-        page, poll_timeout_s=3.0, on_started=None, project_id=PROJ
+    jwpduf_fired = 0
+    orig_fire = page._fire_response
+
+    def track_fire(response: FakeResponse) -> None:
+        nonlocal jwpduf_fired
+        if "jwpduf" in response.url:
+            jwpduf_fired += 1
+        orig_fire(response)
+
+    page._fire_response = track_fire  # type: ignore[method-assign]
+    polls_at_read: list[int] = []
+
+    async def new_page() -> ListingTab:
+        polls_at_read.append(jwpduf_fired)
+        status = 3 if jwpduf_fired >= 9 else 2
+        return ListingTab(_listing(_ours(status)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
     )
     assert rec.is_done
-    assert time.monotonic() - started < 1.5, "settled only at the poll deadline"
-    assert len(reads) == 1, "read the listing while Flow was still polling"
+    assert polls_at_read == [9], "read the listing while Flow was still polling"
+    assert len(reads) == 1
+    assert reads[0][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
 
 
 #: Strong references to background tasks the #1518 tests start: asyncio keeps only weak ones.
