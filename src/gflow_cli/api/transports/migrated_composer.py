@@ -736,11 +736,14 @@ async def _click_create(page: Page, button: Locator) -> None:
     # #1557: the bonus-credit promo renders after the page settles, so the dismissal right
     # after load comes too early. Playwright runs this handler whenever the promo is up
     # before (or while retrying) the click; an account without it pays nothing.
-    promo = page.locator(PROMO_DIALOG_CLOSE)
+    promo = page.locator(PROMO_DIALOG_CLOSE).first  # strict mode: one match only
 
     async def close_promo(close: Locator) -> None:
-        await close.click(timeout=3000)
-        log.info("migrated.promo_dismissed", issue_ref="#1557")
+        try:
+            await close.click(timeout=3000)
+            log.info("migrated.promo_dismissed", issue_ref="#1557")
+        except Exception as e:  # noqa: BLE001 - best-effort; the Create click reports a blocker
+            log.warning("migrated.promo_not_dismissed", error=str(e)[:200], issue_ref="#1557")
 
     await page.add_locator_handler(promo, close_promo)
     try:
@@ -760,7 +763,7 @@ async def _click_create_once(page: Page, button: Locator) -> None:
             if sent.seen():
                 return  # Create reached Flow: wait for its reply, or recover it
             try:
-                state: dict[str, Any] = await button.evaluate(_CLICK_POSTMORTEM_JS)
+                state: dict[str, Any] = await button.evaluate(_CLICK_POSTMORTEM_JS, timeout=2_000)
                 covered = f"; it is covered by {state['occluder']}" if state.get("occluder") else ""
             except Exception:  # noqa: BLE001 - a diagnostic never replaces the failure
                 covered = ""

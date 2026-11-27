@@ -41,7 +41,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote_plus, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -115,7 +115,8 @@ _SURVEY_JS = """
 def _guard(aborted: list[str]) -> Any:
     async def on_route(route: Any, _request: Any) -> None:
         r = route.request
-        data = (r.post_data_buffer or b"").decode("utf-8", errors="replace")
+        # the body is form-encoded: `"nprQif"` only appears after decoding
+        data = unquote_plus((r.post_data_buffer or b"").decode("utf-8", errors="replace"))
         rid = (parse_qs(urlsplit(r.url).query).get("rpcids") or [""])[0]
         billed_rpc = any(s in rid for s in _BILLED) or any(f'"{s}"' in data for s in _BILLED)
         aisandbox_gen = (

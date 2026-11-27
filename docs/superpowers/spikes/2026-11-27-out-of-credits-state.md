@@ -36,7 +36,7 @@ screenshot. The real CLI commands then ran one at a time.
 
 Before running any `gflow video` command against the live account, the spike checked that
 `arrow_forward` is absent for `veo-quality` at this balance (2/2). The video path waits only for
-that button (`_mc_submit_observe.py:641-658`) and has no Enter fallback. So with the button gone,
+that button (`submit_and_observe` in `_mc_submit_observe.py`) and has no Enter fallback. So with the button gone,
 the CLI has nothing to click.
 
 ## Observations
@@ -62,8 +62,8 @@ Its structure:
 
 Closing the dialog does **not** persist: it was back on the next navigation to `/` within seconds.
 `create_project` calls `_dismiss_dialog` straight after `domcontentloaded`
-(`migrated_composer.py:765`), before the dialog has rendered, so the dismissal does nothing. The
-click then lands on the backdrop and the run ends at exit 23 (`migrated_composer.py:740-752`). This
+(`create_project` in `migrated_composer.py`), before the dialog has rendered, so the dismissal does nothing. The
+click then lands on the backdrop and the run ends at exit 23 (`_click_create_once` in `migrated_composer.py`). This
 is the cause of the exit 23 seen on this profile. The dialog offers credits; it does not report a
 shortfall, and it is unrelated to the balance.
 
@@ -79,7 +79,7 @@ In the headless run the warning was already present in the fresh project, becaus
 the last-selected model per account (`veo-quality`, from the headed run). The warning appears
 **before any prompt is typed**, at model selection. No modal or top-up dialog opens: the composer
 shows an orange `info` button where submit was (`spike_out_of_credits_headed_typed_20261127_224702.png`).
-The existing anchor `CREDITS_WARNING = "button.prompt-warning-button"` (`_mc_common.py:187`) held.
+The existing anchor `CREDITS_WARNING = "button.prompt-warning-button"` (`_mc_common.py`) held.
 The `info` ligature is a second structural anchor, newly recorded.
 
 ### Real commands
@@ -96,9 +96,9 @@ The `info` ligature is a second structural anchor, newly recorded.
 Two findings follow:
 
 - **The order of the checks decides which error the user sees.** The cap is checked in the
-  settings pane (`_mc_settings_pane.py:164`), before the submit-side credits interrogation. A capped
+  settings pane (`apply_video_settings` in `_mc_settings_pane.py`), before the submit-side credits interrogation. A capped
   run that is also short therefore exits 45, not 37. The quote is read only when a cap is set
-  (`_mc_settings_pane.py:63-64`).
+  (`_read_credit_quote` in `_mc_settings_pane.py`).
 - **On an account that shows the promo dialog, every run that creates a project fails at exit 23
   before the composer is reached.** On such an account, exit 37 is reachable only with `--project`.
 

@@ -56,6 +56,8 @@ class _Loc:
         # Playwright runs a registered locator handler before an action when its overlay
         # is visible; a promo still up afterwards intercepts the click (#1557).
         if self.sel == mc.PROMO_DIALOG_CLOSE:  # a handler's own action runs no handlers
+            if self.page.promo_close_raises:
+                raise mc.PlaywrightTimeoutError("Locator.click: Timeout 3000ms exceeded")
             self.page.clicks.append(self.sel)
             self.page.present[self.sel] = False
             return
@@ -96,9 +98,9 @@ class _Loc:
     async def count(self) -> int:
         return 1 if self.page.present.get(self.sel, False) else 0
 
-    async def evaluate(self, _js: str) -> dict[str, Any]:
+    async def evaluate(self, _js: str, **_: Any) -> dict[str, Any]:
         if self.page.present.get(mc.PROMO_DIALOG_CLOSE, False):
-            return {"visible": True, "occluder": "div.g1-promo-dialog-backdrop"}
+            return {"visible": True, "occluder": "div.cdk-overlay-backdrop"}
         return {"visible": True}
 
 
@@ -124,6 +126,7 @@ class FakePage:
         self.url_waits: list[Any] = []
         self._handlers: list[Any] = []
         self.locator_handlers: dict[str, Any] = {}
+        self.promo_close_raises = False
         self.locator_handlers_disabled = False  # a promo the handler cannot close
         self.keyboard = self
 
@@ -245,16 +248,33 @@ async def test_create_closes_the_bonus_promo_before_clicking_new_project() -> No
     assert page.locator_handlers == {}  # not left on the pooled page
 
 
+async def test_a_promo_close_that_raises_is_logged_and_leaves_no_handler(
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: Any,
+) -> None:
+    # The handler is best-effort: a close click that fails must not replace the Create
+    # click's own typed failure, and the pooled page must not keep the handler.
+    monkeypatch.setattr(mc, "CREATE_LATE_REQUEST_GRACE_S", 0.1)
+    page = _page_creating()
+    page.present[mc.PROMO_DIALOG_CLOSE] = True
+    page.promo_close_raises = True
+
+    with pytest.raises(UiSelectorDriftError, match="cdk-overlay-backdrop"):
+        await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
+
+    assert page.locator_handlers == {}
+    assert any(e["event"] == "migrated.promo_not_dismissed" for e in install_log_capture.entries)
+
+
 async def test_create_click_blocked_by_an_overlay_names_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(mc, "CREATE_LATE_REQUEST_GRACE_S", 0.1)
     page = _page_creating()
-    page.click_times_out = True
     page.present[mc.PROMO_DIALOG_CLOSE] = True
     page.locator_handlers_disabled = True
 
-    with pytest.raises(UiSelectorDriftError, match="g1-promo-dialog-backdrop"):
+    with pytest.raises(UiSelectorDriftError, match="cdk-overlay-backdrop"):
         await mc.create_project(page, "x", timeout_s=0.1)  # type: ignore[arg-type]
 
 
