@@ -392,6 +392,11 @@ def _assert_single_user_acl(path: Path, user: str) -> None:
     assert entries[0].lower() == f"{user}:(f)"
 
 
+def _has_inherited_aces(path: Path) -> bool:
+    entries = _win_acl(path)
+    return len(entries) > 1 and any("(i)" in entry.lower() for entry in entries)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
 def test_open_restricts_the_db_but_not_its_neighbours(tmp_path: Path) -> None:
     _grant_everyone_read(tmp_path)
@@ -467,8 +472,8 @@ def test_open_tightens_existing_loose_windows_wal_and_shm(tmp_path: Path) -> Non
         pass
     wal.touch()
     shm.touch()
-    assert any("everyone" in entry.lower() for entry in _win_acl(wal))
-    assert any("everyone" in entry.lower() for entry in _win_acl(shm))
+    assert _has_inherited_aces(wal)
+    assert _has_inherited_aces(shm)
 
     with DataStore.open(db) as reopened:
         _assert_single_user_acl(db, user)
@@ -539,11 +544,17 @@ def test_open_never_hardens_windows_non_db_or_symlink_targets(tmp_path: Path) ->
     real_dir = tmp_path / "real"
     real_dir.mkdir()
     target = real_dir / "target.db"
+    target_wal = real_dir / "target.db-wal"
+    target_shm = real_dir / "target.db-shm"
+    target_wal.touch()
+    target_shm.touch()
     link = tmp_path / "linked.db"
     link.symlink_to(target)
     user = _win_current_user()
     with DataStore.open(link):
         _assert_single_user_acl(target, user)
+        _assert_single_user_acl(target_wal, user)
+        _assert_single_user_acl(target_shm, user)
         _assert_single_user_acl(tmp_path / "linked.db-wal", user)
         _assert_single_user_acl(tmp_path / "linked.db-shm", user)
 
@@ -568,7 +579,7 @@ def test_open_hardens_sidecars_even_when_db_acl_fails(
     monkeypatch.setattr(subprocess, "run", fail_db_only)
 
     with capture_logs() as logs1, DataStore.open(db):
-        assert any("everyone" in entry.lower() for entry in _win_acl(db))
+        assert _has_inherited_aces(db)
         _assert_single_user_acl(wal, user)
         _assert_single_user_acl(shm, user)
     assert [entry["event"] for entry in logs1] == ["file_acl_failed"]
@@ -618,6 +629,29 @@ def test_harden_files_once_does_not_retry_a_failure(
     winsec.forget_file_acl(str(once))
     assert winsec.harden_files_once((str(once),)).ok is False
     assert calls == [1, 1]
+
+
+def test_harden_files_once_dedups_by_identity_not_case_only_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case-only distinct paths stay separate when file identities differ; same identity dedups."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(winsec, "_current_user_sid", lambda: "S-1-5-21-1-2-3-1001")
+
+    identities = {
+        str(tmp_path / "Catalog.db-wal"): (1, 101, 1000),
+        str(tmp_path / "catalog.db-wal"): (1, 202, 1000),
+        str(tmp_path / "Alias.db-wal"): (1, 101, 1000),
+    }
+    applied: list[str] = []
+    monkeypatch.setattr(winsec, "_regular_file_identity", identities.get)
+    monkeypatch.setattr(winsec, "_apply_file_acl", lambda p, sid: applied.append(p) or True)
+    for p in identities:
+        winsec.forget_file_acl(p)
+
+    res = winsec.harden_files_once(tuple(identities))
+    assert res.ok is True
+    assert applied == [str(tmp_path / "Catalog.db-wal"), str(tmp_path / "catalog.db-wal")]
 
 
 def _clear_tracebacks(exc: BaseException) -> None:

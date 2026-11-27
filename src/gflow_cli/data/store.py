@@ -38,7 +38,8 @@ _create_lock = threading.Lock()
 def _win32_sidecar_paths(path: Path, real: str) -> tuple[str, ...]:
     """Sidecars SQLite creates on Windows (beside the opened path, not a symlink target)."""
     opened = os.path.join(os.path.realpath(path.parent), path.name)
-    bases = [real] if os.path.normcase(opened) == os.path.normcase(real) else [opened, real]
+    # Keep case-only differences distinct until batch hardening compares file identities.
+    bases = [real] if opened == real else [opened, real]
     return tuple(f"{base}{suffix}" for base in bases for suffix in ("-wal", "-shm"))
 
 

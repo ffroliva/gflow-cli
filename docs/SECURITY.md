@@ -139,7 +139,7 @@ gflow creates `gflow.db` readable and writable only by its owner: mode `0600` on
 
 Limits:
 
-- On Windows, SQLite creates `-wal` and `-shm` with the directory's inherited ACL before `DataStore.open` restricts them prior to returning (before callers write prompts); any sidecars left behind after a crash are already restricted and are re-tightened on the next open. Use a private directory if you need protection during that brief creation window.
+- On Windows, SQLite creates `-wal` and `-shm` with the directory's inherited ACL before `DataStore.open` restricts them prior to returning (before callers write prompts); a crash before that post-migration ACL pass may leave sidecars with inherited read access, and the next writable open attempts to tighten any existing sidecars. Use a private directory if you need protection during that brief creation window.
 - On Windows, permissions someone explicitly granted on an existing `gflow.db`, `-wal`, or `-shm` file are kept.
 - Another account that shared the database through group, other, POSIX ACL or inherited Windows permissions loses access to it.
 - On POSIX, a database file that another account owns stays accessible to that account. On macOS, ACLs inherited from the directory are kept.

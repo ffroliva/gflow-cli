@@ -128,12 +128,12 @@ def ensure_profile_hardened(path: Path) -> bool:
     return True
 
 
-_FileIdentity = tuple[int, int]  # (st_dev, st_ino)
+_FileIdentity = tuple[int, int, int]  # (st_dev, st_ino, birth_ns)
 
-#: Last-hardened file identity per normalized path: norm_path -> (identity, ok).
-#: Bounded to one entry per distinct path; a deleted-and-recreated file (such as
-#: SQLite's -wal / -shm sidecars across clean closes) gets a new NTFS st_ino and
-#: is hardened again automatically.
+#: Last-hardened file identity per exact path: path -> (identity, ok).
+#: Bounded to one entry per distinct path; including birth_ns alongside
+#: (st_dev, st_ino) distinguishes recreated sidecars even if an inode/file ID
+#: is reused on deletion.
 _file_acl_lock = threading.Lock()
 _file_acl_cache: dict[str, tuple[_FileIdentity, bool]] = {}
 
@@ -150,7 +150,7 @@ class FileAclResult:
 def forget_file_acl(path: str) -> None:
     """Drop any cached ACL outcome for *path* (called when gflow creates a fresh file)."""
     with _file_acl_lock:
-        _file_acl_cache.pop(os.path.normcase(path), None)
+        _file_acl_cache.pop(path, None)
 
 
 def _regular_file_identity(path: str) -> _FileIdentity | None:
@@ -163,7 +163,9 @@ def _regular_file_identity(path: str) -> _FileIdentity | None:
         return None
     if not stat.S_ISREG(st.st_mode):
         return None
-    return (st.st_dev, st.st_ino)
+    # On Windows st_birthtime_ns (3.12+) or st_ctime_ns (3.11) is file creation time.
+    birth_ns = int(getattr(st, "st_birthtime_ns", st.st_ctime_ns))
+    return (st.st_dev, st.st_ino, birth_ns)
 
 
 def _apply_file_acl(path: str, sid: str) -> bool | None:
@@ -192,25 +194,27 @@ def _apply_file_acl(path: str, sid: str) -> bool | None:
 
 def _partition_pending_files(
     paths: Iterable[str],
-) -> tuple[list[tuple[str, str, _FileIdentity]], bool]:
+) -> tuple[list[tuple[str, _FileIdentity]], bool]:
     """Return uncached regular files in *paths* and whether cached entries succeeded."""
     all_ok = True
-    pending: list[tuple[str, str, _FileIdentity]] = []
-    seen_norms: set[str] = set()
+    pending: list[tuple[str, _FileIdentity]] = []
+    seen_paths: set[str] = set()
+    seen_ids: set[_FileIdentity] = set()
     for path in paths:
-        norm = os.path.normcase(path)
-        if norm in seen_norms:
+        if path in seen_paths:
             continue
-        seen_norms.add(norm)
+        seen_paths.add(path)
         identity = _regular_file_identity(path)
-        if identity is None:
+        if identity is None or (identity[1] != 0 and identity in seen_ids):
             continue
+        if identity[1] != 0:
+            seen_ids.add(identity)
         with _file_acl_lock:
-            cached = _file_acl_cache.get(norm)
+            cached = _file_acl_cache.get(path)
         if cached is not None and cached[0] == identity:
             all_ok = all_ok and cached[1]
             continue
-        pending.append((path, norm, identity))
+        pending.append((path, identity))
     return pending, all_ok
 
 
@@ -218,9 +222,9 @@ def harden_files_once(paths: Iterable[str], *, sid: str | None = None) -> FileAc
     """Grant only the current user on each existing regular file in *paths*.
 
     Never touches the containing directory, which may not be ours (issue #1437).
-    Cached per ``(norm_path, st_dev, st_ino)`` so repeated opens hit memory only,
-    while newly recreated files (including SQLite ``-wal`` / ``-shm`` sidecars) get
-    their own ACL automatically. Resolves ``whoami /user`` at most once per call.
+    Cached per ``(path, st_dev, st_ino, birth_ns)`` so unchanged repeated opens hit
+    memory only, while recreated sidecars or replaced files are hardened again.
+    Resolves ``whoami /user`` at most once per call.
     """
     if sys.platform != "win32":
         return FileAclResult(ok=False)
@@ -239,16 +243,16 @@ def harden_files_once(paths: Iterable[str], *, sid: str | None = None) -> FileAc
                 returncode=getattr(exc, "returncode", None),
             )
             with _file_acl_lock:
-                for _path, norm, identity in pending:
-                    _file_acl_cache[norm] = (identity, False)
+                for path, identity in pending:
+                    _file_acl_cache[path] = (identity, False)
             return FileAclResult(ok=False, sid=None, sid_failed=True)
 
-    for path, norm, identity in pending:
+    for path, identity in pending:
         outcome = _apply_file_acl(path, sid)
         if outcome is None:
             continue
         with _file_acl_lock:
-            _file_acl_cache[norm] = (identity, outcome)
+            _file_acl_cache[path] = (identity, outcome)
         all_ok = all_ok and outcome
 
     return FileAclResult(ok=all_ok, sid=sid, sid_failed=False)
