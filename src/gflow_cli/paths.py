@@ -219,6 +219,115 @@ def extension_from_magic(head: bytes) -> str | None:
     return None
 
 
+def image_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read ``(width, height)`` from PNG, JPEG, GIF or WebP headers without Pillow.
+
+    Returns ``(width, height)`` as a pair of positive integers, or ``None`` if
+    the format is unrecognised, unsupported, truncated or invalid.
+    """
+    length = len(data)
+    if length < 10:
+        return None
+
+    # 1. PNG: 8-byte signature + 4-byte chunk len + 4-byte "IHDR" + 4-byte width + 4-byte height
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        if length < 24 or data[12:16] != b"IHDR":
+            return None
+        width = int.from_bytes(data[16:20], "big")
+        height = int.from_bytes(data[20:24], "big")
+        return (width, height) if width > 0 and height > 0 else None
+
+    # 2. GIF: GIF87a / GIF89a + 2-byte width LE + 2-byte height LE
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        width = int.from_bytes(data[6:8], "little")
+        height = int.from_bytes(data[8:10], "little")
+        return (width, height) if width > 0 and height > 0 else None
+
+    # 3. JPEG: Starts with FF D8, walks markers to find SOF
+    # (SOF0..SOF3, SOF5..SOF7, SOF9..SOF11, SOF13..SOF15)
+    if data.startswith(b"\xff\xd8"):
+        idx = 2
+        sof_markers = {
+            0xC0,
+            0xC1,
+            0xC2,
+            0xC3,
+            0xC5,
+            0xC6,
+            0xC7,
+            0xC9,
+            0xCA,
+            0xCB,
+            0xCD,
+            0xCE,
+            0xCF,
+        }
+        while idx < length:
+            if data[idx] != 0xFF:
+                return None
+            while idx < length and data[idx] == 0xFF:
+                idx += 1
+            if idx >= length:
+                return None
+            marker = data[idx]
+            idx += 1
+            if marker in (0xD8, 0xD9):  # SOI, EOI
+                continue
+            if marker == 0x00:  # Byte stuffing
+                continue
+            # Standalone restart markers RST0..RST7 (0xD0..0xD7)
+            if 0xD0 <= marker <= 0xD7:
+                continue
+            if idx + 2 > length:
+                return None
+            seg_len = int.from_bytes(data[idx : idx + 2], "big")
+            if seg_len < 2 or idx + seg_len > length:
+                return None
+            if marker in sof_markers:
+                # SOF segment format:
+                # 2 bytes length, 1 byte precision, 2 bytes height, 2 bytes width
+                if seg_len < 7:
+                    return None
+                height = int.from_bytes(data[idx + 3 : idx + 5], "big")
+                width = int.from_bytes(data[idx + 5 : idx + 7], "big")
+                return (width, height) if width > 0 and height > 0 else None
+            idx += seg_len
+        return None
+
+    # 4. WebP: RIFF....WEBP + chunk
+    if length >= 16 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        subformat = data[12:16]
+        # VP8 (simple lossy): chunk at 16:20, frame tag at 20:23, sync at 23:26, dims at 26:30
+        if subformat == b"VP8 ":
+            if length < 30:
+                return None
+            # Check 3-byte VP8 start code / sync code at 23:26: 0x9D 0x01 0x2A
+            if data[23:26] != b"\x9d\x01\x2a":
+                return None
+            width = int.from_bytes(data[26:28], "little") & 0x3FFF
+            height = int.from_bytes(data[28:30], "little") & 0x3FFF
+            return (width, height) if width > 0 and height > 0 else None
+
+        # VP8L (lossless): chunk at 16:20, sig (0x2f) at 20, 4-byte header at 21:25
+        if subformat == b"VP8L":
+            if length < 25 or data[20] != 0x2F:
+                return None
+            packed = int.from_bytes(data[21:25], "little")
+            width = (packed & 0x3FFF) + 1
+            height = ((packed >> 14) & 0x3FFF) + 1
+            return (width, height)
+
+        # VP8X (extended): chunk at 16:20, flags at 20:24, canvas w at 24:27, canvas h at 27:30
+        if subformat == b"VP8X":
+            if length < 30:
+                return None
+            width = int.from_bytes(data[24:27], "little") + 1
+            height = int.from_bytes(data[27:30], "little") + 1
+            return (width, height)
+
+    return None
+
+
 def looks_like_video(head: bytes) -> bool:
     """True when ``head``'s magic bytes are a known video container.
 

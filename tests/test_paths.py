@@ -260,3 +260,93 @@ class TestCorrectImageExtension:
         corrected = paths.correct_image_extension(wrong)
         assert corrected.name == "foo.webp"
         assert corrected.exists()
+
+
+class TestImageDimensions:
+    """`image_dimensions` extracts (width, height) from PNG, JPEG, GIF and WebP headers."""
+
+    def test_image_dimensions_for_each_format(self) -> None:
+        # PNG: 16x32
+        png = (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\x0d"
+            b"IHDR"
+            b"\x00\x00\x00\x10"  # width: 16
+            b"\x00\x00\x00\x20"  # height: 32
+            b"\x08\x02\x00\x00\x00"
+            b"\x90\x91\x68\x36"
+        )
+        assert paths.image_dimensions(png) == (16, 32)
+
+        # GIF87a: 64x48
+        gif87 = b"GIF87a\x40\x00\x30\x00\x00\x00\x00"
+        assert paths.image_dimensions(gif87) == (64, 48)
+
+        # GIF89a: 100x200
+        gif89 = b"GIF89a\x64\x00\xc8\x00\x00\x00\x00"
+        assert paths.image_dimensions(gif89) == (100, 200)
+
+        # JPEG SOF0 (baseline): 80x120 (height=120, width=80)
+        jpeg_sof0 = (
+            b"\xff\xd8"  # SOI
+            b"\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"  # APP0
+            b"\xff\xc0\x00\x11\x08\x00\x78\x00\x50"  # SOF0: len=17, prec=8, h=120, w=80
+            b"\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01"
+            b"\xff\xd9"
+        )
+        assert paths.image_dimensions(jpeg_sof0) == (80, 120)
+
+        # JPEG SOF2 (progressive): 640x480
+        jpeg_sof2 = (
+            b"\xff\xd8"
+            b"\xff\xc2\x00\x11\x08\x01\xe0\x02\x80"  # SOF2: h=480(0x01e0), w=640(0x0280)
+            b"\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01"
+            b"\xff\xd9"
+        )
+        assert paths.image_dimensions(jpeg_sof2) == (640, 480)
+
+        # WebP VP8 (simple lossy): 300x200
+        # VP8 frame tag: 3 bytes keyframe, start code 0x9d 0x01 0x2a, 2 bytes w, 2 bytes h
+        # 16-bit little-endian with 14 bits width, 14 bits height
+        # w=300 (0x012c -> 2c 01), h=200 (0x00c8 -> c8 00)
+        vp8 = (
+            b"RIFF\x20\x00\x00\x00WEBP"
+            b"VP8 \x10\x00\x00\x00"
+            b"\x00\x00\x00"  # 3-byte frame tag (keyframe)
+            b"\x9d\x01\x2a"  # sync code
+            b"\x2c\x01"  # width: 300
+            b"\xc8\x00"  # height: 200
+        )
+        assert paths.image_dimensions(vp8) == (300, 200)
+
+        # WebP VP8L (lossless): 1024x768
+        # signature 0x2f, then 4 bytes (32-bit LE):
+        # 14 bits width-1 (1023 = 0x3ff)
+        # 14 bits height-1 (767 = 0x2ff)
+        # 1 bit alpha, 3 bits version (0)
+        # 1023 | (767 << 14) = 0x3ff | (0x2ff << 14) = 0x3ff | 0x00bfc000 = 0x00bfc3ff
+        # packed 32-bit LE: ff c3 bf 00
+        vp8l = b"RIFF\x20\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x2f\xff\xc3\xbf\x00"
+        assert paths.image_dimensions(vp8l) == (1024, 768)
+
+        # WebP VP8X (extended): 1920x1080
+        # 10 bytes chunk: 4 bytes flags, 3 bytes w - 1, 3 bytes h - 1 (24-bit LE)
+        # w-1 = 1919 (0x00077f -> 7f 07 00), h-1 = 1079 (0x000437 -> 37 04 00)
+        vp8x = (
+            b"RIFF\x20\x00\x00\x00WEBP"
+            b"VP8X\x0a\x00\x00\x00"
+            b"\x00\x00\x00\x00"  # flags
+            b"\x7f\x07\x00"  # canvas width - 1
+            b"\x37\x04\x00"  # canvas height - 1
+        )
+        assert paths.image_dimensions(vp8x) == (1920, 1080)
+
+    def test_image_dimensions_none_for_truncated_or_unknown(self) -> None:
+        assert paths.image_dimensions(b"") is None
+        assert paths.image_dimensions(b"NOT_AN_IMAGE") is None
+        assert paths.image_dimensions(b"\x89PNG\r\n\x1a\n") is None  # truncated PNG
+        assert paths.image_dimensions(b"GIF89a\x01\x02") is None  # truncated GIF
+        assert paths.image_dimensions(b"\xff\xd8\xff\xc0\x00") is None  # truncated JPEG
+        assert paths.image_dimensions(b"RIFF\x10\x00\x00\x00WEBPVP8 ") is None  # truncated WebP
+        # Non-image RIFF
+        assert paths.image_dimensions(b"RIFF\x20\x00\x00\x00WAVEfmt ") is None
