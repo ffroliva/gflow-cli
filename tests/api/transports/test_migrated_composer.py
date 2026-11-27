@@ -6141,3 +6141,185 @@ async def test_image_result_arriving_during_refusal_wait_is_returned_1518(
         page, GenerateImageRequest(prompt="a blue cup")
     )
     assert len(images) == 1
+
+
+async def test_guarded_abort_of_b_before_wait_does_not_hide_unguarded_stray_a_1529() -> None:
+    """#1529 item 2: if request A passed unguarded before the guard aborted request B,
+    _raise_if_refused raises request A's unguarded verdict (charged='maybe') rather than B."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        if "unguarded-a" in body:
+            return WireFormatError(detail="unguarded request A")
+        if "guarded-b" in body:
+            return WireFormatError(detail="guarded request B")
+        return None
+
+    class _UnguardedThenGuardedPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            req_a = FakeRequest(_batch_url("fZytfe"), "f.req=unguarded-a")
+            req_b = FakeRequest(_batch_url("fZytfe"), "f.req=guarded-b")
+
+            async def go() -> None:
+                for handler in list(self._handlers["request"]):
+                    await _maybe_await(handler(req_a))
+                    await _maybe_await(handler(req_b))
+                route_b = FakeRoute()
+                await self.routes[-1][1](route_b, req_b)
+                self.route_outcomes.append(route_b.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _UnguardedThenGuardedPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=unguarded-a")
+
+    with pytest.raises(WireFormatError, match="unguarded request A") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=0.05,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action(), is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+async def test_route_error_is_recorded_before_abort_round_trip_finishes_1529(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1529 item 4: if the reply budget expires while route.abort() is still in flight,
+    the refusal is already recorded so the run reports the unbilled abort, not timeout."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.01)
+
+    class _HungAbortRoute(FakeRoute):
+        async def abort(self) -> None:
+            self.outcome = "abort"
+            await asyncio.sleep(0.2)
+
+    class _HungAbortPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            req = FakeRequest(_batch_url("eb1hJf"), _i2v_body(media_id="wrong-media-id"))
+
+            async def go() -> None:
+                for handler in list(self._handlers["request"]):
+                    await _maybe_await(handler(req))
+                route = _HungAbortRoute()
+                await self.routes[-1][1](route, req)
+                self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _HungAbortPage()
+    page.dom.prompt = "a crane"
+
+    with pytest.raises(WireFormatError, match="uploaded start frame") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=0.05,
+            on_started=None,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert (ei.value.charged, is_retryable(ei.value)) == ("no", True)
+
+
+async def test_image_route_error_is_recorded_before_abort_round_trip_finishes_1529(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1529 item 4 (image sibling): budget expiry during route.abort() still raises refusal."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+    from tests.api.transports.test_migrated_images import REFERENCE
+
+    monkeypatch.setattr(_mc_submit_observe, "IMAGE_REPLY_BUDGET_S", 0.01)
+
+    class _HungAbortRoute(FakeRoute):
+        async def abort(self) -> None:
+            self.outcome = "abort"
+            await asyncio.sleep(0.2)
+
+    class _HungImageAbortPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            req = FakeRequest(_batch_url("ogiZ0b"), "")
+
+            async def go() -> None:
+                for handler in list(self._handlers["request"]):
+                    await _maybe_await(handler(req))
+                route = _HungAbortRoute()
+                await self.routes[-1][1](route, req)
+                self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _HungImageAbortPage()
+    page.dom.prompt = "a blue cup"
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=(REFERENCE,)
+        )
+    assert (ei.value.charged, is_retryable(ei.value)) == ("no", True)
+
+
+async def test_batched_submit_marks_submit_left_so_later_stray_is_not_unbilled_1529() -> None:
+    """#1529 item 7: a batched submit such as rpcids=uwAyfb,fZytfe sets submit_left when let
+    through, so a later aborted stray is reported charged='maybe', not retryable."""
+    from gflow_cli.api.transports import _mc_submit_observe as mso
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        return (
+            WireFormatError(detail="stray second submit")
+            if rpcid == "fZytfe" and "stray" in body
+            else None
+        )
+
+    class _BatchedSubmitPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean_batch = FakeRequest(
+                "https://labs.google/fx/api/batchexecute?rpcids=uwAyfb,fZytfe",
+                'f.req=[[["uwAyfb","[]",null,"generic"],["fZytfe","[]",null,"1"]]]',
+            )
+            stray = FakeRequest(_batch_url("fZytfe"), "f.req=stray")
+
+            async def go() -> None:
+                for request in (clean_batch, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _BatchedSubmitPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("uwAyfb", "f.req=unused")
+
+    with pytest.raises(WireFormatError, match="stray second submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, ei.value.remediation_hint, is_retryable(ei.value)) == (
+        "maybe",
+        mso.STRAY_AFTER_SUBMIT,
+        False,
+    )

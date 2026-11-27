@@ -46,8 +46,8 @@ from gflow_cli.api.transports._mc_common import (
     _recover_images,
     _submit_body_problem,
     _submit_refusal,
-    body_rpcid,
     request_body,
+    request_rpcids,
     url_rpcid,
 )
 from gflow_cli.api.transports._mc_mention import MentionMixin
@@ -151,16 +151,16 @@ async def _raise_if_refused(
     verdicts: _VerdictTracker,
     submit_left: asyncio.Event,
 ) -> None:
-    """Raise a route-guard refusal first, else any unguarded observer verdict.
+    """Raise any unguarded observer verdict first, else a route-guard refusal.
 
-    A refusal says nothing was billed and a retry is safe, which holds only while no
-    submit of this run has left the browser (``submit_left``, set by the route guard when
-    it lets one through). Once one has, the refused request was a stray: Flow may be
-    billing the one that left, whether or not its reply has been read, so a retry could
-    pay twice.
+    An unguarded stray may have reached Flow and billed quota, so it takes precedence over
+    a later guarded abort that never left the browser (#1529). A guard refusal says nothing
+    was billed and a retry is safe only while no submit of this run has left the browser
+    (``submit_left``, set by the route guard when it lets one through). Once one has, the
+    refused request was a stray: Flow may be billing the one that left, whether or not its
+    reply has been read, so a retry could pay twice.
     """
-    if not route_error.done():
-        await verdicts.raise_unguarded()
+    await verdicts.raise_unguarded()
     if route_error.done():
         refusal: GFlowError = route_error.result()
         if submit_left.is_set():
@@ -195,8 +195,6 @@ async def _aborted_by_check(
         return False
     if on_aborted is not None:
         on_aborted()  # before the await: a settling run must not see it as unjudged
-    await route.abort()
-    log.warning("migrated.request_refused_before_send", rpc=rpcid)
     if not route_error.done():
         verdict.charged = "no"
         # A host refusal (exit 36: e.g. an aspect the source clip does not have) is not
@@ -204,6 +202,8 @@ async def _aborted_by_check(
         if not isinstance(verdict, FlowHostMigratedError):
             verdict.next_action, verdict.retryable = "retry", True
         route_error.set_result(verdict)
+    await route.abort()
+    log.warning("migrated.request_refused_before_send", rpc=rpcid)
     return True
 
 
@@ -382,29 +382,31 @@ class SubmitObserveMixin(MentionMixin):
             # (`nprQif` in the URL, key `omni_flash_i2v_8s_first_last`), so treat the
             # body as a second carrier rather than the rule — cohorts differ here.
             body = request_body(request)
-            rpcid = url_rpcid(url) or body_rpcid(body)
+            rpcids = request_rpcids(url, body)
             # Record request rpcids too: at timeout the set shows both what went
             # out and what answered (issue #639).
-            if rpcid is not None:
-                seen_submit_rpcs.add(rpcid)
-            if rpcid is None:
+            seen_submit_rpcs.update(rpcids)
+            if not rpcids:
                 return
             if request_check is not None:
-                verdict = request_check(rpcid, body)
-                if verdict is not None:
-                    # The guard below judges first and aborts; ending the wait here would
-                    # unroute it before it runs (#1320). Kept as the backstop for a request
-                    # no guard saw, raised once the run settles.
-                    verdicts.record(request, verdict)
-                    return
-            if rpcid in submit_rpcs:
-                submit_requests.append((request, rpcid))
+                for rid in rpcids:
+                    verdict = request_check(rid, body)
+                    if verdict is not None:
+                        # The guard below judges first and aborts; ending the wait here would
+                        # unroute it before it runs (#1320). Kept as the backstop for a request
+                        # no guard saw, raised once the run settles.
+                        verdicts.record(request, verdict)
+                        return
+            for rid in rpcids:
+                if rid not in submit_rpcs:
+                    continue
+                submit_requests.append((request, rid))
                 # The prompt comes first in the body, and a prompt can read like a key.
                 if key := MODEL_KEY.search(body.replace(adopt_prompt or "", "")):
                     submit_key["key"] = key.group(0)
                 try:
                     problem = _submit_body_problem(
-                        rpcid,
+                        rid,
                         body,
                         expect_media_id=expect_media_id,
                         expect_end_media_id=expect_end_media_id,
@@ -416,9 +418,9 @@ class SubmitObserveMixin(MentionMixin):
                 # aborts the same request unsent and names it so. A problem only the
                 # observer saw means the route missed it and Flow got the request.
                 if problem is not None:
-                    err = WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
+                    err = WireFormatError(detail=problem, route=f"batchexecute:{rid}")
                     verdicts.record(request, err)
-                return
+                    return
             # An unwatched rpcid is RECORDED (`seen_submit_rpcs`, above) but never
             # adopted as our submit. Adopting by body content was tried and removed:
             # the predicate available here (`_i2v_body_problem`) requires `_i2v_` in
@@ -588,48 +590,54 @@ class SubmitObserveMixin(MentionMixin):
         async def guard(route: Any, request: Any) -> None:
             """Abort a wrong submit BEFORE it leaves the browser (#1178): the observer
             above only sees a request already on its way to Flow, which bills it."""
-            rpcid: str | None = None
+            rpcids: list[str] = []
+            refused_rpc: str | None = None
+            problem: str | None = None
             try:
                 body = request_body(request)
-                rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
-                if await _aborted_by_check(
-                    route,
-                    request_check,
-                    rpcid,
-                    body,
-                    route_error,
-                    on_aborted=lambda: verdicts.judged(request, aborted=True),
-                ):
-                    return
-                problem = (
-                    _submit_body_problem(
-                        rpcid,
+                rpcids = request_rpcids(str(getattr(request, "url", "")), body)
+                for rid in rpcids:
+                    if await _aborted_by_check(
+                        route,
+                        request_check,
+                        rid,
+                        body,
+                        route_error,
+                        on_aborted=lambda: verdicts.judged(request, aborted=True),
+                    ):
+                        return
+                for rid in rpcids:
+                    if rid not in submit_rpcs:
+                        continue
+                    refused_rpc = rid
+                    problem = _submit_body_problem(
+                        rid,
                         body,
                         expect_media_id=expect_media_id,
                         expect_end_media_id=expect_end_media_id,
                         expect_reference_ids=expect_reference_ids,
                     )
-                    if rpcid is not None and rpcid in submit_rpcs
-                    else None
-                )
+                    if problem is not None:
+                        break
             except Exception as exc:  # noqa: BLE001 - an unsettled route hangs the page
-                problem = (
-                    f"migrated host: the {rpcid} submit could not be checked ({type(exc).__name__})"
-                    if rpcid is not None and rpcid in submit_rpcs
-                    else None
-                )
+                if refused_rpc is not None:
+                    problem = (
+                        f"migrated host: the {refused_rpc} submit could not be checked "
+                        f"({type(exc).__name__})"
+                    )
+            has_submit = any(rid in submit_rpcs for rid in rpcids)
             # Judged before the await, so a run settling meanwhile reads the right verdict.
             verdicts.judged(request, aborted=problem is not None)
-            if problem is None and rpcid in submit_rpcs:
+            if problem is None and has_submit:
                 submit_left.set()
             if problem is None:
                 # fallback, not continue_: an outer guard (extend) must still see it.
                 await route.fallback()
                 return
-            await route.abort()
-            log.warning("migrated.submit_refused_before_send", rpc=rpcid)
             if not route_error.done():
-                route_error.set_result(_aborted_before_send(problem, str(rpcid)))
+                route_error.set_result(_aborted_before_send(problem, str(refused_rpc)))
+            await route.abort()
+            log.warning("migrated.submit_refused_before_send", rpc=refused_rpc)
 
         # Both are ALWAYS armed, t2v included: a stale End chip makes the app submit
         # `nprQif` on a run that asked for no end frame. The route guard is where refusing
@@ -966,6 +974,10 @@ class SubmitObserveMixin(MentionMixin):
             if not aborted:
                 submit_left.set()
 
+        def _record_image_refusal(problem: str) -> None:
+            if not route_error.done():
+                route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
+
         async def guard(route: Any, raw_request: Any) -> None:
             problem = await _guard_image_submit(
                 route,
@@ -974,6 +986,7 @@ class SubmitObserveMixin(MentionMixin):
                 request.model,
                 entity_ids,
                 on_judged=lambda aborted: _judge_image(raw_request, aborted=aborted),
+                on_refused=_record_image_refusal,
             )
             found = _image_body_references(request_body(raw_request))
             log.info(
@@ -985,8 +998,6 @@ class SubmitObserveMixin(MentionMixin):
                 body_media=None if found is None else len(found[0]),
                 body_characters=None if found is None else len(found[1]),
             )
-            if problem is not None and not route_error.done():
-                route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
 
         page.on("request", on_request)
         page.on("response", on_response)
