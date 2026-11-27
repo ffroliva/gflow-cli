@@ -32,7 +32,7 @@ Flow's own submit. Everything else is routed to `ui_automation` before any reque
 | Request | Direct | Measured by |
 |---|---|---|
 | Text-to-image, model `nano2` / `nano21` (sent as `BELUGA`) | yes | 10 consecutive live generations |
-| Text-to-image, model `nano2-lite` (`HARBOR_SEAL`) or `nano-pro` (`GEM_PIX_2`), default 9:16 aspect, count 1, no reference, no character | yes | one live generation each on direct `ogiZ0b`, 768x1376 ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)) |
+| Text-to-image, model `nano2-lite` (`HARBOR_SEAL`) or `nano-pro` (`GEM_PIX_2`), 9:16 aspect (the CLI default; the MCP image tool defaults to 1:1, so an MCP call goes direct only with `aspect="9:16"`), count 1, no reference, no character | yes | one live generation each on direct `ogiZ0b`, 768x1376, with each model name sent in the measured request and an image returned; the spike did not separately prove which model rendered it ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)) |
 | Any other shape of `nano2-lite` or `nano-pro` (another aspect, count above 1, a reference, a character) | no | those slots were measured with `BELUGA` only; routed to `ui_automation` |
 | Aspect 9:16, 16:9 | yes | live generations (768x1376, 1376x768) |
 | Aspect 1:1, 4:3, 3:4 | yes | captures of Flow's own submit |

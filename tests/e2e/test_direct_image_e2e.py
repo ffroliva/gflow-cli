@@ -13,6 +13,7 @@ Opt in with:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -22,6 +23,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from gflow_cli.config import reset_settings
+from gflow_cli.mcp import tools as mcp_tools
 from tests.e2e._redacted_env import RedactedEnv
 
 if TYPE_CHECKING:
@@ -103,8 +106,47 @@ def test_a_model_with_no_measured_wire_name_never_goes_direct(
     """Imagen 4 has no measured wire name: routed to the UI transport before any POST, so
     nothing it produces (if the UI serves it at all) is recorded as direct."""
     proc = _t2i(e2e_env, tmp_path / "imagen.jpg", "--model", "imagen4")
+    # 11 (ConfigurationError) and 36 (host-migrated refusal) are accepted because Imagen 4
+    # is no longer in flow.google.com's model menu, so the UI path may refuse it before any
+    # generation; nothing is catalogued then, so only exit 0 can show the routing.
     assert proc.returncode in {0, 11, 36}, f"gflow image t2i failed (exit {proc.returncode})"
-    assert "direct_http" not in _image_transports(e2e_env)
+    if proc.returncode == 0:
+        assert _image_transports(e2e_env) == [None]
+    else:
+        assert _image_transports(e2e_env) == []
+
+
+def test_mcp_nano_pro_portrait_goes_direct(
+    e2e_env: RedactedEnv, e2e_profile_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1549 MCP twin: the tool defaults to 1:1, which is not the measured shape, so an MCP
+    call goes direct only with ``aspect="9:16"``."""
+    del e2e_profile_dir  # selects the real authenticated gflow home
+    for key in ("GFLOW_CLI_DB_PATH", "GFLOW_CLI_OUTPUT_DIR"):
+        monkeypatch.setenv(key, e2e_env[key])
+    monkeypatch.setenv("GFLOW_CLI_TRANSPORT", "direct_http")
+    reset_settings()
+
+    result = asyncio.run(
+        mcp_tools.gflow_generate_image(
+            prompt="a paper boat on a pond",
+            model="nano-pro",
+            aspect="9:16",
+            profile=e2e_env["GFLOW_CLI_PROFILE"],
+            wait=True,
+        )
+    )
+
+    assert result["status"] == "completed", result
+    assert _image_transports(e2e_env) == ["direct_http"]
+
+
+def test_nano_pro_landscape_takes_the_ui_path(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+    """#1549: 16:9 is outside the measured shape, so nano-pro still generates via the UI."""
+    proc = _t2i(e2e_env, tmp_path / "land.jpg", "--model", "nano-pro", "--aspect", "16:9")
+    assert proc.returncode == 0, f"gflow image t2i failed (exit {proc.returncode})"
+    _saved(tmp_path / "land.jpg")
+    assert _image_transports(e2e_env) == [None]
 
 
 def test_a_catalogued_reference_routes_to_the_ui_transport(

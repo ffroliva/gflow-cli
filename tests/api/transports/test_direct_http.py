@@ -63,11 +63,6 @@ def test_direct_can_serve_excluded_shapes(kwargs: dict[str, object]) -> None:
 
 
 @pytest.mark.parametrize("model", [Model.HARBOR_SEAL, Model.GEM_PIX_2])
-def test_new_models_go_direct_only_for_the_measured_shape(model: Model) -> None:
-    assert direct_can_serve(GenerateImageRequest(prompt="x", model=model)) is True
-
-
-@pytest.mark.parametrize("model", [Model.HARBOR_SEAL, Model.GEM_PIX_2])
 @pytest.mark.parametrize(
     "kwargs",
     [

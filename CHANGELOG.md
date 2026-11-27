@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The experimental `direct_http` image transport now serves Nano Banana 2 Lite (`nano2-lite`, `HARBOR_SEAL`) and Nano Banana Pro (`nano-pro`, `GEM_PIX_2`) ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)).** Both were generated live by a direct `ogiZ0b` request; previously they were routed to the UI transport because their wire names had not been measured. `imagen4` is still routed to the UI transport.
+- **The experimental `direct_http` image transport now serves Nano Banana 2 Lite (`nano2-lite`, `HARBOR_SEAL`) and Nano Banana Pro (`nano-pro`, `GEM_PIX_2`) ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)).** Both were generated live by a direct `ogiZ0b` request, for the measured shape only: 9:16, one image, no reference and no character (the CLI default aspect is 9:16; the MCP image tool defaults to 1:1, so over MCP pass `aspect="9:16"`). Every other shape of these models takes the UI path. Previously both were routed to the UI transport because their wire names had not been measured. `imagen4` is still routed to the UI transport.
 
 ### Fixed
 
