@@ -14,6 +14,8 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import sys
 import time
 from typing import Any, Self
@@ -39,6 +41,7 @@ from gflow_cli.api._flow_session import (
 from gflow_cli.api._flow_session import (
     _LABS_ORIGIN,  # pyright: ignore[reportPrivateUsage]
     JsonObject,
+    RelaunchFailed,
 )
 from gflow_cli.api._flow_session import (
     _extract_provider_error_message as _extract_provider_error_message,  # pyright: ignore[reportPrivateUsage]
@@ -69,6 +72,7 @@ from gflow_cli.api._flow_workspace import (
 )
 from gflow_cli.api._flow_workspace import validate_image_file as validate_image_file
 from gflow_cli.api._flow_workspace import validate_video_file as validate_video_file
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports import (
     STANDALONE_ONLY_TRANSPORTS,
     make_transport,
@@ -76,6 +80,7 @@ from gflow_cli.api.transports import (
 )
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
+    SupportsQuiesce,
     SupportsTransportSetup,
     TransportSetup,
 )
@@ -93,12 +98,31 @@ from gflow_cli.errors import (
     FlowApiError,  # re-exported via gflow_cli.api.__init__
     ProfileAccessError,
     ProfileLockedError,
+    UiModeUnavailableError,
 )
 from gflow_cli.errors import (
     WafRejectionError as WafRejectionError,  # read here by scripts/dev/spike_patchright.py
 )
 from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.winsec import ensure_profile_hardened
+
+
+def _on_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def _check_display_server(visibility: BrowserVisibility) -> None:
+    """Refuse a headed launch on Linux if no display server is available."""
+    if visibility == BrowserVisibility.HEADED and _on_linux():
+        if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+            raise UiModeUnavailableError(
+                BrowserVisibility.HEADED,
+                remediation_hint=(
+                    "A headed browser launch requires a display server on Linux, but neither "
+                    "DISPLAY nor WAYLAND_DISPLAY is set. Run under xvfb-run (e.g. "
+                    "'xvfb-run -a gflow ...') or use --browser-visibility headless."
+                ),
+            )
 
 
 def _is_profile_access_denied(exc: BaseException) -> bool:
@@ -114,7 +138,7 @@ def _is_profile_access_denied(exc: BaseException) -> bool:
 
 # Silence "imported but unused" — FlowApiError is re-exported from this module
 # via ``gflow_cli.api.__init__`` for back-compat with Phase 3 call sites.
-__all__ = ["FlowApiClient", "FlowApiError"]
+__all__ = ["FlowApiClient", "FlowApiError", "RelaunchFailed"]
 
 logger = structlog.get_logger(__name__)
 # issue #222: the NextAuth Flow session cookie + the URL used to seed it.
@@ -133,6 +157,7 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
     # --- lifecycle --------------------------------------------------------
 
     async def __aenter__(self) -> Self:
+        _check_display_server(self.visibility)
         # --- Step 1: Launch Playwright FIRST so self._page is ready before
         # transport.setup() is called.  This order is load-bearing for S1
         # (EvaluateFetchTransport): it needs a live Page passed via the
@@ -172,9 +197,16 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         # acquire it and spirals into about:blank / TargetClosedError. Tear
         # down everything opened after the driver starts on any failure.
         try:
+            # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
+            # the headed context, so _ensure_context_session_cookie can seed them if the
+            # headed context can't decrypt the on-disk store. Must run pre-launch and
+            # pre-lease — the snapshot's fallback opens a headless context on the same
+            # profile, which would deadlock on the singleton lock once the headed
+            # context holds it. Once per client: relaunch() reuses this snapshot.
+            await self._preread_flow_session_cookies()
             await self._enter_setup()
         except BaseException:
-            await self._close_browser_resources()
+            await self._close_browser_resources(release_lease=True)
             raise
         return self
 
@@ -416,33 +448,28 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
-        # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
-        # the headed context, so _ensure_context_session_cookie can seed them if the
-        # headed context can't decrypt the on-disk store. Must run pre-launch — the
-        # snapshot's fallback opens a headless context on the same profile, which
-        # would deadlock on the singleton lock once the headed context holds it.
-        await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         if self._recorder is not None:
             self._recorder.note_har_pre_launch(self.settings.har_path)
         # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
-        # _preread_flow_session_cookies above may itself momentarily own a
+        # _preread_flow_session_cookies (run by __aenter__ just before) may itself momentarily own a
         # headless context on this profile (its cookie-decrypt fallback), which
         # takes and releases its own lease first — acquiring earlier would make
         # this a same-process double-acquire. Contention raises ProfileLockedError
         # (exit 11) here, before any Chrome process starts.
-        try:
-            # aacquire so a #478 opt-in wait polls with asyncio.sleep instead
-            # of blocking the event loop (daemon tasks share it).
-            self._lease = await ProfileLease(self.profile_dir).aacquire()
-        except ProfileLockedError as exc:
-            # Metadata-only incident BEFORE any Chrome exists (S07); the
-            # partial-setup guard's _close_browser_resources finalizes it.
-            if self._recorder is not None:
-                ref = await self._recorder.capture_metadata_only(exc, phase="profile_lease")
-                if ref is not None and exc.incident_ref is None:
-                    exc.incident_ref = ref
-            raise
+        if self._lease is None:
+            try:
+                # aacquire so a #478 opt-in wait polls with asyncio.sleep instead
+                # of blocking the event loop (daemon tasks share it).
+                self._lease = await ProfileLease(self.profile_dir).aacquire()
+            except ProfileLockedError as exc:
+                # Metadata-only incident BEFORE any Chrome exists (S07); the
+                # partial-setup guard's _close_browser_resources finalizes it.
+                if self._recorder is not None:
+                    ref = await self._recorder.capture_metadata_only(exc, phase="profile_lease")
+                    if ref is not None and exc.incident_ref is None:
+                        exc.incident_ref = ref
+                raise
         # Guard AFTER the lease (#478 review): during an opt-in lease wait the
         # holder rewrites 'Last Version' exactly as it releases, so a
         # pre-wait check would validate a stale value (TOCTOU). A raise here
@@ -641,14 +668,22 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         # _close_browser_resources is fully guarded internally and always resets
         # the pool fields (even if context.close raises), so the client is left
         # in a clean state without a separate finally block here.
-        await self._close_browser_resources()
-        if self._owns_transport and self.transport is not None:
-            try:
-                await self.transport.teardown()
-            except Exception:
-                logger.warning("transport_teardown_error", exc_info=True)
+        try:
+            if self._owns_transport and self.transport is not None:
+                try:
+                    await self.transport.teardown()
+                except Exception:
+                    logger.warning("transport_teardown_error", exc_info=True)
+        finally:
+            await self._close_browser_resources(release_lease=True)
 
-    async def _close_browser_resources(self) -> None:
+    def _release_lease(self) -> None:
+        """Release the profile lease if held."""
+        if self._lease is not None:
+            self._lease.release()
+            self._lease = None
+
+    async def _close_browser_resources(self, *, release_lease: bool = True) -> None:
         """Close the BrowserContext and stop the Playwright driver, best-effort.
 
         Shared by :meth:`__aexit__` and :meth:`__aenter__`'s partial-setup
@@ -661,7 +696,7 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         skip the lease release in ``finally``. The original cancellation is
         captured and re-raised LAST, after every ownership-release step has run.
         Teardown order: (4) close context/browser -> stop driver;
-        (6) release the profile lease.
+        (6) release the profile lease if release_lease is True.
         """
         # Stop accepting incident events and detach listeners BEFORE the
         # context closes — late callbacks become no-ops (design §6.2 step 7).
@@ -744,17 +779,95 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
             self._page = None
             self._context = None
             self._pw = None
-            # Release the profile lease LAST — after the context is closed and
-            # the driver stopped — so the profile dir is genuinely free before
-            # another process can acquire it (D3 release ordering). release() is
-            # idempotent and never unlinks the lock file.
-            if self._lease is not None:
-                self._lease.release()
-                self._lease = None
+            if release_lease:
+                self._release_lease()
         # Re-raise the original cancellation only after teardown completed, so a
         # cancelled close still stopped Playwright and released the lease.
         if cancelled is not None:
             raise cancelled
+
+    async def relaunch(self, visibility: BrowserVisibility) -> None:
+        """Relaunch the browser process under the held profile lease.
+
+        Checks the display before touching anything, so a refused headed launch
+        leaves the client intact. Then, inside ``transport.quiesce()`` when the
+        transport has one, waits for every pool page to check back in, closes the
+        context and driver, and launches a fresh browser at ``visibility``
+        without releasing the lease. Relaunches are serialised; a page checkout
+        arriving meanwhile waits for the new pool (or the failure).
+
+        A failure marks the client unusable and raises :class:`RelaunchFailed`;
+        a cancellation marks it unusable, closes best-effort and is re-raised.
+        Either way the lease stays held until ``__aexit__``.
+        """
+        async with self._relaunch_lock:
+            if self._unusable:
+                raise RelaunchFailed("FlowApiClient is unusable after a failed browser relaunch")
+            if self._lease is None:
+                raise RuntimeError(
+                    "FlowApiClient.relaunch() requires an active entered client holding a lease"
+                )
+            if not self._owns_transport:
+                raise ConfigurationError(
+                    "FlowApiClient cannot relaunch with a caller-owned transport: it was set "
+                    "up on the current browser page and would be left on a closed context. "
+                    "Pass a transport name instead of an instance.",
+                )
+            _check_display_server(visibility)
+            quiesce = (
+                self.transport.quiesce()
+                if isinstance(self.transport, SupportsQuiesce)
+                else contextlib.nullcontext()
+            )
+            self._relaunch_gate.clear()
+            try:
+                async with quiesce:
+                    await self._drain_and_relaunch(visibility)
+            finally:
+                self._relaunch_gate.set()
+
+    async def _drain_page_pool(self) -> None:
+        """Wait until every pool page is checked back in."""
+        if self._page_queue is None:
+            return
+        for _ in self._pages:
+            await self._page_queue.get()
+
+    async def _drain_and_relaunch(self, visibility: BrowserVisibility) -> None:
+        try:
+            await self._drain_page_pool()
+            if self.transport is not None:
+                try:
+                    await self.transport.teardown()
+                except Exception:
+                    logger.warning("transport_teardown_error", exc_info=True)
+            await self._close_browser_resources(release_lease=False)
+            self.visibility = visibility
+            self.headless = visibility == BrowserVisibility.HEADLESS
+            # The old recorder was frozen by the close; journal the new browser afresh.
+            self._recorder = IncidentRecorder(self.settings)
+            engine = active_engine()
+            log_engine_selected(engine)
+            if engine == BrowserEngine.PATCHRIGHT:
+                self._pw = await resolve_async_playwright(engine)().start()
+            else:
+                self._pw = await async_playwright().start()
+            await self._enter_setup()
+        except Exception as exc:
+            self._unusable = True
+            await self._close_after_failed_relaunch()
+            raise RelaunchFailed(f"Browser relaunch failed: {exc}") from exc
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            self._unusable = True
+            await self._close_after_failed_relaunch()
+            raise
+
+    async def _close_after_failed_relaunch(self) -> None:
+        """Best-effort close that keeps the lease; never masks the original error."""
+        try:
+            await self._close_browser_resources(release_lease=False)
+        except BaseException:  # noqa: BLE001 — the caller re-raises the original
+            logger.warning("client.relaunch_cleanup_error", exc_info=True)
 
     async def set_archived_media(
         self, media_id: str, project_id: str, *, archived: bool

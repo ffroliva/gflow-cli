@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractAsyncContextManager
     from pathlib import Path
 
     from playwright.async_api import Page
@@ -85,6 +86,17 @@ class SupportsTransportSetup(Protocol):
     """
 
     def apply_setup(self, config: TransportSetup) -> None: ...
+
+
+@runtime_checkable
+class SupportsQuiesce(Protocol):
+    """A transport whose in-flight work can be drained for a browser relaunch.
+
+    ``quiesce()`` blocks new starts and, on entry, waits until every in-flight
+    attempt has finished; new starts resume when the context exits.
+    """
+
+    def quiesce(self) -> AbstractAsyncContextManager[None]: ...
 
 
 class FlowTransportStrategy(Protocol):
