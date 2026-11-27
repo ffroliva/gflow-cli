@@ -135,12 +135,12 @@ The `OperationRecorder.redact_metadata` method explicitly strips `signedUrl`, `c
 
 ### Database file permissions
 
-gflow creates `gflow.db` readable and writable only by its owner: mode `0600` on POSIX, an ACL naming only the current user on Windows. An existing database is tightened when gflow opens it for writing. On POSIX this includes its `-wal` and `-shm` files; on Windows it happens once per process. If opening the database creates its directory on POSIX, that directory is `0700`. gflow never changes the permissions of an existing directory here, because `GFLOW_CLI_DB_PATH` can name one that other software uses. This is best-effort: a failure is logged and does not stop the command.
+gflow creates `gflow.db` readable and writable only by its owner: mode `0600` on POSIX, an ACL naming only the current user on Windows. An existing database and its `-wal` and `-shm` files are tightened when gflow opens the database for writing. On Windows, each file instance is hardened once per process and re-hardened if SQLite recreates the sidecars or replaces the file. If opening the database creates its directory on POSIX, that directory is `0700`. gflow never changes the permissions of an existing directory here, because `GFLOW_CLI_DB_PATH` can name one that other software uses. This is best-effort: a failure is logged and does not stop the command.
 
 Limits:
 
-- On Windows, the `-wal` and `-shm` files inherit the directory's ACL, and can remain after a crash. Use a directory that other users cannot read.
-- On Windows, permissions someone explicitly granted on an existing `gflow.db` file are kept.
+- On Windows, SQLite creates `-wal` and `-shm` with the directory's inherited ACL before `DataStore.open` restricts them prior to returning (before callers write prompts); any sidecars left behind after a crash are already restricted and are re-tightened on the next open. Use a private directory if you need protection during that brief creation window.
+- On Windows, permissions someone explicitly granted on an existing `gflow.db`, `-wal`, or `-shm` file are kept.
 - Another account that shared the database through group, other, POSIX ACL or inherited Windows permissions loses access to it.
 - On POSIX, a database file that another account owns stays accessible to that account. On macOS, ACLs inherited from the directory are kept.
 - Use a directory that only your user can write to. An account that can write to it can replace the database or its name, and gflow then writes to the replacement.
