@@ -174,3 +174,32 @@ def test_indeterminate_status_is_accepted(store: DataStore) -> None:
     task = repo.get_task("a")
     assert task is not None
     assert task.status == "indeterminate"
+
+
+def test_recovery_after_submit_refused_marks_failed_not_indeterminate(store: DataStore) -> None:
+    from gflow_cli.worker.queue import recover_processing
+
+    repo = QueueRepository(store)
+    repo.enqueue_task("task-refused", "profile", "t2v", {"prompt": "a prompt"})
+    claimed = repo.claim_next_pending("profile", claimant="worker-1")
+    assert claimed is not None
+
+    # Simulate checkpoint after submit attempt
+    repo.update_checkpoint(
+        "task-refused", claimant="worker-1", phase="submit_attempted", may_have_spent=True
+    )
+
+    # Observer receives submit_refused and resets checkpoint to claimed
+    repo.update_checkpoint(
+        "task-refused", claimant="worker-1", phase="claimed", may_have_spent=False
+    )
+
+    counts = recover_processing(repo, "profile")
+    assert counts["failed"] == 1
+    assert counts["indeterminate"] == 0
+
+    task = repo.get_task("task-refused")
+    assert task is not None
+    assert task.status == "failed"
+    assert task.error is not None
+    assert task.error["charged"] == "no"
