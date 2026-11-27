@@ -28,7 +28,7 @@ Bağımsız bir projedir, Google ile bağlantılı değildir. Gerçek bir Chrome
 | **Video modelleri** | Veo 3.1 Lite, Fast ve Quality; Omni Flash ve Omni 1.2 Flash (15 saniyeye kadar, 7 referans görsele kadar) |
 | **Görsel modelleri** | Nano Banana 2.1, Nano Banana Pro, Nano Banana 2 Lite, Imagen 4 |
 | **Uyumluluk** | Claude Code (eklenti), Claude Desktop, Cursor, VS Code, Codex, herhangi bir MCP istemcisi, kabuk betikleri ve CI |
-| **Maliyet** | Ücretsiz ve MIT lisanslıdır. Video kendi Flow kredilerinizi harcar; görseller kredi harcamaz (günlük görsel kotasından düşer) |
+| **Maliyet** | Ücretsiz ve MIT lisanslıdır. Video kendi Flow kredilerinizi harcar; görsel üretiminin kredi harcamadığı gözlemlenmiştir (günlük görsel kotasından düşer) |
 | **Olgunluk** | Sürümler [değişiklik günlüğünde](https://github.com/ffroliva/gflow-cli/blob/main/CHANGELOG.md) listelenir; v0.54.0'dan beri her sürüm yayımlanmadan önce gerçek Google Flow üzerinde canlı doğrulanır |
 
 ## gflow-cli neler yapabilir?
@@ -139,10 +139,10 @@ Videolar 16:9 ve 9:16; görseller 16:9, 4:3, 1:1, 3:4 ve 9:16 oranlarında üret
 
 ## gflow-cli Flow kredilerimi ve hesabımı nasıl korur?
 
-- **Yalnızca video kredi harcar.** Görsel üretimi kredi harcamaz (günlük görsel kotasından düşer) ve Sahne birleştirme ücretsizdir.
+- **Yalnızca video kredi harcar.** Görsel üretiminin kredi harcamadığı gözlemlenmiştir (günlük görsel kotasından düşer) ve Sahne birleştirme ücretsizdir.
 - **Harcama yapamayan sunucu.** `gflow mcp run --no-spend` kredi harcayan araçları asla kaydetmez; böylece bir ajan bunları hiç çağıramaz.
 - **Çok klipli çalıştırmalarda onay öncesi maliyet.** `video chain`, `video extend` ve `movie run` hiçbir şey göndermeden planı göstermek için `--dry-run` alır; `chain` ve `extend` harcama öncesi sorar.
-- **Asla iki kez faturalandırılmaz.** Ücretli bir istek bir kez gönderilir ve otomatik olarak yeniden denenmez; `gflow run --resume` yalnızca yerel katalogda henüz bulunmayan satırları yeniden üretir.
+- **Otomatik yeniden denemelerde çift faturalandırma yok.** Ücretli bir istek bir kez gönderilir ve otomatik olarak yeniden denenmez. `gflow run --resume` yerel katalogda henüz bulunmayan satırları yeniden üretir; Flow bir isteği kabul edip sonuç yerel kataloğa kaydedilmeden kesinti olursa `--resume` o satırı tekrar gönderip yeniden faturalandırabilir.
 - **Her hata ücret kesilip kesilmediğini söyler.** Hatalar hem CLI'ın `--json` çıktısında hem de MCP yanıtlarında `charged: yes | no | maybe` ve `next_action` (`retry`, `reauth`, `reconcile`) taşır ([ERRORS](docs/ERRORS.md)).
 - **İnsan temposunda çalışır.** `gflow` rastgeleleştirilmiş etkileşim zamanlaması ve dengeli gönderimlerle gerçek bir Chrome penceresi kullanır. IP rotasyonu yapmaz, siz ayarlamadıkça vekil sunucu kullanmaz ve varsayılan olarak parmak izi taklidi yapmaz ([ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)).
 - **Açıkça hata verir.** Flow arayüzü değiştiğinde tahmin yürütmek yerine belirgin bir çıkış koduyla durur (seçici kayması çıkış kodu 23'tür).
@@ -159,7 +159,7 @@ Hayır. Başka projeler de bu adı kullanır. Bu `gflow-cli`, PyPI'daki Python p
 Hayır. `gflow-cli` kullandıkça öde API'sini değil, Google hesabınızın Flow erişimini ve Flow kredilerini kullanır.
 
 ### Ücretli mi?
-Araç ücretsizdir. Video üretimi Flow kredilerinizi harcar; görsel üretimi kredi harcamaz ancak günlük görsel kotasından düşer.
+Araç ücretsizdir. Video üretimi Flow kredilerinizi harcar; görsel üretiminin kredi harcamadığı gözlemlenmiştir ancak günlük görsel kotasından düşer.
 
 ### Bir yapay zekâ ajanı bana sormadan kredilerimi harcayabilir mi?
 `gflow mcp run --no-spend` ile kaydettiğinizde hayır: kredi harcayan araçlar hiç kaydedilmez. Claude Code eklentisi de varsayılan olarak kapalı gelir.
