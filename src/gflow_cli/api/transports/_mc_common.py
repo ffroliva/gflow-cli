@@ -189,6 +189,11 @@ DIALOG = "[role='dialog']"
 # docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md
 CREDITS_WARNING = "button.prompt-warning-button"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
+#: The close control of Flow's bonus-credit promo, which renders over the projects page
+#: after it settles and returns on every load (#1557). Never its claim or no-thanks
+#: buttons: either answers for the account.
+#: docs/superpowers/spikes/2026-11-27-out-of-credits-state.md
+PROMO_DIALOG_CLOSE = "flow-g1-promo-dialog button.close-button"
 
 #: Google's `glue` consent bar — a Google-wide component, not one of Flow's. It is
 #: `position: fixed`, `z-index: 1000`, and Flow's composer is bottom-anchored in the

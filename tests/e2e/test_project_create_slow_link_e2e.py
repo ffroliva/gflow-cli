@@ -183,6 +183,7 @@ async def test_a_covered_new_project_button_is_drift_and_creates_nothing(
 
         assert exit_code_for(exc.value) == 23
         assert exc.value.charged == "no"
+        assert "it is covered by div" in str(exc.value)  # #1557: the occluder is named
     finally:
         await page.close()
     page = await client._checkout_page()  # noqa: SLF001
@@ -190,3 +191,49 @@ async def test_a_covered_new_project_button_is_drift_and_creates_nothing(
         assert await _project_ids(page) == before  # the witness: no project was made
     finally:
         client._checkin_page(page)  # noqa: SLF001
+
+
+# #1557: Flow's bonus-credit promo rendered AFTER the page settled and its backdrop took the
+# Create click. The promotion is time-limited, so this stands in for it: a backdrop over the
+# whole page and a `flow-g1-promo-dialog` with a `button.close-button` that removes both,
+# added after a delay on the projects page only.
+_PROMO_JS = """
+const tick = setInterval(() => {
+  if (!document.body || location.pathname.includes('/project/')) return;
+  if (!document.querySelector("flow-projects-page button:has(mat-icon)")) return;
+  clearInterval(tick);
+  const back = document.createElement('div');
+  back.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:transparent';
+  const dialog = document.createElement('flow-g1-promo-dialog');
+  dialog.style.cssText = 'position:fixed;top:40%;left:40%;z-index:2147483647;display:block';
+  const close = document.createElement('button');
+  close.className = 'close-button';
+  close.textContent = 'x';
+  close.onclick = () => { back.remove(); dialog.remove(); };
+  dialog.appendChild(close);
+  document.body.append(back, dialog);
+}, 50);
+"""
+
+
+async def test_a_late_promo_dialog_over_the_page_is_closed_and_the_project_is_created(
+    client: FlowApiClient, install_log_capture: structlog.testing.LogCapture
+) -> None:
+    """A stand-in promo appears over the new-project button after the page settles. The
+    locator handler closes it, and the create goes through (one empty project is made)."""
+    assert client._context is not None  # noqa: SLF001
+    page = await client._context.new_page()  # noqa: SLF001
+    try:
+        before = await _project_ids(page)
+        await page.add_init_script(_PROMO_JS)
+        title = _title()
+
+        info = await mc.create_project(page, title, timeout_s=60.0)
+
+        assert mc.UUID_RE.fullmatch(info.project_id), info
+        assert info.title == title
+        events = [e["event"] for e in install_log_capture.entries]
+        assert "migrated.promo_dismissed" in events, events
+        assert await _project_ids(page) - before == {info.project_id}
+    finally:
+        await page.close()
