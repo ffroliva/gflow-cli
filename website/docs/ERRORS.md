@@ -252,7 +252,7 @@ members. They have no exit code of their own.
 | `https://gflow-cli.dev/errors/cookie-store-unreadable` | MCP `gflow_auth_status` | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/profile-unavailable` | MCP `gflow_auth_status`, the headless Chrome cookie read could not run (`detail` names the error class) | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
-| `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
+| `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted, or MCP task row missing after execution | — | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/cancelled` | Worker queue, a task cancelled before any submit: `gflow cancel` / MCP `tasks/cancel` (state `cancelled`), or a server shutdown that stopped it | — | `no` | `none` |
 

@@ -249,13 +249,21 @@ def test_errors_doc_row_matches_what_the_class_emits(cls: type[GFlowError]) -> N
 
 def _hand_built_envelopes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict[str, Any]]:
     """Every envelope built by hand instead of from a GFlowError (MCP, worker queue)."""
+    from gflow_cli.data.store import DataStore
     from gflow_cli.mcp import tools
     from gflow_cli.profile_store import NoDefaultProfileError, NoProfilesError
     from gflow_cli.worker.queue import _recovery_error  # pyright: ignore[reportPrivateUsage]
 
+    missing_db = tmp_path / "missing_task.db"
+    with DataStore.open(missing_db):
+        pass
+    invalid = tools._adapt_tools([{"options": {}}])  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(invalid, dict)
     out: list[dict[str, Any]] = [
         tools._masked_unexpected_dict(RuntimeError("x")),  # pyright: ignore[reportPrivateUsage]
         tools._bad_param("Bad", "bad")["error"],  # pyright: ignore[reportPrivateUsage]
+        invalid["error"],
+        tools.task_payload("default", "missing-task", missing_db)["error"],
         _recovery_error("indeterminate", "crash"),
         _recovery_error("failed", "crash"),
         _recovery_error("failed", "cancelled"),

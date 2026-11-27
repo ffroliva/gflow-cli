@@ -54,6 +54,88 @@ _VALID_VIDEO_ASPECTS: frozenset[str] = frozenset({"9:16", "16:9", "1:1"})
 _VALID_DURATIONS: frozenset[int] = frozenset(range(3, 16))
 _VALID_CHARACTER_MODELS: frozenset[str] = frozenset({"nano2", "nanopro"})
 
+_TOP_LEVEL_KEYS: frozenset[str] = frozenset(
+    {
+        "title",
+        "project",
+        "output_dir",
+        "schema_version",
+        "style",
+        "characters",
+        "scenes",
+        "movie",
+        "assemble",
+        "instructions",
+    }
+)
+_MOVIE_SECTION_KEYS: frozenset[str] = frozenset({"continuity"})
+_ASSEMBLE_KEYS: frozenset[str] = frozenset({"output"})
+_STYLE_KEYS: frozenset[str] = frozenset(
+    {
+        "look",
+        "palette",
+        "environment",
+        "camera",
+        "lighting",
+        "mood",
+        "negative",
+        "prefix",
+        "suffix",
+        "variants",
+    }
+)
+_STYLE_VARIANT_KEYS: frozenset[str] = frozenset({"suffix"})
+_GLOBAL_INSTRUCTIONS_KEYS: frozenset[str] = frozenset({"card"})
+_SCENE_INSTRUCTIONS_KEYS: frozenset[str] = frozenset({"disable", "card"})
+_MANIFEST_CARD_KEYS: frozenset[str] = frozenset({"title", "text", "enabled", "ref"})
+_CHARACTER_KEYS: frozenset[str] = frozenset(
+    {
+        "name",
+        "identity",
+        "variants",
+        "model",
+        "face_prompt",
+        "body_prompt",
+        "appearance",
+        "voice",
+    }
+)
+_SCENE_KEYS: frozenset[str] = frozenset(
+    {
+        "id",
+        "action",
+        "title",
+        "setting",
+        "framing",
+        "camera",
+        "lighting",
+        "mood",
+        "negative",
+        "characters",
+        "speaker",
+        "line",
+        "variant",
+        "characters_detail",
+        "aspect",
+        "duration",
+        "model",
+        "style_variant",
+        "style_suffix",
+        "instructions",
+    }
+)
+_CHARACTER_DETAIL_KEYS: frozenset[str] = frozenset({"name", "line"})
+
+
+def _reject_unknown_keys(data: _TomlObj, allowed: frozenset[str], context: str) -> None:
+    """Reject keys outside *allowed* so typos or unsupported fields never get dropped silently."""
+    unknown = set(data) - allowed
+    if unknown:
+        fields = ", ".join(sorted(allowed))
+        raise ConfigurationError(
+            f"{context} has unknown field(s) {sorted(unknown)}; allowed fields are: {fields}."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Manifest DTOs
@@ -99,6 +181,7 @@ class MovieManifest:
 
     @classmethod
     def _from_dict(cls, data: dict[str, object]) -> MovieManifest:
+        _reject_unknown_keys(data, _TOP_LEVEL_KEYS, "movie.toml")
         title = _require_nonempty_str(data, "title")
         project = _require_nonempty_str(data, "project")
         output_dir = _optional_str(data, "output_dir")
@@ -153,21 +236,22 @@ def _require_int(data: dict[str, object], key: str, default: int = 0) -> int:
     return value
 
 
-def _parse_manifest_card(c: object, idx: int) -> ManifestCard:
+def _parse_manifest_card(c: object, idx: int, *, prefix: str = "instructions.card") -> ManifestCard:
     if not isinstance(c, dict):
-        raise ConfigurationError(f"instructions.card[{idx}] must be a table/object.")
+        raise ConfigurationError(f"{prefix}[{idx}] must be a table/object.")
     c_dict = cast(_TomlObj, c)
+    _reject_unknown_keys(c_dict, _MANIFEST_CARD_KEYS, f"{prefix}[{idx}]")
     title = c_dict.get("title")
     if not isinstance(title, str) or not title.strip():
-        raise ConfigurationError(f"instructions.card[{idx}].title must be a non-empty string.")
+        raise ConfigurationError(f"{prefix}[{idx}].title must be a non-empty string.")
 
     text = c_dict.get("text", "")
     if not isinstance(text, str):
-        raise ConfigurationError(f"instructions.card[{idx}].text must be a string.")
+        raise ConfigurationError(f"{prefix}[{idx}].text must be a string.")
 
     enabled = c_dict.get("enabled", True)
     if not isinstance(enabled, bool):
-        raise ConfigurationError(f"instructions.card[{idx}].enabled must be a boolean.")
+        raise ConfigurationError(f"{prefix}[{idx}].enabled must be a boolean.")
 
     raw_ref = c_dict.get("ref", ())
     if isinstance(raw_ref, str):
@@ -193,6 +277,7 @@ def _parse_global_instructions(data: dict[str, object]) -> tuple[ManifestCard, .
         raise ConfigurationError("'instructions' must be a table/object.")
 
     inst_dict = cast(_TomlObj, inst_raw)
+    _reject_unknown_keys(inst_dict, _GLOBAL_INSTRUCTIONS_KEYS, "[instructions]")
     cards_raw = inst_dict.get("card", [])
     if not isinstance(cards_raw, list):
         raise ConfigurationError("'instructions.card' must be an array.")
@@ -210,6 +295,7 @@ def _parse_scene_instructions(inst_raw: object, idx: int) -> SceneInstructions |
         raise ConfigurationError(f"scenes[{idx}].instructions must be a table/object.")
 
     inst_dict = cast(_TomlObj, inst_raw)
+    _reject_unknown_keys(inst_dict, _SCENE_INSTRUCTIONS_KEYS, f"scenes[{idx}].instructions")
     disable_raw = inst_dict.get("disable", [])
     if isinstance(disable_raw, str):
         disable = (disable_raw,)
@@ -226,7 +312,7 @@ def _parse_scene_instructions(inst_raw: object, idx: int) -> SceneInstructions |
 
     cards: list[ManifestCard] = []
     for i, c in enumerate(cast(_TomlList, cards_raw)):
-        cards.append(_parse_manifest_card(c, i))
+        cards.append(_parse_manifest_card(c, i, prefix=f"scenes[{idx}].instructions.card"))
 
     return SceneInstructions(
         disable=disable,
@@ -277,14 +363,17 @@ def _parse_scenes(
 
 def _parse_continuity(data: dict[str, object]) -> str:
     """Parse continuity setting from data."""
-    continuity = "independent"
     movie_raw = data.get("movie")
-    if isinstance(movie_raw, dict):
-        raw_cont = cast(_TomlObj, movie_raw).get("continuity", "independent")
-        if not isinstance(raw_cont, str):
-            raise ConfigurationError("movie.continuity must be a string.")
-        continuity = raw_cont
-    return continuity
+    if movie_raw is None:
+        return "independent"
+    if not isinstance(movie_raw, dict):
+        raise ConfigurationError("[movie] must be a TOML table.")
+    movie_dict = cast(_TomlObj, movie_raw)
+    _reject_unknown_keys(movie_dict, _MOVIE_SECTION_KEYS, "[movie]")
+    raw_cont = movie_dict.get("continuity", "independent")
+    if not isinstance(raw_cont, str):
+        raise ConfigurationError("movie.continuity must be a string.")
+    return raw_cont
 
 
 def _parse_assemble(data: dict[str, object]) -> AssemblyDef | None:
@@ -295,6 +384,7 @@ def _parse_assemble(data: dict[str, object]) -> AssemblyDef | None:
     if not isinstance(assemble_raw, dict):
         raise ConfigurationError("[assemble] must be a TOML table.")
     assemble_dict = cast(_TomlObj, assemble_raw)
+    _reject_unknown_keys(assemble_dict, _ASSEMBLE_KEYS, "[assemble]")
     output = assemble_dict.get("output")
     if output is not None and not isinstance(output, str):
         raise ConfigurationError("assemble.output must be a string path.")
@@ -307,6 +397,7 @@ def _parse_style(data: object) -> StyleSpec:
     if not isinstance(data, dict):
         raise ConfigurationError("[style] must be a TOML table.")
     d = cast(_TomlObj, data)
+    _reject_unknown_keys(d, _STYLE_KEYS, "[style]")
 
     def s(key: str) -> str | None:
         v = d.get(key)
@@ -353,6 +444,7 @@ def _parse_style_variants(d: _TomlObj) -> dict[str, str]:
         suffix_val = variant_d.get("suffix")
         if not isinstance(suffix_val, str):
             raise ConfigurationError(f"style.variants.{name}.suffix must be a string.")
+        _reject_unknown_keys(variant_d, _STYLE_VARIANT_KEYS, f"[style.variants.{name}]")
         variants[name] = suffix_val.strip()
     return variants
 
@@ -385,6 +477,7 @@ def _parse_character(data: object, idx: int) -> Character:
     if not isinstance(data, dict):
         raise ConfigurationError(f"characters[{idx}] must be a TOML table.")
     d = cast(_TomlObj, data)
+    _reject_unknown_keys(d, _CHARACTER_KEYS, f"characters[{idx}]")
 
     name = d.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -482,12 +575,21 @@ def _parse_scene_per_char_dialogue(
     """Parse the optional [[scenes.characters_detail]] per-character dialogue table."""
     dialogue: list[DialogueLine] = []
     per_char = d.get("characters_detail")
-    if not isinstance(per_char, list):
+    if per_char is None:
         return dialogue
-    for e in cast(_TomlList, per_char):
+    if not isinstance(per_char, list):
+        raise ConfigurationError(f"scenes[{idx}].characters_detail must be an array.")
+    for detail_idx, e in enumerate(cast(_TomlList, per_char)):
         if not isinstance(e, dict):
-            continue
+            raise ConfigurationError(
+                f"scenes[{idx}].characters_detail[{detail_idx}] must be a TOML table."
+            )
         ed = cast(_TomlObj, e)
+        _reject_unknown_keys(
+            ed,
+            _CHARACTER_DETAIL_KEYS,
+            f"scenes[{idx}].characters_detail[{detail_idx}]",
+        )
         nm = ed.get("name")
         ln = ed.get("line")
         if nm not in chars:
@@ -609,6 +711,7 @@ def _parse_scene(
     if not isinstance(data, dict):
         raise ConfigurationError(f"scenes[{idx}] must be a TOML table.")
     d = cast(_TomlObj, data)
+    _reject_unknown_keys(d, _SCENE_KEYS, f"scenes[{idx}]")
 
     sid = d.get("id")
     if not isinstance(sid, str) or not sid.strip():

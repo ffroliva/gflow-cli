@@ -33,7 +33,7 @@ from typing import Annotated, Any, cast
 import click
 import structlog
 from mcp.server.mcpserver.context import Context
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
@@ -69,6 +69,7 @@ from gflow_cli.services.credits import inspect_all_profiles as inspect_all_credi
 from gflow_cli.services.credits import inspect_profile as inspect_credit_profile
 from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
+from gflow_cli.tools.invocation import ToolInvocation
 from gflow_cli.worker import codec
 from gflow_cli.worker.daemon import FlowWorker, run_counted
 from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
@@ -178,27 +179,22 @@ _DEFAULT_PROFILE = "default"
 
 
 def _adapt_tools(tools: list[dict[str, Any]] | None) -> tuple[str, ...] | dict[str, Any]:
-    """Validate + adapt the MCP ``tools`` array to CLI ``--tool`` specs.
-
-    Returns the spec tuple on success, or a structured error dict (to return to
-    the agent) when an item is malformed — so a bad ``tools`` payload fails
-    cleanly rather than as an uncaught error once generation is wired.
-    """
-    from pydantic import ValidationError
-
-    from gflow_cli.tools.invocation import tool_specs_from_invocations
-
-    try:
-        return tool_specs_from_invocations(tools)
-    except ValidationError as exc:
-        log.warning("mcp.tool.invalid_tools", error=str(exc))
-        return {
-            "status": "invalid_tools",
-            "error": (
-                "Each item in 'tools' must be {'name': <slug>, 'options': {k: v}}. "
-                f"Validation failed: {exc}"
-            ),
-        }
+    """Validate + adapt MCP ``tools`` items to CLI specs, never echoing input."""
+    if not tools:
+        return ()
+    specs: list[str] = []
+    for index, item in enumerate(tools):
+        try:
+            specs.append(ToolInvocation.model_validate(item).to_spec())
+        except ValidationError as exc:
+            errs = [{"type": e["type"], "loc": list(e["loc"][:1])} for e in exc.errors()]
+            log.warning("mcp.tool.invalid_tools", index=index, errors=errs)
+            msg = (
+                f"Item {index} in 'tools' is invalid: "
+                "each item must be {'name': <slug>, 'options': {k: v}}."
+            )
+            return {"status": "invalid_tools", "error": _bad_param("Invalid Tools", msg)["error"]}
+    return tuple(specs)
 
 
 # ---------------------------------------------------------------------------
@@ -540,10 +536,13 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
     with DataStore.open(db_path) as store:
         completed_task = QueueRepository(store).get_task(task_id)
         if completed_task is None:
-            return {
-                "status": "error",
-                "error": f"Task {task_id!r} disappeared from queue after execution.",
+            err = {
+                "type": "https://gflow-cli.dev/errors/indeterminate-outcome",
+                "title": "Task Not Found",
+                "detail": f"Task {task_id!r} was not found after execution; the job may have run.",
+                **outcome_members("maybe", "reconcile"),
             }
+            return {"status": "error", "task_id": task_id, "error": err}
 
         # Treat anything other than an explicit "completed" as a failure —
         # a row stuck in "processing"/"pending" must not be reported as a
