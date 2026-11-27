@@ -11,6 +11,9 @@ Phases (each is its own flag; run the cheapest first):
               decoded frame (token redacted) and the reCAPTCHA action the page minted.
               Nothing leaves the browser, so nothing is billed. The i2v arm uploads its
               start frame (``maseQ``, $0, one asset left in the spike project).
+  --capture-defaults
+              $0. The same route-aborted capture with the shapes ``gflow video t2v`` and
+              ``i2v`` build when no model, duration or resolution flag is passed (9:16, x1).
   --reads     $0. ``as29s`` for an existing clip, sent two ways: the bare workflow id, and
               the app's ``[id, null, [1]]``. Records which URL hosts each reply carries.
   --upscale   $0 (1 observation: 2026-09-30-migrated-upscale-wire.md). One direct
@@ -67,6 +70,10 @@ Added 2026-11-27 ~18:45, before the A/B, --concurrency / --idle / --image-models
   | image model REJECTED code 5 / 3                      | wire name or frame wrong for it: stays  |
   |                                                      | on the UI transport                     |
   | portrait t2v (aspect 1) renders 360x640              | portrait can go direct                  |
+
+Added 2026-11-27 ~23:00, before the --capture-defaults run and the default-key spends:
+  | default key captured; direct submit of it accepted   | the default shape can go direct         |
+  | default key refused (code 3 / 5)                     | stays on the UI path until measured     |
 Every submit is sent at most once. Evidence -> scripts/dev/_spike_out/ (gitignored).
 """
 
@@ -381,30 +388,43 @@ def _abort_submits(seen: list[dict[str, Any]]) -> Any:
     return on_route
 
 
-async def phase_capture(client: Any, project_id: str) -> None:
+def _cli_default_requests() -> tuple[tuple[str, GenerateVideoRequest], ...]:
+    """What ``gflow video t2v PROMPT`` / ``i2v --initial-frame F PROMPT`` build with no flags:
+    aspect 9:16 (the CLI default), model/duration/resolution None, count 1."""
+    return (
+        ("t2v_default", GenerateVideoRequest(prompt=_PROMPT, mode=Mode.T2V)),
+        ("i2v_default", GenerateVideoRequest(prompt=_PROMPT, mode=Mode.I2V, start_image=_START)),
+    )
+
+
+async def phase_capture(client: Any, project_id: str, *, defaults: bool = False) -> None:
     page = client._page  # noqa: SLF001 - spike-only
     for label, req in (
-        (
-            "t2v",
-            GenerateVideoRequest(
-                prompt=_PROMPT,
-                mode=Mode.T2V,
-                aspect=Aspect.LANDSCAPE,
-                model=VideoModel.OMNI_1_2_FLASH,
-                duration=4,
+        _cli_default_requests()
+        if defaults
+        else (
+            (
+                "t2v",
+                GenerateVideoRequest(
+                    prompt=_PROMPT,
+                    mode=Mode.T2V,
+                    aspect=Aspect.LANDSCAPE,
+                    model=VideoModel.OMNI_1_2_FLASH,
+                    duration=4,
+                ),
             ),
-        ),
-        (
-            "i2v",
-            GenerateVideoRequest(
-                prompt=_PROMPT,
-                mode=Mode.I2V,
-                aspect=Aspect.LANDSCAPE,
-                model=VideoModel.OMNI_1_2_FLASH,
-                duration=4,
-                start_image=_START,
+            (
+                "i2v",
+                GenerateVideoRequest(
+                    prompt=_PROMPT,
+                    mode=Mode.I2V,
+                    aspect=Aspect.LANDSCAPE,
+                    model=VideoModel.OMNI_1_2_FLASH,
+                    duration=4,
+                    start_image=_START,
+                ),
             ),
-        ),
+        )
     ):
         seen: list[dict[str, Any]] = []
 
@@ -500,17 +520,23 @@ async def phase_spend(
     start: str | None,
     crop: list[Any] | None,
     aspect: int = 2,
+    template: list[Any] | None = None,
 ) -> None:
     before = await wire.credits(project_id)
     token, mint_ms = await wire.mint(project_id, "VIDEO_GENERATION")
-    text_seg = [None, None, [[[_PROMPT]]]]
-    ids = [None, None, None, None, str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()]
-    if mode == "t2v":
-        rpcid, item = "YhhmEf", [text_seg, key, aspect, None, ids]
+    rpcid = "YhhmEf" if mode == "t2v" else "eb1hJf"
+    if template is not None:  # the UI's own captured frame: fresh token and uuids, else verbatim
+        payload = _fresh_uuids(template)
+        payload[1] = _ctx(project_id, token)
+        key, aspect = payload[0][0][1], payload[0][0][2]
     else:
-        rpcid = "eb1hJf"
-        item = [text_seg, key, aspect, None, [None, start, None, None, None, crop], ids]
-    payload = [[item], _ctx(project_id, token), [str(uuid.uuid4()).upper(), 2]]
+        text_seg = [None, None, [[[_PROMPT]]]]
+        ids = [None, None, None, None, str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()]
+        if mode == "t2v":
+            item = [text_seg, key, aspect, None, ids]
+        else:
+            item = [text_seg, key, aspect, None, [None, start, None, None, None, crop], ids]
+        payload = [[item], _ctx(project_id, token), [str(uuid.uuid4()).upper(), 2]]
     status, text, ms = await wire.rpc(rpcid, payload, project_id)
     s = _summarise(rpcid, status, text)
     _log(
@@ -528,6 +554,18 @@ async def phase_spend(
     _log(f"spend_{mode}_poll", **await _poll(wire, project_id, s["workflow_id"]))
     await _read_and_download(wire, project_id, s["workflow_id"], f"spend_{mode}")
     _log(f"spend_{mode}_credits", before=before, after=await wire.credits(project_id))
+
+
+_UPPER_UUID = re.compile(r"^[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}$")
+
+
+def _fresh_uuids(node: Any) -> Any:
+    """A copy with every client-made (upper-case) uuid replaced; media ids are lower-case."""
+    if isinstance(node, list):
+        return [_fresh_uuids(x) for x in node]
+    if isinstance(node, str) and _UPPER_UUID.match(node):
+        return str(uuid.uuid4()).upper()
+    return node
 
 
 def _crop(size: tuple[int, int], aspect_w: int = 16, aspect_h: int = 9) -> list[Any]:
@@ -829,6 +867,9 @@ async def main() -> None:
     ap.add_argument("--profile", default="ffroliva")
     ap.add_argument("--project", help="project for --capture / --spend (default: a new one)")
     ap.add_argument("--capture", action="store_true")
+    ap.add_argument(
+        "--capture-defaults", action="store_true", help="--capture with the CLI's no-flag shapes"
+    )
     ap.add_argument("--reads", action="store_true")
     ap.add_argument("--upscale", action="store_true")
     ap.add_argument("--poll-upsampled", action="store_true", help="--upscale without a submit")
@@ -838,6 +879,10 @@ async def main() -> None:
         "(--reads / --upscale); ASPECT = 1 (9:16) or 2 (16:9)",
     )
     ap.add_argument("--spend", default="", help="t2v,i2v — CREDITS")
+    ap.add_argument(
+        "--replay",
+        help="a --capture-defaults .jsonl: --spend sends its captured frames (fresh token, uuids)",
+    )
     ap.add_argument("--t2v-key", default="macaron_cookie_t2v_4s_360p")
     ap.add_argument("--i2v-key", default="macaron_cookie_i2v_4s_360p")
     ap.add_argument("--i2v-start", help="MEDIA_ID of an uploaded start frame (--spend i2v)")
@@ -886,6 +931,7 @@ async def main() -> None:
             )
             if (
                 args.capture
+                or args.capture_defaults
                 or args.spend
                 or args.images
                 or args.soak
@@ -922,12 +968,21 @@ async def main() -> None:
                 await run_idle(client, profile_dir, project_id, args.idle)
             if args.soak:
                 await run_soak(client, profile_dir, project_id, args.soak, args.every)
-            if args.capture:
-                await phase_capture(client, project_id)
+            if args.capture or args.capture_defaults:
+                await phase_capture(client, project_id, defaults=args.capture_defaults)
+            captured = {}
+            if args.replay:
+                for line in Path(args.replay).read_text(encoding="utf-8").splitlines():
+                    rec = json.loads(line)
+                    if rec["tag"].startswith("capture_") and rec.get("frames"):
+                        captured[rec["tag"].split("_")[1]] = rec["frames"][0]["frame"]
             for mode in filter(None, args.spend.split(",")):
                 key = args.t2v_key if mode == "t2v" else args.i2v_key
                 start, crop = args.i2v_start, json.loads(args.i2v_crop)
-                if mode == "i2v" and not start:
+                template = captured.get(mode)
+                if args.replay and template is None:
+                    ap.error(f"--replay holds no captured {mode} frame")
+                if mode == "i2v" and not start and template is None:
                     t0 = time.perf_counter()
                     ref = await dh.run_direct_upload(
                         page=page, profile_dir=profile_dir, project_id=project_id, path=_START
@@ -945,7 +1000,9 @@ async def main() -> None:
                         s=round(time.perf_counter() - t0, 1),
                     )
                 await wire.open()  # cookies may have rotated
-                await phase_spend(wire, project_id, mode, key, start, crop, args.video_aspect)
+                await phase_spend(
+                    wire, project_id, mode, key, start, crop, args.video_aspect, template
+                )
             await wire.hx.aclose()
     finally:
         with open(out, "w", encoding="utf-8") as f:
