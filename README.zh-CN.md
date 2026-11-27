@@ -1,6 +1,6 @@
 # gflow-cli：Google Flow 的 MCP 服务器和命令行工具（Veo 3.1、Omni、Nano Banana）
 
-[English](README.md) | **简体中文**
+[English](README.md) | **简体中文** | [Türkçe](README.tr.md)
 
 > **gflow-cli 是一个开源的 MCP 服务器和命令行工具，用于自动化 [Google Flow](https://labs.google/fx/tools/flow)。** 它可以在 Claude Code、Claude Desktop、Cursor、Codex、VS Code 或终端中生成 Veo 3.1 和 Omni 视频，以及 Nano Banana 和 Imagen 图片，费用计入你自己 Google 账号的 Flow 积分。可作为 Google Flow 命令行工具或 Veo MCP 服务器使用。通过 PyPI 安装：`uv tool install gflow-cli`（MIT 许可，支持 macOS、Windows 和 Linux）。
 

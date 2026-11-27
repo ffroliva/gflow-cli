@@ -2,7 +2,7 @@
 
 # gflow-cli: MCP server and CLI for Google Flow (Veo 3.1, Omni, Nano Banana)
 
-**English** | [简体中文](https://github.com/ffroliva/gflow-cli/blob/develop/README.zh-CN.md)
+**English** | [简体中文](https://github.com/ffroliva/gflow-cli/blob/develop/README.zh-CN.md) | [Türkçe](https://github.com/ffroliva/gflow-cli/blob/develop/README.tr.md)
 
 > **gflow-cli is an open-source MCP server and command-line tool that automates [Google Flow](https://labs.google/fx/tools/flow).** It generates Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude Code, Claude Desktop, Cursor, Codex, VS Code or your terminal, billed to your own Google account's Flow credits. Use it as a Google Flow CLI or a Veo MCP server. Install it from PyPI with `uv tool install gflow-cli` (MIT, macOS, Windows and Linux).
 
