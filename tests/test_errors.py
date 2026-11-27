@@ -979,5 +979,8 @@ def test_waf_refusal_final_remediation_names_headed_and_cooldown() -> None:
     assert "--browser-visibility headed" in err.remediation_hint
     assert "docs/ACCOUNT_SAFETY.md" in err.remediation_hint
     assert "cooldown" in err.remediation_hint.lower()
-    assert "both" in err.remediation_hint.lower() or "attempts" in err.remediation_hint.lower()
+    assert "Both attempts were refused" in err.remediation_hint
+    assert "30" in err.remediation_hint
+    assert "60" in err.remediation_hint
+    assert "minute" in err.remediation_hint.lower()
     assert "nothing" in err.remediation_hint.lower() and "charged" in err.remediation_hint.lower()

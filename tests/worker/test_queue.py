@@ -176,7 +176,11 @@ def test_indeterminate_status_is_accepted(store: DataStore) -> None:
     assert task.status == "indeterminate"
 
 
-def test_recovery_after_submit_refused_marks_failed_not_indeterminate(store: DataStore) -> None:
+def test_recovery_after_submit_refused_marks_failed_not_indeterminate(
+    store: DataStore, tmp_path: Path
+) -> None:
+    from gflow_cli.api.dto import GenerationCheckpoint
+    from gflow_cli.worker.daemon import FlowWorker
     from gflow_cli.worker.queue import recover_processing
 
     repo = QueueRepository(store)
@@ -184,22 +188,49 @@ def test_recovery_after_submit_refused_marks_failed_not_indeterminate(store: Dat
     claimed = repo.claim_next_pending("profile", claimant="worker-1")
     assert claimed is not None
 
-    # Simulate checkpoint after submit attempt
-    repo.update_checkpoint(
-        "task-refused", claimant="worker-1", phase="submit_attempted", may_have_spent=True
-    )
+    worker = FlowWorker("profile", str(tmp_path / "gflow_test.db"))
+    try:
+        project_holder: list[str | None] = [None]
 
-    # Observer receives submit_refused and resets checkpoint to claimed
-    repo.update_checkpoint(
-        "task-refused", claimant="worker-1", phase="claimed", may_have_spent=False
-    )
+        def save_checkpoint(
+            phase: str,
+            *,
+            may_have_spent: bool,
+            operation_id: str | None = None,
+            media_ids: tuple[str, ...] = (),
+            workflow_ids: tuple[str, ...] = (),
+            catalog_operation_id: str | None = None,
+        ) -> None:
+            worker.repo.update_checkpoint(
+                "task-refused",
+                claimant="worker-1",
+                phase=phase,
+                may_have_spent=may_have_spent,
+                project_id=project_holder[0],
+                operation_id=operation_id,
+                media_ids=media_ids,
+                workflow_ids=workflow_ids,
+                catalog_operation_id=catalog_operation_id,
+            )
 
-    counts = recover_processing(repo, "profile")
-    assert counts["failed"] == 1
-    assert counts["indeterminate"] == 0
+        observer = worker._checkpoint_observer(
+            "task-refused",
+            claimant="worker-1",
+            project_id=project_holder,
+            save_checkpoint=save_checkpoint,
+        )
 
-    task = repo.get_task("task-refused")
-    assert task is not None
-    assert task.status == "failed"
-    assert task.error is not None
-    assert task.error["charged"] == "no"
+        observer(GenerationCheckpoint(phase="submit_attempted"))
+        observer(GenerationCheckpoint(phase="submit_refused"))
+
+        counts = recover_processing(repo, "profile")
+        assert counts["failed"] == 1
+        assert counts["indeterminate"] == 0
+
+        task = repo.get_task("task-refused")
+        assert task is not None
+        assert task.status == "failed"
+        assert task.error is not None
+        assert task.error["charged"] == "no"
+    finally:
+        worker.close()

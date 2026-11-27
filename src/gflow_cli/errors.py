@@ -631,13 +631,13 @@ def waf_refusal_final(
     Tells callers and agents not to retry into a refusal window (charged="no",
     retryable=False, next_action="none"). The remediation notes that both attempts
     were refused and nothing was charged, names `--browser-visibility headed`, and
-    points to the cooldown in docs/ACCOUNT_SAFETY.md.
+    points to the 30-60 minute cooldown in docs/ACCOUNT_SAFETY.md.
     """
     attempt_str = "Both attempts were" if attempts == 2 else f"All {attempts} attempts were"
     remediation = (
         f"{attempt_str} refused and nothing was charged. "
-        "Wait for the cooldown described in docs/ACCOUNT_SAFETY.md before trying again, "
-        "or retry with --browser-visibility headed."
+        "Wait for the 30-60 minute cooldown described in docs/ACCOUNT_SAFETY.md "
+        "before trying again, or retry with --browser-visibility headed."
     )
     detail = (
         f"Flow refused {attempts} submit attempts: {reason}"
