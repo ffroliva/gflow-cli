@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, cast
-from urllib.request import getproxies
 
 from gflow_cli.api.image import (
     Aspect as ImageAspect,
@@ -23,6 +22,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.submit_policy import BrowserVisibility, VisibilitySetting
 from gflow_cli.api.video import (
     I2V_DEFAULT_MODEL,
+    EditVideoRequest,
     GenerateVideoRequest,
     Mode,
     VideoModel,
@@ -30,7 +30,8 @@ from gflow_cli.api.video import (
 from gflow_cli.api.video import (
     Aspect as VideoAspect,
 )
-from gflow_cli.config import Settings, UiMode, get_settings, resolve_ui_mode
+from gflow_cli.api.video_extend import ExtendVideoRequest
+from gflow_cli.config import UiMode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -72,7 +73,7 @@ IMAGE_WIRE_MODELS: dict[ImageModel, str] = {
 
 #: Exact (model, mode, duration, resolution, aspect) tuples measured on flow.google.com.
 MEASURED_VIDEO_KEYS: dict[
-    tuple[VideoModel | None, Mode, int | None, str | None, VideoAspect | str],
+    tuple[VideoModel | None, Mode, int | None, str | None, VideoAspect],
     VideoWireTarget,
 ] = {
     (VideoModel.OMNI_1_2_FLASH, Mode.T2V, 4, "360p", VideoAspect.LANDSCAPE): VideoWireTarget(
@@ -90,17 +91,6 @@ MEASURED_VIDEO_KEYS: dict[
     (VideoModel.VEO_3_1_LITE, Mode.I2V, None, None, VideoAspect.PORTRAIT): VideoWireTarget(
         "veo_3_1_i2v_lite", 1
     ),
-    (VideoModel.OMNI_1_2_FLASH, Mode.T2V, 4, "360p", "16:9"): VideoWireTarget(
-        "macaron_cookie_t2v_4s_360p", 2
-    ),
-    (VideoModel.OMNI_1_2_FLASH, Mode.T2V, 4, "360p", "9:16"): VideoWireTarget(
-        "macaron_cookie_t2v_4s_360p", 1
-    ),
-    (VideoModel.OMNI_1_2_FLASH, Mode.I2V, 4, "360p", "16:9"): VideoWireTarget(
-        "macaron_cookie_i2v_4s_360p", 2
-    ),
-    (VideoModel.VEO_3_1_LITE, Mode.T2V, None, None, "16:9"): VideoWireTarget("veo_3_1_t2v_lite", 2),
-    (VideoModel.VEO_3_1_LITE, Mode.I2V, None, None, "9:16"): VideoWireTarget("veo_3_1_i2v_lite", 1),
 }
 
 #: Source clip model keys measured for direct 1080p upscale on flow.google.com.
@@ -115,6 +105,8 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
     T2I with BELUGA (Nano Banana 2.1), any aspect, count 1-4, or one in-project reference or one
     named character (count 1-4). HARBOR_SEAL and GEM_PIX_2 were measured only as portrait
     text-to-image with count 1.
+
+    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
     """
     return (
         request.model in IMAGE_WIRE_MODELS
@@ -125,7 +117,7 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
         and not request.instructions
         and request.thinking_level is None
         and "@" not in request.prompt
-        and resolve_ui_mode(request.ui_mode) is not UiMode.AGENTIC
+        and request.ui_mode is not UiMode.AGENTIC
     )
 
 
@@ -155,56 +147,46 @@ def _characters_measured(request: GenerateImageRequest) -> bool:
     return len(ids) <= 1 and len(names) == 1 and bool(names[0]) and not request.refs
 
 
-def _proxy_configured(env: Settings | None = None) -> bool:
-    settings = env if env is not None else get_settings()
-    if settings.browser_proxy:
-        return True
-    return any(k != "no" for k in getproxies())
-
-
-def _flow_host(env: Settings | None = None) -> str:
-    settings = env if env is not None else get_settings()
-    return str(settings.flow_host)
-
-
 def choose_image_route(
     request: GenerateImageRequest,
-    env: Settings | None = None,
+    *,
+    flow_host: str = "",
+    proxy_configured: bool = False,
 ) -> Route:
-    """Decide whether an image generation request can be served directly over HTTP."""
+    """Decide whether an image generation request can be served directly over HTTP.
+
+    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
+    """
     if not direct_can_serve(request):
         return Route.UI
-    if _flow_host(env) == "labs.google":
+    if flow_host == "labs.google":
         return Route.UI
-    if _proxy_configured(env):
+    if proxy_configured:
         return Route.UI
     return Route.DIRECT
 
 
 def choose_video_route(
-    request: GenerateVideoRequest,
-    env: Settings | None = None,
+    request: GenerateVideoRequest | ExtendVideoRequest | EditVideoRequest,
     *,
+    flow_host: str = "",
+    proxy_configured: bool = False,
     effective_max_credits: int | None = None,
 ) -> Route:
-    """Decide whether a video generation request can be served directly over HTTP."""
-    if _flow_host(env) == "labs.google":
+    """Decide whether a video generation request can be served directly over HTTP.
+
+    The caller must resolve any environment or profile credit caps before calling.
+    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
+    """
+    if flow_host == "labs.google":
         return Route.UI
-    if _proxy_configured(env):
+    if proxy_configured:
         return Route.UI
 
-    if effective_max_credits is None:
-        if request.max_credits is not None:
-            effective_max_credits = request.max_credits
-        elif env is not None and env.max_credits is not None:
-            effective_max_credits = env.max_credits
-        else:
-            try:
-                effective_max_credits = get_settings().max_credits
-            except Exception:
-                effective_max_credits = None
+    if isinstance(request, (ExtendVideoRequest, EditVideoRequest)):
+        return Route.UI
 
-    if effective_max_credits is not None:
+    if effective_max_credits is not None or request.max_credits is not None:
         return Route.UI
 
     if request.count != 1:
@@ -245,26 +227,9 @@ def choose_video_route(
     else:
         return Route.UI
 
-    aspect = request.aspect
-    key_tuple = (model, request.mode, request.duration, request.resolution, aspect)
+    key_tuple = (model, request.mode, request.duration, request.resolution, request.aspect)
     if key_tuple in MEASURED_VIDEO_KEYS:
         return Route.DIRECT
-
-    cli_mapping: dict[VideoAspect, str] = {
-        VideoAspect.PORTRAIT: "9:16",
-        VideoAspect.LANDSCAPE: "16:9",
-        VideoAspect.SQUARE: "1:1",
-    }
-    if aspect in cli_mapping:
-        alias = cli_mapping[aspect]
-        if (
-            model,
-            request.mode,
-            request.duration,
-            request.resolution,
-            alias,
-        ) in MEASURED_VIDEO_KEYS:
-            return Route.DIRECT
 
     return Route.UI
 
@@ -284,8 +249,21 @@ def _read_catalog_field(row: object, *names: str) -> str | None:
     return None
 
 
-def choose_upscale_route(scale: str, catalog_row: object | None) -> Route:
-    """Decide whether a video upscale request can be served directly over HTTP."""
+def choose_upscale_route(
+    scale: str,
+    catalog_row: object | None,
+    *,
+    flow_host: str = "",
+    proxy_configured: bool = False,
+) -> Route:
+    """Decide whether a video upscale request can be served directly over HTTP.
+
+    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
+    """
+    if flow_host == "labs.google":
+        return Route.UI
+    if proxy_configured:
+        return Route.UI
     if scale != "1080p":
         return Route.UI
     if catalog_row is None:
@@ -310,7 +288,10 @@ def plan_visibility(
     setting: VisibilitySetting | str,
     routes: Iterable[Route],
 ) -> BrowserVisibility:
-    """Plan concrete browser visibility based on configuration and planned routes."""
+    """Plan concrete browser visibility based on configuration and planned routes.
+
+    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
+    """
     try:
         resolved_setting = VisibilitySetting(setting)
     except ValueError:

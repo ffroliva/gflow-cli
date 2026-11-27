@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from gflow_cli.api import generation_route
 from gflow_cli.api.generation_route import (
     IMAGE_WIRE_MODELS,
     MEASURED_VIDEO_KEYS,
@@ -39,13 +38,7 @@ from gflow_cli.api.video import (
     Mode,
     VideoModel,
 )
-from gflow_cli.config import Settings, UiMode
-
-
-@pytest.fixture(autouse=True)
-def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure getproxies returns empty by default in this test module."""
-    monkeypatch.setattr(generation_route, "getproxies", dict)
+from gflow_cli.config import UiMode
 
 
 @dataclass
@@ -63,8 +56,65 @@ class FakeCatalogRow:
             self.aspect = self.aspect_ratio
 
 
+def test_route_never_reads_settings_or_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route functions take environmental facts explicitly and never touch settings/proxies."""
+
+    def _explode(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("Forbidden settings/proxy read in pure route domain module")
+
+    _explode.cache_clear = lambda: None  # type: ignore[attr-defined]
+
+    import urllib.request
+
+    import gflow_cli.config
+
+    monkeypatch.setattr(gflow_cli.config, "get_settings", _explode)
+    monkeypatch.setattr(urllib.request, "getproxies", _explode)
+
+    img_req = GenerateImageRequest(prompt="test", model=ImageModel.NARWHAL)
+    vid_req = GenerateVideoRequest(
+        prompt="test",
+        mode=Mode.T2V,
+        model=VideoModel.OMNI_1_2_FLASH,
+        duration=4,
+        resolution="360p",
+        aspect=VideoAspect.LANDSCAPE,
+    )
+    row = FakeCatalogRow()
+
+    assert choose_image_route(img_req) == Route.DIRECT
+    assert choose_video_route(vid_req) == Route.DIRECT
+    assert choose_upscale_route("1080p", row) == Route.DIRECT
+
+
+def test_extend_and_edit_video_route_ui() -> None:
+    """Extend and edit video requests route UI."""
+    from gflow_cli.api.video import EditVideoRequest
+    from gflow_cli.api.video_extend import ExtendVideoRequest
+
+    extend_req = ExtendVideoRequest(
+        media_id="00000000-0000-0000-0000-000000000001",
+        project_id="00000000-0000-0000-0000-000000000002",
+        scene_id="00000000-0000-0000-0000-000000000003",
+        position=0,
+        prompt="extend clip",
+        model_key="veo_3_1_extension_lite",
+        aspect="16:9",
+    )
+    assert choose_video_route(extend_req) == Route.UI
+
+    edit_req = EditVideoRequest(
+        prompt="edit clip",
+        source_media_id="00000000-0000-0000-0000-000000000001",
+    )
+    assert choose_video_route(edit_req) == Route.UI
+
+
 def test_unmeasured_shapes_route_ui() -> None:
     """r2v, extend, edit, end frame, ingredients, 4K upscale, Omni i2v at 9:16 route UI."""
+    from gflow_cli.api.video import EditVideoRequest
+    from gflow_cli.api.video_extend import ExtendVideoRequest
+
     # R2V
     r2v_req = GenerateVideoRequest(
         prompt="test r2v",
@@ -72,6 +122,25 @@ def test_unmeasured_shapes_route_ui() -> None:
         reference_images=(Path("ref.png"),),
     )
     assert choose_video_route(r2v_req) == Route.UI
+
+    # Extend
+    extend_req = ExtendVideoRequest(
+        media_id="00000000-0000-0000-0000-000000000001",
+        project_id="00000000-0000-0000-0000-000000000002",
+        scene_id="00000000-0000-0000-0000-000000000003",
+        position=0,
+        prompt="extend clip",
+        model_key="veo_3_1_extension_lite",
+        aspect="16:9",
+    )
+    assert choose_video_route(extend_req) == Route.UI
+
+    # Edit
+    edit_req = EditVideoRequest(
+        prompt="edit clip",
+        source_media_id="00000000-0000-0000-0000-000000000001",
+    )
+    assert choose_video_route(edit_req) == Route.UI
 
     # End frame on I2V
     end_frame_req = GenerateVideoRequest(
@@ -143,10 +212,12 @@ def test_credit_capped_video_routes_ui() -> None:
         aspect=VideoAspect.LANDSCAPE,
     )
     assert choose_video_route(req_uncapped, effective_max_credits=10) == Route.UI
-    assert choose_video_route(req_uncapped, env=Settings(max_credits=10)) == Route.UI
 
     # No cap routes direct
     assert choose_video_route(req_uncapped, effective_max_credits=None) == Route.DIRECT
+
+
+test_capped_video_routes_ui = test_credit_capped_video_routes_ui
 
 
 def test_video_direct_only_for_exact_measured_tuple() -> None:
@@ -374,7 +445,7 @@ def test_omni_with_unset_duration_or_resolution_routes_ui() -> None:
     assert choose_video_route(req_neither) == Route.UI
 
 
-def test_proxy_routes_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_proxy_routes_ui() -> None:
     """A configured browser proxy forces image and video routes to UI."""
     img_req = GenerateImageRequest(prompt="test", model=ImageModel.NARWHAL)
     vid_req = GenerateVideoRequest(
@@ -385,14 +456,8 @@ def test_proxy_routes_ui(monkeypatch: pytest.MonkeyPatch) -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
     )
-    proxy_settings = Settings(browser_proxy="http://127.0.0.1:8080")
-    assert choose_image_route(img_req, env=proxy_settings) == Route.UI
-    assert choose_video_route(vid_req, env=proxy_settings) == Route.UI
-
-    # Also test with urllib getproxies returning a proxy
-    monkeypatch.setattr(generation_route, "getproxies", lambda: {"https": "http://127.0.0.1:8080"})
-    assert choose_image_route(img_req) == Route.UI
-    assert choose_video_route(vid_req) == Route.UI
+    assert choose_image_route(img_req, proxy_configured=True) == Route.UI
+    assert choose_video_route(vid_req, proxy_configured=True) == Route.UI
 
 
 def test_labs_host_routes_ui() -> None:
@@ -406,9 +471,8 @@ def test_labs_host_routes_ui() -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
     )
-    labs_settings = Settings(flow_host="labs.google")
-    assert choose_image_route(img_req, env=labs_settings) == Route.UI
-    assert choose_video_route(vid_req, env=labs_settings) == Route.UI
+    assert choose_image_route(img_req, flow_host="labs.google") == Route.UI
+    assert choose_video_route(vid_req, flow_host="labs.google") == Route.UI
 
 
 def test_upscale_source_not_in_catalog_routes_ui() -> None:
@@ -568,6 +632,14 @@ def test_explicit_headless_keeps_ui_shapes_headless() -> None:
     )
 
 
+def test_measured_video_keys_aspect_is_strictly_video_aspect() -> None:
+    """Allowlist keys are keyed on VideoAspect only; string aspect aliases are rejected."""
+    for key in MEASURED_VIDEO_KEYS:
+        aspect = key[4]
+        assert isinstance(aspect, VideoAspect)
+        assert type(aspect) is VideoAspect
+
+
 def test_measured_keys_exist_in_htrjv_fixture() -> None:
     """Every wire key in MEASURED_VIDEO_KEYS and IMAGE_WIRE_MODELS exists in HTrJv fixture."""
     fixture_path = (
@@ -595,6 +667,46 @@ def test_measured_keys_exist_in_htrjv_fixture() -> None:
         assert img_model_name in fixture_keys, (
             f"Image wire model {img_model_name!r} not in HTrJv fixture"
         )
+
+
+def test_gem_pix_2_route_mirrors_harbor_seal() -> None:
+    """GEM_PIX_2 routes DIRECT only for 9:16 n1; 16:9, n2, or refs route UI."""
+    # 9:16 (portrait) n1 -> direct
+    req_direct = GenerateImageRequest(
+        prompt="a cat",
+        model=ImageModel.GEM_PIX_2,
+        aspect=ImageAspect.PORTRAIT,
+        count=1,
+    )
+    assert choose_image_route(req_direct) == Route.DIRECT
+
+    # 16:9 (landscape) -> UI
+    req_land = GenerateImageRequest(
+        prompt="a cat",
+        model=ImageModel.GEM_PIX_2,
+        aspect=ImageAspect.LANDSCAPE,
+        count=1,
+    )
+    assert choose_image_route(req_land) == Route.UI
+
+    # n2 -> UI
+    req_n2 = GenerateImageRequest(
+        prompt="a cat",
+        model=ImageModel.GEM_PIX_2,
+        aspect=ImageAspect.PORTRAIT,
+        count=2,
+    )
+    assert choose_image_route(req_n2) == Route.UI
+
+    # reference -> UI
+    req_ref = GenerateImageRequest(
+        prompt="a cat",
+        model=ImageModel.GEM_PIX_2,
+        aspect=ImageAspect.PORTRAIT,
+        count=1,
+        refs=[ImageRef("uuid-1", in_project=True, display_name="img1")],
+    )
+    assert choose_image_route(req_ref) == Route.UI
 
 
 def test_direct_can_serve_rules() -> None:
