@@ -2174,9 +2174,10 @@ environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
 or written — not even pending schema migrations. All database access is
 strictly read-only (SQLite may create transient `-wal`/`-shm` sidecar files
 during the read-only open; the database itself is never modified), so it is
-safe to run against a live catalog at any time. One check uses the network:
-`auth.wire_read` sends one GET and one POST to flow.google.com for the default
-profile, and sends nothing when `GFLOW_CLI_WIRE_READS=0`.
+safe to run against a live catalog at any time. Two checks use the network,
+both for the default profile: `auth.wire_read` sends one GET and one POST to
+flow.google.com, and `models.catalog_drift` one more POST. Neither sends
+anything when `GFLOW_CLI_WIRE_READS=0` or a proxy is configured.
 
 ```text
 gflow doctor [--json]
@@ -2186,7 +2187,7 @@ Options:
                         (experimental; shape may change).
 ```
 
-Twelve checks run on every invocation:
+Thirteen checks run on every invocation:
 
 | Check id | Detects | Suggested remediation |
 |---|---|---|
@@ -2202,6 +2203,7 @@ Twelve checks run on every invocation:
 | `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
 | `env.browser_proxy` | Reports whether `GFLOW_CLI_BROWSER_PROXY` is set (`scheme://host:port`, never credentials); informational, never changes the exit code | Use the same proxy for `HTTPS_PROXY` and for signing in ([CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_proxy)) |
 | `auth.wire_read` | Whether the default profile's direct (browser-free) credits read works: `status=accepted build=<Flow build>` passes; any other status (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_profile`, …) is info only and never changes the exit code, because credits then read through the browser. The one network check: one GET and one POST to flow.google.com, nothing with `GFLOW_CLI_WIRE_READS=0` | The finding's own hint (e.g. close Chrome on the profile, or `gflow auth login`) ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)) |
+| `models.catalog_drift` | Whether Flow's model catalog (`HTrJv`, read directly with no browser, zero credits) still matches gflow's model list ([#1550](https://github.com/ffroliva/gflow-cli/issues/1550)): a model family gflow neither maps nor ignores, a mapped family Flow no longer lists, an image model key Flow dropped, or a retirement date gflow does not carry is a `warn` naming each difference (exit `33`); `N families, all mapped` passes. When the catalog cannot be read (direct reads off, a proxy, no profile, a signed-out or throttled session) the check is `info` and starts with `skipped` | `gflow update --check`: a newer gflow may know the new models |
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status

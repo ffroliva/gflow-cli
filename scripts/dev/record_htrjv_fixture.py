@@ -1,9 +1,11 @@
 """Re-record Flow's model catalog fixture (``HTrJv``) used by the model-retirement tests (#1375).
 
-$0, read-only, no browser: the credits direct-read path (``api/flow_wire.py``: the profile's
-saved cookies, the app shell's ``at``/``f.sid``/``bl``, one ``batchexecute`` POST) sends
-``HTrJv`` with empty arguments, as the page does on every project load. Measured 2026-11-19:
-the reply equals the browser's own copy.
+$0, read-only, no browser: ``flow_wire.read_model_catalog`` (the credits direct-read path:
+the profile's saved cookies, the app shell's ``at``/``f.sid``/``bl``, one ``batchexecute``
+POST, and the same refusals: direct reads off, a proxy configured) sends ``HTrJv`` with empty
+arguments, as the page does on every project load. Measured 2026-11-19: the reply equals the
+browser's own copy. The catalog holds model names, usage keys, costs and limits, and no
+account data; the fixture keeps less still (below).
 
 The direct read works only within about 1.5–2.5 h of a browser visit to Flow on that profile.
 Open any Flow project with ``gflow`` first if this script reports no families.
@@ -14,11 +16,11 @@ No cookie, token, account id, cost or limit is written.
 
     uv run python scripts/dev/record_htrjv_fixture.py --profile NAME [--out PATH]
 
-After re-recording, run ``pytest tests/api/test_model_catalog.py``: a moved retirement date or
-a renamed family key fails there until ``api/model_catalog.py`` is updated.
+The script prints each difference from gflow's mapping (``model_catalog.catalog_drift``, the
+same comparison ``gflow doctor`` makes). After re-recording, run
+``pytest tests/api/test_model_catalog.py``: an added or removed family, a dropped image wire key
+or a new retirement date fails there until ``api/model_catalog.py`` is updated (#1550).
 """
-
-# ruff: noqa: SLF001 - reuses flow_wire's private steps rather than duplicating them
 
 from __future__ import annotations
 
@@ -27,76 +29,19 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime
-from http.cookiejar import CookieJar, DefaultCookiePolicy
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
-from urllib.request import getproxies
 
-import httpx
-
-from gflow_cli.api import flow_wire as fw
-from gflow_cli.api.model_catalog import parse_htrjv_families
-from gflow_cli.api.transports.batchexecute import parse_frames
+from gflow_cli.api import flow_wire
+from gflow_cli.api.model_catalog import catalog_drift, parse_htrjv_families
 from gflow_cli.config import get_settings
 
-RPC = "HTrJv"
 DEFAULT_OUT = (
     Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "flow_htrjv_model_families.json"
 )
 
 
-async def read_htrjv(profile_dir: Path) -> Any:
-    fw.require_in_home(profile_dir)
-    if get_settings().browser_proxy or getproxies():
-        # flow_wire's rule: with a proxy the browser and a direct request may leave by
-        # different routes, and the session cookies must not.
-        sys.exit("a proxy is configured; this direct read is refused, as gflow's own is")
-    ua = fw._user_agent(profile_dir)
-    if ua is None:
-        sys.exit(
-            "no Chrome version recorded for this profile; sign in with `gflow auth login` first"
-        )
-    cookies = await fw._read_cookies(profile_dir)
-    headers = {
-        "user-agent": ua,
-        "accept-language": "en-US,en;q=0.9",
-        "cookie": "; ".join(f"{name}={value}" for name, value in cookies),
-    }
-    async with httpx.AsyncClient(
-        follow_redirects=False,
-        trust_env=False,
-        timeout=15,
-        cookies=CookieJar(policy=DefaultCookiePolicy(allowed_domains=[])),  # never store or replay
-    ) as client:
-        tokens = await fw._shell_tokens(client, profile_dir, headers)
-        query = {
-            "rpcids": RPC,
-            "source-path": "/",
-            "bl": tokens.bl,
-            "f.sid": tokens.fsid,
-            "hl": "en",
-            "rt": "c",
-        }
-        body = urlencode({"f.req": json.dumps([[[RPC, "[]", None, "generic"]]]), "at": tokens.at})
-        response = await client.post(
-            f"{fw._BATCHEXECUTE}?{urlencode({k: v for k, v in query.items() if v is not None})}",
-            content=body,
-            headers={
-                **headers,
-                "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-                "x-same-domain": "1",
-                "origin": fw._ORIGIN,
-                "referer": f"{fw._ORIGIN}/",
-            },
-        )
-    if response.status_code != 200:  # the URL carries f.sid and bl; never print it
-        sys.exit(f"HTrJv read failed: HTTP {response.status_code}")
-    frames = [payload for rid, payload in parse_frames(response.text) if rid == RPC]
-    return frames[0] if frames else None
-
-
-def trim(payload: Any) -> list[list[Any]]:
+def trim(payload: object) -> list[list[Any]]:
     """Family entries with usages reduced to their keys, in catalog order."""
     keys = {family.key for family in parse_htrjv_families(payload)}
     trimmed: list[list[Any]] = []
@@ -127,7 +72,13 @@ def main() -> None:
     parser.add_argument("--profile", required=True)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = parser.parse_args()
-    payload = asyncio.run(read_htrjv(get_settings().profile_subdir(args.profile)))
+    settings = get_settings()
+    if not settings.wire_reads:
+        sys.exit("direct reads are off (GFLOW_CLI_WIRE_READS=0, or the macOS default)")
+    try:
+        payload = asyncio.run(flow_wire.read_model_catalog(settings.profile_subdir(args.profile)))
+    except flow_wire.WireReadUnavailable as exc:  # the reason only: it never carries detail
+        sys.exit(f"HTrJv read unavailable: {exc.reason}")
     families = trim(payload)
     if not families:
         sys.exit(
@@ -147,6 +98,8 @@ def main() -> None:
     args.out.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     dated = [(f[0], f[6]) for f in families if len(f) > 6 and f[6]]
     print(f"wrote {len(families)} families to {args.out}; with a retirement date: {dated}")
+    for line in catalog_drift(parse_htrjv_families(families)):
+        print(f"drift: {line}")
 
 
 if __name__ == "__main__":

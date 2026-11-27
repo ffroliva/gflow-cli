@@ -115,3 +115,25 @@ def _dates_agree(world: dict[str, Any]) -> None:
 
     for model in VideoModel:
         assert world["families"][FAMILY_KEY[model]].retires_on == retires_on(model), model
+
+
+@then("the catalog shows no drift from gflow's model mapping")
+def _no_drift(world: dict[str, Any]) -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    assert catalog_drift(list(world["families"].values())) == []
+
+
+@given(parsers.parse('the recorded HTrJv catalog with a new family "{key}"'))
+def _recorded_plus(world: dict[str, Any], key: str) -> None:
+    from gflow_cli.api.model_catalog import ModelFamily
+
+    _recorded(world)
+    world["families"][key] = ModelFamily(key=key, display_name=key, enabled=True, retires_on=None)
+
+
+@then(parsers.parse('the catalog drift names "{line}"'))
+def _drift_names(world: dict[str, Any], line: str) -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    assert any(d.startswith(line) for d in catalog_drift(list(world["families"].values())))

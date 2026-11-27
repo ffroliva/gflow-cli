@@ -3,8 +3,8 @@
 The profile's saved cookies (``auth/cookies.read_cookies_for``) go on one GET of the app
 shell, which carries the page's ``at`` token (``SNlM0e``), session id (``FdrFJe``) and
 build label (``cfb2h``); batchexecute POSTs then execute RPC ``nzlxg`` (credit balance read,
-decoded by ``CreditsInfo.from_nzlxg``) or ``pGCYOe`` (media trash/restore mutations,
-#1363). Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
+decoded by ``CreditsInfo.from_nzlxg``), ``HTrJv`` (the model catalog, #1550) or ``pGCYOe``
+(media trash/restore mutations, #1363). Spikes: 2026-11-10 cookie jar (#1234), #1192, #1221.
 
 A failure raises :class:`WireReadUnavailable` carrying only an enum reason, and the caller
 (``services/credits.py`` or ``services/media_trash.py``) falls back to the browser instead.
@@ -16,7 +16,7 @@ remediation hint without entering the credits throttle window. An RPC rejection 
 ``pGCYOe`` raises a typed ``FlowApiError`` rather than falling back.
 
 Nothing here retries a 4xx, follows a redirect, keeps a cookie Flow sets, or executes
-unallowed RPCs outside ``nzlxg`` and ``pGCYOe``. All state is per profile: one account's
+unallowed RPCs outside ``nzlxg``, ``HTrJv`` and ``pGCYOe``. All state is per profile: one account's
 failure never affects another.
 """
 
@@ -54,7 +54,7 @@ log = structlog.get_logger(__name__)
 
 _ORIGIN = "https://flow.google.com"
 _BATCHEXECUTE = f"{_ORIGIN}/_/AiSandboxAngularFrontend/data/batchexecute"
-_ALLOWED_RPCIDS = frozenset({"nzlxg", "pGCYOe"})
+_ALLOWED_RPCIDS = frozenset({"nzlxg", "HTrJv", "pGCYOe"})
 _ROUTE = "credits_wire"
 _THROTTLED_HINT = "Flow is throttling this account; wait a minute, then read the balance again."
 _THROTTLE_DEFAULT_S = 60.0
@@ -370,6 +370,20 @@ async def read_credits(profile_dir: Path) -> CreditsInfo:
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE) from None
     log.info("credits.wire_read", ms=round(elapsed * 1000))
     return info
+
+
+async def read_model_catalog(profile_dir: Path) -> object:
+    """Flow's model catalog (``HTrJv``, sent with empty arguments as each project load does).
+
+    The raw payload, for ``api.model_catalog.parse_htrjv_families``; it holds model names,
+    usage keys and limits, no account data. Same rules and failures as :func:`read_credits`.
+    """
+    response, _ = await _execute_direct_rpc(profile_dir, "HTrJv")
+    frames = [payload for rpcid, payload in parse_frames(response.text) if rpcid == "HTrJv"]
+    if not frames:
+        _tokens.pop(profile_dir, None)
+        raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE)
+    return frames[0]
 
 
 async def direct_set_archived_media(

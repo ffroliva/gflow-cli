@@ -1000,3 +1000,32 @@ def test_doctor_returns_within_the_budget_when_the_cookie_read_blocks(
 
     assert finding.summary.startswith("status=store_unreadable")
     assert elapsed < 2.0, elapsed
+
+
+# --- the model catalog read (#1550): the same shell and rules, rpcid HTrJv ---------------
+
+
+def _htrjv_reply(payload: object) -> str:
+    import json
+
+    inner = json.dumps(payload)
+    return ")]}'\n" + json.dumps([["wrb.fr", "HTrJv", inner, None, None, None, "generic"]]) + "\n"
+
+
+async def test_the_catalog_read_posts_htrjv_and_returns_its_payload(
+    profile: Path, flow: _Flow
+) -> None:
+    families = [["Veo 3.1 - Lite", [["veo_3_1_t2v_lite"]], True, "veo_3_1_lite"]]
+    flow.rpc = lambda _r: httpx.Response(200, text=_htrjv_reply([families]))
+
+    assert await flow_wire.read_model_catalog(profile) == [families]
+    assert flow.posts[0].url.params["rpcids"] == "HTrJv"
+    assert len(flow.gets) == 1
+
+
+async def test_a_catalog_reply_without_htrjv_is_unparseable(profile: Path, flow: _Flow) -> None:
+    flow.rpc = lambda _r: httpx.Response(200, text=_REPLY)  # an nzlxg frame, not HTrJv
+
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_model_catalog(profile)
+    assert _reason(exc) is WireFallbackReason.UNPARSEABLE

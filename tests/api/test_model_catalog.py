@@ -85,3 +85,100 @@ def test_parser_ignores_payloads_with_no_families() -> None:
     assert parse_htrjv_families(None) == []
     assert parse_htrjv_families({"not": "a list"}) == []
     assert parse_htrjv_families([[1, 2, 3], ["only a name"]]) == []
+
+
+# --- #1550: the cross-check. A refreshed fixture that adds or drops a model fails here. ---
+
+
+def test_the_recorded_catalog_matches_gflows_mapping() -> None:
+    """Every family is mapped or ignored, every mapped family is present, dates agree."""
+    from gflow_cli.api.model_catalog import catalog_drift, parse_htrjv_families
+
+    assert catalog_drift(parse_htrjv_families(_recorded())) == []
+
+
+def test_every_image_model_is_mapped_or_recorded_as_unlisted() -> None:
+    from gflow_cli.api.image import Model
+    from gflow_cli.api.model_catalog import IMAGE_FAMILY, UNLISTED_MODELS
+
+    assert set(IMAGE_FAMILY).isdisjoint(UNLISTED_MODELS)
+    assert set(IMAGE_FAMILY) | set(UNLISTED_MODELS) == set(Model)
+
+
+def test_direct_transport_wire_names_are_the_catalog_keys() -> None:
+    from gflow_cli.api.model_catalog import IMAGE_FAMILY
+    from gflow_cli.api.transports.direct_http import _WIRE_MODEL
+
+    for model, wire in _WIRE_MODEL.items():
+        assert IMAGE_FAMILY[model][1] == wire, model
+
+
+def _family(key: str, *, usages: tuple[str, ...] = (), when: date | None = None) -> Any:
+    from gflow_cli.api.model_catalog import ModelFamily
+
+    return ModelFamily(key=key, display_name=key, enabled=True, retires_on=when, usages=usages)
+
+
+def _baseline() -> list[Any]:
+    from gflow_cli.api.model_catalog import parse_htrjv_families
+
+    return parse_htrjv_families(_recorded())
+
+
+def test_drift_names_a_family_gflow_neither_maps_nor_ignores() -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    assert catalog_drift([*_baseline(), _family("veo_4")]) == [
+        "added family veo_4 (veo_4): not mapped in gflow"
+    ]
+
+
+def test_drift_names_a_mapped_family_flow_dropped() -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    families = [f for f in _baseline() if f.key != "veo_3_1_lite"]
+    assert catalog_drift(families) == ["removed family veo_3_1_lite: gflow maps veo_3_1_lite"]
+
+
+def test_drift_names_an_ignored_family_flow_dropped() -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    families = [f for f in _baseline() if f.key != "gemini_tts"]
+    assert catalog_drift(families) == ["removed family gemini_tts: listed as ignored in gflow"]
+
+
+def test_drift_names_an_image_wire_key_flow_dropped() -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    families = [
+        _family("harbor_seal", usages=("HARBOR_SEAL_2",)) if f.key == "harbor_seal" else f
+        for f in _baseline()
+    ]
+    assert catalog_drift(families) == [
+        "family harbor_seal no longer lists HARBOR_SEAL: gflow sends it for HARBOR_SEAL"
+    ]
+
+
+def test_drift_names_new_moved_and_dropped_retirement_dates() -> None:
+    from gflow_cli.api.model_catalog import catalog_drift
+
+    moved = {
+        "veo_3_1_lite": date(2027, 1, 31),
+        "veo_3_1_fast": date(2026, 12, 12),
+        "veo_3_1_quality": None,
+    }
+    families = [
+        _family(f.key, usages=f.usages, when=moved[f.key]) if f.key in moved else f
+        for f in _baseline()
+    ]
+    assert catalog_drift(families) == [
+        "veo_3_1_lite: new retirement date 2027-01-31",
+        "veo_3_1_fast: retirement date moved 2026-12-05 -> 2026-12-12",
+        "veo_3_1_quality: retirement date 2026-12-05 withdrawn",
+    ]
+
+
+def test_the_parser_keeps_each_familys_usage_keys() -> None:
+    by_key = {f.key: f for f in _baseline()}
+    assert by_key["nano_banana_pro"].usages == ("GEM_PIX_2",)
+    assert "abra_t2v_4s" in by_key["abra"].usages
