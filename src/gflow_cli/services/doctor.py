@@ -421,20 +421,26 @@ def _check_deprecated_vars(settings: Settings) -> list[Finding]:
     successors = {
         "GFLOW_CLI_PREFER_CLASSIC": "GFLOW_CLI_UI_MODE",
         "GFLOW_CLI_FORCE_AGENT_UI": "GFLOW_CLI_UI_MODE",
+        "GFLOW_CLI_HEADLESS": "GFLOW_CLI_BROWSER_VISIBILITY",
         "GEMINI_API_KEY": None,
     }
-    findings = [
-        _finding(
-            "env.deprecated_vars",
-            "warn",
-            f"deprecated environment variable {var} is set",
-            f"unset {var} and use {successor} instead"
-            if successor
-            else f"unset {var} (no longer read by gflow-cli)",
-        )
-        for var, successor in successors.items()
-        if os.environ.get(var)
-    ]
+    findings: list[Finding] = []
+    for var, successor in successors.items():
+        if os.environ.get(var):
+            if var == "GFLOW_CLI_HEADLESS":
+                remediation = f"unset {var} and use {successor} instead (false pins headed)"
+            elif successor:
+                remediation = f"unset {var} and use {successor} instead"
+            else:
+                remediation = f"unset {var} (no longer read by gflow-cli)"
+            findings.append(
+                _finding(
+                    "env.deprecated_vars",
+                    "warn",
+                    f"deprecated environment variable {var} is set",
+                    remediation,
+                )
+            )
     env_db = os.environ.get("GFLOW_CLI_DB_PATH")
     if env_db and Path(env_db).expanduser().resolve() != settings.resolved_db_path().resolve():
         findings.append(
