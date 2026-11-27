@@ -1,15 +1,17 @@
 """`gflow doctor` compares Flow's live model catalog with gflow's mapping (#1550).
 
-The comparison itself is ``api.model_catalog.catalog_drift`` (tests/api/test_model_catalog.py);
+The comparison itself is ``api.model_catalog.classify_catalog`` (tests/api/test_model_catalog.py);
 the read is ``flow_wire.read_model_catalog`` (tests/api/test_flow_wire.py). Here the read is
-stubbed, so only the finding is under test: a removed family or key is a warning (exit 33), an
-added one is info, and every state in which nothing could be compared is info, sent under the
-direct read's own rules.
+stubbed, so only the finding is under test: a family or key gflow relies on removed early is a
+warning (exit 33); an added one, a scheduled retirement or an ignored family's change is info;
+and every state in which nothing could be compared is info, sent under the direct read's own
+rules.
 """
 
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -18,7 +20,7 @@ from gflow_cli import profile_store
 from gflow_cli.api import flow_wire
 from gflow_cli.api.flow_wire import WireFallbackReason, WireReadUnavailable
 from gflow_cli.config import get_settings
-from gflow_cli.errors import RateLimitError
+from gflow_cli.errors import RateLimitError, SecurityError
 from gflow_cli.services import doctor
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "flow_htrjv_model_families.json"
@@ -131,24 +133,80 @@ def test_a_named_profile_is_read_instead_of_the_default(read: _Read) -> None:
     assert read.seen == [get_settings().profile_subdir("canary")]
 
 
-@pytest.mark.parametrize(
-    ("update", "word"),
-    [
-        ({"wire_reads": False}, "GFLOW_CLI_WIRE_READS"),
-        ({"wire_reads": True, "browser_proxy": "http://p:1"}, "proxy"),
-    ],
-)
-def test_wire_reads_off_skip_the_check_and_send_nothing(
-    read: _Read, update: dict[str, object], word: str
-) -> None:
-    settings = get_settings().model_copy(update=update)
+def test_wire_reads_off_skip_the_check_and_send_nothing(read: _Read) -> None:
+    settings = get_settings().model_copy(update={"wire_reads": False})
 
     [finding] = doctor.check_model_catalog(settings)
 
     assert finding.severity == "info"
     assert finding.summary.startswith("skipped")
-    assert word in finding.summary
+    assert "GFLOW_CLI_WIRE_READS" in finding.summary
     assert read.seen == []
+
+
+def test_a_proxy_refusal_is_info_with_a_catalog_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """flow_wire refuses any proxy itself; the hint must not promise a browser fallback."""
+
+    async def raises(_profile_dir: Path) -> object:
+        raise WireReadUnavailable(WireFallbackReason.PROXY_CONFIGURED)
+
+    monkeypatch.setattr(flow_wire, "read_model_catalog", raises)
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _flag: "denon")
+
+    [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
+
+    assert (finding.severity, finding.summary) == ("info", "skipped: catalog read proxy_configured")
+    assert "proxy" in finding.remediation
+    assert "credits" not in finding.remediation
+    assert "browser" not in finding.remediation
+
+
+def test_the_retirements_flow_scheduled_are_info_on_the_day(read: _Read) -> None:
+    """2026-12-05: Flow drops the three retiring video families. Not exit 33 on every install."""
+    gone = {"abra", "veo_3_1_fast", "veo_3_1_quality"}
+    read.payload = [[f for f in _recorded() if f[3] not in gone]]  # type: ignore[index]
+
+    [finding] = doctor.check_model_catalog(_on(), today=date(2026, 12, 5))  # type: ignore[arg-type]
+
+    assert finding.severity == "info"
+    assert "removed family abra" in finding.summary
+
+
+def test_an_ignored_family_flow_dropped_is_info(read: _Read) -> None:
+    read.payload = [[f for f in _recorded() if f[3] != "gemini_tts"]]  # type: ignore[index]
+
+    [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
+
+    assert finding.severity == "info"
+    assert "removed family gemini_tts" in finding.summary
+
+
+@pytest.mark.parametrize("error", [ImportError("browser_cookie3"), ValueError("decode")])
+def test_an_unexpected_read_error_is_info_not_fail(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """As flow_wire.health: an unforeseen read failure reports, never fails doctor."""
+
+    async def raises(_profile_dir: Path) -> object:
+        raise error
+
+    monkeypatch.setattr(flow_wire, "read_model_catalog", raises)
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _flag: "denon")
+
+    [finding] = doctor.check_model_catalog(_on())  # type: ignore[arg-type]
+
+    assert (finding.severity, finding.summary) == ("info", "skipped: catalog read unexpected")
+
+
+def test_a_security_error_is_not_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def raises(_profile_dir: Path) -> object:
+        raise SecurityError("profile outside GFLOW_CLI_HOME")
+
+    monkeypatch.setattr(flow_wire, "read_model_catalog", raises)
+    monkeypatch.setattr(profile_store, "resolve_profile", lambda _flag: "denon")
+
+    with pytest.raises(SecurityError):
+        doctor.check_model_catalog(_on())  # type: ignore[arg-type]
 
 
 def test_the_suite_default_skips_with_no_stub() -> None:

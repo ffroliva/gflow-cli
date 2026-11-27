@@ -2,7 +2,7 @@
 
 Two checks reach flow.google.com for the default profile, unless the direct read
 is disabled: ``auth.wire_read`` (#1229, one GET and one POST) and
-``models.catalog_drift`` (#1550, one more POST reading Flow's model catalog).
+``models.catalog_drift`` (#1550, at most one more GET and POST reading Flow's model catalog).
 
 Rendering only: every finding string arrives pre-redacted from
 :mod:`gflow_cli.services.doctor` (UUIDs not display names, safe paths,

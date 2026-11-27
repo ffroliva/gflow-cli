@@ -12,7 +12,7 @@ recorded catalog (``tests/fixtures/flow_htrjv_model_families.json``). Nothing he
 network, and nothing here refuses a request: a retiring model is warned about, and Flow's live
 menu decides whether it is still offered (the pre-submit "not offered" refusal, exit 11).
 
-:func:`catalog_drift` compares a catalog with gflow's mapping (#1550): the recorded fixture in
+:func:`classify_catalog` compares a catalog with gflow's mapping (#1550): the recorded fixture in
 the test suite, Flow's live reply in ``gflow doctor`` (check ``models.catalog_drift``). Every
 family is either mapped (:data:`FAMILY_KEY`, :data:`IMAGE_FAMILY`) or listed in
 :data:`IGNORED_FAMILIES` with its reason. Video usage keys are not mapped one by one: gflow
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
 
@@ -200,63 +201,84 @@ def _mapped_keys() -> dict[str, str]:
     return mapped | {key: model.value for model, (key, _) in IMAGE_FAMILY.items()}
 
 
-def catalog_news(families: Sequence[ModelFamily]) -> list[str]:
-    """What Flow added that gflow does not map: a family, or a key inside an image family.
+class Drift(StrEnum):
+    """What one catalog difference means for ``gflow doctor``. Only ``BREAK`` warns (exit 33)."""
 
-    A subset of :func:`catalog_drift`. A user cannot map a new model themselves, so
-    ``gflow doctor`` reports these as information; what Flow removed is a warning.
+    ADDED = "added"  # Flow added a family, a key or a date gflow does not carry: no user can map it
+    RETIRED = "retired"  # a family gone on or after the retirement date gflow carries for it
+    IGNORED = "ignored"  # a family gflow deliberately does not use changed
+    BREAK = "break"  # a family, key or date gflow relies on changed before it was due to
+
+
+@dataclass(frozen=True)
+class Difference:
+    """One way Flow's catalog differs from gflow's mapping."""
+
+    kind: Drift
+    line: str
+
+
+def _date_change(key: str, was: date | None, now: date | None) -> str:
+    if was is None:
+        return f"{key}: new retirement date {now}"
+    if now is None:
+        return f"{key}: retirement date {was} withdrawn"
+    return f"{key}: retirement date moved {was} -> {now}"
+
+
+def classify_catalog(families: Sequence[ModelFamily], *, today: date) -> list[Difference]:
+    """Every way ``families`` differ from gflow's mapping, each sorted into a :class:`Drift`.
+
+    Empty when they agree. ``BREAK``: no families at all, a mapped family or image wire key
+    gone (a video family only before the date in :data:`RETIRES_ON`), or a mapped video
+    family's retirement date changed. Everything else is information: an added family or
+    key, a date on a family gflow carries no date for, a scheduled retirement, a change to an
+    :data:`IGNORED_FAMILIES` entry.
     """
+    if not families:
+        line = "Flow's catalog reply held no model families (its format changed)"
+        return [Difference(Drift.BREAK, line)]
+    by_key = {family.key: family for family in families}
     mapped = _mapped_keys()
-    news = [
-        f"added family {family.key} ({family.display_name}): not mapped in gflow"
+    video = {key: model for model, key in FAMILY_KEY.items()}
+    diffs = [
+        Difference(
+            Drift.ADDED, f"added family {family.key} ({family.display_name}): not mapped in gflow"
+        )
         for family in families
         if family.key not in mapped and family.key not in IGNORED_FAMILIES
     ]
-    by_key = {family.key: family for family in families}
-    news += [
-        f"family {key} lists {usage}: gflow has no mapping for it"
+    diffs += [
+        Difference(Drift.ADDED, f"family {key} lists {usage}: gflow has no mapping for it")
         for _, (key, wire) in IMAGE_FAMILY.items()
         if key in by_key
         for usage in by_key[key].usages
         if usage != wire
     ]
-    return news
-
-
-def catalog_drift(families: Sequence[ModelFamily]) -> list[str]:
-    """How ``families`` differ from gflow's mapping, one line each; empty when they agree.
-
-    Reported: a family neither mapped nor ignored, a mapped or ignored family that is gone, an
-    image wire key its family no longer lists (or one it lists that gflow does not map), and a
-    retirement date gflow does not carry. :func:`catalog_news` is the part Flow added.
-    """
-    by_key = {family.key: family for family in families}
-    mapped = _mapped_keys()
-    expected_dates = {FAMILY_KEY[model]: when for model, when in RETIRES_ON.items()}
-    drift = catalog_news(families)
-    drift += [
-        f"removed family {key}: gflow maps {model}"
-        for key, model in mapped.items()
-        if key not in by_key
-    ]
-    drift += [
-        f"removed family {key}: listed as ignored in gflow"
+    for key, model in mapped.items():
+        if key not in by_key:
+            due = retires_on(video[key]) if key in video else None
+            kind = Drift.RETIRED if due is not None and today >= due else Drift.BREAK
+            diffs.append(Difference(kind, f"removed family {key}: gflow maps {model}"))
+    diffs += [
+        Difference(Drift.IGNORED, f"removed family {key}: listed as ignored in gflow")
         for key in IGNORED_FAMILIES
         if key not in by_key
     ]
-    drift += [
-        f"family {key} no longer lists {wire}: gflow sends it for {model.value}"
+    diffs += [
+        Difference(
+            Drift.BREAK, f"family {key} no longer lists {wire}: gflow sends it for {model.value}"
+        )
         for model, (key, wire) in IMAGE_FAMILY.items()
         if key in by_key and wire not in by_key[key].usages
     ]
     for family in families:
-        was, now = expected_dates.get(family.key), family.retires_on
-        if was == now:
+        was = retires_on(video[family.key]) if family.key in video else None
+        if was == family.retires_on:
             continue
-        if was is None:
-            drift.append(f"{family.key}: new retirement date {now}")
-        elif now is None:
-            drift.append(f"{family.key}: retirement date {was} withdrawn")
+        if family.key in video:
+            kind = Drift.BREAK
         else:
-            drift.append(f"{family.key}: retirement date moved {was} -> {now}")
-    return drift
+            kind = Drift.IGNORED if family.key in IGNORED_FAMILIES else Drift.ADDED
+        diffs.append(Difference(kind, _date_change(family.key, was, family.retires_on)))
+    return diffs

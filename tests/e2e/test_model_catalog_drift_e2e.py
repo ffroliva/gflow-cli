@@ -1,8 +1,9 @@
 """E2E for #1550: `gflow doctor --json` reads Flow's live model catalog and compares it.
 
 Doctor runs as a real subprocess with the direct read switched on. The check must have
-read and compared the catalog: ``pass`` (no drift) or ``warn`` (drift, each difference named).
-``info`` means nothing was read, which proves nothing, so it fails here.
+read and compared the catalog: ``pass`` (no drift), ``warn`` (a breaking difference) or
+``info`` naming the differences (only additions, scheduled retirements or ignored families).
+A ``skipped`` info means nothing was read, which proves nothing, so it fails here.
 
 Opt-in: ``-m e2e_auth`` with ``GFLOW_CLI_E2E_PROFILE`` set. **Cost: zero.** One shell GET, one
 ``nzlxg`` balance read and one ``HTrJv`` catalog read; no browser, nothing generated.
@@ -40,7 +41,7 @@ def test_doctor_compares_the_live_model_catalog(
 
     assert proc.returncode in (0, 33), proc.stderr[-2000:]  # 33: findings, possibly unrelated
     [check] = [c for c in json.loads(proc.stdout)["checks"] if c["check"] == "models.catalog_drift"]
-    # info is allowed only for Flow having added a model (nothing skipped): the read still ran
+    # info passes only when it names compared differences (nothing skipped): the read ran
     assert check["severity"] in ("pass", "warn", "info"), check
     assert not check["summary"].startswith("skipped"), check
     if check["severity"] == "pass":

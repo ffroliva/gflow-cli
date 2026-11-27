@@ -36,7 +36,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -47,7 +47,7 @@ import structlog
 from gflow_cli import _cli_helpers, browser_manager, profile_store
 from gflow_cli.api import flow_wire, model_catalog
 from gflow_cli.data.store import DataStore, inspect_schema
-from gflow_cli.errors import DataStoreError, NetworkError, RateLimitError
+from gflow_cli.errors import DataStoreError, NetworkError, RateLimitError, SecurityError
 
 if TYPE_CHECKING:
     import sqlite3
@@ -554,19 +554,28 @@ def _check_wire_read(settings: Settings) -> list[Finding]:
     return [_finding(_WIRE_READ, "info", summary, hint)]
 
 
-def check_model_catalog(settings: Settings, profile: str | None = None) -> list[Finding]:
+_CATALOG_HINTS = {
+    **_WIRE_HINTS,
+    "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
+    " set GFLOW_CLI_WIRE_READS=1 to compare Flow's model catalog",
+    "proxy_configured": "the direct read is skipped while a proxy is configured"
+    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); the model catalog is not"
+    " compared",
+}
+
+
+def check_model_catalog(
+    settings: Settings, profile: str | None = None, *, today: date | None = None
+) -> list[Finding]:
     """Flow's live model catalog against gflow's mapping (#1550), read for ``profile``.
 
-    One ``HTrJv`` POST under the direct read's rules (default profile unless named; the
-    nightly canary names its own). A mapped family or key Flow removed is ``warn``; one Flow
-    added is ``info``, since no user can map it. A catalog that could not be read is ``info``:
-    nothing was compared.
+    At most one shell GET and one ``HTrJv`` POST under the direct read's rules (default profile
+    unless named; the nightly canary names its own). ``warn`` only for a
+    :attr:`model_catalog.Drift.BREAK`; any other difference is ``info``, since no user can act
+    on it. A catalog that could not be read is ``info``: nothing was compared.
     """
     if not settings.wire_reads:
         reason = "direct reads are off (GFLOW_CLI_WIRE_READS=0, or the macOS default)"
-        return [_finding(_MODEL_CATALOG, "info", f"skipped: {reason}")]
-    if settings.browser_proxy:
-        reason = "direct reads are skipped while a proxy is configured"
         return [_finding(_MODEL_CATALOG, "info", f"skipped: {reason}")]
     name, hint = _default_profile(profile)
     if name is None:
@@ -574,26 +583,26 @@ def check_model_catalog(settings: Settings, profile: str | None = None) -> list[
     try:
         payload = asyncio.run(flow_wire.read_model_catalog(settings.profile_subdir(name)))
     except flow_wire.WireReadUnavailable as exc:
-        hint = _WIRE_HINTS.get(exc.reason.value, "")
+        hint = _CATALOG_HINTS.get(exc.reason.value, "")
         return [_finding(_MODEL_CATALOG, "info", f"skipped: catalog read {exc.reason}", hint)]
     except (RateLimitError, NetworkError):
-        return [
-            _finding(
-                _MODEL_CATALOG, "info", "skipped: catalog read throttled", _WIRE_HINTS["throttled"]
-            )
-        ]
+        summary = "skipped: catalog read throttled"
+        return [_finding(_MODEL_CATALOG, "info", summary, _CATALOG_HINTS["throttled"])]
+    except SecurityError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - as flow_wire.health: report, never fail doctor
+        log.warning("doctor.catalog_read_unexpected", error_type=type(exc).__name__)
+        return [_finding(_MODEL_CATALOG, "info", "skipped: catalog read unexpected")]
     families = model_catalog.parse_htrjv_families(payload)
+    diffs = model_catalog.classify_catalog(families, today=today or date.today())
+    if not diffs:
+        return [_finding(_MODEL_CATALOG, "pass", f"{len(families)} families, all mapped")]
+    summary = f"{len(diffs)} difference(s) from gflow's model mapping: " + "; ".join(
+        d.line for d in diffs
+    )
+    severity = "warn" if any(d.kind is model_catalog.Drift.BREAK for d in diffs) else "info"
     update = "gflow may be behind Flow's model list; check for a newer gflow: gflow update --check"
-    if not families:
-        summary = "Flow's catalog reply held no model families (its format changed)"
-        return [_finding(_MODEL_CATALOG, "warn", summary, update)]
-    if drift := model_catalog.catalog_drift(families):
-        summary = f"{len(drift)} difference(s) from gflow's model mapping: " + "; ".join(drift)
-        news = model_catalog.catalog_news(families)
-        return [
-            _finding(_MODEL_CATALOG, "info" if len(news) == len(drift) else "warn", summary, update)
-        ]
-    return [_finding(_MODEL_CATALOG, "pass", f"{len(families)} families, all mapped")]
+    return [_finding(_MODEL_CATALOG, severity, summary, update)]
 
 
 # ---------------------------------------------------------------------------
