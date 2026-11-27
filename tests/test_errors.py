@@ -940,3 +940,47 @@ def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
     ]
     assert len(guarded_raises) == expected_guards
     assert len(guarded_raises) == len(drift_raises)
+
+
+def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
+    from gflow_cli.errors import (
+        WafRejectionError,
+        exit_code_for,
+        is_retryable,
+        waf_refusal_final,
+    )
+    from gflow_cli.mcp.tools import _gflow_error_dict
+
+    err = waf_refusal_final(reason="UNUSUAL_ACTIVITY", attempts=2)
+
+    assert isinstance(err, WafRejectionError)
+    assert exit_code_for(err) == 10
+    assert err.charged == "no"
+    assert err.retryable is False
+    assert err.next_action == "none"
+    assert is_retryable(err) is False
+
+    pd = err.to_problem_details()
+    assert pd["charged"] == "no"
+    assert pd["next_action"] == "none"
+    assert pd["type"] == "https://gflow-cli.dev/errors/waf-rejection"
+
+    mcp_dict = _gflow_error_dict(err)
+    assert mcp_dict["charged"] == "no"
+    assert mcp_dict["next_action"] == "none"
+    assert mcp_dict["retryable"] is False
+
+
+def test_waf_refusal_final_remediation_names_headed_and_cooldown() -> None:
+    from gflow_cli.errors import waf_refusal_final
+
+    err = waf_refusal_final(reason="UNUSUAL_ACTIVITY", attempts=2)
+
+    assert "--browser-visibility headed" in err.remediation_hint
+    assert "docs/ACCOUNT_SAFETY.md" in err.remediation_hint
+    assert "cooldown" in err.remediation_hint.lower()
+    assert "Both attempts were refused" in err.remediation_hint
+    assert "30" in err.remediation_hint
+    assert "60" in err.remediation_hint
+    assert "minute" in err.remediation_hint.lower()
+    assert "nothing" in err.remediation_hint.lower() and "charged" in err.remediation_hint.lower()

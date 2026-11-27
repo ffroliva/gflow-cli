@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gflow_cli.errors import GFlowError
 
 
-GenerationPhase = Literal["submit_attempted", "remote_started"]
+GenerationPhase = Literal["submit_attempted", "remote_started", "submit_refused"]
 
 
 @dataclass(frozen=True)

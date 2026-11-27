@@ -729,7 +729,11 @@ class FlowWorker:
 
         def observe_checkpoint(cp: GenerationCheckpoint) -> None:
             # Any emitted phase is at/after submit_attempted (C1 emits it right
-            # before the credit gesture), so may_have_spent is always True here.
+            # before the credit gesture), so may_have_spent is always True here,
+            # EXCEPT submit_refused which resets the checkpoint to claimed (not charged).
+            if cp.phase == "submit_refused":
+                save_checkpoint("claimed", may_have_spent=False)
+                return
             if cp.phase == "submit_attempted":
                 # #1198 submit gate: a `gflow cancel` / `tasks/cancel` that landed while
                 # this job was claimed stops it here, before anything is sent to Flow.
