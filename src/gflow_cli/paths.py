@@ -197,6 +197,26 @@ _MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
 # media tooling. Lowercase comparison.
 _JPEG_ALIASES: frozenset[str] = frozenset({".jpg", ".jpeg", ".jpe"})
 
+# JPEG Start of Frame (SOF) markers identifying frames containing dimensions:
+# SOF0..SOF3, SOF5..SOF7, SOF9..SOF11, SOF13..SOF15.
+_JPEG_SOF_MARKERS: frozenset[int] = frozenset(
+    {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+)
+
 
 def extension_from_magic(head: bytes) -> str | None:
     """Return the canonical extension for ``head``'s magic bytes.
@@ -216,6 +236,139 @@ def extension_from_magic(head: bytes) -> str | None:
     # WebP needs both halves: RIFF<4-byte size>WEBP.
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return ".webp"
+    return None
+
+
+def _png_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from PNG IHDR chunk."""
+    if len(data) < 24 or data[12:16] != b"IHDR":
+        return None
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def _gif_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from GIF87a or GIF89a header."""
+    width = int.from_bytes(data[6:8], "little")
+    height = int.from_bytes(data[8:10], "little")
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def _parse_jpeg_sof(data: bytes, idx: int, seg_len: int) -> tuple[int, int] | None:
+    """Parse SOF segment payload into (width, height)."""
+    if seg_len < 7:
+        return None
+    height = int.from_bytes(data[idx + 3 : idx + 5], "big")
+    width = int.from_bytes(data[idx + 5 : idx + 7], "big")
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def _next_jpeg_marker(data: bytes, idx: int, length: int) -> tuple[int, int] | None:
+    """Find next non-fill JPEG marker. Returns (marker, next_idx) or None."""
+    if idx >= length or data[idx] != 0xFF:
+        return None
+    while idx < length and data[idx] == 0xFF:
+        idx += 1
+    if idx >= length:
+        return None
+    return data[idx], idx + 1
+
+
+def _is_standalone_jpeg_marker(marker: int) -> bool:
+    """True if marker does not take a length payload (SOI, EOI, byte stuffing, RST0..RST7)."""
+    return marker in (0xD8, 0xD9, 0x00) or 0xD0 <= marker <= 0xD7
+
+
+def _read_segment_length(data: bytes, idx: int, length: int) -> int | None:
+    """Read a 2-byte JPEG segment length. Returns length or None if invalid/truncated."""
+    if idx + 2 > length:
+        return None
+    seg_len = int.from_bytes(data[idx : idx + 2], "big")
+    if seg_len < 2 or idx + seg_len > length:
+        return None
+    return seg_len
+
+
+def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) by walking JPEG markers."""
+    idx = 2
+    length = len(data)
+    while idx < length:
+        res = _next_jpeg_marker(data, idx, length)
+        if res is None:
+            return None
+        marker, idx = res
+        if _is_standalone_jpeg_marker(marker):
+            continue
+        seg_len = _read_segment_length(data, idx, length)
+        if seg_len is None:
+            return None
+        if marker in _JPEG_SOF_MARKERS:
+            return _parse_jpeg_sof(data, idx, seg_len)
+        idx += seg_len
+    return None
+
+
+def _webp_vp8_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from WebP VP8 simple lossy chunk."""
+    if len(data) < 30 or data[23:26] != b"\x9d\x01\x2a":
+        return None
+    width = int.from_bytes(data[26:28], "little") & 0x3FFF
+    height = int.from_bytes(data[28:30], "little") & 0x3FFF
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def _webp_vp8l_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from WebP VP8L lossless chunk."""
+    if len(data) < 25 or data[20] != 0x2F:
+        return None
+    packed = int.from_bytes(data[21:25], "little")
+    width = (packed & 0x3FFF) + 1
+    height = ((packed >> 14) & 0x3FFF) + 1
+    return (width, height)
+
+
+def _webp_vp8x_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from WebP VP8X extended chunk."""
+    if len(data) < 30:
+        return None
+    width = int.from_bytes(data[24:27], "little") + 1
+    height = int.from_bytes(data[27:30], "little") + 1
+    return (width, height)
+
+
+def _webp_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read (width, height) from WebP header (VP8, VP8L, or VP8X)."""
+    if len(data) < 16 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    subformat = data[12:16]
+    if subformat == b"VP8 ":
+        return _webp_vp8_dimensions(data)
+    if subformat == b"VP8L":
+        return _webp_vp8l_dimensions(data)
+    if subformat == b"VP8X":
+        return _webp_vp8x_dimensions(data)
+    return None
+
+
+def image_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Read ``(width, height)`` from PNG, JPEG, GIF or WebP headers without Pillow.
+
+    Returns ``(width, height)`` as a pair of positive integers, or ``None`` if
+    the format is unrecognised, unsupported, truncated or invalid.
+    """
+    if len(data) < 10:
+        return None
+    magic = data[:4]
+    if magic == b"\x89PNG":
+        return _png_dimensions(data)
+    if magic[:3] == b"GIF":
+        return _gif_dimensions(data)
+    if magic[:2] == b"\xff\xd8":
+        return _jpeg_dimensions(data)
+    if magic == b"RIFF":
+        return _webp_dimensions(data)
     return None
 
 
