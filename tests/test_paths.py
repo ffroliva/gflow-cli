@@ -350,3 +350,63 @@ class TestImageDimensions:
         assert paths.image_dimensions(b"RIFF\x10\x00\x00\x00WEBPVP8 ") is None  # truncated WebP
         # Non-image RIFF
         assert paths.image_dimensions(b"RIFF\x20\x00\x00\x00WAVEfmt ") is None
+
+    def test_image_dimensions_edge_cases_and_invalid_branches(self) -> None:
+        # PNG: wrong chunk type (not IHDR) or zero dimensions
+        bad_chunk = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dNOTI\x00\x00\x00\x10\x00\x00\x00\x20"
+        assert paths.image_dimensions(bad_chunk) is None
+        zero_w_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x00\x00\x00\x00\x00\x00\x20"
+        assert paths.image_dimensions(zero_w_png) is None
+
+        # GIF: truncated (< 10 bytes) or zero dimensions
+        assert paths.image_dimensions(b"GIF89a\x00\x00") is None
+        zero_gif = b"GIF89a\x00\x00\x00\x00\x00\x00"
+        assert paths.image_dimensions(zero_gif) is None
+
+        # JPEG: non-0xFF byte where marker expected
+        assert paths.image_dimensions(b"\xff\xd8\x00\x00\x00\x00\x00\x00\x00\x00") is None
+        # JPEG: runs out of bytes while reading 0xFF padding
+        assert paths.image_dimensions(b"\xff\xd8\xff\xff\xff") is None
+        assert paths._next_jpeg_marker(b"\xff\xd8\xff\xff", 2, 4) is None
+        # JPEG: standalone marker (RST0 0xD0, byte stuffing 0x00, EOI 0xD9) followed by EOF or end
+        assert paths.image_dimensions(b"\xff\xd8\xff\xd0\xff\xd9\x00\x00\x00\x00\x00") is None
+        # JPEG: seg_len too short (< 2) or segment extends beyond buffer
+        assert paths.image_dimensions(b"\xff\xd8\xff\xe0\x00\x01\x00\x00\x00\x00") is None
+        assert paths.image_dimensions(b"\xff\xd8\xff\xe0\x00\x20\x00\x00\x00\x00") is None
+        assert paths.image_dimensions(b"\xff\xd8\xff\xe0\x00\x00\x00\x00\x00\x00") is None
+        # Valid JFIF header followed by marker whose seg_len is truncated (idx + 2 > length)
+        jfif_prefix = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        assert paths.image_dimensions(jfif_prefix + b"\xff\xee\x00") is None
+        # Non-SOF segment (0xFF 0xEE) processed completely without finding any SOF marker
+        assert paths.image_dimensions(jfif_prefix + b"\xff\xee\x00\x02") is None
+        # JPEG: non-SOF segment (APP0) with no subsequent SOF
+        assert paths.image_dimensions(b"\xff\xd8\xff\xe0\x00\x04\x00\x00\x00\x00") is None
+        assert paths.image_dimensions(b"\xff\xd8\xff\xe0\x00\x04\x00\x00\xff\xd8\x00") is None
+        # JPEG: SOF with seg_len < 7
+        assert paths.image_dimensions(b"\xff\xd8\xff\xc0\x00\x05\x00\x00\x00\x00") is None
+        # JPEG: SOF with zero width / height
+        zero_sof = (
+            b"\xff\xd8\xff\xc0\x00\x11\x08\x00\x00\x00\x50\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01"
+        )
+        assert paths.image_dimensions(zero_sof) is None
+
+        # WebP: unsupported subformat (e.g. VP8 )
+        unsupported_webp = b"RIFF\x20\x00\x00\x00WEBPUNKN\x00\x00\x00\x00\x00\x00"
+        assert paths.image_dimensions(unsupported_webp) is None
+        # WebP VP8: bad sync code or zero dimensions
+        bad_sync_vp8 = (
+            b"RIFF\x20\x00\x00\x00WEBPVP8 \x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x2c\x01\xc8\x00"
+        )
+        assert paths.image_dimensions(bad_sync_vp8) is None
+        zero_vp8 = (
+            b"RIFF\x20\x00\x00\x00WEBPVP8 \x10\x00\x00\x00\x00\x00\x00\x9d\x01\x2a\x00\x00\x00\x00"
+        )
+        assert paths.image_dimensions(zero_vp8) is None
+        # WebP VP8L: truncated (< 25 bytes) or bad signature (not 0x2F)
+        trunc_vp8l = b"RIFF\x20\x00\x00\x00WEBPVP8L\x05\x00"
+        assert paths.image_dimensions(trunc_vp8l) is None
+        bad_sig_vp8l = b"RIFF\x20\x00\x00\x00WEBPVP8L\x05\x00\x00\x00\x00\xff\xc3\xbf\x00"
+        assert paths.image_dimensions(bad_sig_vp8l) is None
+        # WebP VP8X: truncated (< 30 bytes)
+        trunc_vp8x = b"RIFF\x20\x00\x00\x00WEBPVP8X\x0a\x00\x00\x00\x00\x00"
+        assert paths.image_dimensions(trunc_vp8x) is None
