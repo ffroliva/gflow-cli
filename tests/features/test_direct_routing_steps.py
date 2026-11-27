@@ -1,0 +1,337 @@
+"""Offline BDD step definitions for direct routing and refusal retry.
+
+Bound to tests/features/direct_routing.feature. Covers the 8 scenarios planned in
+Task 20. Each scenario is marked strict-xfail until its owning task removes the marker:
+- Scenarios 1-5: Task 13 (The refusal retry loop)
+- Scenarios 6-8: Task 12 (Route-aware client construction and the direct default)
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from pytest_bdd import given, parsers, scenario, then, when
+
+from gflow_cli.api.submit_policy import (
+    BrowserVisibility,
+    VisibilitySetting,
+)
+
+# ---------------------------------------------------------------------------
+# Scenarios (8) marked strict-xfail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
+@scenario(
+    "direct_routing.feature",
+    "A refused direct submit is retried once from a fresh headless browser",
+)
+def test_refused_direct_submit_retried_once() -> None:
+    pass
+
+
+@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
+@scenario(
+    "direct_routing.feature",
+    "A refusal on both attempts stops without a third submit",
+)
+def test_refusal_on_both_attempts_stops() -> None:
+    pass
+
+
+@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
+@scenario(
+    "direct_routing.feature",
+    "A timeout after send is never resent",
+)
+def test_timeout_after_send_never_resent() -> None:
+    pass
+
+
+@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
+@scenario(
+    "direct_routing.feature",
+    "A signed-out profile reports the UI path's auth error with no retry",
+)
+def test_signed_out_profile_reports_auth_error_no_retry() -> None:
+    pass
+
+
+@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
+@scenario(
+    "direct_routing.feature",
+    "An explicit headed setting with no display fails before launch, naming the display",
+)
+def test_explicit_headed_without_display_fails_before_launch() -> None:
+    pass
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Task 12: Route-aware client construction and the direct default"
+)
+@scenario(
+    "direct_routing.feature",
+    "A credit-capped video takes the UI path",
+)
+def test_credit_capped_video_takes_ui_path() -> None:
+    pass
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Task 12: Route-aware client construction and the direct default"
+)
+@scenario(
+    "direct_routing.feature",
+    "An unmeasured shape takes the UI path headed",
+)
+def test_unmeasured_shape_takes_ui_path_headed() -> None:
+    pass
+
+
+@pytest.mark.xfail(
+    strict=True, reason="Task 12: Route-aware client construction and the direct default"
+)
+@scenario(
+    "direct_routing.feature",
+    "GFLOW_CLI_HEADLESS=false pins headed",
+)
+def test_headless_false_pins_headed() -> None:
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def world() -> dict[str, Any]:
+    return {
+        "submits": [],
+        "relaunches": [],
+        "credits_charged": 0,
+        "error": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Given steps (Scenarios 1-5: Refusal retry & display checks)
+# ---------------------------------------------------------------------------
+
+
+@given("the direct path serves the request")
+def _step_direct_path_serves(world: dict[str, Any]) -> None:
+    world["route_direct"] = True
+
+
+@given("Flow refuses the first submit as unusual activity")
+def _step_flow_refuses_first(world: dict[str, Any]) -> None:
+    world["submit_responses"] = ["UNUSUAL_ACTIVITY", "ACCEPTED"]
+
+
+@given("Flow refuses every submit as unusual activity")
+def _step_flow_refuses_every(world: dict[str, Any]) -> None:
+    world["submit_responses"] = ["UNUSUAL_ACTIVITY", "UNUSUAL_ACTIVITY"]
+
+
+@given("the submit times out after the body was sent")
+def _step_submit_times_out(world: dict[str, Any]) -> None:
+    world["submit_responses"] = ["TIMEOUT_AFTER_SEND"]
+
+
+@given("the profile's saved session is signed out")
+def _step_signed_out_profile(world: dict[str, Any]) -> None:
+    world["signed_out"] = True
+
+
+@given("an explicit headed browser setting without a display")
+def _step_explicit_headed_no_display(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world["setting"] = VisibilitySetting.HEADED
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+
+
+# ---------------------------------------------------------------------------
+# When steps (Scenarios 1-5: Generation and client launch)
+# ---------------------------------------------------------------------------
+
+
+@when("the generation runs")
+def _step_generation_runs(world: dict[str, Any]) -> None:
+    # Lazy import of Task 13 retry loop runner
+    from gflow_cli.api._flow_retry import run_with_retry  # pyright: ignore[reportMissingImports]
+
+    world["result"] = run_with_retry(world)
+
+
+@when("the client launches")
+def _step_client_launches(world: dict[str, Any]) -> None:
+    # Lazy import of Task 11 / Task 13 client construction with display validation
+    from gflow_cli.api.client import FlowApiClient
+
+    try:
+        # Task 11 adds visibility keyword and pre-flight display check before headed launch
+        client = FlowApiClient(visibility=BrowserVisibility.HEADED)  # type: ignore[call-arg]
+        world["client"] = client
+    except Exception as exc:  # noqa: BLE001
+        world["error"] = exc
+
+
+# ---------------------------------------------------------------------------
+# Then steps (Scenarios 1-5: Refusal retry & display assertions)
+# ---------------------------------------------------------------------------
+
+
+@then("exactly two submits are sent")
+def _step_exactly_two_submits(world: dict[str, Any]) -> None:
+    assert len(world.get("submits", [])) == 2
+
+
+@then("the second runs on a new headless browser process")
+def _step_second_runs_headless(world: dict[str, Any]) -> None:
+    assert world.get("relaunches") == [BrowserVisibility.HEADLESS]
+
+
+@then("no credits are reported as charged")
+def _step_no_credits_charged(world: dict[str, Any]) -> None:
+    assert world.get("credits_charged", 0) == 0
+
+
+@then("the error is not retryable and suggests no next action")
+def _step_error_not_retryable(world: dict[str, Any]) -> None:
+    from gflow_cli.errors import WafRejectionError
+
+    err = world.get("error")
+    assert isinstance(err, WafRejectionError)
+    assert getattr(err, "retryable", None) is False
+    assert getattr(err, "next_action", None) == "none"
+    assert getattr(err, "charged", None) == "no"
+
+
+@then("exactly one submit is sent")
+def _step_exactly_one_submit(world: dict[str, Any]) -> None:
+    assert len(world.get("submits", [])) == 1
+
+
+@then("the outcome is indeterminate and the project is reconciled")
+def _step_outcome_indeterminate(world: dict[str, Any]) -> None:
+    err = world.get("error")
+    assert err is not None
+    assert getattr(err, "next_action", None) == "reconcile"
+    assert getattr(err, "charged", None) == "maybe"
+    assert getattr(err, "retryable", None) is False
+
+
+@then("no submits are sent")
+def _step_no_submits(world: dict[str, Any]) -> None:
+    assert len(world.get("submits", [])) == 0
+
+
+@then("the UI auth error is reported with no retry")
+def _step_ui_auth_error(world: dict[str, Any]) -> None:
+    from gflow_cli.errors import AuthenticationError
+
+    err = world.get("error")
+    assert isinstance(err, AuthenticationError)
+    assert len(world.get("submits", [])) == 0
+
+
+@then("the launch fails before launch naming the missing display")
+def _step_fails_naming_display(world: dict[str, Any]) -> None:
+    from gflow_cli.errors import UiModeUnavailableError
+
+    err = world.get("error")
+    assert isinstance(err, UiModeUnavailableError)
+    assert "display" in err.detail.lower()
+    assert err.exit_code == 28
+
+
+# ---------------------------------------------------------------------------
+# Given steps (Scenarios 6-8: Routing)
+# ---------------------------------------------------------------------------
+
+
+@given("a video request at a measured key with a credit cap")
+def _step_video_capped(world: dict[str, Any]) -> None:
+    world["request_type"] = "video"
+    world["measured_key"] = "veo_3_1_t2v_fast"
+    world["max_credits"] = 10
+
+
+@given("an image-to-video request with an end frame")
+def _step_i2v_end_frame(world: dict[str, Any]) -> None:
+    world["request_type"] = "i2v"
+    world["has_end_frame"] = True
+
+
+@given(parsers.parse('the environment variable GFLOW_CLI_HEADLESS is set to "{val}"'))
+def _step_env_headless_false(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, val: str
+) -> None:
+    monkeypatch.setenv("GFLOW_CLI_HEADLESS", val)
+    from gflow_cli import config
+
+    config.reset_settings()
+
+
+# ---------------------------------------------------------------------------
+# When steps (Scenarios 6-8: Routing via future client_visibility)
+# ---------------------------------------------------------------------------
+
+
+@when("the route is chosen")
+def _step_route_chosen(world: dict[str, Any]) -> None:
+    # Must go through Task 12's future client_visibility entry point:
+    from gflow_cli.api.generation_route import (  # pyright: ignore[reportMissingImports]
+        Route,
+        choose_video_route,
+    )
+
+    from gflow_cli._cli_helpers import client_visibility  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType]
+    from gflow_cli.config import get_settings
+
+    settings = get_settings()
+
+    if world.get("request_type") == "video":
+        route = choose_video_route(  # pyright: ignore[reportUnknownVariableType]
+            model_key=world.get("measured_key"),
+            max_credits=world.get("max_credits"),
+        )
+        visibility = client_visibility(settings, routes=(route,))
+        world["route"] = route
+        world["visibility"] = visibility
+    elif world.get("request_type") == "i2v":
+        route = choose_video_route(  # pyright: ignore[reportUnknownVariableType]
+            model_key="i2v_unmeasured",
+            has_end_frame=world.get("has_end_frame", False),
+        )
+        visibility = client_visibility(settings, routes=(route,))
+        world["route"] = route
+        world["visibility"] = visibility
+    else:
+        route = Route.DIRECT
+        visibility = client_visibility(settings, routes=(route,))
+        world["route"] = route
+        world["visibility"] = visibility
+
+
+# ---------------------------------------------------------------------------
+# Then steps (Scenarios 6-8: Routing assertions)
+# ---------------------------------------------------------------------------
+
+
+@then("the UI path is chosen and launched headed")
+def _step_ui_path_headed(world: dict[str, Any]) -> None:
+    from gflow_cli.api.generation_route import Route  # pyright: ignore[reportMissingImports]
+
+    assert world["route"] == Route.UI
+    assert world["visibility"] == BrowserVisibility.HEADED
+
+
+@then("the launch visibility is headed")
+def _step_visibility_headed(world: dict[str, Any]) -> None:
+    assert world["visibility"] == BrowserVisibility.HEADED
