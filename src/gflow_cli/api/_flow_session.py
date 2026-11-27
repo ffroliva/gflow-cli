@@ -19,6 +19,7 @@ from playwright.async_api import BrowserContext, Page, Playwright
 
 from gflow_cli.api._engine import retryable_engine_errors
 from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
 )
@@ -399,13 +400,19 @@ class FlowSession:
         self,
         profile_dir: Path,
         *,
-        headless: bool = False,
+        visibility: BrowserVisibility = BrowserVisibility.HEADED,
+        headless: bool | None = None,
         settings: Settings | None = None,
         transport: FlowTransportStrategy | str | None = None,
         out_dir: Path | None = None,
     ) -> None:
         self.profile_dir = profile_dir
-        self.headless = headless
+        if headless is not None:
+            self.visibility = BrowserVisibility.HEADLESS if headless else BrowserVisibility.HEADED
+        else:
+            self.visibility = visibility
+        self.headless = self.visibility == BrowserVisibility.HEADLESS
+        self._unusable: bool = False
         # Optional directory for debug screenshots when a generation step
         # fails on a selector. Propagated to the transport (see __aenter__)
         # so long-lived workers can diagnose a "Could not find ... CTA"

@@ -211,7 +211,7 @@ def _retry_delay(deadline: float | None) -> float | None:
 
 def _lock_nonblocking(fd: int) -> None:
     """Acquire the kernel advisory lock on byte 0; raises OSError on contention."""
-    if sys.platform == "win32":
+    if sys.platform == "win32" or "msvcrt" in sys.modules:
         os.lseek(fd, 0, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
     else:
@@ -219,7 +219,7 @@ def _lock_nonblocking(fd: int) -> None:
 
 
 def _unlock(fd: int) -> None:
-    if sys.platform == "win32":
+    if sys.platform == "win32" or "msvcrt" in sys.modules:
         os.lseek(fd, 0, os.SEEK_SET)
         msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
     else:

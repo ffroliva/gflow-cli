@@ -1309,7 +1309,13 @@ class UiModeUnavailableError(GFlowError):
     next_action = "retry"
     title = "Requested Flow UI mode unavailable"
 
-    def __init__(self, requested: object, *, remediation_hint: str | None = None) -> None:
+    def __init__(
+        self,
+        requested: object,
+        *,
+        detail: str | None = None,
+        remediation_hint: str | None = None,
+    ) -> None:
         self.requested = requested
         arm = getattr(requested, "value", str(requested))
         other = "agentic" if arm == "classic" else "classic"
@@ -1321,8 +1327,13 @@ class UiModeUnavailableError(GFlowError):
             f"{other}/auto if the command allows it. Note: a server-side experiment "
             f"can pin the arm, in which case '{arm}' cannot be reached from the client."
         )
+        msg = (
+            detail
+            if detail is not None
+            else f"Required Flow UI mode '{arm}' is unavailable on this profile."
+        )
         super().__init__(
-            f"Required Flow UI mode '{arm}' is unavailable on this profile.",
+            msg,
             remediation_hint=remediation_hint,
         )
 
