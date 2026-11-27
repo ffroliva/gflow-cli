@@ -34,6 +34,7 @@ CHECK_IDS = (
     "env.browser_proxy",
     "auth.files_present",
     "auth.wire_read",
+    "models.catalog_drift",
 )
 
 
@@ -65,3 +66,11 @@ def healthy_doctor_env(monkeypatch: pytest.MonkeyPatch) -> None:
         return {"status": "accepted", "build": "boq_labs-flow-frontend_20261110.00_p0"}
 
     monkeypatch.setattr("gflow_cli.api.flow_wire.health", accepted)
+
+    # models.catalog_drift (#1550): the live catalog matches gflow's mapping; nothing is sent.
+    from gflow_cli.services import doctor
+
+    def matching(_settings: object, _profile: str | None = None) -> list[doctor.Finding]:
+        return [doctor.Finding("models.catalog_drift", "pass", "15 families, all mapped", "")]
+
+    monkeypatch.setattr(doctor, "check_model_catalog", matching)

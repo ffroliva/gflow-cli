@@ -2,9 +2,11 @@
 
 Brew-doctor philosophy: diagnose, never heal. Every check inspects local
 state (catalog DB, environment, auth files) and reports a :class:`Finding`;
-nothing is migrated, repaired, or written. One check is not local:
+nothing is migrated, repaired, or written. Two checks are not local, and send
+nothing while the direct read is disabled or a proxy is configured:
 ``auth.wire_read`` sends one GET and one POST to flow.google.com for the
-default profile (``flow_wire.health``), unless the direct read is disabled.
+default profile (``flow_wire.health``), and ``models.catalog_drift`` one more
+POST (``HTrJv``, Flow's model catalog, #1550).
 All DB access goes through :meth:`DataStore.open_readonly`, and every check
 runs inside a guard that
 converts unexpected exceptions into a "fail" finding — doctor must never
@@ -34,7 +36,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -43,9 +45,9 @@ import structlog
 # _cli_helpers is imported as a module (not `from ... import safe_path_text`)
 # so tests patching gflow_cli._cli_helpers.safe_path_text reach this layer.
 from gflow_cli import _cli_helpers, browser_manager, profile_store
-from gflow_cli.api import flow_wire
+from gflow_cli.api import flow_wire, model_catalog
 from gflow_cli.data.store import DataStore, inspect_schema
-from gflow_cli.errors import DataStoreError
+from gflow_cli.errors import DataStoreError, NetworkError, RateLimitError, SecurityError
 
 if TYPE_CHECKING:
     import sqlite3
@@ -58,6 +60,7 @@ log = structlog.get_logger(__name__)
 Severity = Literal["pass", "info", "warn", "fail"]
 
 _WIRE_READ = "auth.wire_read"
+_MODEL_CATALOG = "models.catalog_drift"
 
 #: Frozen v1 check inventory — mirrored by tests/fixtures/doctor_env.py.
 CHECK_IDS: tuple[str, ...] = (
@@ -73,6 +76,7 @@ CHECK_IDS: tuple[str, ...] = (
     "env.browser_proxy",
     "auth.files_present",
     _WIRE_READ,
+    _MODEL_CATALOG,
 )
 
 _STUCK_THRESHOLD = timedelta(hours=24)
@@ -511,10 +515,20 @@ _WIRE_HINTS = {
     "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
     " credits read through the browser",
     "proxy_configured": "the direct read is skipped while a proxy is configured"
-    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); credits read through the"
-    " browser",
+    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); credits and media trash"
+    " read through the browser",
     "throttled": "Flow is throttling this account; wait a minute, then re-run: gflow doctor",
 }
+
+
+def _default_profile(profile: str | None = None) -> tuple[str | None, str]:
+    """The profile to probe (``profile``, else the default), or ``None`` and a hint."""
+    try:
+        return profile_store.resolve_profile(profile), ""
+    except profile_store.NoProfilesError:
+        return None, "create one with: gflow auth login"
+    except profile_store.NoDefaultProfileError:
+        return None, "set a default with: gflow auth use <name>"
 
 
 def _check_wire_read(settings: Settings) -> list[Finding]:
@@ -524,13 +538,9 @@ def _check_wire_read(settings: Settings) -> list[Finding]:
     browser read still answers in each, and a state that follows from Chrome being open, the
     network, or a deliberate setting is not a defect. Status and build label only.
     """
-    hint = ""
-    try:
-        name = profile_store.resolve_profile(None)
-    except profile_store.NoProfilesError:
-        status, build, hint = "no_profile", None, "create one with: gflow auth login"
-    except profile_store.NoDefaultProfileError:
-        status, build, hint = "no_profile", None, "set a default with: gflow auth use <name>"
+    name, hint = _default_profile()
+    if name is None:
+        status, build = "no_profile", None
     else:
         result = asyncio.run(flow_wire.health(settings.profile_subdir(name), settings))
         status, build = str(result["status"]), result["build"]
@@ -542,6 +552,57 @@ def _check_wire_read(settings: Settings) -> list[Finding]:
         "credits fall back to the browser read; for details re-run with GFLOW_CLI_LOG_LEVEL=DEBUG",
     )
     return [_finding(_WIRE_READ, "info", summary, hint)]
+
+
+_CATALOG_HINTS = {
+    **_WIRE_HINTS,
+    "disabled": "the direct read is off (GFLOW_CLI_WIRE_READS=0, or the macOS default);"
+    " set GFLOW_CLI_WIRE_READS=1 to compare Flow's model catalog",
+    "proxy_configured": "the direct read is skipped while a proxy is configured"
+    " (GFLOW_CLI_BROWSER_PROXY, or an environment/system proxy); the model catalog is not"
+    " compared",
+}
+
+
+def check_model_catalog(
+    settings: Settings, profile: str | None = None, *, today: date | None = None
+) -> list[Finding]:
+    """Flow's live model catalog against gflow's mapping (#1550), read for ``profile``.
+
+    At most one shell GET and one ``HTrJv`` POST under the direct read's rules (default profile
+    unless named; the nightly canary names its own). ``warn`` only for a
+    :attr:`model_catalog.Drift.BREAK`; any other difference is ``info``, since no user can act
+    on it. A catalog that could not be read is ``info``: nothing was compared.
+    """
+    if not settings.wire_reads:
+        reason = "direct reads are off (GFLOW_CLI_WIRE_READS=0, or the macOS default)"
+        return [_finding(_MODEL_CATALOG, "info", f"skipped: {reason}")]
+    name, hint = _default_profile(profile)
+    if name is None:
+        return [_finding(_MODEL_CATALOG, "info", "skipped: no profile to read with", hint)]
+    try:
+        payload = asyncio.run(flow_wire.read_model_catalog(settings.profile_subdir(name)))
+    except flow_wire.WireReadUnavailable as exc:
+        hint = _CATALOG_HINTS.get(exc.reason.value, "")
+        return [_finding(_MODEL_CATALOG, "info", f"skipped: catalog read {exc.reason}", hint)]
+    except (RateLimitError, NetworkError):
+        summary = "skipped: catalog read throttled"
+        return [_finding(_MODEL_CATALOG, "info", summary, _CATALOG_HINTS["throttled"])]
+    except SecurityError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - as flow_wire.health: report, never fail doctor
+        log.warning("doctor.catalog_read_unexpected", error_type=type(exc).__name__)
+        return [_finding(_MODEL_CATALOG, "info", "skipped: catalog read unexpected")]
+    families = model_catalog.parse_htrjv_families(payload)
+    diffs = model_catalog.classify_catalog(families, today=today or date.today())
+    if not diffs:
+        return [_finding(_MODEL_CATALOG, "pass", f"{len(families)} families, all mapped")]
+    summary = f"{len(diffs)} difference(s) from gflow's model mapping: " + "; ".join(
+        d.line for d in diffs
+    )
+    severity = "warn" if any(d.kind is model_catalog.Drift.BREAK for d in diffs) else "info"
+    update = "gflow may be behind Flow's model list; check for a newer gflow: gflow update --check"
+    return [_finding(_MODEL_CATALOG, severity, summary, update)]
 
 
 # ---------------------------------------------------------------------------
@@ -618,6 +679,7 @@ def run_all(db_path: Path, settings: Settings) -> DoctorReport:
             ("env.browser_proxy", lambda: _check_browser_proxy(settings)),
             ("auth.files_present", _check_auth_files_present),
             (_WIRE_READ, lambda: _check_wire_read(settings)),
+            (_MODEL_CATALOG, lambda: check_model_catalog(settings)),
         )
         findings: list[Finding] = []
         for check_id, fn in checks:
