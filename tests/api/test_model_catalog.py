@@ -159,9 +159,9 @@ def test_the_retiring_families_dropped_on_their_date_are_retired_as_scheduled() 
     assert {kind for kind, _ in _classify(families, today=date(2027, 1, 1))} == {"retired"}
 
 
-def test_a_retiring_family_dropped_before_its_date_is_a_break() -> None:
+def test_a_retiring_family_dropped_before_its_grace_is_a_break() -> None:
     families = [f for f in _baseline() if f.key != "abra"]
-    assert _classify(families, today=date(2026, 12, 4)) == [
+    assert _classify(families, today=date(2026, 12, 3)) == [
         ("break", "removed family abra: gflow maps omni_flash")
     ]
 
@@ -202,20 +202,32 @@ def test_an_unmapped_key_inside_an_image_family_is_added() -> None:
     ]
 
 
-def test_a_mapped_video_familys_new_moved_or_dropped_date_is_a_break() -> None:
-    moved = {
-        "veo_3_1_lite": date(2027, 1, 31),
-        "veo_3_1_fast": date(2026, 12, 12),
-        "veo_3_1_quality": None,
-    }
-    families = [
+def _with_dates(moved: dict[str, date | None]) -> list[Any]:
+    return [
         _family(f.key, usages=f.usages, when=moved[f.key]) if f.key in moved else f
         for f in _baseline()
     ]
+
+
+def test_a_mapped_video_familys_new_later_or_withdrawn_date_is_information() -> None:
+    families = _with_dates(
+        {
+            "veo_3_1_lite": date(2027, 1, 31),
+            "veo_3_1_fast": date(2026, 12, 12),
+            "veo_3_1_quality": None,
+        }
+    )
     assert _classify(families) == [
-        ("break", "veo_3_1_lite: new retirement date 2027-01-31"),
-        ("break", "veo_3_1_fast: retirement date moved 2026-12-05 -> 2026-12-12"),
-        ("break", "veo_3_1_quality: retirement date 2026-12-05 withdrawn"),
+        ("added", "veo_3_1_lite: new retirement date 2027-01-31"),
+        ("added", "veo_3_1_fast: retirement date moved 2026-12-05 -> 2026-12-12"),
+        ("added", "veo_3_1_quality: retirement date 2026-12-05 withdrawn"),
+    ]
+
+
+def test_a_mapped_video_familys_date_moved_earlier_is_a_break() -> None:
+    families = _with_dates({"veo_3_1_fast": date(2026, 12, 1)})
+    assert _classify(families) == [
+        ("break", "veo_3_1_fast: retirement date moved 2026-12-05 -> 2026-12-01")
     ]
 
 
@@ -243,3 +255,11 @@ def test_the_parser_keeps_each_familys_usage_keys() -> None:
     by_key = {f.key: f for f in _baseline()}
     assert by_key["nano_banana_pro"].usages == ("GEM_PIX_2",)
     assert "abra_t2v_4s" in by_key["abra"].usages
+
+
+def test_the_retirement_day_has_one_day_of_grace_for_the_local_clock() -> None:
+    """Flow's date has no zone and ``date.today()`` is local: due - 1 day counts as retired."""
+    gone = {"abra", "veo_3_1_fast", "veo_3_1_quality"}
+    families = [f for f in _baseline() if f.key not in gone]
+    assert {k for k, _ in _classify(families, today=date(2026, 12, 4))} == {"retired"}
+    assert {k for k, _ in _classify(families, today=date(2026, 12, 3))} == {"break"}

@@ -22,7 +22,7 @@ selects a video model by family, so only the image keys gflow sends on the wire 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, cast
@@ -201,13 +201,16 @@ def _mapped_keys() -> dict[str, str]:
     return mapped | {key: model.value for model, (key, _) in IMAGE_FAMILY.items()}
 
 
+_GRACE = timedelta(days=1)
+
+
 class Drift(StrEnum):
     """What one catalog difference means for ``gflow doctor``. Only ``BREAK`` warns (exit 33)."""
 
-    ADDED = "added"  # Flow added a family, a key or a date gflow does not carry: no user can map it
-    RETIRED = "retired"  # a family gone on or after the retirement date gflow carries for it
+    ADDED = "added"  # news with no mapping: a new family or key, a video date new/later/withdrawn
+    RETIRED = "retired"  # a mapped video family gone from one day before its retirement date
     IGNORED = "ignored"  # a family gflow deliberately does not use changed
-    BREAK = "break"  # a family, key or date gflow relies on changed before it was due to
+    BREAK = "break"  # a mapped family, key or date changed before it was due to
 
 
 @dataclass(frozen=True)
@@ -230,9 +233,10 @@ def classify_catalog(families: Sequence[ModelFamily], *, today: date) -> list[Di
     """Every way ``families`` differ from gflow's mapping, each sorted into a :class:`Drift`.
 
     Empty when they agree. ``BREAK``: no families at all, a mapped family or image wire key
-    gone (a video family only before the date in :data:`RETIRES_ON`), or a mapped video
-    family's retirement date changed. Everything else is information: an added family or
-    key, a date on a family gflow carries no date for, a scheduled retirement, a change to an
+    gone (a video family only before one day short of its date in :data:`RETIRES_ON`: Flow's
+    date has no zone and ``today`` is local), or a mapped video family's retirement date
+    moved earlier. Everything else is information: an added family or key, a video date
+    that is new, later or withdrawn, a scheduled retirement, a change to an
     :data:`IGNORED_FAMILIES` entry.
     """
     if not families:
@@ -258,7 +262,7 @@ def classify_catalog(families: Sequence[ModelFamily], *, today: date) -> list[Di
     for key, model in mapped.items():
         if key not in by_key:
             due = retires_on(video[key]) if key in video else None
-            kind = Drift.RETIRED if due is not None and today >= due else Drift.BREAK
+            kind = Drift.RETIRED if due is not None and today >= due - _GRACE else Drift.BREAK
             diffs.append(Difference(kind, f"removed family {key}: gflow maps {model}"))
     diffs += [
         Difference(Drift.IGNORED, f"removed family {key}: listed as ignored in gflow")
@@ -277,7 +281,8 @@ def classify_catalog(families: Sequence[ModelFamily], *, today: date) -> list[Di
         if was == family.retires_on:
             continue
         if family.key in video:
-            kind = Drift.BREAK
+            earlier = was is not None and family.retires_on is not None and family.retires_on < was
+            kind = Drift.BREAK if earlier else Drift.ADDED
         else:
             kind = Drift.IGNORED if family.key in IGNORED_FAMILIES else Drift.ADDED
         diffs.append(Difference(kind, _date_change(family.key, was, family.retires_on)))
