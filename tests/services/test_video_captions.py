@@ -630,18 +630,19 @@ def test_caption_font_renders_cjk_when_a_cjk_font_is_installed() -> None:
 
 
 class _CoverageFont:
-    """Covers CJK only when its path names a CJK-capable face."""
+    """Draws ASCII; draws CJK only when its path says ``cjk``; never draws emoji."""
 
     def __init__(self, path: str) -> None:
         self.path = path
-        self.cjk = any(k in path for k in ("msyh", "malgun", "CJK", "Unicode"))
 
     def getmask(self, text: str) -> bytes:
-        return (
-            b"tofu"
-            if text == "\U0010ffff" or (ord(text) > 0x2FFF and not self.cjk)
-            else (text.encode())
-        )
+        if text == "\U0010ffff" or ord(text) > 0xFFFF:
+            return b"tofu"
+        if ord(text) > 0x2FFF and "cjk" not in self.path:
+            return b"tofu"
+        if "broken" in self.path:
+            raise OSError("bad glyph table")
+        return text.encode()
 
 
 class _CoverageFontModule:
@@ -654,15 +655,24 @@ class _CoverageFontModule:
         return _CoverageFont("default")
 
 
-def test_caption_font_skips_installed_fonts_that_lack_the_texts_glyphs(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Hello", "latin"),  # Latin keeps the first installed font, as before
+        ("字幕 한국어", "cjk"),
+        ("中文 😀", "cjk"),  # an emoji no font draws must not send CJK back to tofu
+        ("﻿中文‎字‍", "cjk"),  # BOM / LRM / ZWJ need no glyph
+        ("😀", "latin"),  # nothing covers it: the earliest installed font
+    ],
+)
+def test_caption_font_picks_the_installed_font_that_draws_the_text(
+    text: str, expected: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    fonts = ("latin", "broken", "cjk")  # "broken" raises from getmask and is skipped
+    monkeypatch.setattr(service, "_CAPTION_FONTS_NT", fonts)
+    monkeypatch.setattr(service, "_CAPTION_FONTS_POSIX", fonts)
     monkeypatch.setattr(service.Path, "is_file", lambda _self: True)
-    latin = service._load_caption_font(720, _CoverageFontModule, text="Hello")
-    cjk = service._load_caption_font(720, _CoverageFontModule, text="字幕 한국어")
-    # Latin captions keep the first installed font, as before; CJK skips the ones without glyphs.
-    assert latin.path == service._load_caption_font(720, _CoverageFontModule).path
-    assert cjk.cjk
+    assert service._load_caption_font(720, _CoverageFontModule, text=text).path == expected
 
 
 @pytest.mark.parametrize(

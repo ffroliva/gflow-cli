@@ -8,6 +8,7 @@ import math
 import os
 import re
 import tempfile
+import unicodedata
 import wave
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -840,13 +841,20 @@ _CAPTION_FONTS_POSIX = (
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
-    "/System/Library/Fonts/PingFang.ttc",
 )
+#: Invisible or combining marks (BOM, LRM, ZWJ, VS16) that no font needs a glyph for.
+_NO_GLYPH_CATEGORIES = frozenset({"Cf", "Mn", "Me"})
 
 
-def _covers(font: Any, text: str) -> bool:
+def _coverage(font: Any, text: str) -> tuple[int, int]:
+    """(characters drawn, characters needing a glyph) for ``text`` in ``font``."""
     tofu = bytes(font.getmask("\U0010ffff"))
-    return all(bytes(font.getmask(char)) != tofu for char in set(text) if not char.isspace())
+    chars = [
+        c
+        for c in set(text)
+        if not c.isspace() and unicodedata.category(c) not in _NO_GLYPH_CATEGORIES
+    ]
+    return sum(bytes(font.getmask(c)) != tofu for c in chars), len(chars)
 
 
 def _load_caption_font(
@@ -858,22 +866,26 @@ def _load_caption_font(
 ) -> Any:
     """The first installed font that draws every character of ``text`` (#1535).
 
-    Falls back to the first installed font when none covers it, as before."""
+    When none draws all of it (an emoji beside CJK), the one that draws the most, the
+    earliest on a tie; Pillow's default when no listed font is installed."""
     if image_font_module is None:
         from PIL import ImageFont
 
         image_font_module = ImageFont
 
     resolved_size = size if size is not None else max(14, round(height * 0.045))
-    first: Any = None
+    best: Any = None
+    best_drawn = -1
     for candidate in _CAPTION_FONTS_NT if os.name == "nt" else _CAPTION_FONTS_POSIX:
         if not Path(candidate).is_file():
             continue
         try:
             font = image_font_module.truetype(candidate, size=resolved_size)
+            drawn, needed = _coverage(font, text)
         except OSError:
             continue
-        if _covers(font, text):
+        if drawn == needed:
             return font
-        first = first or font
-    return first or image_font_module.load_default(size=resolved_size)
+        if drawn > best_drawn:
+            best, best_drawn = font, drawn
+    return best or image_font_module.load_default(size=resolved_size)
