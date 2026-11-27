@@ -975,6 +975,8 @@
   "_pw",
   "_recorder",
   "_recorder_handlers",
+  "_relaunch_gate",
+  "_relaunch_lock",
   "_transport_input",
   "_unusable",
   "headless",

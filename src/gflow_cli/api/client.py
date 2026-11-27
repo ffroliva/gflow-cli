@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import time
@@ -40,6 +41,7 @@ from gflow_cli.api._flow_session import (
 from gflow_cli.api._flow_session import (
     _LABS_ORIGIN,  # pyright: ignore[reportPrivateUsage]
     JsonObject,
+    RelaunchFailed,
 )
 from gflow_cli.api._flow_session import (
     _extract_provider_error_message as _extract_provider_error_message,  # pyright: ignore[reportPrivateUsage]
@@ -78,6 +80,7 @@ from gflow_cli.api.transports import (
 )
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
+    SupportsQuiesce,
     SupportsTransportSetup,
     TransportSetup,
 )
@@ -93,7 +96,6 @@ from gflow_cli.diagnostics import IncidentRecorder, run_retention, validated_inc
 from gflow_cli.errors import (
     ConfigurationError,
     FlowApiError,  # re-exported via gflow_cli.api.__init__
-    GFlowError,
     ProfileAccessError,
     ProfileLockedError,
     UiModeUnavailableError,
@@ -105,30 +107,16 @@ from gflow_cli.profile_lease import ProfileLease
 from gflow_cli.winsec import ensure_profile_hardened
 
 
-class RelaunchFailed(GFlowError):  # noqa: N818 — per plan naming
-    """Raised when relaunching the browser process under a held lease fails.
-
-    Leaves the lease held and the client unusable; the retry loop turns this
-    into the final not-charged refusal (Task 13).
-    """
-
-    problem_type = "https://gflow-cli.dev/errors/relaunch-failed"
-    charged = "no"
-    next_action = "none"
-    title = "Browser relaunch failed"
+def _on_linux() -> bool:
+    return sys.platform.startswith("linux")
 
 
 def _check_display_server(visibility: BrowserVisibility) -> None:
     """Refuse a headed launch on Linux if no display server is available."""
-    if visibility == BrowserVisibility.HEADED and sys.platform.startswith("linux"):
+    if visibility == BrowserVisibility.HEADED and _on_linux():
         if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
             raise UiModeUnavailableError(
                 BrowserVisibility.HEADED,
-                detail=(
-                    "Headed browser launch requires a display server on Linux "
-                    "(neither DISPLAY nor WAYLAND_DISPLAY is set). "
-                    "Run under xvfb-run or use headless mode."
-                ),
                 remediation_hint=(
                     "A headed browser launch requires a display server on Linux, but neither "
                     "DISPLAY nor WAYLAND_DISPLAY is set. Run under xvfb-run (e.g. "
@@ -209,6 +197,13 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         # acquire it and spirals into about:blank / TargetClosedError. Tear
         # down everything opened after the driver starts on any failure.
         try:
+            # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
+            # the headed context, so _ensure_context_session_cookie can seed them if the
+            # headed context can't decrypt the on-disk store. Must run pre-launch and
+            # pre-lease — the snapshot's fallback opens a headless context on the same
+            # profile, which would deadlock on the singleton lock once the headed
+            # context holds it. Once per client: relaunch() reuses this snapshot.
+            await self._preread_flow_session_cookies()
             await self._enter_setup()
         except BaseException:
             await self._close_browser_resources(release_lease=True)
@@ -453,17 +448,11 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         """
         # Invariant: __aenter__ sets self._pw immediately before calling us.
         assert self._pw is not None
-        # issue #222 (macOS): pre-read the profile's Flow cookies BEFORE launching
-        # the headed context, so _ensure_context_session_cookie can seed them if the
-        # headed context can't decrypt the on-disk store. Must run pre-launch — the
-        # snapshot's fallback opens a headless context on the same profile, which
-        # would deadlock on the singleton lock once the headed context holds it.
-        await self._preread_flow_session_cookies()
         kwargs = self._persistent_context_kwargs()
         if self._recorder is not None:
             self._recorder.note_har_pre_launch(self.settings.har_path)
         # Own the profile BEFORE Chrome launches. Acquire here (not earlier):
-        # _preread_flow_session_cookies above may itself momentarily own a
+        # _preread_flow_session_cookies (run by __aenter__ just before) may itself momentarily own a
         # headless context on this profile (its cookie-decrypt fallback), which
         # takes and releases its own lease first — acquiring earlier would make
         # this a same-process double-acquire. Contention raises ProfileLockedError
@@ -800,75 +789,85 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
     async def relaunch(self, visibility: BrowserVisibility) -> None:
         """Relaunch the browser process under the held profile lease.
 
-        Drains in-flight direct work via transport.quiesce() and waits for all
-        pooled pages to check back in. Then closes browser context and driver,
-        and launches a fresh browser process at the given visibility without
-        releasing the profile lease.
+        Checks the display before touching anything, so a refused headed launch
+        leaves the client intact. Then, inside ``transport.quiesce()`` when the
+        transport has one, waits for every pool page to check back in, closes the
+        context and driver, and launches a fresh browser at ``visibility``
+        without releasing the lease. Relaunches are serialised; a page checkout
+        arriving meanwhile waits for the new pool (or the failure).
 
-        If relaunch fails, the lease remains held and the client is marked
-        unusable, raising RelaunchFailed. The lease is only released on __aexit__.
+        A failure marks the client unusable and raises :class:`RelaunchFailed`;
+        a cancellation marks it unusable, closes best-effort and is re-raised.
+        Either way the lease stays held until ``__aexit__``.
         """
-        if self._unusable:
-            raise RelaunchFailed("FlowApiClient is unusable after a previous relaunch failure")
-        if self._lease is None:
-            raise RuntimeError(
-                "FlowApiClient.relaunch() requires an active entered client holding a lease"
+        async with self._relaunch_lock:
+            if self._unusable:
+                raise RelaunchFailed("FlowApiClient is unusable after a failed browser relaunch")
+            if self._lease is None:
+                raise RuntimeError(
+                    "FlowApiClient.relaunch() requires an active entered client holding a lease"
+                )
+            if not self._owns_transport:
+                raise ConfigurationError(
+                    "FlowApiClient cannot relaunch with a caller-owned transport: it was set "
+                    "up on the current browser page and would be left on a closed context. "
+                    "Pass a transport name instead of an instance.",
+                )
+            _check_display_server(visibility)
+            quiesce = (
+                self.transport.quiesce()
+                if isinstance(self.transport, SupportsQuiesce)
+                else contextlib.nullcontext()
             )
-
-        quiesce_fn: Any = getattr(self.transport, "quiesce", None)
-        if quiesce_fn is not None and callable(quiesce_fn):
-            cm: Any = quiesce_fn()
-            if hasattr(cm, "__aenter__") and hasattr(cm, "__aexit__"):
-                async with cm:
+            self._relaunch_gate.clear()
+            try:
+                async with quiesce:
                     await self._drain_and_relaunch(visibility)
-                return
-            if asyncio.iscoroutine(cm):
-                await cm
-
-        await self._drain_and_relaunch(visibility)
+            finally:
+                self._relaunch_gate.set()
 
     async def _drain_page_pool(self) -> None:
         """Wait until every pool page is checked back in."""
-        if self._page_queue is None or not self._pages:
+        if self._page_queue is None:
             return
-        total = len(self._pages)
-        drained: list[Page] = []
-        for _ in range(total):
-            page = await self._page_queue.get()
-            drained.append(page)
+        for _ in self._pages:
+            await self._page_queue.get()
 
     async def _drain_and_relaunch(self, visibility: BrowserVisibility) -> None:
-        await self._drain_page_pool()
-
-        self.visibility = visibility
-        self.headless = visibility == BrowserVisibility.HEADLESS
-
-        if self._owns_transport and self.transport is not None:
-            try:
-                await self.transport.teardown()
-            except Exception:
-                logger.warning("transport_teardown_error", exc_info=True)
-
-        await self._close_browser_resources(release_lease=False)
-
-        _check_display_server(self.visibility)
-
         try:
+            await self._drain_page_pool()
+            if self.transport is not None:
+                try:
+                    await self.transport.teardown()
+                except Exception:
+                    logger.warning("transport_teardown_error", exc_info=True)
+            await self._close_browser_resources(release_lease=False)
+            self.visibility = visibility
+            self.headless = visibility == BrowserVisibility.HEADLESS
+            # The old recorder was frozen by the close; journal the new browser afresh.
+            self._recorder = IncidentRecorder(self.settings)
             engine = active_engine()
             log_engine_selected(engine)
             if engine == BrowserEngine.PATCHRIGHT:
                 self._pw = await resolve_async_playwright(engine)().start()
             else:
                 self._pw = await async_playwright().start()
-
             await self._enter_setup()
-        except BaseException as exc:
+        except Exception as exc:
             self._unusable = True
-            try:
-                await self._close_browser_resources(release_lease=False)
-            except Exception:
-                pass
+            await self._close_after_failed_relaunch()
             raise RelaunchFailed(f"Browser relaunch failed: {exc}") from exc
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            self._unusable = True
+            await self._close_after_failed_relaunch()
+            raise
+
+    async def _close_after_failed_relaunch(self) -> None:
+        """Best-effort close that keeps the lease; never masks the original error."""
+        try:
+            await self._close_browser_resources(release_lease=False)
+        except BaseException:  # noqa: BLE001 — the caller re-raises the original
+            logger.warning("client.relaunch_cleanup_error", exc_info=True)
 
     async def set_archived_media(
         self, media_id: str, project_id: str, *, archived: bool
