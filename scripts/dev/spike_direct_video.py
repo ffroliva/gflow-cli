@@ -743,6 +743,53 @@ async def run_image_models(wire: Wire, project_id: str, models: list[str]) -> No
         )
 
 
+async def run_cross_project(wire: Wire, page: Any, home: str, other: str, n: int) -> None:
+    """Mint on a page parked on project HOME, submit an image to project OTHER (no navigation)."""
+    from gflow_cli.api._engine import mint_evaluate_kwargs
+    from gflow_cli.api.recaptcha import TokenMinter
+    from gflow_cli.api.transports.batchexecute import image_records
+    from gflow_cli.api.transports.frame_builder import build_ogiz0b_body
+
+    minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
+    for i in range(1, n + 1):
+        parked = page.url
+        t0 = time.perf_counter()
+        token = await minter.mint("IMAGE_GENERATION")
+        mint_ms = round((time.perf_counter() - t0) * 1000)
+        body = build_ogiz0b_body(
+            prompt="a lighthouse on a rocky coast, ink and watercolor",
+            model="BELUGA",
+            project_id=other,
+            recaptcha_token=token,
+            at_token=wire.tokens.at,
+            batch_id=str(uuid.uuid4()).upper(),
+            entry_seeds=(1 + int.from_bytes(os.urandom(4), "big") % (2**31 - 2),),
+        )
+        status, text, ms = await wire.send_body("ogiZ0b", body, other)
+        recs: list[Any] = []
+        for rid, data in parse_frames(text) if status == 200 else []:
+            if rid == "ogiZ0b":
+                with contextlib.suppress(Exception):
+                    recs.extend(image_records(rid, data))
+        errs = (
+            [{"code": e.code, "reasons": list(e.reasons)} for e in rpc_errors(text)]
+            if status == 200
+            else []
+        )
+        _log(
+            "cross_project",
+            i=i,
+            parked_on_home=home in parked,
+            submitted_to=other,
+            still_parked=page.url == parked,
+            status=status,
+            mint_ms=mint_ms,
+            post_ms=ms,
+            verdict="GENERATED" if recs else ("REJECTED" if errs else "EMPTY"),
+            errors=errs,
+        )
+
+
 def _keep_awake(on: bool) -> None:
     """Ask Windows not to sleep while the spike runs (no-op elsewhere)."""
     if sys.platform == "win32":
@@ -784,6 +831,7 @@ async def main() -> None:
     ap.add_argument("--idle", type=float, default=0, help="minutes idle between two images")
     ap.add_argument("--image-models", default="", help="raw wire names, e.g. HARBOR_SEAL,GEM_PIX_2")
     ap.add_argument("--video-aspect", type=int, default=2, help="1 = 9:16, 2 = 16:9 (--spend)")
+    ap.add_argument("--cross-project", default="", help="OTHER project id: mint here, submit there")
     args = ap.parse_args()
 
     profile_dir = resolve_profile_dir(args.profile)
@@ -840,6 +888,8 @@ async def main() -> None:
                 )
             if args.images:
                 await phase_images(client, profile_dir, project_id, args.images)
+            if args.cross_project:
+                await run_cross_project(wire, page, project_id, args.cross_project, 3)
             if args.image_models:
                 await run_image_models(wire, project_id, args.image_models.split(","))
             if args.concurrency:

@@ -203,6 +203,16 @@ Readings, each from one observation:
   the retry must come from a **new page**; the headed fallback's relaunch provides one.
 - Whether idle alone needs a re-arm is **unmeasured**: the burst confounded the idle arm.
 
+### Cross-project tokens, and the burst re-run
+
+- **A token minted on a page parked on one project was accepted for a submit to another** (3/3,
+  account A, headless; the page never navigated). One armed page can serve every project.
+- **The burst did not reproduce.** Two back-to-back runs of 8 in flight on account B (16 images in
+  about 55 s, a faster pace than the earlier 14 in 90 s) were 16/16, and fresh headless and headed
+  pages started immediately afterwards were 4/4. The earlier refusal window is therefore
+  unexplained, not disproven; whether a headed retry helps right after a refusal stays
+  **unmeasured**, because no refusal could be provoked.
+
 ### A UI-path observation
 
 On account B a "redeem bonus credits" modal (a three-day streak reward) covered the project page.
