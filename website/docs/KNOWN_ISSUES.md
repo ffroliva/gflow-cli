@@ -72,12 +72,14 @@ in use (`ProfileLockedError`, exit 11) as before. Linux is unmeasured.
 
 **Remedy / opt-out:** set `GFLOW_CLI_WIRE_READS=0` to always read in the browser
 ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)). If Flow ever answers signed out
-or HTTP 401, that process stops trying the direct read for that profile until a `--refresh`
-renewal that Flow authenticated, or a `gflow_auth_status` probe in that MCP server that Flow
-accepts (`gflow doctor` runs in its own process, so it cannot lift another process's mark).
-If it answers HTTP 429 or 503, that profile is left alone for the throttle window
-(`Retry-After`, capped at 60 s) and nothing retries in the browser: `credits user` exits 4 or
-6, and `credits list` records the error for that profile and keeps the other balances.
+or HTTP 401, that process stops trying the direct read for that profile for 5 minutes (300 s),
+or until a `--refresh` renewal that Flow authenticated (including `labs_stale` renewals for
+`flow.google.com` targets), or a `gflow_auth_status` probe that clears or gets a Flow answer
+(`gflow doctor` runs in its own process, so it cannot lift another process's mark;
+pre-response `health()` failures preserve an active mark). If it answers HTTP 429 or 503, that
+profile is left alone for the throttle window (`Retry-After`, capped at 60 s) and nothing
+retries in the browser: `credits user` exits 4 or 6, and `credits list` records the error for
+that profile and keeps the other balances.
 
 ---
 

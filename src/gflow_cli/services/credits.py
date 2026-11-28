@@ -12,7 +12,7 @@ from gflow_cli.api import flow_wire
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import CreditsInfo
 from gflow_cli.auth.renew import renew_profile
-from gflow_cli.config import get_settings
+from gflow_cli.config import Settings, get_settings
 from gflow_cli.errors import (
     AuthExpiredError,
     GFlowError,
@@ -50,10 +50,10 @@ def _success(meta: profile_store.ProfileMeta, info: CreditsInfo) -> dict[str, An
     }
 
 
-async def _read_wire(meta: profile_store.ProfileMeta) -> CreditsInfo | None:
+async def _read_wire(meta: profile_store.ProfileMeta, settings: Settings) -> CreditsInfo | None:
     """The balance read with no browser (#1229), or None when the page path must answer."""
     try:
-        return await flow_wire.read_credits(meta.profile_dir)
+        return await flow_wire.read_credits(meta.profile_dir, settings=settings)
     except (SecurityError, RateLimitError, NetworkError):
         # Refused (a profile outside GFLOW_CLI_HOME), or back-pressure from Flow: the page
         # would send the same RPCs to a throttled account, so neither goes to the browser.
@@ -76,7 +76,7 @@ async def _fetch_once(meta: profile_store.ProfileMeta) -> dict[str, Any]:
     # profile's saved cookies BEFORE any FlowApiClient exists, because building one launches
     # Chrome; only when that fails does the browser load the app and read it (#1229).
     settings = get_settings()
-    if settings.wire_reads and (info := await _read_wire(meta)) is not None:
+    if settings.wire_reads and (info := await _read_wire(meta, settings)) is not None:
         log.info("credits.read", profile=meta.name, source="wire")
         return _success(meta, info)
     async with FlowApiClient(profile_dir=meta.profile_dir, headless=settings.headless) as client:
@@ -105,10 +105,10 @@ async def _fetch(meta: profile_store.ProfileMeta, *, refresh: bool = False) -> d
         # channel is missing). The first read's diagnosis is still the accurate one.
         log.info("credits.refresh_failed", profile=meta.name, error_type=type(exc).__name__)
         raise expired from exc
-    # `labs_unverified` (Flow authenticated the session, the labs step itself failed) still
-    # gets the re-ask: the Flow visit may have rotated what the read needs. A labs 410 is
-    # already `renewed` (#1023).
-    if not result.renewed and result.result != "labs_unverified":
+    # `labs_unverified` and `labs_stale` mean Flow itself authenticated the session while
+    # labs.google did not: the direct read only talks to flow.google.com, so any non-/about
+    # renewal Flow authenticated gets one re-ask (#1023, #1242).
+    if not result.renewed and result.result not in ("labs_unverified", "labs_stale"):
         # Revoked, or held at Flow's /about page: the first read's diagnosis stands.
         log.info(
             "credits.refresh_failed",

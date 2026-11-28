@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -22,6 +23,8 @@ from gflow_cli.api import flow_wire
 from gflow_cli.api.flow_wire import WireFallbackReason, WireReadUnavailable
 from gflow_cli.auth.cookies import CookieStoreUnreadable
 from gflow_cli.errors import NetworkError, RateLimitError
+
+_REAL_NATIVE_OS_PROXIES = flow_wire._native_os_proxies  # pyright: ignore[reportPrivateUsage]
 
 _FAKE_COOKIES = [("SID", "fake-sid-value"), ("__Secure-3PSID", "fake-3psid"), ("OSID", "fake-osid")]
 _FAKE_AT = "AFAKEATTOKEN:1700000000000"
@@ -657,14 +660,7 @@ async def test_an_environment_proxy_skips_the_wire(
     `getproxies` (environment, and on Windows the system proxy) decides."""
     import urllib.request
 
-    for name in (
-        "HTTPS_PROXY",
-        "HTTP_PROXY",
-        "ALL_PROXY",
-        "https_proxy",
-        "http_proxy",
-        "all_proxy",
-    ):
+    for name in [k for k in os.environ if k.lower().endswith("_proxy")]:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(var, "http://127.0.0.1:3128")
     monkeypatch.setattr(flow_wire, "getproxies", urllib.request.getproxies)
@@ -862,7 +858,7 @@ async def test_health_reports_throttling_and_then_sends_nothing(
 async def test_health_passes_every_fallback_reason_through(
     profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch, reason: WireFallbackReason
 ) -> None:
-    async def fails(_p: Path) -> object:
+    async def fails(_p: Path, **_kw: object) -> object:
         raise WireReadUnavailable(reason)
 
     monkeypatch.setattr(flow_wire, "read_credits", fails)
@@ -873,7 +869,7 @@ async def test_health_passes_every_fallback_reason_through(
 async def test_health_turns_a_wire_bug_into_unexpected(
     profile: Path, wire_on: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def boom(_p: Path) -> object:
+    async def boom(_p: Path, **_kw: object) -> object:
         raise RuntimeError("SID=fake-sid-value")
 
     monkeypatch.setattr(flow_wire, "read_credits", boom)
@@ -1041,3 +1037,368 @@ async def test_an_undecodable_catalog_frame_is_unparseable(profile: Path, flow: 
     with pytest.raises(WireReadUnavailable) as exc:
         await flow_wire.read_model_catalog(profile)
     assert _reason(exc) is WireFallbackReason.UNPARSEABLE
+
+
+# --- #1242: signed-out mark TTL, health() preservation, passed settings, session_recovered ---
+
+
+async def test_signed_out_mark_expires_after_ttl_and_recovers(
+    profile: Path, flow: _Flow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1242(1): a signed-out mark suppresses rapid repeats, then lifts after its TTL."""
+    now = [1000.0]
+    monkeypatch.setattr(flow_wire, "_clock", lambda: now[0])
+
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.SIGNED_OUT_SHELL
+
+    # Before TTL expiry, repeats do not touch Flow again.
+    now[0] += flow_wire._SIGNED_OUT_TTL_S - 1.0  # pyright: ignore[reportPrivateUsage]
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+    with pytest.raises(WireReadUnavailable):
+        await flow_wire.read_credits(profile)
+    assert (len(flow.gets), len(flow.posts)) == (1, 0)
+
+    # Past TTL expiry and still signed out -> re-probes once and re-marks.
+    now[0] += 2.0
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable) as exc2:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc2) is WireFallbackReason.SIGNED_OUT_SHELL
+    assert len(flow.gets) == 2
+
+    # Past the second TTL expiry and signed back in -> recovers cleanly.
+    now[0] += flow_wire._SIGNED_OUT_TTL_S + 1.0  # pyright: ignore[reportPrivateUsage]
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+    info = await flow_wire.read_credits(profile)
+    assert info.credits == 42
+    assert (len(flow.gets), len(flow.posts)) == (3, 1)
+    assert profile not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    "failure_mode",
+    ["store_unreadable", "network", "proxy_configured", "throttled", "unexpected"],
+)
+async def test_health_preserves_signed_out_mark_when_flow_never_answers(
+    profile: Path,
+    flow: _Flow,
+    wire_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    """#1242(2): health() only drops an existing signed-out mark when Flow actually answers."""
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.SIGNED_OUT_SHELL
+
+    with monkeypatch.context() as m:
+        if failure_mode == "store_unreadable":
+
+            def unreadable(_p: Path) -> list[tuple[str, str]]:
+                raise CookieStoreUnreadable("locked")
+
+            m.setattr(flow_wire, "read_cookies_for", unreadable)
+        elif failure_mode == "network":
+
+            def down(_r: httpx.Request) -> httpx.Response:
+                raise httpx.ConnectError("offline")
+
+            m.setattr(flow, "shell", down)
+        elif failure_mode == "proxy_configured":
+            m.setattr(flow_wire, "getproxies", lambda: {"https": "http://127.0.0.1:3128"})
+        elif failure_mode == "throttled":
+            flow_wire._throttled[profile] = (flow_wire._clock() + 30.0, 429)  # pyright: ignore[reportPrivateUsage]
+        elif failure_mode == "unexpected":
+
+            async def boom(_p: Path, **_kw: object) -> object:
+                raise RuntimeError("boom")
+
+            m.setattr(flow_wire, "read_credits", boom)
+
+        probe = await flow_wire.health(profile)
+        assert probe["status"] == failure_mode
+
+    flow_wire._throttled.pop(profile, None)  # pyright: ignore[reportPrivateUsage]
+    flow.gets.clear()
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+    with pytest.raises(WireReadUnavailable) as after:
+        await flow_wire.read_credits(profile)
+    assert _reason(after) is WireFallbackReason.SIGNED_OUT_SHELL
+    assert flow.gets == []
+
+    # When health() does reach Flow and Flow returns 401, the mark updates to HTTP_401.
+    flow.rpc = lambda _r: httpx.Response(401, text="")
+    assert await flow_wire.health(profile) == {"status": "http_401", "build": None}
+    with pytest.raises(WireReadUnavailable) as after_401:
+        await flow_wire.read_credits(profile)
+    assert _reason(after_401) is WireFallbackReason.HTTP_401
+
+
+async def test_health_honours_unproxied_settings_when_global_settings_has_proxy(
+    profile: Path,
+    flow: _Flow,
+    wire_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1242(4): read_credits and health() use the passed Settings, not global settings."""
+    from gflow_cli.config import get_settings, reset_settings
+
+    monkeypatch.setenv("GFLOW_CLI_BROWSER_PROXY", "http://127.0.0.1:3128")
+    reset_settings()
+    unproxied = get_settings().model_copy(update={"browser_proxy": None, "wire_reads": True})
+
+    # `NO_PROXY` alone emits key "no" from urllib.request.getproxies() and is not a proxy.
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"no": "localhost"})
+
+    result = await flow_wire.health(profile, unproxied)
+    assert result["status"] == "accepted"
+
+    flow_wire.reset_state()
+    info = await flow_wire.read_credits(profile, settings=unproxied)
+    assert info.credits == 42
+
+
+async def test_health_calls_session_recovered_before_probing(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1242(5): health() delegates mark/token reset to session_recovered."""
+    from gflow_cli.config import get_settings
+
+    calls: list[Path] = []
+    real = flow_wire.session_recovered
+
+    def spy(p: Path) -> None:
+        calls.append(p)
+        real(p)
+
+    monkeypatch.setattr(flow_wire, "session_recovered", spy)
+    off = get_settings().model_copy(update={"wire_reads": False})
+    assert (await flow_wire.health(profile, off))["status"] == "disabled"
+    assert calls == []
+
+    proxied = get_settings().model_copy(update={"browser_proxy": "http://127.0.0.1:3128"})
+    assert (await flow_wire.health(profile, proxied))["status"] == "proxy_configured"
+    assert calls == []
+
+    assert (await flow_wire.health(profile))["status"] == "accepted"
+    assert calls == [profile]
+
+
+async def test_no_proxy_env_does_not_hide_native_os_proxy(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1242 review: NO_PROXY alone must not bypass an active native OS proxy."""
+    import sys
+    import urllib.request
+
+    for name in [k for k in os.environ if k.lower().endswith("_proxy")]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NO_PROXY", "localhost")
+    monkeypatch.setattr(flow_wire, "getproxies", urllib.request.getproxies)
+    monkeypatch.setattr(flow_wire, "_native_os_proxies", _REAL_NATIVE_OS_PROXIES)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    os_proxies: dict[str, str] = {"https": "http://127.0.0.1:8888"}
+    monkeypatch.setattr(urllib.request, "getproxies_registry", lambda: os_proxies, raising=False)
+
+    assert await flow_wire.health(profile) == {"status": "proxy_configured", "build": None}
+    with pytest.raises(WireReadUnavailable) as exc:
+        await flow_wire.read_credits(profile)
+    assert _reason(exc) is WireFallbackReason.PROXY_CONFIGURED
+
+    os_proxies.clear()
+    assert (await flow_wire.health(profile))["status"] == "accepted"
+
+
+async def test_overlapping_failed_health_probe_does_not_undo_newer_recovery(
+    profile: Path, flow: _Flow, wire_on: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1242 review: an older failing health() probe must not restore a recovered mark."""
+    flow.shell = lambda _r: httpx.Response(200, text=_SIGNED_OUT_SHELL)
+    with pytest.raises(WireReadUnavailable):
+        await flow_wire.read_credits(profile)
+
+    probe_a_waiting = asyncio.Event()
+    release_probe_a = asyncio.Event()
+    calls = 0
+
+    async def fake_read_cookies(_p: Path) -> list[tuple[str, str]]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            probe_a_waiting.set()
+            await release_probe_a.wait()
+            raise CookieStoreUnreadable("locked")
+        return list(_FAKE_COOKIES)
+
+    monkeypatch.setattr(flow_wire, "_read_cookies", fake_read_cookies)
+    flow.shell = lambda _r: httpx.Response(200, text=_SHELL)
+
+    probe_a = asyncio.create_task(flow_wire.health(profile))
+    await probe_a_waiting.wait()
+
+    # Newer probe B succeeds while probe A is stuck reading cookies.
+    assert (await flow_wire.health(profile))["status"] == "accepted"
+
+    release_probe_a.set()
+    assert (await probe_a)["status"] == "store_unreadable"
+
+    # Recovery from probe B must remain active for subsequent credit reads.
+    assert profile not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+    assert (await flow_wire.read_credits(profile)).credits == 42
+
+    # External session_recovered() while probe_c is stuck must NOT have probe_c restore stale mark.
+    flow_wire._mark_signed_out(profile, WireFallbackReason.SIGNED_OUT_SHELL)  # pyright: ignore[reportPrivateUsage]
+    probe_c_waiting = asyncio.Event()
+    release_probe_c = asyncio.Event()
+
+    async def stuck_then_fail(_p: Path) -> list[tuple[str, str]]:
+        probe_c_waiting.set()
+        await release_probe_c.wait()
+        raise CookieStoreUnreadable("locked")
+
+    monkeypatch.setattr(flow_wire, "_read_cookies", stuck_then_fail)
+    probe_c = asyncio.create_task(flow_wire.health(profile))
+    await probe_c_waiting.wait()
+    flow_wire.session_recovered(profile)
+    release_probe_c.set()
+    assert (await probe_c)["status"] == "store_unreadable"
+    assert flow_wire._active_signed_out(profile) is None  # pyright: ignore[reportPrivateUsage]
+
+    # Reverse interleaving: failed probe restores BEFORE in-flight accepted POST returns.
+    post_waiting = asyncio.Event()
+    release_post = asyncio.Event()
+    fail_cookie = asyncio.Event()
+    cookie_started = asyncio.Event()
+    call_idx = 0
+
+    async def staggered_cookies(_p: Path) -> list[tuple[str, str]]:
+        nonlocal call_idx
+        call_idx += 1
+        if call_idx == 1:
+            cookie_started.set()
+            await fail_cookie.wait()
+            raise CookieStoreUnreadable("locked")
+        return list(_FAKE_COOKIES)
+
+    real_send = flow_wire._send  # pyright: ignore[reportPrivateUsage]
+
+    async def paused_send(client: httpx.AsyncClient, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            post_waiting.set()
+            await release_post.wait()
+        return await real_send(client, request)
+
+    flow_wire._mark_signed_out(profile, WireFallbackReason.SIGNED_OUT_SHELL)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(flow_wire, "_read_cookies", staggered_cookies)
+    monkeypatch.setattr(flow_wire, "_send", paused_send)
+    probe_d = asyncio.create_task(flow_wire.health(profile))
+    await cookie_started.wait()
+    reader_e = asyncio.create_task(flow_wire.read_credits(profile))
+    await post_waiting.wait()
+
+    # Probe D fails cookie read and restores _signed_out while reader_e's POST is in flight.
+    fail_cookie.set()
+    assert (await probe_d)["status"] == "store_unreadable"
+    assert flow_wire._active_signed_out(profile) is not None  # pyright: ignore[reportPrivateUsage]
+
+    # reader_e's accepted POST finishes and must clear the restored mark.
+    release_post.set()
+    assert (await reader_e).credits == 42
+    assert profile not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(flow_wire, "_send", real_send)
+    assert (await flow_wire.read_credits(profile)).credits == 42
+
+
+@pytest.mark.parametrize(
+    ("expected_status", "setup_kind"),
+    [
+        ("http_400", "status_400"),
+        ("http_error", "status_500"),
+        ("redirect", "status_302"),
+        ("unparseable", "bad_rpc_body"),
+    ],
+)
+async def test_health_does_not_restore_signed_out_on_flow_response_errors(
+    profile: Path,
+    flow: _Flow,
+    wire_on: None,
+    expected_status: str,
+    setup_kind: str,
+) -> None:
+    """Flow-answered failures (http_400/http_error/redirect/unparseable) never restore a mark."""
+    flow_wire._mark_signed_out(profile, WireFallbackReason.SIGNED_OUT_SHELL)  # pyright: ignore[reportPrivateUsage]
+    if setup_kind == "status_400":
+        flow.shell = lambda _r: httpx.Response(400)
+    elif setup_kind == "status_500":
+        flow.shell = lambda _r: httpx.Response(500)
+    elif setup_kind == "status_302":
+        flow.shell = lambda _r: httpx.Response(
+            302, headers={"location": "https://accounts.google.com/"}
+        )
+    elif setup_kind == "bad_rpc_body":
+        flow.rpc = lambda _r: httpx.Response(200, text="not-batchexecute")
+
+    result = await flow_wire.health(profile)
+    assert result["status"] == expected_status
+    assert flow_wire._active_signed_out(profile) is None  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    ("expected_status", "failure_kind"),
+    [
+        ("store_unreadable", "store_unreadable"),
+        ("no_chrome_version", "no_chrome_version"),
+        ("proxy_configured", "proxy_configured"),
+        ("network", "network"),
+        ("disabled", "disabled"),
+        ("unexpected", "unexpected"),
+    ],
+)
+async def test_health_preserves_signed_out_across_all_pre_response_reasons(
+    profile: Path,
+    flow: _Flow,
+    wire_on: None,
+    monkeypatch: pytest.MonkeyPatch,
+    expected_status: str,
+    failure_kind: str,
+) -> None:
+    """All pre-response failure reasons preserve an existing active signed-out mark."""
+    from gflow_cli.config import get_settings
+
+    flow_wire._mark_signed_out(profile, WireFallbackReason.HTTP_401)  # pyright: ignore[reportPrivateUsage]
+    settings = get_settings()
+
+    if failure_kind == "store_unreadable":
+
+        async def _unreadable(_p: Path) -> list[tuple[str, str]]:
+            raise CookieStoreUnreadable("locked")
+
+        monkeypatch.setattr(flow_wire, "_read_cookies", _unreadable)
+    elif failure_kind == "no_chrome_version":
+        monkeypatch.setattr(flow_wire, "profile_last_version", lambda _p: None)
+    elif failure_kind == "proxy_configured":
+        settings = settings.model_copy(update={"browser_proxy": "http://127.0.0.1:3128"})
+    elif failure_kind == "network":
+
+        async def _boom(_c: httpx.AsyncClient, _r: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectTimeout("timed out")
+
+        monkeypatch.setattr(flow_wire, "_send", _boom)
+    elif failure_kind == "disabled":
+        settings = settings.model_copy(update={"wire_reads": False})
+    elif failure_kind == "unexpected":
+
+        async def _unexpected(*_a: object, **_k: object) -> object:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(flow_wire, "read_credits", _unexpected)
+
+    result = await flow_wire.health(profile, settings=settings)
+    assert result["status"] == expected_status
+    active = flow_wire._active_signed_out(profile)  # pyright: ignore[reportPrivateUsage]
+    assert active is not None and active[1] is WireFallbackReason.HTTP_401

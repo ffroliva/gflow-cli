@@ -286,5 +286,6 @@ def fresh_wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     flow_wire.reset_state()
     monkeypatch.setattr(flow_wire, "getproxies", dict)
+    monkeypatch.setattr(flow_wire, "_native_os_proxies", dict)
     yield
     flow_wire.reset_state()
