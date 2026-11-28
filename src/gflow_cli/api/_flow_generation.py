@@ -61,6 +61,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api._flow_retry import DirectImages, RetryHost
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.direct_http import DirectHttpTransport
     from gflow_cli.api.video import (
         EditVideoRequest,
         GenerateVideoRequest,
@@ -68,6 +69,8 @@ if TYPE_CHECKING:
         VideoStarted,
         VideoStartedCallback,
     )
+
+
 from gflow_cli.api._flow_retry import run_with_retry
 from gflow_cli.api._flow_session import (
     JsonObject,
@@ -110,6 +113,28 @@ def _dc_replace(obj: _DataclassT, /, **changes: Any) -> _DataclassT:
 # failure is not meaningfully delayed on its way to the user.
 _MIGRATION_RECHECK_BUDGET_S = 1.5
 _MIGRATION_RECHECK_POLL_S = 0.25
+
+
+def _relay_remote_started(
+    on_started: VideoStartedCallback | None,
+    on_checkpoint: GenerationCheckpointObserver | None,
+) -> VideoStartedCallback | None:
+    """``on_started``, preceded by a ``remote_started`` checkpoint when there is an observer."""
+    if on_checkpoint is None:
+        return on_started
+    observer: GenerationCheckpointObserver = on_checkpoint
+
+    def _relay(started: VideoStarted) -> Awaitable[None] | None:
+        observer(
+            GenerationCheckpoint(
+                phase="remote_started",
+                operation_id=started.flow_operation_id,
+                media_ids=(started.media_id,),
+            ),
+        )
+        return on_started(started) if on_started is not None else None
+
+    return _relay
 
 
 def _strip_query(url: str) -> str:
@@ -824,22 +849,12 @@ class GenerationSurface(WorkspaceSurface):
             except Exception as e:
                 await self._raise_with_incident(e, phase="video_generation")
 
-        wrapped_on_started = on_started
-        if on_checkpoint is not None:
-            observer: GenerationCheckpointObserver = on_checkpoint
-            observer(GenerationCheckpoint(phase="submit_attempted"))
-
-            def _relay(started: VideoStarted) -> Awaitable[None] | None:
-                observer(
-                    GenerationCheckpoint(
-                        phase="remote_started",
-                        operation_id=started.flow_operation_id,
-                        media_ids=(started.media_id,),
-                    ),
-                )
-                return on_started(started) if on_started is not None else None
-
-            wrapped_on_started = _relay
+        # A class-level lookup, as for images: a mock transport answers every attribute.
+        through_retry = hasattr(type(self.transport), "generate_video_ui")
+        if on_checkpoint is not None and not through_retry:
+            # The retry loop writes it itself, before each send and before the UI fallback.
+            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+        wrapped_on_started = _relay_remote_started(on_started, on_checkpoint)
 
         try:
             # Kwarg passed only when set — same #546 compat rule as
@@ -847,6 +862,17 @@ class GenerationSurface(WorkspaceSurface):
             resolver_kw: dict[str, Any] = (
                 {} if name_resolver is None else {"name_resolver": name_resolver}
             )
+            if through_retry:
+                return await self._video_through_retry(
+                    request=req,
+                    project_id=project_id,
+                    out_dir=out_dir,
+                    poll_timeout_s=poll_timeout_s,
+                    download=download,
+                    on_started=wrapped_on_started,
+                    on_checkpoint=on_checkpoint,
+                    resolver_kw=resolver_kw,
+                )
             return await self.transport.generate_video(
                 request=req,
                 project_id=project_id,
@@ -859,6 +885,53 @@ class GenerationSurface(WorkspaceSurface):
 
         except Exception as e:
             await self._raise_with_incident(e, phase="video_generation")
+
+    async def _video_through_retry(
+        self,
+        *,
+        request: GenerateVideoRequest,
+        project_id: str,
+        out_dir: Path | None,
+        poll_timeout_s: float,
+        download: bool,
+        on_started: VideoStartedCallback | None,
+        on_checkpoint: GenerationCheckpointObserver | None,
+        resolver_kw: dict[str, Any],
+    ) -> VideoResult:
+        """A direct-capable transport, through the refusal retry loop (Task 14).
+
+        ``frame_uploads`` lives for this one call, so a retry after a refusal reuses the
+        start frame the first attempt uploaded instead of storing it twice.
+        """
+        frame_uploads: dict[Path, str] = {}
+
+        def transport() -> DirectHttpTransport:
+            return cast("DirectHttpTransport", self.transport)  # re-read: a relaunch replaces it
+
+        return await run_with_retry(
+            cast("RetryHost", self),
+            direct=lambda before: transport().generate_video(
+                request=request,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
+                on_before_submit=before,
+                frame_uploads=frame_uploads,
+            ),
+            ui=lambda: transport().generate_video_ui(
+                request=request,
+                project_id=project_id,
+                out_dir=out_dir,
+                poll_timeout_s=poll_timeout_s,
+                download=download,
+                on_started=on_started,
+                **resolver_kw,
+            ),
+            setting=VisibilitySetting(self.settings.browser_visibility),
+            on_checkpoint=on_checkpoint,
+        )
 
     async def edit_video(  # noqa: PLR0913
         self,

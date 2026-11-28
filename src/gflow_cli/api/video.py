@@ -648,6 +648,8 @@ class VideoResult:
     flow_operation_id: str | None = None
     workflow_id: str | None = None  # see VideoStarted.workflow_id (#898)
     quoted_credits: int | None = None
+    #: ``"direct_http"`` when the clip was submitted over direct HTTP; ``None`` on the UI path.
+    transport: str | None = None
 
 
 # Callback type: invoked by the transport the moment a media_id becomes known,

@@ -350,43 +350,6 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
         == Route.DIRECT
     )
 
-    # 3. Omni 1.2 Flash I2V 4s 360p 16:9 -> DIRECT
-    assert (
-        choose_video_route(
-            GenerateVideoRequest(
-                prompt="p",
-                mode=Mode.I2V,
-                model=VideoModel.OMNI_1_2_FLASH,
-                duration=4,
-                resolution="360p",
-                aspect=VideoAspect.LANDSCAPE,
-                start_image=Path("start.png"),
-            ),
-            flow_host="",
-            proxy_configured=False,
-            effective_max_credits=None,
-        )
-        == Route.DIRECT
-    )
-
-    # 4. Veo 3.1 Lite T2V None None 16:9 -> DIRECT
-    assert (
-        choose_video_route(
-            GenerateVideoRequest(
-                prompt="p",
-                mode=Mode.T2V,
-                model=VideoModel.VEO_3_1_LITE,
-                duration=None,
-                resolution=None,
-                aspect=VideoAspect.LANDSCAPE,
-            ),
-            flow_host="",
-            proxy_configured=False,
-            effective_max_credits=None,
-        )
-        == Route.DIRECT
-    )
-
     # 5. Veo 3.1 Lite I2V None None 9:16 -> DIRECT
     assert (
         choose_video_route(
@@ -1035,3 +998,28 @@ def test_direct_can_serve_rules() -> None:
         model=ImageModel.NARWHAL,
     )
     assert direct_can_serve(req_at) is False
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        # only the hand-built frame was ever sent for these; the app's frame was not captured
+        GenerateVideoRequest(
+            prompt="p",
+            mode=Mode.I2V,
+            model=VideoModel.OMNI_1_2_FLASH,
+            duration=4,
+            resolution="360p",
+            aspect=VideoAspect.LANDSCAPE,
+            start_image=Path("start.png"),
+        ),
+        GenerateVideoRequest(
+            prompt="p", mode=Mode.T2V, model=VideoModel.VEO_3_1_LITE, aspect=VideoAspect.LANDSCAPE
+        ),
+    ],
+)
+def test_uncaptured_video_tuples_are_not_direct(request_: GenerateVideoRequest) -> None:
+    route = choose_video_route(
+        request_, flow_host="", proxy_configured=False, effective_max_credits=None
+    )
+    assert route is Route.UI

@@ -3,30 +3,85 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 import httpx
+import structlog
 
-from gflow_cli.api.generation_route import direct_can_serve
+from gflow_cli.api import flow_wire
+from gflow_cli.api.credit_cap import resolve_max_credits
+from gflow_cli.api.generation_route import (
+    Route,
+    VideoWireTarget,
+    choose_video_route,
+    direct_can_serve,
+    video_target,
+)
 from gflow_cli.api.image import ImageRef
 from gflow_cli.api.submit_policy import DirectAttemptEnded, RefusedNotBilled, not_sent
 from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource, ProjectTokens
 from gflow_cli.api.transports.direct_http._session import _proxy_configured
+from gflow_cli.api.transports.direct_http._video import StartFrame, run_direct_video
+from gflow_cli.api.transports.frame_builder import centred_crop
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
+from gflow_cli.api.video import Mode
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
+from gflow_cli.errors import InsufficientCreditsError
+from gflow_cli.paths import image_dimensions, jpeg_exif_orientation
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
+log = structlog.get_logger(__name__)
 _T = TypeVar("_T")
+
+
+def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
+    """The measured wire key and aspect slot for ``request``, or ``None`` (the UI path).
+
+    ``choose_video_route`` decides; a credit cap (the request's or the configured one)
+    routes to the UI, where Flow's quote is read; :func:`video_target` reads the shape.
+    """
+    settings = get_settings()
+    route = choose_video_route(
+        request,
+        flow_host=settings.flow_host,
+        proxy_configured=_proxy_configured(),
+        effective_max_credits=resolve_max_credits(request.max_credits, settings.max_credits),
+    )
+    if route is not Route.DIRECT or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
+        return None
+    return video_target(request)
+
+
+async def _refuse_empty_balance(profile_dir: Path) -> None:
+    """Exit 37 before any send when Flow reports no credits; a failed read skips the check.
+
+    The read is browser-free (``nzlxg``, the ``gflow credits`` read). Only an empty balance
+    is refused: no price is readable without the browser, so a partial balance is left to
+    Flow (a price comparison is tracked separately).
+    """
+    try:
+        balance = (await flow_wire.read_credits(profile_dir)).credits
+    except Exception as exc:  # noqa: BLE001 - an unreadable balance never blocks a submit
+        log.info("direct.balance_unread", cause=type(exc).__name__)
+        return
+    if balance <= 0:
+        raise InsufficientCreditsError(
+            detail="Flow reports a balance of 0 credits; nothing was sent.",
+            route="batchexecute:nzlxg",
+        )
 
 
 class DirectHttpTransport(UiAutomationTransport):
@@ -40,6 +95,7 @@ class DirectHttpTransport(UiAutomationTransport):
         self._http_transport = http_transport
         self._gate = InFlightGate()
         self._token_source: PageTokenSource | None = None
+        self._poll_interval_s = 5.0  # between jwpduf polls, as the spike measured
 
     async def setup(self, profile_dir: Path, *, page: Page | None = None) -> None:
         self._profile_dir = profile_dir
@@ -162,6 +218,114 @@ class DirectHttpTransport(UiAutomationTransport):
     async def upload_reference_ui(self, *, project_id: str, path: Path) -> ImageRef | None:
         """The inherited UI upload, for the retry loop's fallback when nothing was sent."""
         return await super().upload_reference(project_id=project_id, path=path)
+
+    # No name_resolver: the client sends this transport through the retry loop, which passes
+    # resolver kwargs to generate_video_ui only; the direct frame has no mention to resolve.
+    async def generate_video(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        *,
+        request: GenerateVideoRequest,
+        project_id: str | None = None,
+        out_dir: Path | None = None,
+        poll_timeout_s: float = 600.0,
+        download: bool = True,
+        on_started: VideoStartedCallback | None = None,
+        on_before_submit: Callable[[], None] | None = None,
+        frame_uploads: dict[Path, str] | None = None,
+    ) -> VideoResult:
+        """Generate one clip over direct HTTP when its key tuple is measured.
+
+        As :meth:`generate_images`: every other outcome raises ``DirectAttemptEnded`` for
+        the retry loop, which runs :meth:`generate_video_ui` on a fresh page when nothing
+        was sent. An i2v start frame is uploaded with ``maseQ`` once per run:
+        ``frame_uploads`` (path to media id) is kept by the caller across a retry, so a
+        retry after a refusal reuses the stored upload. A zero balance, read without the
+        browser, ends the request before any send (exit 37); an unreadable one is skipped.
+        """
+        if not self._setup_done or self._page is None:
+            msg = "DirectHttpTransport.setup() must be called before generate_video()"
+            raise RuntimeError(msg)
+        page, profile_dir = self._page, self._profile_dir
+        reason = self._why_not_direct_upload()
+        target = None if reason else _video_target(request)
+        if target is None:
+            reason = reason or "unsupported_shape"
+        elif project_id is None:
+            reason = "no_project"
+        if reason or target is None or project_id is None or profile_dir is None:
+            raise not_sent(reason or "no_profile_dir")
+        await _refuse_empty_balance(profile_dir)
+        tokens = self._source_for(page).for_project(project_id)
+        start: StartFrame | None = None
+        if request.mode is Mode.I2V:
+            start = await self._start_frame(project_id, request, target.aspect_slot, frame_uploads)
+        video_target, start_frame = target, start
+        return await self._run_direct(
+            tokens,
+            lambda: run_direct_video(
+                tokens=tokens,
+                page=page,
+                profile_dir=profile_dir,
+                project_id=project_id,
+                request=request,
+                target=video_target,
+                start=start_frame,
+                save=partial(self._save_clip, out_dir=out_dir),
+                download=download,
+                poll_timeout_s=poll_timeout_s,
+                poll_interval_s=self._poll_interval_s,
+                on_started=on_started,
+                http_transport=self._http_transport,
+                on_before_submit=on_before_submit,
+            ),
+        )
+
+    async def generate_video_ui(
+        self,
+        *,
+        request: GenerateVideoRequest,
+        project_id: str | None = None,
+        out_dir: Path | None = None,
+        poll_timeout_s: float = 600.0,
+        download: bool = True,
+        on_started: VideoStartedCallback | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
+    ) -> VideoResult:
+        """The inherited UI path, for the retry loop's fallback when nothing was sent."""
+        return await super().generate_video(
+            request=request,
+            project_id=project_id,
+            out_dir=out_dir,
+            poll_timeout_s=poll_timeout_s,
+            download=download,
+            on_started=on_started,
+            name_resolver=name_resolver,
+        )
+
+    async def _start_frame(
+        self,
+        project_id: str,
+        request: GenerateVideoRequest,
+        aspect_slot: int,
+        frame_uploads: dict[Path, str] | None,
+    ) -> StartFrame:
+        """The start frame's media id (uploaded once per run) and its centred crop box."""
+        path = request.start_image
+        if path is None:  # pragma: no cover - video_target routes an in-project frame to the UI
+            raise not_sent("start_frame_not_local")
+        data = await asyncio.to_thread(path.read_bytes)
+        if jpeg_exif_orientation(data) >= 5:  # a quarter turn: the stored box is not the shown one
+            raise not_sent("start_frame_exif_rotated")
+        size = image_dimensions(data)
+        if size is None:
+            raise not_sent("start_frame_dimensions")
+        uploads = {} if frame_uploads is None else frame_uploads
+        if path not in uploads:
+            ref = await self.upload_reference(project_id=project_id, path=path)
+            if ref is None:  # pragma: no cover - the direct upload returns a ref or raises
+                raise not_sent("start_frame_upload")
+            uploads[path] = ref.name
+        return (uploads[path], centred_crop(*size, aspect_slot=aspect_slot))
 
     def _why_not_direct_upload(self) -> str | None:
         if self._profile_dir is None:

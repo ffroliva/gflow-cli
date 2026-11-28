@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
 from platformdirs import user_data_dir, user_downloads_dir
@@ -370,6 +370,42 @@ def image_dimensions(data: bytes) -> tuple[int, int] | None:
     if magic == b"RIFF":
         return _webp_dimensions(data)
     return None
+
+
+def jpeg_exif_orientation(data: bytes) -> int:
+    """The EXIF orientation (1-8) in a JPEG's APP1/Exif segment; ``1`` when absent or unreadable.
+
+    Orientations 5-8 rotate the image a quarter turn on display, so the displayed width and
+    height are the stored ones swapped. Stdlib only, as :func:`image_dimensions`.
+    """
+    if data[:2] != b"\xff\xd8":
+        return 1
+    idx, length = 2, len(data)
+    while (found := _next_jpeg_marker(data, idx, length)) is not None:
+        marker, idx = found
+        if _is_standalone_jpeg_marker(marker):
+            continue
+        seg_len = _read_segment_length(data, idx, length)
+        if seg_len is None or marker in _JPEG_SOF_MARKERS:  # Exif comes before the frame
+            return 1
+        if marker == 0xE1 and data[idx + 2 : idx + 8] == b"Exif\x00\x00":
+            return _tiff_orientation(data[idx + 8 : idx + seg_len])
+        idx += seg_len
+    return 1
+
+
+def _tiff_orientation(tiff: bytes) -> int:
+    """Tag ``0x0112`` in a TIFF header's first IFD; ``1`` when absent or malformed."""
+    if len(tiff) < 8 or tiff[:2] not in (b"MM", b"II"):
+        return 1
+    order: Literal["big", "little"] = "big" if tiff[:2] == b"MM" else "little"
+    ifd = int.from_bytes(tiff[4:8], order)
+    for i in range(int.from_bytes(tiff[ifd : ifd + 2], order)):
+        entry = tiff[ifd + 2 + 12 * i : ifd + 14 + 12 * i]
+        if len(entry) == 12 and int.from_bytes(entry[:2], order) == 0x0112:
+            value = int.from_bytes(entry[8:10], order)
+            return value if 1 <= value <= 8 else 1
+    return 1
 
 
 def looks_like_video(head: bytes) -> bool:
