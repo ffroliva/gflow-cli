@@ -655,6 +655,9 @@ def test_problem_details_without_ref_has_no_incident_key() -> None:
 
 def test_all_domain_errors_provide_remediation_hint() -> None:
     """Assert to_problem_details() returns remediation_hint for all domain error classes."""
+    # Load every module that defines a GFlowError subclass, so discovery does not depend on
+    # which other tests ran in this worker first.
+    import gflow_cli.api.client  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from gflow_cli.errors import CreditCapExceededError, GFlowError
 
     def get_subclasses(c: type[GFlowError]) -> set[type[GFlowError]]:
@@ -943,11 +946,11 @@ def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
 
 
 def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
+    from gflow_cli.api.refusal import waf_refusal_final
     from gflow_cli.errors import (
         WafRejectionError,
         exit_code_for,
         is_retryable,
-        waf_refusal_final,
     )
     from gflow_cli.mcp.tools import _gflow_error_dict
 
@@ -972,7 +975,7 @@ def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
 
 
 def test_waf_refusal_final_remediation_names_headed_and_cooldown() -> None:
-    from gflow_cli.errors import waf_refusal_final
+    from gflow_cli.api.refusal import waf_refusal_final
 
     err = waf_refusal_final(reason="UNUSUAL_ACTIVITY", attempts=2)
 
