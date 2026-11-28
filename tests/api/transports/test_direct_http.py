@@ -387,7 +387,7 @@ async def test_direct_http_pre_send_connect_error_falls_back(
 
 
 @pytest.mark.asyncio
-async def test_direct_http_post_403_falls_back_to_ui(
+async def test_direct_http_post_403_is_reconcile_never_ui(
     transport: DirectHttpTransport, mock_mint_and_body: None
 ) -> None:
     post_count = 0
@@ -414,9 +414,12 @@ async def test_direct_http_post_403_falls_back_to_ui(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    await transport.generate_images(project_id="proj-123", request=req)
+    # After the send a 403 is indeterminate: the UI fallback could submit twice.
+    with pytest.raises(NetworkError) as exc_info:
+        await transport.generate_images(project_id="proj-123", request=req)
 
-    assert ui_called
+    assert exc_info.value.next_action == "reconcile"
+    assert not ui_called
     assert post_count == 1
 
 
@@ -1059,14 +1062,19 @@ async def test_a_connection_that_never_opened_falls_back(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", [302, 401])
-async def test_a_redirect_or_401_falls_back_instead_of_reconcile(
+async def test_a_redirect_or_401_after_send_is_reconcile_not_a_fallback(
     transport: DirectHttpTransport, mock_mint_and_body: None, status: int
 ) -> None:
-    """CR-J: Flow accepted nothing; telling the user to check for an image was wrong."""
+    """Past the send, a 3xx or 401 cannot prove Flow accepted nothing, so nothing is resent
+    and the UI path does not run (it could submit a second time)."""
     transport._http_transport = _shell_and(httpx.Response(status))
     ui = _watch_ui(transport)
-    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
-    assert ui == [True]
+    with pytest.raises(NetworkError) as caught:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
+        )
+    assert caught.value.next_action == "reconcile"
+    assert ui == []
 
 
 @pytest.mark.asyncio
@@ -1172,8 +1180,10 @@ async def test_cookies_are_matched_by_domain_not_by_a_url_filter(
 
     transport._http_transport = httpx.MockTransport(handler)
     await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
-    assert sent[-1] == "SID=a; XS=b"
-    page.context.cookies.assert_awaited_once_with()
+    assert sent == ["SID=a; XS=b", "SID=a; XS=b"]
+    # Read live before each request (the shell GET and the POST), never with a URL filter.
+    calls = page.context.cookies.await_args_list
+    assert [(c.args, c.kwargs) for c in calls] == [((), {}), ((), {})]
 
 
 # --- A bare @Name mention (T2.2): the name is resolved to the project's character id -----
@@ -1423,15 +1433,21 @@ async def test_an_upload_failing_after_the_send_is_not_resent(
 
 
 @pytest.mark.asyncio
-async def test_an_upload_reply_without_a_media_id_is_a_wire_format_error(
+async def test_an_upload_reply_without_a_media_id_is_reconciled_not_resent(
     transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """Past the send an unreadable reply is indeterminate: the upload may be stored."""
     monkeypatch.setattr(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     transport._http_transport = _shell_and(httpx.Response(200, text=")]}'\n[]"))
-    with pytest.raises(WireFormatError):
+    ui = AsyncMock()
+    monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
+    with pytest.raises(NetworkError) as caught:
         await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    assert caught.value.next_action == "reconcile"
+    assert "upload" in (caught.value.remediation_hint or "")
+    ui.assert_not_awaited()
 
 
 @pytest.mark.asyncio

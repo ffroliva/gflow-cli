@@ -1,46 +1,166 @@
-# pyright: reportUnusedFunction=false
-"""The batchexecute write path: one POST, sent once, with its fallback and reconcile rules."""
+# pyright: reportUnusedFunction=false, reportPrivateUsage=false
+"""The batchexecute write path: a phase-tracked attempt that ends in a ``SubmitOutcome``.
+
+The outcome is decided by phase, never by the type of the failure. Until ``client.send`` is
+entered for the billed write, nothing reached Flow and a failure is ``NotSent``. From that
+moment on, every failure (a reply, a parse, a later cookie read, a poll, a download) is
+``Indeterminate``: Flow may have accepted and billed the request, so it is never resent.
+"""
 
 from __future__ import annotations
 
 import secrets
 from http.cookiejar import CookieJar, DefaultCookiePolicy
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
+import structlog
 
 from gflow_cli.api import flow_wire
-from gflow_cli.errors import NetworkError
+from gflow_cli.api.submit_policy import (
+    Accepted,
+    DirectAttemptEnded,
+    Indeterminate,
+    NotSent,
+    RefusedNotBilled,
+    classify_reply,
+    not_sent,
+)
+from gflow_cli.api.transports._mc_common import _submit_refusal
+from gflow_cli.errors import ContentPolicyError, GFlowError, NetworkError
+from gflow_cli.redaction import redact_sensitive_text
+
+if TYPE_CHECKING:
+    from pathlib import Path
+    from types import TracebackType
+
+    from gflow_cli.api.submit_policy import RecaptchaTokenSource
+
+log = structlog.get_logger(__name__)
 
 _ORIGIN = "https://flow.google.com"
 _RpcSpec = tuple[str, str, str, str]  # rpcid, reCAPTCHA action, noun, reconcile hint
 
+#: The billed or stored writes this transport may send, each measured on flow.google.com.
+WRITE_RPCIDS = frozenset({"ogiZ0b", "maseQ", "YhhmEf", "eb1hJf", "p0UkFb"})
+#: The reads that follow a write (the generation poll and the media read).
+READ_RPCIDS = frozenset({"jwpduf", "as29s"})
+# Raised while the connection opens, before any byte of the request is written.
+_CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
-class _DirectFallbackError(Exception):
-    """Internal sentinel: nothing was accepted, so the UI transport may run instead."""
 
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
+def _first_line(exc: BaseException) -> str:
+    # Redacted before the cut: trimming first can split a token below every pattern's floor.
+    return redact_sensitive_text((str(exc).strip().splitlines() or [""])[0])[:160]
 
 
-def _reconcile_error(detail: str, spec: _RpcSpec, *, status: int | None = None) -> NetworkError:
-    """A failure after the POST was sent: never resent, the caller reconciles."""
-    return NetworkError(
-        detail=f"{detail}; not resent",
-        status=status,
-        route=f"batchexecute:{spec[0]}",
-        next_action="reconcile",
-        remediation_hint=spec[3],
-    )
+class SubmitAttempt:
+    """One billed write and everything that follows it, used as ``async with attempt:``.
+
+    ``sent`` flips to ``True`` the moment ``client.send`` is entered for the write. On exit,
+    any failure after that point becomes ``DirectAttemptEnded(Indeterminate)``; a failure
+    before it propagates as raised (the session, shell and mint steps raise ``not_sent``).
+    """
+
+    def __init__(
+        self, spec: _RpcSpec, profile_dir: Path, token_source: RecaptchaTokenSource
+    ) -> None:
+        self.spec = spec
+        self.sent = False
+        self._profile_dir = profile_dir
+        self._token_source = token_source
+
+    async def __aenter__(self) -> SubmitAttempt:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if not self.sent or not isinstance(exc, Exception):
+            return  # pre-send failures, cancellation and success pass through unchanged
+        if isinstance(exc, ContentPolicyError):
+            return  # Flow named a content refusal; it is final and is not resent either
+        if isinstance(exc, DirectAttemptEnded) and not isinstance(exc.outcome, NotSent):
+            return
+        outcome = Indeterminate(
+            rpcid=self.spec[0], cause=f"{type(exc).__name__} ({_first_line(exc)})"
+        )
+        if isinstance(exc, GFlowError):
+            # A typed failure keeps its type; past the send it is never a retry.
+            exc.retryable = False
+            log.warning("direct.attempt_indeterminate", rpcid=outcome.rpcid, cause=outcome.cause)
+            raise DirectAttemptEnded(outcome, error=exc) from exc
+        raise self._ended(outcome) from exc
+
+    async def mint(self) -> str:
+        """The reCAPTCHA token for this write's action, from the injected source."""
+        try:
+            return await self._token_source.mint(self.spec[1])
+        except DirectAttemptEnded:
+            raise
+        except Exception as exc:
+            raise not_sent(f"mint_failure:{type(exc).__name__}") from exc
+
+    async def send(self, client: httpx.AsyncClient, request: httpx.Request) -> httpx.Response:
+        """Send the write once and classify the reply; return the response only if accepted.
+
+        A connection that never opened sent nothing, so it is reopened once; a second
+        failure to open is ``NotSent``. Every rejected reply drops the cached ``at`` so a
+        stale one cannot stick in a long-lived process.
+        """
+        rpcid = request.url.params.get("rpcids", "")
+        if rpcid not in WRITE_RPCIDS:
+            msg = f"refusing to send {rpcid!r}: not a measured batchexecute write"
+            raise ValueError(msg)
+        try:
+            response = await self._open(client, request)
+        except _CONNECT_ERRORS:
+            try:
+                response = await self._open(client, request)
+            except _CONNECT_ERRORS as exc:
+                raise not_sent(f"connect:{type(exc).__name__}") from exc
+        outcome = classify_reply(rpcid, response.status_code, response.text)
+        if isinstance(outcome, Accepted):
+            return response
+        flow_wire.forget_tokens(self._profile_dir)
+        if isinstance(outcome, RefusedNotBilled):
+            raise DirectAttemptEnded(outcome, error=_submit_refusal(response.text, (rpcid,)))
+        if isinstance(outcome, Indeterminate):
+            raise self._ended(outcome)
+        raise DirectAttemptEnded(outcome)  # pragma: no cover - classify_reply never answers NotSent
+
+    async def _open(self, client: httpx.AsyncClient, request: httpx.Request) -> httpx.Response:
+        self.sent = True
+        try:
+            return await client.send(request)
+        except _CONNECT_ERRORS:
+            self.sent = False  # the connection never opened: no byte reached Flow
+            raise
+
+    def _ended(self, outcome: Indeterminate) -> DirectAttemptEnded:
+        rpcid, _, noun, hint = self.spec
+        log.warning("direct.attempt_indeterminate", rpcid=rpcid, cause=outcome.cause)
+        return DirectAttemptEnded(
+            outcome,
+            error=NetworkError(
+                detail=f"{outcome.cause} on an {noun}; not resent",
+                status=outcome.status,
+                route=f"batchexecute:{rpcid}",
+                next_action="reconcile",
+                remediation_hint=hint,
+            ),
+        )
 
 
 def _post_request(
-    rpcid: str, project_id: str, tokens: flow_wire.Tokens, headers: dict[str, str], body: str
+    rpcid: str, source_path: str, tokens: flow_wire.Tokens, headers: dict[str, str], body: str
 ) -> httpx.Request:
     query = {
         "rpcids": rpcid,
-        "source-path": f"/project/{project_id}",
+        "source-path": source_path,
         "bl": tokens.bl,
         "f.sid": tokens.fsid,
         "hl": "en",
@@ -57,38 +177,12 @@ def _post_request(
             "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
             "x-same-domain": "1",
             "origin": _ORIGIN,
-            "referer": f"{_ORIGIN}/project/{project_id}",
+            "referer": f"{_ORIGIN}{source_path}",
             "sec-fetch-site": "same-origin",
             "sec-fetch-mode": "cors",
             "sec-fetch-dest": "empty",
         },
     )
-
-
-async def _send_once(
-    client: httpx.AsyncClient, request: httpx.Request, profile_dir: Path, spec: _RpcSpec
-) -> httpx.Response:
-    """Write path: exactly one send.
-
-    Nothing was accepted when the connection never opened, or when Flow redirected (3xx),
-    refused the session (401) or the token (403): the UI transport may run instead.
-    Anything else after the send may have been billed and is never resent. Every rejected
-    reply drops the cached ``at`` so a stale one cannot stick in a long-lived process.
-    """
-    try:
-        response = await client.send(request)
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
-        raise _DirectFallbackError(f"connect:{type(exc).__name__}") from exc
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
-        cause = (str(exc).strip().splitlines() or [""])[0][:160]
-        raise _reconcile_error(f"{type(exc).__name__} on an {spec[2]} ({cause})", spec) from exc
-    status = response.status_code
-    if status == 200:
-        return response
-    flow_wire.forget_tokens(profile_dir)
-    if 300 <= status < 400 or status in (401, 403):
-        raise _DirectFallbackError(f"http_{status}")
-    raise _reconcile_error(f"HTTP {status} on an {spec[2]}", spec, status=status)
 
 
 def _client(http_transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
