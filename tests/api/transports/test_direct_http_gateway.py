@@ -463,6 +463,25 @@ async def test_signed_out_shell_is_not_sent_auth(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_file_read_signed_out_mark_does_not_block_live_direct_session(
+    tmp_path: Path,
+) -> None:
+    """A browser-free read of the on-disk cookies (credits, the pre-launch balance check) can
+    mark the profile signed out and cache an ``at`` for those cookies. The direct path sends
+    the live browser's cookies, so it asks the shell again rather than inherit either."""
+    flow_wire._signed_out[tmp_path] = flow_wire.WireFallbackReason.SIGNED_OUT_SHELL
+    flow_wire._tokens[tmp_path] = flow_wire.Tokens("at-from-disk", "sid", "boq_x")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_SHELL_HTML)
+
+    async with _client(httpx.MockTransport(handler)) as client:
+        tokens = await _shell(client, _page(), tmp_path)
+    assert tokens == _TOKENS
+    assert tmp_path not in flow_wire._signed_out
+
+
+@pytest.mark.asyncio
 async def test_401_then_signed_out_shell_is_auth(tmp_path: Path) -> None:
     gets = 0
 

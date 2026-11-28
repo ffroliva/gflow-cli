@@ -58,19 +58,20 @@ async def _session_headers(page: Page, profile_dir: Path) -> dict[str, str]:
 async def _shell(client: httpx.AsyncClient, page: Page, profile_dir: Path) -> flow_wire.Tokens:
     """Read path: ``at`` / ``f.sid`` / ``bl`` from flow_wire's shell GET.
 
-    Called before the mint, never after a send. A 401 drops the cached ``at`` and the
-    signed-out mark and fetches once more with freshly read cookies; a second 401, a
-    shell with no ``at`` or a redirect (to sign-in) is a signed-out session.
+    Called before the mint, never after a send. Each fetch first drops the cached ``at`` and
+    the signed-out mark: either may come from a read of the on-disk cookies, and this path
+    sends the live browser's. A 401 fetches once more with freshly read cookies; a second
+    401, a shell with no ``at`` or a redirect (to sign-in) is a signed-out session.
     """
     for refetch in (False, True):
         headers = await _session_headers(page, profile_dir)
+        flow_wire.session_recovered(profile_dir)
         try:
             return await flow_wire.shell_tokens(client, profile_dir, headers)
         except flow_wire.WireReadUnavailable as exc:
             reason = exc.reason
             if reason is not flow_wire.WireFallbackReason.HTTP_401 or refetch:
                 raise not_sent(reason.value, auth=reason in _AUTH_REASONS) from exc
-            flow_wire.session_recovered(profile_dir)
         except Exception as exc:
             raise not_sent(f"shell_tokens:{type(exc).__name__}") from exc
     raise AssertionError("unreachable")  # pragma: no cover - the loop returns or raises
