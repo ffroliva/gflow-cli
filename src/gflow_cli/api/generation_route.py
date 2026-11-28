@@ -7,6 +7,7 @@ plans the required browser visibility before any browser context is launched.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -34,19 +35,23 @@ from gflow_cli.api.video_extend import ExtendVideoRequest
 from gflow_cli.config import UiMode
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
 __all__ = [
     "IMAGE_WIRE_MODELS",
     "MEASURED_UPSCALE_SOURCES",
     "MEASURED_VIDEO_KEYS",
+    "VIDEO_FAMILY_MODELS",
+    "VIDEO_RESOLUTION_ENUMS",
     "Route",
     "VideoWireTarget",
     "choose_image_route",
     "choose_upscale_route",
     "choose_video_route",
     "direct_can_serve",
+    "is_bare_t2v",
     "plan_visibility",
+    "selected_video_request",
     "video_target",
 ]
 
@@ -87,6 +92,12 @@ MEASURED_VIDEO_KEYS: dict[
         "veo_3_1_i2v_lite", 1
     ),
 }
+
+#: The composer's ``videoModelFamilyId`` (``localStorage['flow-prompt-box-settings']``, spike
+#: 2026-11-27-selected-video-model) per model. A family not listed keys nothing: the UI path.
+VIDEO_FAMILY_MODELS: dict[str, VideoModel] = {"macaron_cookie": VideoModel.OMNI_1_2_FLASH}
+#: The composer's ``videoResolution`` enum, as measured (4 is 360p); any other value is unmapped.
+VIDEO_RESOLUTION_ENUMS: dict[int, str] = {4: "360p"}
 
 #: Source clips measured for direct 1080p upscale on flow.google.com, as the catalog records
 #: them: (CLI model value, aspect), and only a 4 s source.
@@ -201,6 +212,14 @@ def _resolve_video_model(request: GenerateVideoRequest) -> VideoModel | None:
     return None
 
 
+def _single_plain_clip(request: GenerateVideoRequest) -> bool:
+    return (
+        request.count == 1
+        and not _has_video_references(request)
+        and request.ui_mode is not UiMode.AGENTIC
+    )
+
+
 def video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     """The measured wire key and aspect slot for ``request``'s shape, or ``None`` (the UI path).
 
@@ -208,7 +227,7 @@ def video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     local file, and an exact measured tuple. The host, the proxy and the credit cap are the
     caller's (:func:`choose_video_route`).
     """
-    if request.count != 1 or _has_video_references(request) or request.ui_mode is UiMode.AGENTIC:
+    if not _single_plain_clip(request):
         return None
     model = _resolve_video_model(request)
     if model is None:
@@ -216,6 +235,44 @@ def video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     return MEASURED_VIDEO_KEYS.get(
         (model, request.mode, request.duration, request.resolution, request.aspect)
     )
+
+
+def is_bare_t2v(request: GenerateVideoRequest) -> bool:
+    """A one-clip t2v with no model: its key is the account's selection, read after launch."""
+    return request.mode is Mode.T2V and request.model is None and _single_plain_clip(request)
+
+
+def _int_field(selection: Mapping[str, object], name: str) -> int | None:
+    value = selection.get(name)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def selected_video_request(
+    request: GenerateVideoRequest, selection: Mapping[str, object]
+) -> GenerateVideoRequest | None:
+    """``request`` with the model, duration and resolution the account's selection names.
+
+    ``selection`` is the composer's saved picker state (``flow-prompt-box-settings``). A
+    duration or resolution the request sets explicitly wins, as it does in Flow's UI. An
+    unmapped family or resolution enum, or a combination the request rejects (a duration the
+    model does not allow), resolves to ``None``; whether the result is measured is
+    :func:`video_target`'s decision, the single lookup.
+    """
+    family = selection.get("videoModelFamilyId")
+    model = VIDEO_FAMILY_MODELS.get(family) if isinstance(family, str) else None
+    resolution_enum = _int_field(selection, "videoResolution")
+    resolution = request.resolution or (
+        None if resolution_enum is None else VIDEO_RESOLUTION_ENUMS.get(resolution_enum)
+    )
+    if model is None or resolution is None:
+        return None
+    duration = request.duration
+    if duration is None:
+        duration = _int_field(selection, "videoDuration")
+    try:
+        return replace(request, model=model, duration=duration, resolution=resolution)
+    except ValueError:
+        return None
 
 
 def choose_video_route(
@@ -236,6 +293,14 @@ def choose_video_route(
         return Route.UI
     if _has_credit_cap(effective_max_credits, request.max_credits):
         return Route.UI
+    # A mention can resolve to a reference after launch, which the direct frame cannot carry.
+    if "@" in request.prompt:
+        return Route.UI
+    # A bare t2v plans direct (headless): the transport reads the selection on the armed page
+    # and ends NotSent when it is unread or unmeasured, so an unmeasured selection costs at
+    # most one extra (headed) launch for the UI path.
+    if is_bare_t2v(request):
+        return Route.DIRECT
     return Route.DIRECT if video_target(request) is not None else Route.UI
 
 

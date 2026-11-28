@@ -28,17 +28,13 @@ _NAVIGATE_MS = 45_000  # the composer's own budget for reaching a project
 _PROJECT_PREFIX = f"{_ORIGIN}/project/"
 
 
-async def _mint(page: Page, project_id: str, action: str) -> str:
-    """The single browser step: a reCAPTCHA token for ``action``, minted on a project page.
+async def _arm_page(page: Page, project_id: str) -> None:
+    """Put ``page`` on a flow.google.com project; a page already on one is not navigated.
 
-    A page already on any flow.google.com project is not navigated: a token minted on one
-    project's page is accepted for another (measured 3/3). Otherwise the page goes to
-    ``project_id``, and must end up on flow.google.com: an account Flow serves on
-    labs.google is redirected there, and the direct path does not serve it. Right after a
-    navigation the enterprise script is not loaded yet and the mint raises
-    ``RecaptchaError`` (measured 2026-11-23 on an i2i run with ``--project``). A mint spends
-    nothing, so it is retried, every attempt bounded, until the script answers or the
-    budget runs out.
+    A token minted on one project's page is accepted for another (measured 3/3), and
+    ``localStorage`` is the profile's, so any project page serves the mint and the selection
+    read. An account Flow serves on labs.google is redirected there, and the direct path
+    does not serve it: ``NotSent``.
     """
     try:
         if not page.url.startswith(_PROJECT_PREFIX):
@@ -51,12 +47,25 @@ async def _mint(page: Page, project_id: str, action: str) -> str:
         raise not_sent(f"navigation_failed:{type(exc).__name__}") from exc
     if flow_host_kind(page.url) != "migrated":
         raise not_sent("served_labs")
+
+
+async def _mint(page: Page, project_id: str, action: str) -> str:
+    """The single browser step: a reCAPTCHA token for ``action``, minted on a project page.
+
+    The page is armed first (:func:`_arm_page`). Right after a navigation the enterprise
+    script is not loaded yet and the mint raises ``RecaptchaError`` (measured 2026-11-23 on
+    an i2i run with ``--project``). A mint spends nothing, so it is retried, every attempt
+    bounded, until the script answers or the budget runs out.
+    """
+    await _arm_page(page, project_id)
     minter = TokenMinter(page, mint_evaluate_kwargs=mint_evaluate_kwargs())
     deadline = time.monotonic() + _MINT_BUDGET_S  # a bounded wait, not the re-arm clock
     while True:
         try:
             remaining = max(deadline - time.monotonic(), 0.1)
-            return await asyncio.wait_for(minter.mint(action), remaining)
+            token = await asyncio.wait_for(minter.mint(action), remaining)
+            log.info("direct.minted", action=action)
+            return token
         except RecaptchaError as exc:
             if time.monotonic() >= deadline:
                 raise not_sent("mint_failure:RecaptchaError") from exc
