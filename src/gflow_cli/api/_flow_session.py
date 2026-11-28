@@ -433,6 +433,8 @@ class FlowSession:
         self._relaunch_lock = asyncio.Lock()
         self._relaunch_gate = asyncio.Event()
         self._relaunch_gate.set()
+        # Counts completed relaunches, so concurrent refusals on one client cost one.
+        self.relaunch_generation = 0
         # Optional directory for debug screenshots when a generation step
         # fails on a selector. Propagated to the transport (see __aenter__)
         # so long-lived workers can diagnose a "Could not find ... CTA"

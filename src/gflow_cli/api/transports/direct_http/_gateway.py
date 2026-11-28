@@ -51,8 +51,6 @@ _RpcSpec = tuple[str, str, str, str]  # rpcid, reCAPTCHA action, noun, reconcile
 
 #: The billed or stored writes this transport may send, each measured on flow.google.com.
 WRITE_RPCIDS = frozenset({"ogiZ0b", "maseQ", "YhhmEf", "eb1hJf", "p0UkFb"})
-#: The reads that follow a write (the generation poll and the media read).
-READ_RPCIDS = frozenset({"jwpduf", "as29s"})
 # Raised while the connection opens, before any byte of the request is written.
 _CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 

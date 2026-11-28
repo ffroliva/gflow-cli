@@ -792,7 +792,9 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         if cancelled is not None:
             raise cancelled
 
-    async def relaunch(self, visibility: BrowserVisibility) -> None:
+    async def relaunch(
+        self, visibility: BrowserVisibility, *, unless_since: int | None = None
+    ) -> None:
         """Relaunch the browser process under the held profile lease.
 
         Checks the display before touching anything, so a refused headed launch
@@ -800,7 +802,12 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         transport has one, waits for every pool page to check back in, closes the
         context and driver, and launches a fresh browser at ``visibility``
         without releasing the lease. Relaunches are serialised; a page checkout
-        arriving meanwhile waits for the new pool (or the failure).
+        arriving meanwhile waits for the new pool (or the failure). Each completed
+        relaunch increments ``relaunch_generation`` before the gate reopens.
+
+        ``unless_since`` is the generation a caller saw when its attempt started: when a
+        relaunch has completed since, the fresh process already exists and nothing is done,
+        so concurrent refusals in one window cost one relaunch.
 
         A failure marks the client unusable and raises :class:`RelaunchFailed`;
         a cancellation marks it unusable, closes best-effort and is re-raised.
@@ -809,6 +816,9 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         async with self._relaunch_lock:
             if self._unusable:
                 raise RelaunchFailed("FlowApiClient is unusable after a failed browser relaunch")
+            if unless_since is not None and self.relaunch_generation != unless_since:
+                logger.info("client.relaunch_skipped", generation=self.relaunch_generation)
+                return
             if self._lease is None:
                 raise RuntimeError(
                     "FlowApiClient.relaunch() requires an active entered client holding a lease"
@@ -835,6 +845,7 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
             try:
                 async with quiesce, page_lock:
                     await self._drain_and_relaunch(visibility)
+                    self.relaunch_generation += 1
             finally:
                 self._relaunch_gate.set()
 
@@ -878,7 +889,7 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         """Best-effort close that keeps the lease; never masks the original error."""
         try:
             await self._close_browser_resources(release_lease=False)
-        except BaseException:  # noqa: BLE001 — the caller re-raises the original
+        except (Exception, asyncio.CancelledError):  # the caller re-raises the original
             logger.warning("client.relaunch_cleanup_error", exc_info=True)
 
     async def set_archived_media(

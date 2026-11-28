@@ -101,9 +101,9 @@ def test_a_refused_direct_submit_is_retried_once_from_a_new_browser(
         ) as client:
             real_relaunch = client.relaunch
 
-            async def recording_relaunch(target: BrowserVisibility) -> None:
+            async def recording_relaunch(target: BrowserVisibility, **kw: Any) -> None:
                 world["contexts"].append(client._context)  # noqa: SLF001
-                await real_relaunch(target)
+                await real_relaunch(target, **kw)
                 world["relaunches"].append(target)
                 world["contexts"].append(client._context)  # noqa: SLF001
 

@@ -56,17 +56,9 @@ from rich.markup import escape
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
-from gflow_cli.api.generation_route import (
-    Route,
-    choose_image_route,
-    choose_upscale_route,
-    choose_video_route,
-    plan_visibility,
-)
-from gflow_cli.api.transports.direct_http._session import (
-    _proxy_configured,  # pyright: ignore[reportPrivateUsage]
-)
-from gflow_cli.config import UiMode, get_settings, reset_settings, resolve_ui_mode
+from gflow_cli.api.generation_route import Route, plan_visibility
+from gflow_cli.api.transports.direct_http import _route as direct_route
+from gflow_cli.config import UiMode, get_settings, reset_settings
 from gflow_cli.errors import (
     GFlowError,
     exit_code_for,
@@ -723,11 +715,7 @@ def _direct_transport(transport: str | None) -> bool:
 
 def image_route(request: GenerateImageRequest, *, transport: str | None = None) -> Route:
     """The route the direct transport takes for ``request``; agentic UI mode is the UI."""
-    if not _direct_transport(transport) or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
-        return Route.UI
-    return choose_image_route(
-        request, flow_host=get_settings().flow_host, proxy_configured=_proxy_configured()
-    )
+    return direct_route.image_route(request) if _direct_transport(transport) else Route.UI
 
 
 def video_route(request: GenerateVideoRequest, *, transport: str | None = None) -> Route:
@@ -737,24 +725,14 @@ def video_route(request: GenerateVideoRequest, *, transport: str | None = None) 
     ``--no-max-credits`` into it), so a capped video routes to the UI, where the quote is
     read, and an explicitly uncapped one routes on its shape.
     """
-    settings = get_settings()
-    if not _direct_transport(transport) or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
-        return Route.UI
-    return choose_video_route(
-        request,
-        flow_host=settings.flow_host,
-        proxy_configured=_proxy_configured(),
-        effective_max_credits=request.max_credits,
-    )
+    return direct_route.video_route(request) if _direct_transport(transport) else Route.UI
 
 
 def upscale_route(scale: str, catalog_row: object | None, *, transport: str | None = None) -> Route:
     """The route a video upscale takes, from the local catalog row alone."""
     if not _direct_transport(transport):
         return Route.UI
-    return choose_upscale_route(
-        scale, catalog_row, flow_host=get_settings().flow_host, proxy_configured=_proxy_configured()
-    )
+    return direct_route.upscale_route(scale, catalog_row)
 
 
 def upscale_visibility(
@@ -788,7 +766,8 @@ async def video_client_visibility(
     """:func:`client_visibility` for video, after the browser-free zero-balance check.
 
     A planned direct clip meeting a balance of 0 ends with exit 37 before any browser
-    launches; an unreadable balance skips the check (the transport repeats it per submit).
+    launches; an unreadable balance skips the check. This is the only balance check: once
+    the profile's Chrome runs, it holds the on-disk cookie jar the read needs.
     """
     if Route.DIRECT in routes:
         from gflow_cli.api.transports.direct_http._transport import (  # noqa: PLC0415
@@ -1208,7 +1187,6 @@ def validate_t2i_flags(
     thinking_level: str | None,
 ) -> None:
     """Validate single-prompt-only and arm-conflict flags on ``gflow image t2i``."""
-    from gflow_cli.config import UiMode
 
     if ui_mode == UiMode.CLASSIC.value and instructions:
         raise click.UsageError(

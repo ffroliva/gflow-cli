@@ -32,8 +32,9 @@ _CLAIMANT = "worker:profile:1"
 
 class _Host:
     visibility = BrowserVisibility.HEADED
+    relaunch_generation = 0
 
-    async def relaunch(self, visibility: BrowserVisibility) -> None:
+    async def relaunch(self, visibility: BrowserVisibility, **_: object) -> None:
         self.visibility = visibility
 
 

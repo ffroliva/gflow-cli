@@ -312,6 +312,13 @@ async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     return await asyncio.wait_for(future, _TOTAL_S)
 
 
+def proxy_configured() -> bool:
+    """Whether gflow's, the environment's or the OS's proxy is set: the one proxy rule for
+    the wire reads and the direct route. ``NO_PROXY`` alone shows up as the ``no`` key and
+    configures no proxy."""
+    return bool(get_settings().browser_proxy) or any(k != "no" for k in getproxies())
+
+
 async def _execute_direct_rpc(
     profile_dir: Path,
     rpcid: str,
@@ -319,7 +326,7 @@ async def _execute_direct_rpc(
 ) -> tuple[httpx.Response, float]:
     require_in_home(profile_dir)  # before anything reads the profile (row 19)
     _gate(profile_dir)
-    if get_settings().browser_proxy or getproxies():
+    if proxy_configured():
         # A proxy anywhere (gflow's, the environment's, the OS's) means the browser and a
         # direct request may leave by different routes; the session cookies must not.
         raise WireReadUnavailable(WireFallbackReason.PROXY_CONFIGURED)

@@ -113,8 +113,6 @@ def direct_can_serve(request: GenerateImageRequest) -> bool:
     T2I with BELUGA (Nano Banana 2.1), any aspect, count 1-4, or one in-project reference or one
     named character (count 1-4). HARBOR_SEAL and GEM_PIX_2 were measured only as portrait
     text-to-image with count 1.
-
-    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
     """
     return (
         request.model in IMAGE_WIRE_MODELS
@@ -161,15 +159,10 @@ def choose_image_route(
     flow_host: str,
     proxy_configured: bool,
 ) -> Route:
-    """Decide whether an image generation request can be served directly over HTTP.
-
-    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
-    """
+    """Decide whether an image generation request can be served directly over HTTP."""
     if not direct_can_serve(request):
         return Route.UI
-    if flow_host == "labs.google":
-        return Route.UI
-    if proxy_configured:
+    if not _is_environment_supported(flow_host=flow_host, proxy_configured=proxy_configured):
         return Route.UI
     return Route.DIRECT
 
@@ -325,11 +318,10 @@ def choose_upscale_route(
     flow_host: str,
     proxy_configured: bool,
 ) -> Route:
-    """Decide whether a video upscale request can be served directly over HTTP.
-
-    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
-    """
-    if flow_host == "labs.google" or proxy_configured or scale != "1080p" or catalog_row is None:
+    """Decide whether a video upscale request can be served directly over HTTP."""
+    if scale != "1080p" or catalog_row is None:
+        return Route.UI
+    if not _is_environment_supported(flow_host=flow_host, proxy_configured=proxy_configured):
         return Route.UI
     return Route.DIRECT if _measured_upscale_source(catalog_row) else Route.UI
 
@@ -353,10 +345,7 @@ def plan_visibility(
     setting: VisibilitySetting | str,
     routes: Iterable[Route],
 ) -> BrowserVisibility:
-    """Plan concrete browser visibility based on configuration and planned routes.
-
-    An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
-    """
+    """Plan concrete browser visibility based on configuration and planned routes."""
     try:
         resolved_setting = VisibilitySetting(setting)
     except ValueError:

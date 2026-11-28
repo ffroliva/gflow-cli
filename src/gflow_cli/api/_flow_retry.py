@@ -14,7 +14,11 @@ their own. A direct attempt that does not end ``Accepted`` raises ``DirectAttemp
   reconcile; a signed-out session raises the UI path's auth error.
 
 The relaunch runs only after the attempt has left its in-flight slot, so the transport's
-``quiesce()`` can drain other jobs without waiting on this one.
+``quiesce()`` can drain other jobs without waiting on this one. Each attempt records the
+client's ``relaunch_generation`` when it starts: refusals in one window cost one relaunch
+(a later one finds the fresh process already started and retries on it), and an attempt
+that waited out another job's relaunch at the gate (``NotSent("torn_down")``) runs again
+on the new transport instead of falling back to the UI.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from gflow_cli.api.submit_policy import (
     DirectAttemptEnded,
     FallbackUi,
     Indeterminate,
+    NotSent,
     RetryDirect,
     RetryStep,
     Stop,
@@ -60,16 +65,23 @@ _T = TypeVar("_T")
 #: Called by the transport immediately before the billed POST.
 BeforeSubmit = Callable[[], None]
 
+#: An attempt that waited at the gate while the client relaunched (``DirectHttpTransport``).
+_TORN_DOWN = NotSent("torn_down")
+
 #: The one line a person sees before the relaunch (structlog writes it to stderr).
 REFUSAL_RETRY_NOTICE = "Flow refused the token; retrying once from a fresh browser"
 
 
 class RetryHost(Protocol):
-    """The client the loop relaunches: its current visibility and ``relaunch``."""
+    """The client the loop relaunches: its current visibility, how many relaunches it has
+    completed, and ``relaunch`` (a no-op when ``unless_since`` is no longer current)."""
 
     visibility: BrowserVisibility
+    relaunch_generation: int
 
-    async def relaunch(self, visibility: BrowserVisibility) -> None: ...
+    async def relaunch(
+        self, visibility: BrowserVisibility, *, unless_since: int | None = None
+    ) -> None: ...
 
 
 class DirectImages(Protocol):
@@ -126,24 +138,22 @@ async def run_with_retry(
         return result if observe is None else observe(result, refused is not None)
 
     while True:
+        generation = host.relaunch_generation  # the process this attempt starts on
         try:
             return done(await direct(hook))
         except DirectAttemptEnded as exc:
             ended = exc
+        if ended.outcome == _TORN_DOWN and host.relaunch_generation != generation:
+            continue  # it waited out another job's relaunch; nothing was sent: run it again
         step = next_step(ended.outcome, setting=setting, retried=refused is not None)
         if isinstance(step, RetryDirect):
-            await _relaunch_after_refusal(host, step, ended, emit)
+            await _relaunch_after_refusal(host, step, ended, emit, generation)
             refused = _reason(ended)
-        elif isinstance(step, FallbackUi):
-            if host.visibility != step.visibility:
-                await _relaunch_for_ui(host, step.visibility, refused)
-            log.info("direct.fallback_to_ui", reason=_reason(ended))
-            emit.submit_attempted()
+            continue
+        if isinstance(step, FallbackUi):
+            await _prepare_ui_fallback(host, step, ended, emit, refused)
             return done(await ui())
-        else:
-            if isinstance(step, Stop) and step.kind == "waf_final":
-                emit("submit_refused")
-            raise _stop_error(step, ended) from ended
+        raise _stop_error(step, ended, emit) from ended
 
 
 class _Checkpoints:
@@ -161,9 +171,14 @@ class _Checkpoints:
 
 
 async def _relaunch_after_refusal(
-    host: RetryHost, step: RetryDirect, ended: DirectAttemptEnded, emit: _Checkpoints
+    host: RetryHost,
+    step: RetryDirect,
+    ended: DirectAttemptEnded,
+    emit: _Checkpoints,
+    generation: int,
 ) -> None:
-    """Reset the job to not charged, tell the person, and start a fresh browser process."""
+    """Reset the job to not charged, tell the person, and start a fresh browser process,
+    unless another job's relaunch already did since this attempt started."""
     emit("submit_refused")
     log.warning(
         "mint.retried",
@@ -172,9 +187,23 @@ async def _relaunch_after_refusal(
         new_process=True,
     )
     try:
-        await host.relaunch(step.visibility)
+        await host.relaunch(step.visibility, unless_since=generation)
     except RelaunchFailed as failed:
         raise waf_refusal_final(reason=_reason(ended), attempts=1) from failed
+
+
+async def _prepare_ui_fallback(
+    host: RetryHost,
+    step: FallbackUi,
+    ended: DirectAttemptEnded,
+    emit: _Checkpoints,
+    refused: str | None,
+) -> None:
+    """Relaunch at the UI's visibility when it differs, then pass the submit gate."""
+    if host.visibility != step.visibility:
+        await _relaunch_for_ui(host, step.visibility, refused)
+    log.info("direct.fallback_to_ui", reason=_reason(ended))
+    emit.submit_attempted()
 
 
 async def _relaunch_for_ui(
@@ -198,11 +227,13 @@ def _reason(ended: DirectAttemptEnded) -> str:
     return outcome.reason
 
 
-def _stop_error(step: RetryStep, ended: DirectAttemptEnded) -> GFlowError:
+def _stop_error(step: RetryStep, ended: DirectAttemptEnded, emit: _Checkpoints) -> GFlowError:
+    """The final error; a final refusal first resets the job to not charged."""
     if not isinstance(step, Stop):  # pragma: no cover - Done never follows an ended attempt
         raise AssertionError(f"unexpected step {step!r} for an ended attempt")
     outcome = ended.outcome
     if step.kind == "waf_final":
+        emit("submit_refused")
         return waf_refusal_final(reason=_reason(ended), attempts=2)
     if step.kind == "reauth":
         return AuthExpiredError(

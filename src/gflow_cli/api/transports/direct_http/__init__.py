@@ -11,9 +11,6 @@ predicate ``direct_can_serve`` lives in ``generation_route`` and is re-exported 
 from __future__ import annotations
 
 from gflow_cli.api.generation_route import direct_can_serve
-from gflow_cli.api.transports.direct_http._gateway import (
-    _post_request,
-)
 from gflow_cli.api.transports.direct_http._images import (
     _CHARACTER_READ_S,
     _WIRE_MODEL,
@@ -39,7 +36,6 @@ __all__ = [
     "_MINT_RETRY_S",
     "_WIRE_MODEL",
     "DirectHttpTransport",
-    "_post_request",
     "_session_headers",
     "_shell",
     "build_maseq_body",

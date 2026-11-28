@@ -13,7 +13,6 @@ import structlog
 from gflow_cli.api import flow_wire
 from gflow_cli.api.submit_policy import not_sent
 from gflow_cli.auth.cookies import sent_to_flow_host
-from gflow_cli.config import get_settings
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -30,12 +29,6 @@ _AUTH_REASONS = frozenset(
         flow_wire.WireFallbackReason.REDIRECT,
     }
 )
-
-
-def _proxy_configured() -> bool:
-    """A proxy anywhere means the browser and this request could leave by different routes.
-    ``NO_PROXY`` alone shows up as the ``no`` key and configures no proxy."""
-    return bool(get_settings().browser_proxy) or any(k != "no" for k in flow_wire.getproxies())
 
 
 async def _session_headers(page: Page, profile_dir: Path) -> dict[str, str]:

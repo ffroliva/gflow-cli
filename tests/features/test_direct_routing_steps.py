@@ -153,9 +153,10 @@ class _Host:
 
     def __init__(self, world: dict[str, Any]) -> None:
         self.visibility = BrowserVisibility.HEADLESS
+        self.relaunch_generation = 0
         self._world = world
 
-    async def relaunch(self, visibility: BrowserVisibility) -> None:
+    async def relaunch(self, visibility: BrowserVisibility, **_: object) -> None:
         self._world["relaunches"].append(visibility)
         self.visibility = visibility
 

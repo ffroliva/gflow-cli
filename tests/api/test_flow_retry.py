@@ -50,6 +50,8 @@ _REFUSED = RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
 class FakeHost:
     """A ``RetryHost``: records each relaunch and the visibility it asked for."""
 
+    relaunch_generation = 0
+
     def __init__(
         self,
         visibility: BrowserVisibility = BrowserVisibility.HEADLESS,
@@ -62,7 +64,7 @@ class FakeHost:
         self.events = events if events is not None else []
         self._fail = fail
 
-    async def relaunch(self, visibility: BrowserVisibility) -> None:
+    async def relaunch(self, visibility: BrowserVisibility, **_: object) -> None:
         self.events.append(f"relaunch:{visibility.value}")
         if self._fail is not None:
             raise self._fail
@@ -477,9 +479,7 @@ async def test_route_mismatch_and_upload_fallback_raise_not_sent_no_in_place_ui(
         await transport.generate_images(project_id=None, request=GenerateImageRequest(prompt="x"))
     assert no_project.value.outcome == NotSent("no_project")
 
-    monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http._transport._proxy_configured", lambda: True
-    )
+    monkeypatch.setattr(flow_wire, "proxy_configured", lambda: True)
     with pytest.raises(DirectAttemptEnded) as upload:
         await transport.upload_reference(project_id="proj-123", path=tmp_path / "face.png")
     assert upload.value.outcome == NotSent("proxy_configured")
@@ -555,7 +555,7 @@ async def test_two_in_flight_one_refused_accepted_one_completes() -> None:
     finish_accepted = asyncio.Event()
 
     class QuiescingHost(FakeHost):
-        async def relaunch(self, visibility: BrowserVisibility) -> None:
+        async def relaunch(self, visibility: BrowserVisibility, **_: object) -> None:
             finish_accepted.set()
             async with gate.quiesce():
                 events.append("relaunch")
@@ -643,7 +643,7 @@ async def test_the_image_surface_runs_a_direct_transport_through_the_loop(
     image.transport = "direct_http"
     client.transport = FakeDirect(_REFUSED)  # type: ignore[assignment]
 
-    async def relaunch(visibility: BrowserVisibility) -> None:
+    async def relaunch(visibility: BrowserVisibility, **_: object) -> None:
         events.append(f"relaunch:{visibility.value}")
         client.transport = FakeDirect(image)  # type: ignore[assignment]
 
@@ -801,7 +801,7 @@ def _upload_client(
     client = FlowApiClient(tmp_path, visibility=BrowserVisibility.HEADLESS)
     client.transport = _direct_transport(tmp_path, handler)
 
-    async def relaunch(visibility: BrowserVisibility) -> None:
+    async def relaunch(visibility: BrowserVisibility, **_: object) -> None:
         events.append(f"relaunch:{visibility.value}")
 
     client.relaunch = relaunch  # type: ignore[method-assign]
@@ -852,7 +852,7 @@ async def test_fallback_relaunch_failure_exit_code_and_not_charged() -> None:
     in its detail."""
 
     class FailsSecond(FakeHost):
-        async def relaunch(self, visibility: BrowserVisibility) -> None:
+        async def relaunch(self, visibility: BrowserVisibility, **_: object) -> None:
             if self.relaunches:
                 raise RelaunchFailed("Browser relaunch failed: boom")
             await super().relaunch(visibility)
@@ -957,6 +957,72 @@ async def test_ui_fallback_queued_behind_relaunch_raises_typed_not_charged(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_refusals_relaunch_once(tmp_path: Path) -> None:
+    """Two attempts refused in one window cost one relaunch: the second finds the first's
+    fresh process already started and retries on it."""
+    events: list[str] = []
+    client = _relaunching_client(
+        tmp_path, _direct_transport(tmp_path, lambda _r: httpx.Response(404)), events
+    )
+    both_refused = asyncio.Barrier(2)
+    sends = {"a": 0, "b": 0}
+
+    def attempt(key: str) -> Any:
+        async def direct(before: Any) -> str:
+            sends[key] += 1
+            if sends[key] == 1:
+                await both_refused.wait()
+                raise DirectAttemptEnded(_REFUSED)
+            return key
+
+        return direct
+
+    results = await asyncio.gather(
+        run_with_retry(client, direct=attempt("a"), ui=_no_ui, setting=VisibilitySetting.AUTO),
+        run_with_retry(client, direct=attempt("b"), ui=_no_ui, setting=VisibilitySetting.AUTO),
+    )
+
+    assert results == ["a", "b"]
+    assert sends == {"a": 2, "b": 2}
+    assert events == ["relaunch_start", "relaunch_done"]
+
+
+@pytest.mark.asyncio
+async def test_attempt_waiting_during_relaunch_retries_on_new_transport(tmp_path: Path) -> None:
+    """An attempt queued at the old gate while a relaunch runs finds its transport torn down
+    once the gate reopens: it sends nothing there and retries on the new transport, rather
+    than ending NotSent and relaunching the shared client headed for a UI fallback."""
+    events: list[str] = []
+    old = _direct_transport(tmp_path, lambda _r: httpx.Response(404))
+    hold = asyncio.Event()
+    client = _relaunching_client(tmp_path, old, events, hold)
+
+    async def stale_run() -> str:
+        events.append("ran_on_old")  # a mint on the closed page would end NotSent
+        raise DirectAttemptEnded(NotSent("mint_failed"))
+
+    async def direct(before: Any) -> str:
+        if client.transport is old:
+            return await old._run_direct(MagicMock(), stale_run)
+        events.append("new_transport")
+        return "image"
+
+    relaunch = asyncio.create_task(client.relaunch(BrowserVisibility.HEADLESS))
+    while "relaunch_start" not in events:
+        await asyncio.sleep(0)
+    attempt = asyncio.create_task(
+        run_with_retry(client, direct=direct, ui=_no_ui, setting=VisibilitySetting.AUTO)
+    )
+    await asyncio.sleep(0.01)  # the attempt is now waiting at the quiesced old gate
+    hold.set()
+    await relaunch
+
+    assert await attempt == "image"
+    assert events == ["relaunch_start", "relaunch_done", "new_transport"]
+    assert client.visibility is BrowserVisibility.HEADLESS
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("answers", "retried"), [(("image",), False), ((_REFUSED, "image"), True)])
 async def test_observe_is_told_whether_a_refusal_was_retried(
     answers: tuple[Any, ...], retried: bool
@@ -1002,7 +1068,10 @@ async def test_a_relaunch_failure_after_one_refusal_counts_one_attempt() -> None
         await run_with_retry(
             host, direct=Script(_REFUSED).direct, ui=_no_ui, setting=VisibilitySetting.AUTO
         )
-    assert caught.value.detail == f"Flow refused 1 submit attempts: {UNUSUAL_ACTIVITY_REASON}"
+    detail, hint = caught.value.detail, caught.value.remediation_hint or ""
+    assert detail == f"Flow refused 1 submit attempt: {UNUSUAL_ACTIVITY_REASON}"
+    assert hint.startswith("The attempt was refused, the browser relaunch for the retry failed")
+    assert "attempts" not in detail + hint
 
 
 @pytest.mark.asyncio

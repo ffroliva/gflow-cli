@@ -45,12 +45,10 @@ from gflow_cli.api.video import (
     VideoStatus,
 )
 from gflow_cli.errors import (
-    InsufficientCreditsError,
     MediaDownloadError,
     NetworkError,
     TransportTimeoutError,
     WireFormatError,
-    legacy_exit_code_for,
 )
 from tests.api.test_flow_retry import FakeHost
 from tests.api.transports.test_direct_http import _maseq_reply
@@ -388,7 +386,7 @@ def _client(tmp_path: Path, flow: Flow) -> tuple[FlowApiClient, list[str]]:
     client = FlowApiClient(tmp_path, visibility=BrowserVisibility.HEADLESS)
     client.transport = _transport(tmp_path, flow)
 
-    async def relaunch(visibility: BrowserVisibility) -> None:
+    async def relaunch(visibility: BrowserVisibility, **_: object) -> None:
         flow.events.append(f"relaunch:{visibility.value}")
 
     client.relaunch = relaunch  # type: ignore[method-assign]
@@ -472,35 +470,6 @@ async def test_unmeasured_video_shape_raises_not_sent_route(
         )
     assert ended.value.outcome == NotSent("unsupported_shape")
     assert flow.events == []
-
-
-# --- the balance read before a direct submit -----------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_zero_balance_raises_insufficient_credits_before_any_send(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(flow_wire, "read_credits", AsyncMock(return_value=CreditsInfo(0)))
-    flow = _happy()
-    client, _ = _client(tmp_path, flow)
-    with pytest.raises(InsufficientCreditsError) as caught:
-        await client.generate_video(req=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path)
-    assert caught.value.charged == "no"
-    assert flow.events == []
-
-
-@pytest.mark.asyncio
-async def test_a_failed_balance_read_skips_the_check(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(flow_wire, "read_credits", AsyncMock(side_effect=OSError("no cookies")))
-    flow = _happy()
-    result = await _transport(tmp_path, flow).generate_video(
-        request=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path
-    )
-    assert result.status.succeeded
-    assert flow.count("YhhmEf") == 1
 
 
 # --- council fixes ---------------------------------------------------------------------
@@ -629,21 +598,6 @@ async def test_video_retries_only_exact_unusual_activity(tmp_path: Path) -> None
     assert flow.count("YhhmEf") == 1
     assert not any(e.startswith("relaunch") for e in flow.events)
     assert caught.value.resolved_next_action() == "reconcile"
-
-
-@pytest.mark.asyncio
-async def test_i2v_zero_balance_exits_37_before_upload(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(flow_wire, "read_credits", AsyncMock(return_value=CreditsInfo(0)))
-    flow = _happy()
-    client, _ = _client(tmp_path, flow)
-    request = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=_png(tmp_path))
-    with pytest.raises(InsufficientCreditsError) as caught:
-        await client.generate_video(req=request, project_id=_PROJECT, out_dir=tmp_path)
-    assert legacy_exit_code_for(caught.value) == 37
-    assert caught.value.charged == "no"
-    assert flow.events == []
 
 
 def test_crop_rounding_to_zero_sends_null() -> None:
@@ -857,17 +811,20 @@ async def test_unresolved_selection_never_mints(
 
 
 @pytest.mark.asyncio
-async def test_selection_read_on_armed_page_before_balance(
+async def test_selection_read_on_armed_page_then_one_mint_and_no_balance_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The page is armed, then the selection read, then the balance, then the one mint."""
+    """The page is armed, then the selection read, then the one mint. The transport reads no
+    balance: the on-disk cookie jar is locked while the profile's Chrome runs, so the
+    zero-balance check runs before launch (``_cli_helpers.video_client_visibility``)."""
     flow = _happy()
     transport = _transport(tmp_path, flow)
     order = _ordered(transport, monkeypatch, _selection("macaron_cookie"))
     result = await transport.generate_video(
         request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path
     )
-    assert order[:4] == ["navigate", _ARMED, "balance", "mint"]
+    assert "balance" not in order
+    assert order[:3] == ["navigate", _ARMED, "mint"]
     assert order.count("navigate") == 1
     assert result.status.succeeded
 

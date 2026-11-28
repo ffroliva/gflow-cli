@@ -26,7 +26,6 @@ from gflow_cli.api.submit_policy import (
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http import DirectHttpTransport, _session_headers, _shell
 from gflow_cli.api.transports.direct_http._gateway import (
-    READ_RPCIDS,
     WRITE_RPCIDS,
     SubmitAttempt,
     _client,
@@ -426,9 +425,8 @@ async def test_write_rpcid_outside_allowlist_refused_before_send(
     assert attempt.sent is False
 
 
-def test_the_write_and_read_allowlists_are_separate_and_measured() -> None:
+def test_the_write_allowlist_is_measured() -> None:
     assert frozenset({"ogiZ0b", "maseQ", "YhhmEf", "eb1hJf", "p0UkFb"}) == WRITE_RPCIDS
-    assert frozenset({"jwpduf", "as29s"}) == READ_RPCIDS
 
 
 def test_post_request_carries_the_source_path() -> None:

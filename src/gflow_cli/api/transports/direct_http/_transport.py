@@ -14,29 +14,27 @@ import httpx
 import structlog
 
 from gflow_cli.api import flow_wire
-from gflow_cli.api.generation_route import (
-    Route,
-    choose_video_route,
-    direct_can_serve,
-    is_bare_t2v,
-    video_target,
-)
+from gflow_cli.api.generation_route import Route, is_bare_t2v, video_target
 from gflow_cli.api.image import ImageRef
 from gflow_cli.api.submit_policy import DirectAttemptEnded, RefusedNotBilled, not_sent
 from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource, ProjectTokens, _arm_page
-from gflow_cli.api.transports.direct_http._session import _proxy_configured
+from gflow_cli.api.transports.direct_http._route import (
+    environment_reason,
+    image_shape_direct,
+    video_route,
+)
 from gflow_cli.api.transports.direct_http._upscale import UpscaleSource, run_direct_upscale
 from gflow_cli.api.transports.direct_http._video import (
     StartFrame,
+    VideoJob,
     run_direct_video,
     selected_target,
 )
 from gflow_cli.api.transports.frame_builder import centred_crop
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.video import Mode
-from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import InsufficientCreditsError
 from gflow_cli.paths import image_dimensions, jpeg_exif_orientation
 
@@ -52,28 +50,13 @@ log = structlog.get_logger(__name__)
 _T = TypeVar("_T")
 
 
-def _routes_direct(request: GenerateVideoRequest) -> bool:
-    """Whether ``request`` takes the direct path; the agentic UI mode is the UI.
-
-    ``choose_video_route`` decides; the request's credit cap (its callers resolve
-    ``GFLOW_CLI_MAX_CREDITS`` into it, as the pre-launch route does) routes to the UI, where
-    Flow's quote is read.
-    """
-    route = choose_video_route(
-        request,
-        flow_host=get_settings().flow_host,
-        proxy_configured=_proxy_configured(),
-        effective_max_credits=request.max_credits,
-    )
-    return route is Route.DIRECT and resolve_ui_mode(request.ui_mode) is not UiMode.AGENTIC
-
-
 async def refuse_empty_balance(profile_dir: Path) -> None:
     """Exit 37 before any send when Flow reports no credits; a failed read skips the check.
 
-    The read is browser-free (``nzlxg``, the ``gflow credits`` read). Only an empty balance
-    is refused: no price is readable without the browser, so a partial balance is left to
-    Flow (a price comparison is tracked separately).
+    The read is browser-free (``nzlxg``, the ``gflow credits`` read) and runs before launch
+    only: it reads the on-disk cookie jar, which the profile's Chrome holds while it runs.
+    Only an empty balance is refused: no price is readable without the browser, so a partial
+    balance is left to Flow (a price comparison is tracked separately).
     """
     try:
         balance = (await flow_wire.read_credits(profile_dir)).credits
@@ -121,9 +104,15 @@ class DirectHttpTransport(UiAutomationTransport):
         return self._token_source
 
     async def _run_direct(self, tokens: ProjectTokens, run: Callable[[], Awaitable[_T]]) -> _T:
-        """One attempt inside the in-flight gate; a refusal discards the page that minted."""
+        """One attempt inside the in-flight gate; a refusal discards the page that minted.
+
+        An attempt that waited at the gate while the client relaunched finds this transport
+        torn down when the gate reopens: it ends ``NotSent("torn_down")`` before anything is
+        minted or sent, and the retry loop runs it again on the new transport."""
         try:
             async with self._gate.slot():
+                if not self._setup_done or self._page is None:
+                    raise not_sent("torn_down")
                 return await run()
         except DirectAttemptEnded as ended:
             if isinstance(ended.outcome, RefusedNotBilled):
@@ -222,9 +211,7 @@ class DirectHttpTransport(UiAutomationTransport):
         """The inherited UI upload, for the retry loop's fallback when nothing was sent."""
         return await super().upload_reference(project_id=project_id, path=path)
 
-    # No name_resolver: the client sends this transport through the retry loop, which passes
-    # resolver kwargs to generate_video_ui only; the direct frame has no mention to resolve.
-    async def generate_video(  # pyright: ignore[reportIncompatibleMethodOverride]
+    async def generate_video(
         self,
         *,
         request: GenerateVideoRequest,
@@ -233,22 +220,24 @@ class DirectHttpTransport(UiAutomationTransport):
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
+        name_resolver: Callable[[str], str | None] | None = None,
         on_before_submit: Callable[[], None] | None = None,
         frame_uploads: dict[Path, str] | None = None,
     ) -> VideoResult:
         """Generate one clip over direct HTTP when its key tuple is measured.
 
         The page is armed first; a bare t2v (no model) is then keyed from the account's
-        selection, read on it before the balance read and before any mint; an unread or
-        unmeasured selection ends ``NotSent("t2v_key_unresolved")``.
+        selection, read on it before any mint; an unread or unmeasured selection ends
+        ``NotSent("t2v_key_unresolved")``.
 
         As :meth:`generate_images`: every other outcome raises ``DirectAttemptEnded`` for
         the retry loop, which runs :meth:`generate_video_ui` on a fresh page when nothing
         was sent. An i2v start frame is uploaded with ``maseQ`` once per run:
         ``frame_uploads`` (path to media id) is kept by the caller across a retry, so a
-        retry after a refusal reuses the stored upload. A zero balance, read without the
-        browser, ends the request before any send (exit 37); an unreadable one is skipped.
+        retry after a refusal reuses the stored upload. The zero-balance check runs before
+        launch (:func:`refuse_empty_balance`), not here.
         """
+        del name_resolver  # the direct frame carries no mention text to resolve
         if not self._setup_done or self._page is None:
             msg = "DirectHttpTransport.setup() must be called before generate_video()"
             raise RuntimeError(msg)
@@ -260,12 +249,20 @@ class DirectHttpTransport(UiAutomationTransport):
         request, target = await self._armed_target(source.page, project_id, request)
         if target is None:  # unreachable: _routes_direct keyed it
             raise not_sent("unsupported_shape")
-        await refuse_empty_balance(profile_dir)
         tokens = source.for_project(project_id)
         start: StartFrame | None = None
         if request.mode is Mode.I2V:
             start = await self._start_frame(project_id, request, target.aspect_slot, frame_uploads)
-        resolved, wire_target, start_frame = request, target, start
+        job = VideoJob(
+            request=request,
+            target=target,
+            start=start,
+            save=partial(self._save_clip, out_dir=out_dir),
+            download=download,
+            poll_timeout_s=poll_timeout_s,
+            poll_interval_s=self._poll_interval_s,
+            on_started=on_started,
+        )
         return await self._run_direct(
             tokens,
             lambda: run_direct_video(
@@ -273,14 +270,7 @@ class DirectHttpTransport(UiAutomationTransport):
                 page=page,
                 profile_dir=profile_dir,
                 project_id=project_id,
-                request=resolved,
-                target=wire_target,
-                start=start_frame,
-                save=partial(self._save_clip, out_dir=out_dir),
-                download=download,
-                poll_timeout_s=poll_timeout_s,
-                poll_interval_s=self._poll_interval_s,
-                on_started=on_started,
+                job=job,
                 http_transport=self._http_transport,
                 on_before_submit=on_before_submit,
             ),
@@ -369,13 +359,7 @@ class DirectHttpTransport(UiAutomationTransport):
         return (uploads[path], centred_crop(*size, aspect_slot=aspect_slot))
 
     def _why_not_direct_upload(self) -> str | None:
-        if self._profile_dir is None:
-            return "no_profile_dir"
-        if get_settings().flow_host == "labs.google":
-            return "flow_host_labs"
-        if _proxy_configured():
-            return "proxy_configured"
-        return None
+        return "no_profile_dir" if self._profile_dir is None else environment_reason()
 
     def _why_not_direct_video(
         self, request: GenerateVideoRequest, project_id: str | None
@@ -383,7 +367,7 @@ class DirectHttpTransport(UiAutomationTransport):
         reason = self._why_not_direct_upload()
         if reason:
             return reason
-        if not _routes_direct(request):
+        if video_route(request) is not Route.DIRECT:
             return "unsupported_shape"
         return "no_project" if project_id is None else None
 
@@ -398,8 +382,7 @@ class DirectHttpTransport(UiAutomationTransport):
             return request, video_target(request)
 
     def _why_not_direct(self, request: GenerateImageRequest, project_id: str | None) -> str | None:
-        # generation_route's predicate is pure, so the GFLOW_CLI_UI_MODE setting is read here.
-        if not direct_can_serve(request) or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
+        if not image_shape_direct(request):
             return "unsupported_shape"
         if project_id is None:
             return "no_project"

@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import time
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
@@ -78,28 +79,36 @@ _I2V = ("eb1hJf", "VIDEO_GENERATION", "video submit", _RECONCILE_HINT)
 StartFrame = tuple[str, list[float | int | None]]
 
 
+@dataclass(frozen=True)
+class VideoJob:
+    """What one direct video sends and how its clip is collected.
+
+    ``request`` is the resolved request (a bare t2v's carries the account's selection, read
+    before the mint by :func:`selected_target`) and ``target`` its measured key.
+    """
+
+    request: GenerateVideoRequest
+    target: VideoWireTarget
+    start: StartFrame | None
+    save: ClipSaver
+    download: bool
+    poll_timeout_s: float
+    poll_interval_s: float
+    on_started: VideoStartedCallback | None = None
+
+
 async def run_direct_video(
     *,
     tokens: RecaptchaTokenSource,
     page: Page,
     profile_dir: Path,
     project_id: str,
-    request: GenerateVideoRequest,
-    target: VideoWireTarget,
-    start: StartFrame | None,
-    save: ClipSaver,
-    download: bool,
-    poll_timeout_s: float,
-    poll_interval_s: float,
-    on_started: VideoStartedCallback | None = None,
+    job: VideoJob,
     http_transport: httpx.AsyncBaseTransport | None = None,
     on_before_submit: Callable[[], None] | None = None,
 ) -> VideoResult:
-    """One direct video: mint, send once, poll, read, download; all inside one attempt.
-
-    ``request`` is the resolved request (a bare t2v's carries the account's selection, read
-    before the mint by :func:`selected_target`) and ``target`` its measured key.
-    """
+    """One direct video: mint, send once, poll, read, download; all inside one attempt."""
+    request, target, start = job.request, job.target, job.start
     started = time.perf_counter()
     spec = _T2V if start is None else _I2V
     attempt = SubmitAttempt(spec, profile_dir, tokens, on_before_submit=on_before_submit)
@@ -115,12 +124,12 @@ async def run_direct_video(
         log.info(
             "direct.video_post", status=response.status_code, workflow_id=submitted.workflow_id
         )
-        await _notify(on_started, submitted, project_id)
+        await _notify(job.on_started, submitted, project_id)
         read = _reader(client, page, profile_dir, shell, source)
-        record = await _poll(read, submitted.workflow_id, poll_timeout_s, poll_interval_s)
+        record = await _poll(read, submitted.workflow_id, job.poll_timeout_s, job.poll_interval_s)
         local_path: Path | None = None
-        if download and record.is_done:
-            local_path = await _download(client, read, record, save)
+        if job.download and record.is_done:
+            local_path = await _download(client, read, record, job.save)
     log.info("direct.video", total_ms=int((time.perf_counter() - started) * 1000))
     return VideoResult(
         status=VideoStatus(

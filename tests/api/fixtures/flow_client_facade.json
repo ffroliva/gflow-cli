@@ -981,6 +981,7 @@
   "_unusable",
   "headless",
   "profile_dir",
+  "relaunch_generation",
   "settings",
   "transport",
   "visibility"
@@ -1033,7 +1034,7 @@
   "patch_agent_info": "async (self, project_id: 'str', *, enabled: 'bool | None' = None, cards: 'tuple[AgentInstruction, ...] | None' = None) -> 'JsonObject'",
   "patch_entity": "async (self, *, project_id: 'str', entity_id: 'str', display_name: 'str', workflow_ids: 'list[str]', voice: 'str | None' = None, personality: 'str | None' = None) -> 'None'",
   "poll_video_status": "async (self, media_id: 'str', *, project_id: 'str', initial_delay_s: 'float' = 90.0, poll_interval: 'float' = 10.0, timeout_s: 'float' = 900.0) -> 'VideoStatus'",
-  "relaunch": "async (self, visibility: 'BrowserVisibility') -> 'None'",
+  "relaunch": "async (self, visibility: 'BrowserVisibility', *, unless_since: 'int | None' = None) -> 'None'",
   "rename_project": "async (self, project_id: 'str', new_title: 'str') -> 'JsonObject'",
   "restore_media": "async (self, media_id: 'str', project_id: 'str') -> 'dict[str, Any]'",
   "served_route": "sync (self, *, prefer_migrated: 'bool') -> 'str'",

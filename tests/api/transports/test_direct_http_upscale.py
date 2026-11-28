@@ -163,7 +163,7 @@ def _client(tmp_path: Path, flow: UpscaleFlow) -> tuple[FlowApiClient, AsyncMock
     transport._poll_interval_s = 0.0
     client.transport = transport
 
-    async def relaunch(visibility: BrowserVisibility) -> None:
+    async def relaunch(visibility: BrowserVisibility, **_: object) -> None:
         flow.events.append(f"relaunch:{visibility.value}")
 
     client.relaunch = relaunch  # type: ignore[method-assign]

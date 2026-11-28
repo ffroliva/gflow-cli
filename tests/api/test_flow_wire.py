@@ -817,6 +817,15 @@ async def test_health_reports_a_system_or_env_proxy_like_the_read_path(
     assert reads == [] and flow.gets == []
 
 
+def test_no_proxy_alone_is_not_a_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One rule for the wire reads and the direct route: ``NO_PROXY`` alone (the ``no`` key)
+    configures no proxy, so a planned direct video still gets its pre-launch balance read."""
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"no": "localhost"})
+    assert flow_wire.proxy_configured() is False
+    monkeypatch.setattr(flow_wire, "getproxies", lambda: {"no": "x", "https": "http://p:1"})
+    assert flow_wire.proxy_configured() is True
+
+
 async def test_health_raises_the_security_refusal_for_a_profile_outside_home(
     tmp_path: Path, flow: _Flow, wire_on: None
 ) -> None:

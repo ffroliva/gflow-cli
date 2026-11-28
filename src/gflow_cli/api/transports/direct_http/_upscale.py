@@ -16,19 +16,15 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard
 
 import structlog
 
-from gflow_cli.api.generation_route import Route, choose_upscale_route
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.submit_policy import DirectAttemptEnded, Indeterminate
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http._gateway import SubmitAttempt, _client, _post_request
-from gflow_cli.api.transports.direct_http._session import (
-    _proxy_configured,
-    _session_headers,
-    _shell,
-)
+from gflow_cli.api.transports.direct_http._route import upscale_route
+from gflow_cli.api.transports.direct_http._session import _session_headers, _shell
 from gflow_cli.api.transports.direct_http._video import _fetch_clip, _poll, _reader
 from gflow_cli.api.transports.frame_builder import build_rpc_body
 from gflow_cli.api.transports.migrated_video_upscale import _check_mp4_resolution
-from gflow_cli.config import get_settings
 from gflow_cli.errors import UpscaleUnavailableError
 
 if TYPE_CHECKING:
@@ -68,16 +64,9 @@ def upscale_source(
 ) -> UpscaleSource | None:
     """The source for a direct upscale, or ``None`` for the menu path.
 
-    ``choose_upscale_route`` decides from the local catalog row alone (no network read).
+    :func:`upscale_route` decides from the local catalog row alone (no network read).
     """
-    settings = get_settings()
-    route = choose_upscale_route(
-        scale,
-        catalog_row,
-        flow_host=settings.flow_host,
-        proxy_configured=_proxy_configured(),
-    )
-    if route is not Route.DIRECT or catalog_row is None:
+    if upscale_route(scale, catalog_row) is not Route.DIRECT or catalog_row is None:
         return None
     return UpscaleSource(media_id, str(catalog_row["flow_workflow_id"]))
 

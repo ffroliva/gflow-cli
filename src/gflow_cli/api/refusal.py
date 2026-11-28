@@ -17,19 +17,25 @@ def waf_refusal_final(
     Tells callers and agents not to retry into a refusal window (charged="no",
     retryable=False, next_action="none"). The remediation notes that both attempts
     were refused and nothing was charged, names `--browser-visibility headed`, and
-    points to the 30-60 minute cooldown in docs/ACCOUNT_SAFETY.md.
+    points to the 30-60 minute cooldown in docs/ACCOUNT_SAFETY.md. One attempt means the
+    browser relaunch for the retry failed, so only the first send reached Flow.
     """
-    attempt_str = "Both attempts were" if attempts == 2 else f"All {attempts} attempts were"
+    if attempts == 1:
+        summary = (
+            "The attempt was refused, the browser relaunch for the retry failed, "
+            "and nothing was charged."
+        )
+    elif attempts == 2:
+        summary = "Both attempts were refused and nothing was charged."
+    else:
+        summary = f"All {attempts} attempts were refused and nothing was charged."
     remediation = (
-        f"{attempt_str} refused and nothing was charged. "
+        f"{summary} "
         "Wait for the 30-60 minute cooldown described in docs/ACCOUNT_SAFETY.md "
         "before trying again, or retry with --browser-visibility headed."
     )
-    detail = (
-        f"Flow refused {attempts} submit attempts: {reason}"
-        if reason
-        else f"Flow refused {attempts} submit attempts"
-    )
+    noun = "attempt" if attempts == 1 else "attempts"
+    detail = f"Flow refused {attempts} submit {noun}" + (f": {reason}" if reason else "")
     return WafRejectionError(
         detail,
         remediation_hint=remediation,
