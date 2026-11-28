@@ -6,6 +6,7 @@ End-to-end live tests against the real Flow API live in
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -523,7 +524,8 @@ async def test_client_delegates_image_gen_to_transport(
                 aspect=Aspect.PORTRAIT,
             ),
         )
-    assert result is sentinel
+    # The client stamps the launch visibility; everything else is the transport's image.
+    assert result == dataclasses.replace(sentinel, visibility="headed")
 
 
 # ---------------------------------------------------------------------------
