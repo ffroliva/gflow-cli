@@ -155,11 +155,11 @@ chain = [
 ]
 tts = ["edge-tts>=7.3.1"]
 # Patchright engine extra — opt-in, drop-in patched Playwright (Chromium) that
-# avoids the Runtime.enable CDP leak on the headed path. Selected via
+# avoids the Runtime.enable CDP leak. Selected via
 # GFLOW_CLI_BROWSER_ENGINE=patchright. Ships a PATCHED Chromium driver that
 # handles live Google session cookies/Bearer/SAPISID, so it is EXACT-pinned and
 # treated as a security-review-required bump (NOT a dependabot auto-merge) —
-# see SECURITY.md. Not a headless unlock.
+# see SECURITY.md. It does not hide the headless browser (`HeadlessChrome`).
 patchright = [
     "patchright==1.64.4",
 ]
