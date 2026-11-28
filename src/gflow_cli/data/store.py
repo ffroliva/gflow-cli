@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Self
 import structlog
 
 from gflow_cli.errors import DataMigrationError, DataStoreError
-from gflow_cli.winsec import harden_file_once
+from gflow_cli.winsec import harden_files_once
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -35,7 +35,15 @@ logger = structlog.get_logger(__name__)
 _create_lock = threading.Lock()
 
 
-def _secure_store_files(path: Path) -> None:
+def _win32_sidecar_paths(path: Path, real: str) -> tuple[str, ...]:
+    """Sidecars SQLite creates on Windows (beside the opened path, not a symlink target)."""
+    opened = os.path.join(os.path.realpath(path.parent), path.name)
+    # Keep case-only differences distinct until batch hardening compares file identities.
+    bases = [real] if opened == real else [opened, real]
+    return tuple(f"{base}{suffix}" for base in bases for suffix in ("-wal", "-shm"))
+
+
+def _secure_store_files(path: Path) -> str | None:
     """Create the database owner-only, or drop group/other access from an existing one.
 
     Runs before SQLite opens the file. An existing directory is left alone:
@@ -45,7 +53,7 @@ def _secure_store_files(path: Path) -> None:
     # user, so a directory first created by an elevated run would lock the user out.
     dir_mode = 0o777 if sys.platform == "win32" else 0o700
     path.parent.mkdir(mode=dir_mode, parents=True, exist_ok=True)
-    # SQLite follows a symlinked database and keeps its sidecars beside the target.
+    # SQLite follows a symlinked database and keeps its sidecars beside the target on POSIX.
     real = os.path.realpath(path)
     try:
         # On POSIX, closing any descriptor of a file drops this process's locks on it.
@@ -53,14 +61,13 @@ def _secure_store_files(path: Path) -> None:
         # connecting between this open and close.
         with _create_lock:
             os.close(os.open(real, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-        harden_file_once.cache_clear()  # a recreated file needs its own ACL
     except FileExistsError:
         pass
     if not os.path.isfile(real):
-        return  # a directory or device is no database, so "<path>-wal" is no sidecar
+        return None  # no regular db, so "<path>-wal" is no sidecar
     if sys.platform == "win32":
-        harden_file_once(real)
-        return
+        harden_files_once((real, *_win32_sidecar_paths(path, real)))
+        return real
     for target in (real, f"{real}-wal", f"{real}-shm"):
         try:
             mode = os.lstat(target).st_mode
@@ -74,6 +81,7 @@ def _secure_store_files(path: Path) -> None:
                 file=os.path.basename(target),
                 error=type(exc).__name__,
             )
+    return real
 
 
 def _utc_now() -> str:
@@ -265,7 +273,7 @@ class DataStore:
     @classmethod
     def open(cls, path: Path) -> DataStore:
         try:
-            _secure_store_files(path)
+            real = _secure_store_files(path)
             conn = sqlite3.connect(path, isolation_level=None)
             try:
                 conn.row_factory = sqlite3.Row
@@ -274,6 +282,8 @@ class DataStore:
                 conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
                 store = cls(conn=conn, path=path)
                 store.apply_migrations()
+                if sys.platform == "win32" and real is not None:
+                    harden_files_once(_win32_sidecar_paths(path, real))
                 return store
             except BaseException:
                 conn.close()

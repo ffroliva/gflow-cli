@@ -58,9 +58,9 @@ def ctx(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     real_read = flow_wire.read_credits
 
-    async def recording_read(profile_dir: Path) -> Any:
+    async def recording_read(profile_dir: Path, **kw: Any) -> Any:
         try:
-            return await real_read(profile_dir)
+            return await real_read(profile_dir, **kw)
         except flow_wire.WireReadUnavailable as exc:
             state["reasons"].append(exc.reason.value)
             raise

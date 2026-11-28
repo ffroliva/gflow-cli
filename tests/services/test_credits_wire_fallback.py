@@ -83,7 +83,7 @@ def _wire(
 ) -> list[Path]:
     seen: list[Path] = []
 
-    async def read(profile_dir: Path) -> CreditsInfo:
+    async def read(profile_dir: Path, **_kw: Any) -> CreditsInfo:
         seen.append(profile_dir)
         return await fn(profile_dir)
 
@@ -306,7 +306,7 @@ async def test_a_throttled_profile_never_builds_the_browser_on_later_reads(
 
 
 def _mark_signed_out(meta: ProfileMeta) -> None:
-    flow_wire._signed_out[meta.profile_dir] = WireFallbackReason.SIGNED_OUT_SHELL  # pyright: ignore[reportPrivateUsage]
+    flow_wire._mark_signed_out(meta.profile_dir, WireFallbackReason.SIGNED_OUT_SHELL)  # pyright: ignore[reportPrivateUsage]
     flow_wire._tokens[meta.profile_dir] = flow_wire._Tokens("stale-at", None, None)  # pyright: ignore[reportPrivateUsage]
 
 
@@ -354,7 +354,10 @@ async def test_a_failed_page_read_keeps_the_signed_out_mark(
     assert meta.profile_dir in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.parametrize(("renewed", "outcome"), [(True, "renewed"), (False, "labs_unverified")])
+@pytest.mark.parametrize(
+    ("renewed", "outcome"),
+    [(True, "renewed"), (False, "labs_unverified"), (False, "labs_stale")],
+)
 async def test_a_renewed_profile_has_its_signed_out_mark_lifted_before_the_retry(
     monkeypatch: pytest.MonkeyPatch, page: type[_Page], renewed: bool, outcome: str
 ) -> None:
@@ -365,7 +368,7 @@ async def test_a_renewed_profile_has_its_signed_out_mark_lifted_before_the_retry
     page.result = AuthExpiredError("signed out")
     tried: list[Path] = []
 
-    async def wire(profile_dir: Path) -> CreditsInfo:
+    async def wire(profile_dir: Path, **_kw: Any) -> CreditsInfo:
         tried.append(profile_dir)
         if profile_dir in flow_wire._signed_out:  # pyright: ignore[reportPrivateUsage]
             raise WireReadUnavailable(WireFallbackReason.DISABLED)

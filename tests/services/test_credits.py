@@ -334,9 +334,9 @@ async def test_a_renewal_that_cannot_launch_keeps_the_fast_paths_diagnosis(
     assert isinstance(caught.value.__cause__, PlaywrightError)
 
 
-@pytest.mark.parametrize(("landing", "labs_stale"), [("public", False), (None, True)])
+@pytest.mark.parametrize("labs_stale", [False, True])
 async def test_an_about_account_is_not_re_asked(
-    monkeypatch: pytest.MonkeyPatch, landing: str | None, labs_stale: bool
+    monkeypatch: pytest.MonkeyPatch, labs_stale: bool
 ) -> None:
     """The verifier says AUTHENTICATED on an /about account; renewal did not fix it."""
     from gflow_cli.services import credits
@@ -351,7 +351,7 @@ async def test_an_about_account_is_not_re_asked(
 
     async def renew(profile_dir: Path, *, source: str = "renew") -> object:
         renewals.append(profile_dir.name)
-        return _verdict("authenticated", landing=landing, labs_stale=labs_stale)
+        return _verdict("authenticated", landing="public", labs_stale=labs_stale)
 
     _install_reader(monkeypatch, fast)
     monkeypatch.setattr(credits, "renew_profile", renew)
@@ -362,18 +362,19 @@ async def test_an_about_account_is_not_re_asked(
     assert asked == ["one"]
 
 
-async def test_an_unverified_labs_state_is_still_re_asked(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("labs_stale", [None, True])
+async def test_an_unverified_or_stale_labs_state_is_still_re_asked(
+    monkeypatch: pytest.MonkeyPatch, labs_stale: bool | None
 ) -> None:
-    """`labs_unverified` keeps `auth renew` from claiming success, but the re-ask is one
-    self-checking HTTP call: if the Flow visit's rotated cookies did the job, use it."""
+    """`labs_unverified` / `labs_stale` fail labs, but the Flow visit already authenticated:
+    the direct read only needs flow.google.com's cookies, so retry and keep the answer."""
     from gflow_cli.services import credits
 
     renewals = _install_expiring_fast_path(monkeypatch, [_meta("one")])
 
     async def renew(profile_dir: Path, *, source: str = "renew") -> object:
         renewals.append(profile_dir.name)
-        return _verdict("authenticated", labs_stale=None)
+        return _verdict("authenticated", labs_stale=labs_stale)
 
     monkeypatch.setattr(credits, "renew_profile", renew)
 
@@ -383,25 +384,31 @@ async def test_an_unverified_labs_state_is_still_re_asked(
 
 
 @pytest.mark.parametrize(
-    ("labs_stale", "verdict", "lifted"),
+    ("landing", "labs_stale", "verdict", "lifted"),
     [
-        (False, "authenticated", True),  # renewed
-        (None, "authenticated", True),  # labs_unverified: Flow authenticated, labs step failed
-        (True, "authenticated", False),  # labs_stale: not re-asked at all
+        (None, False, "authenticated", True),  # renewed
+        (None, None, "authenticated", True),  # labs_unverified: Flow authenticated, labs failed
+        (None, True, "authenticated", True),  # labs_stale: Flow authenticated, #1242(3)
+        ("public", False, "authenticated", False),  # public_landing: /about is never re-asked
+        (None, False, "no_session", False),  # unauthenticated renewal
     ],
 )
 async def test_a_flow_verified_renewal_lifts_the_wire_signed_out_mark(
-    monkeypatch: pytest.MonkeyPatch, labs_stale: bool | None, verdict: str, lifted: bool
+    monkeypatch: pytest.MonkeyPatch,
+    landing: str | None,
+    labs_stale: bool | None,
+    verdict: str,
+    lifted: bool,
 ) -> None:
-    """The direct read only needs flow.google.com's cookies, so a renewal Flow authenticated
-    gets the wire one more try even when the labs step failed (`labs_unverified`)."""
+    """The direct read only needs flow.google.com's cookies, so any non-/about renewal Flow
+    authenticated gets the wire one more try regardless of labs_stale (#1242)."""
     from gflow_cli.services import credits
 
     _install_expiring_fast_path(monkeypatch, [_meta("one")])
     recovered: list[str] = []
 
     async def renew(profile_dir: Path, *, source: str = "renew") -> object:
-        return _verdict(verdict, labs_stale=labs_stale)
+        return _verdict(verdict, landing=landing, labs_stale=labs_stale)
 
     monkeypatch.setattr(credits, "renew_profile", renew)
     monkeypatch.setattr(credits.flow_wire, "session_recovered", lambda p: recovered.append(p.name))
