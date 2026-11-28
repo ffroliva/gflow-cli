@@ -264,9 +264,12 @@ def selected_video_request(
     if duration is None:
         duration = _int_field(selection, "videoDuration")
     try:
-        return replace(request, model=model, duration=duration, resolution=resolution)
+        selected: GenerateVideoRequest = replace(
+            request, model=model, duration=duration, resolution=resolution
+        )
     except ValueError:
         return None
+    return selected
 
 
 def choose_video_route(
@@ -338,11 +341,13 @@ def choose_upscale_route(
     proxy_configured: bool,
 ) -> Route:
     """Decide whether a video upscale request can be served directly over HTTP."""
-    if scale != "1080p" or catalog_row is None:
-        return Route.UI
-    if not _is_environment_supported(flow_host=flow_host, proxy_configured=proxy_configured):
-        return Route.UI
-    return Route.DIRECT if _measured_upscale_source(catalog_row) else Route.UI
+    direct = (
+        scale == "1080p"
+        and catalog_row is not None
+        and _is_environment_supported(flow_host=flow_host, proxy_configured=proxy_configured)
+        and _measured_upscale_source(catalog_row)
+    )
+    return Route.DIRECT if direct else Route.UI
 
 
 def _measured_upscale_source(row: object) -> bool:

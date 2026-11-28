@@ -21,15 +21,17 @@ __all__ = [
     "Tier",
 ]
 
+_VIDEO = "gflow_cli.api.video"
+
 _DEFERRED_IMPORTS: dict[str, tuple[str, str]] = {
     "FlowApiClient": ("gflow_cli.api.client", "FlowApiClient"),
     "FlowApiError": ("gflow_cli.api.client", "FlowApiError"),
     "AssetInfo": ("gflow_cli.api.dto", "AssetInfo"),
     "ProjectInfo": ("gflow_cli.api.dto", "ProjectInfo"),
-    "Aspect": ("gflow_cli.api.video", "Aspect"),
-    "GenerateVideoRequest": ("gflow_cli.api.video", "GenerateVideoRequest"),
-    "Mode": ("gflow_cli.api.video", "Mode"),
-    "Tier": ("gflow_cli.api.video", "Tier"),
+    "Aspect": (_VIDEO, "Aspect"),
+    "GenerateVideoRequest": (_VIDEO, "GenerateVideoRequest"),
+    "Mode": (_VIDEO, "Mode"),
+    "Tier": (_VIDEO, "Tier"),
 }
 
 

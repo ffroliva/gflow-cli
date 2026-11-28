@@ -73,8 +73,7 @@ def build_ogiz0b_body(
         for seed in entry_seeds
     ]
     inner = [None, entries, 1, ctx, [batch_id]]
-    f_req = json.dumps([[["ogiZ0b", json.dumps(inner, separators=(",", ":")), None, "generic"]]])
-    return urlencode({"f.req": f_req, "at": at_token})
+    return build_rpc_body("ogiZ0b", inner, at_token)
 
 
 def build_maseq_body(
@@ -97,8 +96,7 @@ def build_maseq_body(
     ctx.append([recaptcha_token, 1])
     data = base64.b64encode(image_bytes).decode("ascii")
     frame = [ctx, data, mime, 1, None, None, None, None, display_name, None, *request_ids]
-    f_req = json.dumps([[["maseQ", json.dumps(frame, separators=(",", ":")), None, "generic"]]])
-    return urlencode({"f.req": f_req, "at": at_token})
+    return build_rpc_body("maseQ", frame, at_token)
 
 
 def build_rpc_body(rpcid: str, payload: object, at_token: str) -> str:

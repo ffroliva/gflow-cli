@@ -92,7 +92,8 @@ SubmitOutcome = NotSent | Accepted | RefusedNotBilled | Indeterminate
 EndedOutcome = NotSent | RefusedNotBilled | Indeterminate
 
 
-class DirectAttemptEnded(Exception):  # noqa: N818 - a signal for the caller, not a fault
+# Named for the signal it carries to the caller, not as a fault, hence no "Error" suffix.
+class DirectAttemptEnded(Exception):  # noqa: N818
     """A direct attempt that did not end ``Accepted``.
 
     ``error`` is the user-facing error for an outcome past the send (the reconcile error, or
