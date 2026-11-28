@@ -82,6 +82,9 @@ class Indeterminate:
     rpcid: str
     cause: str
     status: int | None = None
+    #: The ``ErrorInfo`` reasons and gRPC code of Flow's error frame(s) for ``rpcid``, if any.
+    reasons: tuple[str, ...] = ()
+    code: int | None = None
 
 
 SubmitOutcome = NotSent | Accepted | RefusedNotBilled | Indeterminate
@@ -209,6 +212,8 @@ def classify_reply(
             rpcid=rpcid,
             cause=f"rpc error: {err.reasons or [err.code]}",
             status=status,
+            reasons=tuple(r for e in matching_errors for r in e.reasons),
+            code=err.code,
         )
 
     frames = parse_frames(raw_body)

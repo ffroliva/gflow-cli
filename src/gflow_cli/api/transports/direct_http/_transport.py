@@ -28,6 +28,7 @@ from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource, ProjectTokens
 from gflow_cli.api.transports.direct_http._session import _proxy_configured
+from gflow_cli.api.transports.direct_http._upscale import UpscaleSource, run_direct_upscale
 from gflow_cli.api.transports.direct_http._video import StartFrame, run_direct_video
 from gflow_cli.api.transports.frame_builder import centred_crop
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
@@ -300,6 +301,41 @@ class DirectHttpTransport(UiAutomationTransport):
             download=download,
             on_started=on_started,
             name_resolver=name_resolver,
+        )
+
+    async def upscale_video_direct(
+        self,
+        *,
+        project_id: str,
+        source: UpscaleSource,
+        on_before_submit: Callable[[], None] | None = None,
+    ) -> bytes:
+        """Upscale a catalogued clip to 1080p with one direct ``p0UkFb`` POST; its mp4 bytes.
+
+        The caller routes first (:func:`upscale_source`). As :meth:`generate_video`, every
+        other outcome raises ``DirectAttemptEnded`` for the retry loop, whose UI step is the
+        download menu. It costs 0 credits, so no balance is read.
+        """
+        if not self._setup_done or self._page is None:
+            msg = "DirectHttpTransport.setup() must be called before upscale_video_direct()"
+            raise RuntimeError(msg)
+        page, profile_dir = self._page, self._profile_dir
+        reason = self._why_not_direct_upload()
+        if reason or profile_dir is None:
+            raise not_sent(reason or "no_profile_dir")
+        tokens = self._source_for(page).for_project(project_id)
+        return await self._run_direct(
+            tokens,
+            lambda: run_direct_upscale(
+                tokens=tokens,
+                page=page,
+                profile_dir=profile_dir,
+                project_id=project_id,
+                source=source,
+                poll_interval_s=self._poll_interval_s,
+                http_transport=self._http_transport,
+                on_before_submit=on_before_submit,
+            ),
         )
 
     async def _start_frame(
