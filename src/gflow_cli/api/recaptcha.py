@@ -117,7 +117,7 @@ class TokenMinter:
             msg = (
                 f"reCAPTCHA evaluate failed for action={action!r}: {exc}. "
                 "Likely causes: grecaptcha not loaded, page navigated away, "
-                "or Playwright timeout. Try GFLOW_CLI_HEADLESS=false."
+                "or Playwright timeout. Try GFLOW_CLI_BROWSER_VISIBILITY=headed."
             )
             # Spike arm D: a mint that lost a race with a navigation succeeds once the
             # page settles (3/3), so this one is worth a retry.
@@ -125,8 +125,8 @@ class TokenMinter:
         if not isinstance(token, str) or not token:
             msg = (
                 f"reCAPTCHA returned an empty token for action={action!r}. "
-                "Likely causes: headless detection by Google, or the page "
-                "navigated away before mint. Try GFLOW_CLI_HEADLESS=false."
+                "Likely causes: the page navigated away before mint. "
+                "Try GFLOW_CLI_BROWSER_VISIBILITY=headed."
             )
             raise RecaptchaError(msg)  # class default (not retryable) until it is observed
         return token

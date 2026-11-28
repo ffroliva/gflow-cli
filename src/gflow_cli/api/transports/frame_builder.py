@@ -1,4 +1,4 @@
-"""The ``ogiZ0b`` (image generation) batchexecute body, built from domain values.
+"""The batchexecute write bodies (images, uploads, videos), built from domain values.
 
 A pure function: no I/O, no clock, no randomness. The caller supplies the per-request
 values (``batch_id``, ``entry_seeds``) so the output is deterministic under test.
@@ -73,8 +73,7 @@ def build_ogiz0b_body(
         for seed in entry_seeds
     ]
     inner = [None, entries, 1, ctx, [batch_id]]
-    f_req = json.dumps([[["ogiZ0b", json.dumps(inner, separators=(",", ":")), None, "generic"]]])
-    return urlencode({"f.req": f_req, "at": at_token})
+    return build_rpc_body("ogiZ0b", inner, at_token)
 
 
 def build_maseq_body(
@@ -97,8 +96,115 @@ def build_maseq_body(
     ctx.append([recaptcha_token, 1])
     data = base64.b64encode(image_bytes).decode("ascii")
     frame = [ctx, data, mime, 1, None, None, None, None, display_name, None, *request_ids]
-    f_req = json.dumps([[["maseQ", json.dumps(frame, separators=(",", ":")), None, "generic"]]])
+    return build_rpc_body("maseQ", frame, at_token)
+
+
+def build_rpc_body(rpcid: str, payload: object, at_token: str) -> str:
+    """The form-encoded body for one batchexecute call: ``f.req`` wrapping ``payload``."""
+    f_req = json.dumps([[[rpcid, json.dumps(payload, separators=(",", ":")), None, "generic"]]])
     return urlencode({"f.req": f_req, "at": at_token})
+
+
+def _video_body(
+    rpcid: str,
+    item: list[object],
+    *,
+    project_id: str,
+    recaptcha_token: str,
+    at_token: str,
+    batch_id: str,
+) -> str:
+    ctx: list[object] = [None, 22, None, None, None, project_id, None, None, None, None]
+    ctx.append([recaptcha_token, 1])
+    return build_rpc_body(rpcid, [[item], ctx, [batch_id, 1]], at_token)
+
+
+def build_t2v_body(
+    *,
+    prompt: str,
+    wire_key: str,
+    aspect_slot: int,
+    duration: int | None,
+    project_id: str,
+    recaptcha_token: str,
+    at_token: str,
+    request_ids: tuple[str, str],
+    batch_id: str,
+) -> str:
+    """The ``YhhmEf`` (text-to-video) body, as Flow's app sends it.
+
+    Captured 2026-11-27 (``--capture-defaults``) and accepted when replayed direct: the item
+    ends with the duration slot (``[..., ids, null, null, [4]]``) and the batch tail is
+    ``[batch_id, 1]``. A key with no duration (Veo 3.1 Lite) was measured without the slot.
+    """
+    ids = [None, None, None, None, *request_ids]
+    item: list[object] = [[None, None, [[[prompt]]]], wire_key, aspect_slot, None, ids]
+    if duration is not None:
+        item += [None, None, [duration]]
+    return _video_body(
+        "YhhmEf",
+        item,
+        project_id=project_id,
+        recaptcha_token=recaptcha_token,
+        at_token=at_token,
+        batch_id=batch_id,
+    )
+
+
+def build_i2v_body(
+    *,
+    prompt: str,
+    wire_key: str,
+    aspect_slot: int,
+    start_media_id: str,
+    crop: list[float | int | None],
+    project_id: str,
+    recaptcha_token: str,
+    at_token: str,
+    request_ids: tuple[str, str],
+    batch_id: str,
+) -> str:
+    """The ``eb1hJf`` (image-to-video, start frame) body, as Flow's app sends it.
+
+    Captured and replayed 2026-11-27: the start frame's media id with its crop box
+    (:func:`centred_crop`) at ``item[4]``, the batch tail ``[batch_id, 1]``.
+    """
+    start = [None, start_media_id, None, None, None, crop]
+    item: list[object] = [
+        [None, None, [[[prompt]]]],
+        wire_key,
+        aspect_slot,
+        None,
+        start,
+        [None, None, None, None, *request_ids],
+    ]
+    return _video_body(
+        "eb1hJf",
+        item,
+        project_id=project_id,
+        recaptcha_token=recaptcha_token,
+        at_token=at_token,
+        batch_id=batch_id,
+    )
+
+
+def centred_crop(width: int, height: int, *, aspect_slot: int) -> list[float | int | None]:
+    """The start frame's centred crop to the video aspect, ``[top, left, bottom, right]``.
+
+    Fractions of the frame, ``0`` sent as ``null`` and ``1`` as ``1``, rounded to six places,
+    as the app sends them (a 1200x630 frame into 16:9: ``[null, 0.033333, 1, 0.966667]``).
+    ``aspect_slot`` is the wire's ``1`` (9:16) or ``2`` (16:9).
+    """
+    target = 9 / 16 if aspect_slot == 1 else 16 / 9
+    source = width / height
+    if source > target:
+        f = target / source
+        box = [0.0, (1 - f) / 2, 1.0, (1 + f) / 2]
+    else:
+        f = source / target
+        box = [(1 - f) / 2, 0.0, (1 + f) / 2, 1.0]
+    rounded = [round(v, 6) for v in box]  # round first: 0.0000001 is sent as null, not 0.0
+    return [None if v == 0 else (1 if v == 1 else v) for v in rounded]
 
 
 def _prompt_document(

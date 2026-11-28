@@ -398,6 +398,11 @@ Options:
                             catalog when omitted; pass it explicitly for videos
                             gflow didn't record (e.g. generated in the web UI).
   --out PATH                Output directory (see "Output paths" below).
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md).
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -554,6 +559,12 @@ Options:
                             medium, or high; when omitted, Flow's existing
                             setting is left untouched). Single-prompt only.
                             Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md). Also on `image generate`
+                            and `image batch`.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -678,6 +689,11 @@ Options:
   --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
                             must live in --project). Counts toward the ref cap.
   --reference-entity-name N Display name paired with --reference-entity.
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md).
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -936,7 +952,7 @@ Generate a video from a text prompt only. On Flow's agent-only composer (#799), 
 through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's 2026-11-20 build an account with no Agent switch is still reported as selector drift (exit 23) before submit: none has been observed there ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)).
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]
+gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--browser-visibility] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]
 
 Options:
   --resolution [360p|720p]
@@ -954,6 +970,12 @@ Options:
                         pre-submit and abort with exit 28 ($0 spent) if it is
                         unreachable; agentic is rejected (exit 2) — not yet
                         supported for video. Also on `video i2v`.
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md). Also on `video i2v`,
+                            `video r2v`, `video generate` and `video extend`.
 ```
 
 > **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
@@ -1447,6 +1469,11 @@ Options:
   --seed-offset INTEGER     Extract the seed frame this many ms before EOF
                             (fade-to-black guard).            [default: 0]
   --aspect [9:16|16:9]      Uniform aspect for every link.    [default: 9:16]
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md).
   --profile NAME            Profile name (overrides default).
   --out-file FILE           Write link i's clip to FILE's stem plus _i
                             (clip.mp4 -> clip_1.mp4, clip_2.mp4).
@@ -2519,7 +2546,11 @@ use. When set:
 - `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
-  `duration`, `count`, `seed`).
+  `duration`, `resolution`, `count`, `seed`). `model`, `duration` and `resolution` report the
+  request that was sent to Flow (`VideoResult.sent_request`) when the direct path resolved
+  one: a bare `video t2v` names no model, and `model` then carries the account's selected
+  model, with `duration` and `resolution` as sent. Otherwise they echo the parsed request,
+  and `resolution` is `null` when none was set.
 - `image generate` / `video generate` emit the payload of the verb they resolved to, plus a
   top-level `"mode"` (`t2i`, `i2i`, `t2v`, `i2v` or `r2v`), on success and on failure.
 - On failure, the command still emits a JSON payload — an RFC 9457
@@ -2553,8 +2584,12 @@ For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).
 Sequential JSON-described batch image generation. New in v0.5.0a1.
 
 ```text
-gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--resume] [--continue-on-error|--fail-fast]
+gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--resume] [--continue-on-error|--fail-fast] [--browser-visibility auto|headless|headed]
 ```
+
+`--browser-visibility` overrides `GFLOW_CLI_BROWSER_VISIBILITY` for the run: under `auto`, a run
+whose rows are all measured shapes runs headless, and a run with any row that needs Flow's UI
+launches headed for the whole run ([BROWSER_MODES](BROWSER_MODES.md)).
 
 The config is a JSON file with a top-level `prompts` array; each entry
 produces 1–4 images through one `FlowApiClient` session (one Playwright
@@ -2937,13 +2972,18 @@ import asyncio
 from pathlib import Path
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model, Aspect
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.config import get_settings
 
 async def main() -> None:
     settings = get_settings()
     profile_dir = settings.profile_subdir("default")
-    async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.IMAGE4)
+    # A measured shape (here nano2 text-to-image) needs only a headless browser to mint
+    # the reCAPTCHA token; omit `visibility` for a shape that drives Flow's UI (headed).
+    async with FlowApiClient(
+        profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS
+    ) as client:
+        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.NARWHAL)
         # project_id is optional — omit it and a new project is created automatically.
         image = await client.generate_image(req=req)
         saved = await client.download_image(image, Path("lake.png"))
@@ -2951,6 +2991,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+Omitted, `visibility` follows `GFLOW_CLI_BROWSER_VISIBILITY` for a Flow UI shape (headed under `auto`). The per-command list is [BROWSER_MODES](BROWSER_MODES.md).
 
 `project_id` defaults to `None`. When omitted, `generate_image()` (and `generate_images_batch()`) call `create_project()` internally. Pass an explicit `project_id` when you want multiple generations to land in the same Flow project.
 

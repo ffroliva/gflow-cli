@@ -79,7 +79,7 @@ async def _fetch_once(meta: profile_store.ProfileMeta) -> dict[str, Any]:
     if settings.wire_reads and (info := await _read_wire(meta, settings)) is not None:
         log.info("credits.read", profile=meta.name, source="wire")
         return _success(meta, info)
-    async with FlowApiClient(profile_dir=meta.profile_dir, headless=settings.headless) as client:
+    async with FlowApiClient(profile_dir=meta.profile_dir) as client:
         info = await client.get_credits()
     log.info("credits.read", profile=meta.name, source="page")
     return _success(meta, info)

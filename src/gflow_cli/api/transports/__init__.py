@@ -15,7 +15,9 @@ from gflow_cli.errors import ConfigurationError
 # avoid pulling playwright/httpx into the import path until a strategy is
 # actually instantiated.
 
-_DEFAULT_TRANSPORT = "ui_automation"
+# direct_http sends measured shapes over HTTP with a headless token mint and runs every other
+# shape through the UI transport; GFLOW_CLI_TRANSPORT=ui_automation is the kill switch.
+_DEFAULT_TRANSPORT = "direct_http"
 
 # Strategies under active research. Hidden from CLI Choice lists unless
 # GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 is set in the environment. The factory
@@ -25,7 +27,6 @@ EXPERIMENTAL_TRANSPORTS: tuple[str, ...] = (
     "evaluate_fetch",
     "bearer",
     "sapisidhash",
-    "direct_http",
 )
 
 # Experimental transports whose ``setup()`` discards a caller-supplied ``page=``
@@ -62,7 +63,7 @@ def _registry() -> dict[str, type[FlowTransportStrategy]]:
 def transport_choices() -> list[str]:
     """Strategy keys exposed in CLI ``--transport`` Choice lists.
 
-    By default only the production-validated strategy (``ui_automation``).
+    By default only the production strategies (``ui_automation`` and ``direct_http``).
     Set ``GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`` to expose all registered
     strategies including the experimental ones.
     """
@@ -73,16 +74,20 @@ def transport_choices() -> list[str]:
 
 def resolve_transport_name(name: str | None = None) -> str:
     """Resolve the effective strategy key: explicit ``name`` arg >
-    ``GFLOW_CLI_TRANSPORT`` env > built-in default.
+    ``GFLOW_CLI_TRANSPORT`` env > the settings (a ``.env`` line) > built-in default.
 
     Exposed so callers that must decide *before* instantiating (e.g. FlowApiClient's
     standalone-only guard) resolve the key identically to :func:`make_transport`.
     """
-    return name or os.getenv("GFLOW_CLI_TRANSPORT") or _DEFAULT_TRANSPORT
+    from gflow_cli.config import get_settings  # noqa: PLC0415
+
+    return (
+        name or os.getenv("GFLOW_CLI_TRANSPORT") or get_settings().transport or _DEFAULT_TRANSPORT
+    )
 
 
 def make_transport(name: str | None = None) -> FlowTransportStrategy:
-    """Resolve strategy: explicit `name` arg > GFLOW_CLI_TRANSPORT env > built-in default.
+    """Resolve strategy as :func:`resolve_transport_name` does.
 
     Raises ConfigurationError listing all registered strategies if name is unknown.
     Note: the factory accepts experimental keys regardless of the

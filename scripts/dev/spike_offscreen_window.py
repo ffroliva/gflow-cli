@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gflow_cli.api._engine import mint_evaluate_kwargs  # noqa: E402
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.api.recaptcha import TokenMinter  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 from _spike_common import default_out_path, resolve_profile_dir, step  # noqa: E402, isort: skip
 
@@ -106,7 +107,7 @@ async def _arm(profile_dir: Path, name: str, extra: list[str]) -> dict[str, Any]
     FlowApiClient._persistent_context_kwargs = patched  # type: ignore[method-assign]
     result: dict[str, Any] = {"arm": name, "args": extra, "fg_before": _foreground()}
     try:
-        async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+        async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
             ctx = client._context  # noqa: SLF001 - spike reads the live context
             assert ctx is not None
             result["fg_after_launch"] = _foreground()

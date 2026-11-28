@@ -39,6 +39,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import Model as ImageModel
 from gflow_cli.api.model_catalog import retires_on
+from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.video import (
     EDIT_DEFAULT_MODEL,
     EditVideoRequest,
@@ -59,6 +60,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "DecodedPayload",
+    "browser_visibility",
     "build_image_request",
     "build_video_edit_request",
     "build_video_extend_request",
@@ -101,6 +103,8 @@ class DecodedPayload:
     task_type: str
     request: GenerateImageRequest | GenerateVideoRequest | MigratedExtendRequest | EditVideoRequest
     fields: dict[str, Any]
+    #: The MCP twin of ``--browser-visibility``; ``None`` keeps the configured setting.
+    browser_visibility: VisibilitySetting | None = None
 
 
 def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
@@ -125,6 +129,7 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
         )
 
     fields = {k: v for k, v in payload.items() if k != "schema_version"}
+    visibility = browser_visibility(fields)
 
     try:
         request: (
@@ -143,8 +148,29 @@ def decode_payload(task_type: str, payload: dict[str, Any]) -> DecodedPayload:
         raise QueueSchemaError(detail, route=_CODEC_ROUTE) from exc
 
     return DecodedPayload(
-        schema_version=version, task_type=task_type, request=request, fields=fields
+        schema_version=version,
+        task_type=task_type,
+        request=request,
+        fields=fields,
+        browser_visibility=visibility,
     )
+
+
+def browser_visibility(payload: dict[str, Any]) -> VisibilitySetting | None:
+    """The payload's ``browser_visibility`` (any task type), or ``None`` when absent.
+
+    Raises :class:`QueueSchemaError` for a value that is not ``auto``/``headless``/``headed``.
+    """
+    raw = payload.get("browser_visibility")
+    if raw is None:
+        return None
+    try:
+        return VisibilitySetting(raw.lower() if isinstance(raw, str) else raw)
+    except ValueError as exc:
+        expected = [v.value for v in VisibilitySetting]
+        raise QueueSchemaError(
+            f"browser_visibility must be one of {expected}", route=_CODEC_ROUTE
+        ) from exc
 
 
 def encode_payload(task_type: str, decoded: DecodedPayload) -> dict[str, Any]:

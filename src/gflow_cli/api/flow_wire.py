@@ -376,6 +376,13 @@ async def _read_cookies(profile_dir: Path) -> list[tuple[str, str]]:
     return await asyncio.wait_for(future, _TOTAL_S)
 
 
+def proxy_configured() -> bool:
+    """Whether gflow's, the environment's or the OS's proxy is set: the one proxy rule for
+    the wire reads and the direct route (``_proxy_configured``, which also sees an OS proxy
+    that ``getproxies()`` skips when the environment holds ``NO_PROXY`` alone)."""
+    return _proxy_configured(get_settings())
+
+
 async def _execute_direct_rpc(
     profile_dir: Path,
     rpcid: str,

@@ -220,7 +220,6 @@ async def _dispatch_mutation(
     archived: bool,
     action: str,
     wire_reads: bool,
-    headless: bool,
 ) -> dict[str, Any]:
     wire_res: dict[str, Any] | None = None
     if wire_reads:
@@ -231,7 +230,7 @@ async def _dispatch_mutation(
             log.info(f"media.{action}_wire_fallback", reason=exc.reason.value, media_id=media_id)
 
     if wire_res is None:
-        async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        async with FlowApiClient(profile_dir=profile_dir) as client:
             client_fn = client.trash_media if archived else client.restore_media
             wire_res = await client_fn(media_id, project_id)
     return wire_res
@@ -276,7 +275,6 @@ async def set_archived_media_service(
         archived=archived,
         action=action,
         wire_reads=settings.wire_reads,
-        headless=settings.headless,
     )
 
     res_archived = wire_res.get("archived")

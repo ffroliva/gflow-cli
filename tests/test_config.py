@@ -141,6 +141,46 @@ class TestEnvOverrides:
         monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
         assert Settings().headless is True
 
+    def test_browser_visibility_defaults_auto(self, clean_env: None) -> None:
+        assert Settings().browser_visibility == "auto"
+
+    def test_headless_alias_maps_true_and_false(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
+        s_true = Settings()
+        assert s_true.browser_visibility == "headless"
+        assert s_true.headless is True
+
+        # false was the old .env.template default, so it keeps the auto default (#1371).
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
+        s_false = Settings()
+        assert s_false.browser_visibility == "auto"
+        assert s_false.headless is False
+
+    def test_explicit_visibility_wins_over_alias(
+        self, clean_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "true")
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_VISIBILITY", "headed")
+        assert Settings().browser_visibility == "headed"
+
+        monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
+        monkeypatch.setenv("GFLOW_CLI_BROWSER_VISIBILITY", "headless")
+        assert Settings().browser_visibility == "headless"
+
+    def test_init_kwarg_visibility_sets_legacy_headless_field(self, clean_env: None) -> None:
+        s = Settings(browser_visibility="headless")  # pyright: ignore[reportArgumentType]
+        assert s.headless is True
+        s = Settings(browser_visibility="headed")  # pyright: ignore[reportArgumentType]
+        assert s.headless is False
+
+    def test_alias_resolution_does_not_mutate_its_input(self) -> None:
+        data: dict[str, object] = {"headless": "true"}
+        out = Settings._resolve_browser_visibility_alias(data)  # noqa: SLF001
+        assert data == {"headless": "true"}
+        assert out == {"headless": True, "browser_visibility": "headless"}
+
 
 class TestDerivedPaths:
     def test_profile_subdir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -252,6 +292,16 @@ class TestHomeEnvFileFallback:
     ) -> None:
         (isolated_cwd / ".env").write_text("GFLOW_CLI_AUTH_LOGIN_TIMEOUT=456\n", encoding="utf-8")
         assert Settings().auth_login_timeout == 456
+
+    def test_visibility_is_read_from_the_env_file(
+        self, clean_env: None, isolated_cwd: Path, home_with_env: Path
+    ) -> None:
+        (isolated_cwd / ".env").write_text(
+            "GFLOW_CLI_BROWSER_VISIBILITY=headless\n", encoding="utf-8"
+        )
+        s = Settings()
+        assert s.browser_visibility == "headless"
+        assert s.headless is True
 
     def test_process_env_var_beats_both_env_files(
         self,

@@ -27,6 +27,9 @@ from gflow_cli.api.transports._common import (
     safe_page_url,
 )
 from gflow_cli.api.transports.batchexecute import (
+    UNUSUAL_ACTIVITY_REASON as UNUSUAL_ACTIVITY_REASON,
+)
+from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_records_matching,
     parse_frames,
@@ -761,11 +764,6 @@ def _picker_pane(page: Any) -> Any:
 def _ligature(page: Any, name: str) -> Any:
     """A ``mat-icon`` whose ligature text is exactly ``name`` — for ``filter(has=…)``."""
     return page.locator("mat-icon").filter(has_text=_exact(name))
-
-
-#: Google's ErrorInfo reason on a submit reCAPTCHA Enterprise scored as a bot. The labs
-#: REST path has always raised WafRejectionError for it (KNOWN_ISSUES, HTTP 403).
-UNUSUAL_ACTIVITY_REASON = "PUBLIC_ERROR_UNUSUAL_ACTIVITY"
 
 
 def _outcome_unknown(detail: str) -> TransportTimeoutError:

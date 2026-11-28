@@ -490,3 +490,51 @@ def test_named_character_with_count_two_goes_direct(e2e_env: RedactedEnv, tmp_pa
     assert len(files) == 2, files
     assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in files)
     assert _image_transports(e2e_env)[-2:] == ["direct_http", "direct_http"]
+
+
+def test_four_images_in_flight_from_one_armed_page(
+    e2e_env: RedactedEnv, e2e_profile_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Four concurrent direct generations on one client: four POSTs, one armed page.
+
+    ``gflow run`` drives its rows one after another, so the four attempts are started
+    in-process on one ``FlowApiClient``: its direct transport admits four at once, and
+    every mint uses the one armed page (no ``mint.rearmed`` for the run).
+    """
+    from structlog.testing import capture_logs
+
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.image import GenerateImageRequest
+
+    for key in ("GFLOW_CLI_DB_PATH", "GFLOW_CLI_OUTPUT_DIR"):
+        monkeypatch.setenv(key, e2e_env[key])
+    monkeypatch.setenv("GFLOW_CLI_TRANSPORT", "direct_http")
+    monkeypatch.setenv("GFLOW_CLI_EXPERIMENTAL_TRANSPORTS", "1")
+    reset_settings()
+    prompts = ("a paper boat", "a red kite", "a blue teapot", "a green lantern")
+
+    async def run() -> None:
+        async with FlowApiClient(profile_dir=e2e_profile_dir) as client:
+            project = await client.create_project()
+            images = await asyncio.gather(
+                *(
+                    client.generate_image(
+                        project_id=project.project_id, req=GenerateImageRequest(prompt=p)
+                    )
+                    for p in prompts
+                )
+            )
+            assert [img.transport for img in images] == ["direct_http"] * 4, images
+            for i, img in enumerate(images):
+                await client.download_image(img, tmp_path / f"img{i}.jpg")
+
+    with capture_logs() as logs:
+        asyncio.run(run())
+
+    written = sorted(tmp_path.glob("img*"))
+    assert len(written) == 4, written
+    assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in written), written
+    events = [e["event"] for e in logs]
+    assert events.count("direct.image_post") == 4, events
+    assert "mint.rearmed" not in events  # one page armed for the whole run
+    assert "direct.fallback_to_ui" not in events

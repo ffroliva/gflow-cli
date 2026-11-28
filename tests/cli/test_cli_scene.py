@@ -73,7 +73,6 @@ async def test_run_create_with_output_records_before_render(tmp_path, monkeypatc
     await cli_scene._run_create(
         profile_name="p",
         profile_dir=tmp_path,
-        headless=True,
         project_id="proj-1",
         refs=[ClipRef("wf-1", None, None)],
         output=out,
@@ -91,7 +90,6 @@ async def test_run_create_without_output_skips_concat(tmp_path, monkeypatch):
     await cli_scene._run_create(
         profile_name="p",
         profile_dir=tmp_path,
-        headless=True,
         project_id="proj-1",
         refs=[ClipRef("wf-1", None, None)],
         output=None,

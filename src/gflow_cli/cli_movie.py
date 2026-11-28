@@ -36,10 +36,13 @@ from rich.markup import escape
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    browser_visibility_option,
     no_max_credits_option,
     resolve_max_credits,
     run_with_handlers,
     spends_credits,
+    video_client_visibility,
+    video_route,
 )
 from gflow_cli.api.character import CharacterImageRequest
 from gflow_cli.api.client import FlowApiClient
@@ -48,6 +51,7 @@ from gflow_cli.api.credit_cap import (
     mark_prior_work_billed,
     preserve_credit_cap_partials,
 )
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel, VideoStarted
 from gflow_cli.composition import (
@@ -225,6 +229,7 @@ def template(output: Path, force: bool) -> None:
         "(ffmpeg, no transitions). Not a deliverable."
     ),
 )
+@browser_visibility_option()
 def run(
     manifest_path: Path,
     profile: str | None,
@@ -680,7 +685,12 @@ async def _run_movie(
     completed_local_paths: list[Path] = []
 
     try:
-        async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+        # A run with any UI scene launches headed for the whole run (SCENARIO.md row 34).
+        routes = _planned_routes(manifest, max_credits)
+        visibility = await video_client_visibility(settings, profile_dir, routes)
+        async with FlowApiClient(
+            profile_dir=profile_dir, out_dir=out_dir, visibility=visibility
+        ) as client:
             # ------------------------------------------------------------------
             # Phase 1: Characters — create native (entity-identity) characters.
             # text-identity characters need no creation; they are folded into
@@ -935,6 +945,47 @@ def _resolve_entity_names(
 # ---------------------------------------------------------------------------
 
 
+def _scene_request(
+    scene: Scene,
+    prompt: str,
+    *,
+    reference_entities: tuple[str, ...] = (),
+    reference_entity_names: tuple[str, ...] = (),
+    max_credits: int | None = None,
+) -> GenerateVideoRequest:
+    # R2V needs at least one reference (image or, in P2, entity). P1 has none,
+    # so a named-character scene degrades to T2V (text identity in the prompt).
+    use_r2v = bool(scene.characters) and bool(reference_entities)
+    return GenerateVideoRequest(
+        prompt=prompt,
+        mode=Mode.R2V if use_r2v else Mode.T2V,
+        aspect=Aspect.from_cli(scene.aspect),
+        model=VideoModel.from_cli(scene.model),
+        duration=scene.duration,
+        count=scene.count,
+        reference_entities=reference_entities,
+        reference_entity_names=reference_entity_names,
+        max_credits=max_credits,
+    )
+
+
+def _planned_routes(manifest: MovieManifest, max_credits: int | None) -> list[Route]:
+    """The route of every scene, in order, decided before launch."""
+    return [_planned_scene_route(manifest, scene, max_credits) for scene in manifest.scenes]
+
+
+def _planned_scene_route(manifest: MovieManifest, scene: Scene, max_credits: int | None) -> Route:
+    """The route a scene takes, decided before launch.
+
+    Characters (created or attached in the Flow UI) and instruction cards need the UI; any
+    other scene routes on its request.
+    """
+    if manifest.characters or manifest.instructions or scene.characters or scene.instructions:
+        return Route.UI
+    prompt = compose_prompt(manifest.style, scene, manifest.characters)
+    return video_route(_scene_request(scene, prompt, max_credits=max_credits))
+
+
 async def _generate_scene(
     *,
     client: FlowApiClient,
@@ -959,21 +1010,9 @@ async def _generate_scene(
     ``reference_entities`` which flips these scenes to R2V.
     """
     del reference_audio  # reserved for P2 (native identity / voice)
-
-    # R2V needs at least one reference (image or, in P2, entity). P1 has none,
-    # so a named-character scene degrades to T2V (text identity in the prompt).
-    use_r2v = bool(scene.characters) and bool(reference_entities)
-    mode = Mode.R2V if use_r2v else Mode.T2V
-    aspect = Aspect.from_cli(scene.aspect)
-    model = VideoModel.from_cli(scene.model)
-
-    request = GenerateVideoRequest(
-        prompt=prompt,
-        mode=mode,
-        aspect=aspect,
-        model=model,
-        duration=scene.duration,
-        count=scene.count,
+    request = _scene_request(
+        scene,
+        prompt,
         reference_entities=reference_entities,
         reference_entity_names=reference_entity_names,
         max_credits=max_credits,
@@ -1012,7 +1051,7 @@ async def _generate_scene(
             profile_name=profile_name,
             profile_dir=profile_dir,
             command="movie run",
-            mode=OperationKind(mode.value),
+            mode=OperationKind(request.mode.value),
             exc=exc,
             request=request,
             flow_project_id=project_id,

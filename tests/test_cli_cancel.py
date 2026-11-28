@@ -181,3 +181,62 @@ def test_cancel_envelopes_carry_both_exit_codes_in_either_mode(
     error = doc["error"]
     assert isinstance(error, dict)
     assert (code, error["exit_code"], error["exit_code_legacy"]) == (1, 1, 1)
+
+
+def test_cancel_after_submit_refused_reports_cancelled_with_no_charge(db: Path) -> None:
+    from gflow_cli.api.dto import GenerationCheckpoint
+    from gflow_cli.worker.daemon import FlowWorker
+
+    with DataStore.open(db) as store:
+        repo = QueueRepository(store)
+        repo.enqueue_task(
+            task_id="refused",
+            profile_name="default",
+            task_type="t2i",
+            payload={"prompt": "p", "aspect": "1:1", "count": 1},
+        )
+        repo.claim_task("refused", "worker")
+
+    worker = FlowWorker("default", str(db))
+    try:
+        project_holder: list[str | None] = [None]
+
+        def save_checkpoint(
+            phase: str,
+            *,
+            may_have_spent: bool,
+            operation_id: str | None = None,
+            media_ids: tuple[str, ...] = (),
+            workflow_ids: tuple[str, ...] = (),
+            catalog_operation_id: str | None = None,
+        ) -> None:
+            worker.repo.update_checkpoint(
+                "refused",
+                claimant="worker",
+                phase=phase,
+                may_have_spent=may_have_spent,
+                project_id=project_holder[0],
+                operation_id=operation_id,
+                media_ids=media_ids,
+                workflow_ids=workflow_ids,
+                catalog_operation_id=catalog_operation_id,
+            )
+
+        observer = worker._checkpoint_observer(
+            "refused",
+            claimant="worker",
+            project_id=project_holder,
+            save_checkpoint=save_checkpoint,
+        )
+        observer(GenerationCheckpoint(phase="submit_attempted"))
+        observer(GenerationCheckpoint(phase="submit_refused"))
+    finally:
+        worker.close()
+
+    code, doc = _run("refused")
+
+    assert code == 0
+    assert doc["state"] == "cancelled"
+    assert doc["previous_state"] == "processing"
+    assert doc["charged"] == "no"
+    assert _status(db, "refused") == "cancelled"

@@ -211,6 +211,19 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 
 @pytest.fixture(autouse=True)
+def _display_available(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests fake the browser, so a headed launch must not depend on the host's display.
+
+    Without this, a CI runner (Linux, no DISPLAY) fails every test that builds a real
+    ``FlowApiClient`` under ``auto`` with exit 28, while Windows and macOS never run the check.
+    Tests of the check itself patch ``_on_linux`` back to ``True`` and clear DISPLAY.
+    """
+    if any(request.node.get_closest_marker(m) for m in ("e2e", "live")):
+        return
+    monkeypatch.setattr("gflow_cli.api.client._on_linux", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point every proxy at a closed local port so no unit test, or child it spawns, goes online.
 

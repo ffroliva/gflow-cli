@@ -42,6 +42,7 @@ from gflow_cli.data._recorder_core import (
     _file_sha256,
     _new_id,
     _now_utc_iso,
+    _with_run_path,
 )
 
 
@@ -153,14 +154,13 @@ class ImageRecordingMixin(RecorderCore):
         width, height = image.dimensions
         # Persist the Flow-assigned display name (when present) so a generated
         # image can later be referenced by name — the picker's searchable label.
-        metadata: dict[str, str] = {"fife_url": image.fife_url}
+        metadata: dict[str, object] = {"fife_url": image.fife_url}
         # Flow captions can closely paraphrase the generation prompt. Respect
         # the same privacy boundary as prompt storage: redacted history never
         # persists the browser-searchable caption in plaintext.
         if image.display_name and self.prompt_mode == "store":
             metadata["display_name"] = image.display_name
-        if image.transport is not None:
-            metadata["transport"] = image.transport
+        metadata = _with_run_path(metadata, image)
         repo.upsert_asset(
             AssetRecord(
                 id=asset_id,

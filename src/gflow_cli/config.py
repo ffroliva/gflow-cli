@@ -29,11 +29,11 @@ from collections.abc import Mapping
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import urlsplit
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from gflow_cli import paths
@@ -150,6 +150,13 @@ def _resolve_home() -> Path:
     if from_cwd_env is not None:
         return from_cwd_env
     return paths.default_home()
+
+
+def _truthy(value: object) -> bool:
+    """The deprecated ``GFLOW_CLI_HEADLESS`` value read as a boolean, as pydantic reads one."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "t", "yes", "y", "on")
+    return bool(value)
 
 
 def _env_files() -> tuple[str, str]:
@@ -301,9 +308,8 @@ class BrowserEngine(StrEnum):
 
     PLAYWRIGHT is the default and the only engine the standard install ships.
     PATCHRIGHT is an opt-in, drop-in patched Playwright (Chromium) that avoids
-    the ``Runtime.enable`` CDP leak for stronger reCAPTCHA-Enterprise evasion on
-    the headed path; it must be installed separately (``pip install 'gflow-cli[patchright]'``)
-    and is NOT a headless unlock.
+    the ``Runtime.enable`` CDP leak for stronger reCAPTCHA-Enterprise evasion;
+    it must be installed separately (``pip install 'gflow-cli[patchright]'``).
     """
 
     PLAYWRIGHT = "playwright"
@@ -514,11 +520,12 @@ class Settings(BaseSettings):
     transport: str | None = Field(
         default=None,
         description=(
-            "Default transport strategy: ui_automation (production-validated; default). "
-            "Set GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to expose direct_http / evaluate_fetch / "
-            "bearer / sapisidhash in the --transport CLI Choice list. The Python API accepts any "
-            "registered key regardless of that env var. Override via GFLOW_CLI_TRANSPORT "
-            "env var or --transport."
+            "Transport strategy: direct_http (default; sends measured shapes over HTTP and "
+            "drives the Flow UI for the rest) or ui_automation (the kill switch: every request "
+            "drives the Flow UI). Set GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to expose "
+            "evaluate_fetch / bearer / sapisidhash in the --transport CLI Choice list. The "
+            "Python API accepts any registered key regardless of that env var. Override via "
+            "GFLOW_CLI_TRANSPORT env var or --transport."
         ),
     )
 
@@ -558,13 +565,22 @@ class Settings(BaseSettings):
             "Override via GFLOW_CLI_LEASE_WAIT_SECONDS."
         ),
     )
+    browser_visibility: Literal["auto", "headless", "headed"] = Field(
+        default="auto",
+        description=(
+            "Browser window visibility: 'auto' (default), 'headless', or 'headed'. "
+            "Direct HTTP transport runs headless by default for measured generation shapes; "
+            "set 'headed' to force a visible browser window. "
+            "Deprecated alias: GFLOW_CLI_HEADLESS. "
+            "Override via GFLOW_CLI_BROWSER_VISIBILITY."
+        ),
+    )
     headless: bool = Field(
         default=False,
         description=(
-            "Run the Playwright Chromium headless. The ui_automation transport "
-            "requires headed Chrome — reCAPTCHA Enterprise rejects headless "
-            "browsers with an immediate 403. Only set True in CI/CD environments "
-            "that use a different transport (e.g. bearer/sapisidhash)."
+            "Deprecated alias for GFLOW_CLI_BROWSER_VISIBILITY. true is headless "
+            "(same as GFLOW_CLI_BROWSER_VISIBILITY=headless); false is the auto default "
+            "(same as GFLOW_CLI_BROWSER_VISIBILITY=auto). Flagged by gflow doctor."
         ),
     )
     browser_window_position: str = Field(
@@ -572,11 +588,10 @@ class Settings(BaseSettings):
         pattern=r"^(-?\d+,-?\d+)?$",
         description=(
             "Screen position 'X,Y' of the headed generation browser window (#923). "
-            "The default puts it off-screen: still a real headed Chrome, so reCAPTCHA "
-            "is unaffected, but it no longer covers your desktop. Set e.g. '0,0' to "
-            "watch a run, or '' for Chrome's own placement. It does NOT stop Chrome "
-            "taking keyboard focus at launch. Override via "
-            "GFLOW_CLI_BROWSER_WINDOW_POSITION."
+            "The default puts it off-screen when running headed so it no longer "
+            "covers your desktop. Set e.g. '0,0' to watch a run, or '' for Chrome's "
+            "own placement. It does NOT stop Chrome taking keyboard focus at launch. "
+            "Override via GFLOW_CLI_BROWSER_WINDOW_POSITION."
         ),
     )
     browser_proxy: str | None = Field(
@@ -649,14 +664,27 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return v.strip()
 
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_browser_visibility_alias(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        raw = dict(cast("dict[str, object]", data))
+        if "browser_visibility" not in raw and "headless" in raw:
+            # false was the old .env.template default, so it keeps the auto default (#1371)
+            raw["browser_visibility"] = "headless" if _truthy(raw["headless"]) else "auto"
+        if "browser_visibility" in raw:
+            raw["headless"] = raw["browser_visibility"] == "headless"
+        return raw
+
     browser_engine: BrowserEngine = Field(
         default=BrowserEngine.PLAYWRIGHT,
         description=(
             "Browser automation engine: 'playwright' (default) or 'patchright'. "
             "Patchright is an OPT-IN, drop-in patched Playwright (Chromium) that "
             "avoids the Runtime.enable CDP leak for stronger reCAPTCHA-Enterprise "
-            "evasion on the HEADED path. It must be installed separately "
-            "(`pip install 'gflow-cli[patchright]'`) and is NOT a headless unlock — the default "
+            "evasion. It must be installed separately "
+            "(`pip install 'gflow-cli[patchright]'`) — the default "
             "stays playwright and is unaffected. Override via GFLOW_CLI_BROWSER_ENGINE."
         ),
     )

@@ -38,6 +38,7 @@ from gflow_cli.api.transports.ui_automation_video import (
 )
 from gflow_cli.api.video import VideoModel
 from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 
 async def capture(profile_name: str, model_alias: str, settle_ms: int) -> int:
@@ -49,7 +50,7 @@ async def capture(profile_name: str, model_alias: str, settle_ms: int) -> int:
         sys.exit(f"Unknown model alias: {model_alias!r}")
     print(f"Profile: {profile_name}  model={model.value}  settle_ms={settle_ms}")
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         transport = client.transport
         if transport is None:
             sys.exit("FlowApiClient.transport is None")

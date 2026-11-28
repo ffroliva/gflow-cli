@@ -186,3 +186,35 @@ def test_an_extend_payload_with_a_wrong_type_is_a_queue_schema_error(
         decode_payload("extend", payload)
     assert EXIT_CODE_MAP[QueueSchemaError] == 30
     assert "extend payload rejected" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("task_type", "payload"),
+    [
+        ("t2i", {"prompt": "sunrise"}),
+        ("t2v", {"prompt": "a river flows"}),
+        ("extend", {"prompt": "go", "source_video": "clip.mp4"}),
+    ],
+    ids=["image", "video", "extend"],
+)
+@pytest.mark.parametrize("value", ["auto", "headless", "headed"])
+def test_browser_visibility_round_trips_through_codec(
+    task_type: str, payload: dict[str, object], value: str
+) -> None:
+    """SCENARIO row 31: the MCP twin's ``browser_visibility`` survives the queue."""
+    from gflow_cli.api.submit_policy import VisibilitySetting
+
+    queued = {**payload, "browser_visibility": value}
+    decoded = decode_payload(task_type, queued)
+    assert decoded.browser_visibility == VisibilitySetting(value)
+    assert encode_payload(task_type, decoded)["browser_visibility"] == value
+
+
+def test_absent_browser_visibility_decodes_as_none() -> None:
+    assert decode_payload("t2i", {"prompt": "sunrise"}).browser_visibility is None
+
+
+@pytest.mark.parametrize("value", ["visible", 1, True])
+def test_unknown_browser_visibility_is_a_queue_schema_error(value: object) -> None:
+    with pytest.raises(QueueSchemaError):
+        decode_payload("t2v", {"prompt": "cat", "browser_visibility": value})

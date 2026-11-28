@@ -39,6 +39,7 @@ import copy
 import functools
 import inspect
 import json
+import os
 import re
 import sys
 import traceback
@@ -55,7 +56,9 @@ from rich.markup import escape
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
-from gflow_cli.config import get_settings
+from gflow_cli.api.generation_route import Route, plan_visibility
+from gflow_cli.api.transports.direct_http import _route as direct_route
+from gflow_cli.config import UiMode, get_settings, reset_settings
 from gflow_cli.errors import (
     GFlowError,
     exit_code_for,
@@ -64,8 +67,12 @@ from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterator
+    from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.submit_policy import BrowserVisibility
+    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.config import Settings
     from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
@@ -262,6 +269,39 @@ def output_format_option(
         return with_format
 
     return decorator
+
+
+def _apply_browser_visibility(
+    _ctx: click.Context, _param: click.Parameter, value: str | None
+) -> None:
+    """Make ``--browser-visibility`` the setting for this invocation (it beats the env)."""
+    if value is None:
+        return
+    os.environ["GFLOW_CLI_BROWSER_VISIBILITY"] = value
+    reset_settings()
+
+
+def browser_visibility_option() -> Callable[[Any], Any]:
+    """Decorator adding ``--browser-visibility [auto|headless|headed]``.
+
+    Feeds the one ``GFLOW_CLI_BROWSER_VISIBILITY`` setting that :func:`client_visibility`
+    reads, so the flag and the env var can never disagree about what runs.
+    """
+    return click.option(
+        "--browser-visibility",
+        type=click.Choice(["auto", "headless", "headed"]),
+        default=None,
+        expose_value=False,
+        callback=_apply_browser_visibility,
+        metavar="[auto|headless|headed]",
+        help=(
+            "Browser window policy; overrides GFLOW_CLI_BROWSER_VISIBILITY. 'auto' "
+            "(default) mints headless and retries a not-charged refusal once from a "
+            "fresh headless browser; shapes the direct path cannot send open a visible "
+            "browser. 'headed' always shows the window. An explicit 'headless' also "
+            "runs Flow UI shapes headless, which is unsupported."
+        ),
+    )
 
 
 def out_file_option(
@@ -659,6 +699,83 @@ def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | 
     if ctx is not None and ctx.meta.get("no_max_credits"):
         configured = None
     return _resolve(cli_value, configured)
+
+
+# --- route-aware client construction ----------------------------------------
+# Every FlowApiClient construction decides its routes before launch with the same rules the
+# direct transport applies at run time, so a UI-bound request never runs on a headless page.
+
+
+def _direct_transport(transport: str | None) -> bool:
+    """Only ``direct_http`` has a direct route; the kill switch (``ui_automation``) has none."""
+    from gflow_cli.api.transports import resolve_transport_name  # noqa: PLC0415
+
+    return resolve_transport_name(transport) == "direct_http"
+
+
+def image_route(request: GenerateImageRequest, *, transport: str | None = None) -> Route:
+    """The route the direct transport takes for ``request``; agentic UI mode is the UI."""
+    return direct_route.image_route(request) if _direct_transport(transport) else Route.UI
+
+
+def video_route(request: GenerateVideoRequest, *, transport: str | None = None) -> Route:
+    """The route the direct transport takes for ``request``.
+
+    The request carries its effective cap (callers resolve ``GFLOW_CLI_MAX_CREDITS`` and
+    ``--no-max-credits`` into it), so a capped video routes to the UI, where the quote is
+    read, and an explicitly uncapped one routes on its shape.
+    """
+    return direct_route.video_route(request) if _direct_transport(transport) else Route.UI
+
+
+def upscale_route(scale: str, catalog_row: object | None, *, transport: str | None = None) -> Route:
+    """The route a video upscale takes, from the local catalog row alone."""
+    if not _direct_transport(transport):
+        return Route.UI
+    return direct_route.upscale_route(scale, catalog_row)
+
+
+def upscale_visibility(
+    profile_dir: Path, media_id: str, scale: str, kind: str = "video"
+) -> BrowserVisibility:
+    """An upscale's launch visibility: a video upscale routes on its local catalog row (no
+    network read); an image upscale drives the Flow UI."""
+    settings = get_settings()
+    if kind != "video":
+        return client_visibility(settings)
+    from gflow_cli.api._flow_media_edit import upscale_catalog_row  # noqa: PLC0415
+
+    row = upscale_catalog_row(settings, profile_dir, media_id)
+    return client_visibility(settings, (upscale_route(scale, row),))
+
+
+def client_visibility(
+    settings: Settings, routes: Iterable[Route] = (Route.UI,)
+) -> BrowserVisibility:
+    """The launch visibility for a client that runs ``routes``.
+
+    UI-only commands pass nothing and launch headed under ``auto``; a run with any UI item
+    launches headed for the whole run; an explicit setting wins.
+    """
+    return plan_visibility(settings.browser_visibility, routes)
+
+
+async def video_client_visibility(
+    settings: Settings, profile_dir: Path, routes: Sequence[Route]
+) -> BrowserVisibility:
+    """:func:`client_visibility` for video, after the browser-free zero-balance check.
+
+    A planned direct clip meeting a balance of 0 ends with exit 37 before any browser
+    launches; an unreadable balance skips the check. This is the only balance check: once
+    the profile's Chrome runs, it holds the on-disk cookie jar the read needs.
+    """
+    if Route.DIRECT in routes:
+        from gflow_cli.api.transports.direct_http._transport import (  # noqa: PLC0415
+            refuse_empty_balance,
+        )
+
+        await refuse_empty_balance(profile_dir)
+    return client_visibility(settings, routes)
 
 
 def safe_path_text(path: Path) -> str:
@@ -1070,7 +1187,6 @@ def validate_t2i_flags(
     thinking_level: str | None,
 ) -> None:
     """Validate single-prompt-only and arm-conflict flags on ``gflow image t2i``."""
-    from gflow_cli.config import UiMode
 
     if ui_mode == UiMode.CLASSIC.value and instructions:
         raise click.UsageError(

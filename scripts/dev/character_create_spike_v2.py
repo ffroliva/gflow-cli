@@ -102,6 +102,7 @@ if SRC.exists() and str(SRC) not in sys.path:
 from gflow_cli import auth as auth_mod  # noqa: E402
 from gflow_cli.api import routes  # noqa: E402
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 logger = structlog.get_logger("character_create_spike_v2")
 
@@ -416,7 +417,7 @@ async def _read_back(
 
 async def _run(*, profile_dir: Path, headless: bool, project_id: str) -> int:
     t0 = time.monotonic()
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS if headless else BrowserVisibility.HEADED) as client:
         entity_id = await _create_entity(client, project_id)
         workflow_id, media_id, returned_project = await _generate_face_with_entity_context(
             client, project_id=project_id, entity_id=entity_id

@@ -144,7 +144,6 @@ async def test_emits_submission_attempt_per_row(
     )
     await run_manifest_image_batch(
         profile_dir=tmp_path,
-        headless=True,
         transport=None,
         prompts=prompts,
         output_dir=tmp_path / "out",
@@ -219,7 +218,6 @@ async def test_emits_row_completed_per_row(
     )
     await run_manifest_image_batch(
         profile_dir=tmp_path,
-        headless=True,
         transport=None,
         prompts=prompts,
         output_dir=tmp_path / "out",
@@ -259,7 +257,6 @@ async def test_recorder_persistence_failure_emits_event_and_continues(
 
     await run_manifest_image_batch(
         profile_dir=tmp_path,
-        headless=True,
         transport=None,
         prompts=prompts,
         output_dir=out_dir,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -125,6 +126,29 @@ class TestVideoResult:
         assert payload["request"]["mode"] == "i2v"
         assert payload["request"]["duration"] == 8
 
+    def test_json_reports_resolved_duration_resolution(self) -> None:
+        """A bare t2v reports the model, duration and resolution of the request that ran."""
+        bare = GenerateVideoRequest(prompt="boat", aspect=Aspect.PORTRAIT)
+        sent = GenerateVideoRequest(
+            prompt="boat",
+            aspect=Aspect.PORTRAIT,
+            model=VideoModel.OMNI_1_2_FLASH,
+            duration=4,
+            resolution="360p",
+        )
+        result = VideoResult(
+            status=VideoStatus(media_id="m-3", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=None,
+            sent_request=sent,
+        )
+        payload = json_output.video_result(command="video t2v", request=bare, result=result)
+        request = payload["request"]
+        assert (request["model"], request["duration"], request["resolution"]) == (
+            "omni_1_2_flash",
+            4,
+            "360p",
+        )
+
     def test_failure_shape(self) -> None:
         result = VideoResult(
             status=VideoStatus(
@@ -150,6 +174,43 @@ class TestVideoResult:
         )
         payload = json_output.video_result(command="video t2v", request=req, result=result)
         assert payload["request"]["model"] is None
+
+
+def test_json_output_carries_route_visibility_retried(tmp_path: Path) -> None:
+    """Row 30: the image and video results say which path ran, at which visibility, and
+    whether a refused submit was retried; a UI result says ``ui``."""
+    direct = replace(_img(), transport="direct_http", visibility="headless", retried=True)
+    image = json_output.image_result(
+        command="image t2i",
+        project_id="proj-1",
+        model="NARWHAL",
+        images=[direct],
+        saved_paths=[Path("out/a.png")],
+    )
+    assert (image["route"], image["visibility"], image["retried"]) == ("direct", "headless", True)
+
+    clip = VideoResult(
+        status=VideoStatus(media_id="m-1", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+        local_path=tmp_path / "v.mp4",
+        transport="direct_http",
+        visibility="headless",
+        retried=True,
+    )
+    req = GenerateVideoRequest(prompt="x", mode=Mode.T2V)
+    video = json_output.video_result(command="video t2v", request=req, result=clip)
+    assert (video["route"], video["visibility"], video["retried"]) == ("direct", "headless", True)
+
+    ui = VideoResult(
+        status=VideoStatus(media_id="m-2", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+        local_path=None,
+        visibility="headed",
+    )
+    ui_video = json_output.video_result(command="video t2v", request=req, result=ui)
+    assert (ui_video["route"], ui_video["visibility"], ui_video["retried"]) == (
+        "ui",
+        "headed",
+        False,
+    )
 
 
 class TestErrorPayload:

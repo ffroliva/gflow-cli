@@ -185,7 +185,6 @@ def create(
             lambda: _run_create_from_files(
                 profile_name=profile_name,
                 profile_dir=pdir,
-                headless=settings.headless,
                 project_id=project_id,
                 name=name,
                 portrait=portrait,
@@ -205,7 +204,6 @@ def create(
         lambda: _run_create(
             profile_name=profile_name,
             profile_dir=pdir,
-            headless=settings.headless,
             project_id=project_id,
             name=name,
             face_prompt=face,
@@ -229,7 +227,6 @@ async def _run_create(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     project_id: str,
     name: str,
     face_prompt: str,
@@ -256,7 +253,7 @@ async def _run_create(
             image_reference_index=1,
         )
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         recorder = OperationRecorder.open(settings)  # type: ignore[arg-type]
         try:
             result: CharacterCreateResult = await character_create(
@@ -315,7 +312,6 @@ async def _run_create_from_files(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     project_id: str,
     name: str,
     portrait: Path,
@@ -325,7 +321,7 @@ async def _run_create_from_files(
     output_format: str,
     settings: object,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         recorder = OperationRecorder.open(settings)  # type: ignore[arg-type]
         try:
             result = await character_create_from_files(
@@ -388,11 +384,9 @@ def list_cmd(project_id: str, output_format: str, as_json: bool, profile: str | 
     """List all Character entities in a project."""
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_list(
             profile_dir=pdir,
-            headless=settings.headless,
             project_id=project_id,
             output_format=output_format,
             as_json=as_json,
@@ -406,12 +400,11 @@ def list_cmd(project_id: str, output_format: str, as_json: bool, profile: str | 
 async def _run_list(
     *,
     profile_dir: Path,
-    headless: bool,
     project_id: str,
     output_format: str = "table",
     as_json: bool = False,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         chars = await client.list_characters(project_id)
     if output_format == "json":
         json_output.emit({"status": "ok", "characters": [_char_to_dict(c) for c in chars]})
@@ -457,11 +450,9 @@ def show(
         raise click.UsageError("--id and --name are mutually exclusive.")
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_show(
             profile_dir=pdir,
-            headless=settings.headless,
             project_id=project_id,
             entity_id=entity_id,
             name=name,
@@ -477,14 +468,13 @@ def show(
 async def _run_show(
     *,
     profile_dir: Path,
-    headless: bool,
     project_id: str,
     entity_id: str | None,
     name: str | None,
     output_format: str = "table",
     as_json: bool = False,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         char = await client.get_character(project_id, entity_id=entity_id, name=name)
     if output_format == "json":
         json_output.emit({"status": "ok", "character": _char_to_dict(char)})
@@ -528,11 +518,9 @@ def rm(
         raise click.UsageError("--id and --name are mutually exclusive.")
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_rm(
             profile_dir=pdir,
-            headless=settings.headless,
             project_id=project_id,
             entity_id=entity_id,
             name=name,
@@ -549,7 +537,6 @@ def rm(
 async def _run_rm(
     *,
     profile_dir: Path,
-    headless: bool,
     project_id: str,
     entity_id: str | None,
     name: str | None,
@@ -557,7 +544,7 @@ async def _run_rm(
     output_format: str = "table",
     as_json: bool = False,
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         char = await client.get_character(project_id, entity_id=entity_id, name=name)
         if not assume_yes and not as_json and output_format != "id":
             click.confirm(

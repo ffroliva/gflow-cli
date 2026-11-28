@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.browser_manager import disable_features_args
 
 _DEV = Path(__file__).resolve().parents[2] / "scripts" / "dev"
@@ -22,7 +23,9 @@ from _recording_client import RecordingFlowApiClient  # noqa: E402
 
 def test_recording_client_injects_video_and_preserves_base(tmp_path: Path) -> None:
     rec_dir = tmp_path / "rec"
-    client = RecordingFlowApiClient(profile_dir=tmp_path, headless=True, record_video_dir=rec_dir)
+    client = RecordingFlowApiClient(
+        profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS, record_video_dir=rec_dir
+    )
     kwargs = client._persistent_context_kwargs()  # noqa: SLF001
     # Recording kwargs injected:
     assert kwargs["record_video_dir"] == str(rec_dir)

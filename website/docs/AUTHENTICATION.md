@@ -40,13 +40,13 @@ This page documents the full lifecycle: capture, storage, reuse, refresh, multi-
                                            │
                                            ▼
                               ┌──────────────────────────────────────┐
-                              │  Playwright launches HEADED Chrome   │
-                              │  with the same profile dir (the      │
-                              │  production default — reCAPTCHA      │
-                              │  Enterprise rejects headless outright│
-                              │  with a 403); page.request.post(...) │
-                              │  auto-sends cookies. No token         │
-                              │  plumbing needed.                     │
+                              │  Playwright launches system Chrome   │
+                              │  on the same profile dir: headless   │
+                              │  to mint the reCAPTCHA token for a   │
+                              │  measured direct-HTTP request, headed│
+                              │  for the UI surfaces (BROWSER_MODES).│
+                              │  The profile's cookies go with each  │
+                              │  request. No token plumbing needed.  │
                               └──────────────────────────────────────┘
 ```
 
@@ -562,7 +562,7 @@ For deeper guidance see [SECURITY.md](SECURITY.md).
 ## FAQ
 
 **Q: Can I use `gflow-cli` without a browser at all?**
-A: No — not for `auth login`, and not for generation either. `auth login` needs Chromium so you can solve any 2FA/CAPTCHA challenge interactively. Generation calls also launch a real, **headed** Chrome window by default (`GFLOW_CLI_HEADLESS=false`) — the `ui_automation` transport is gflow-cli's only production transport, and reCAPTCHA Enterprise rejects headless Chromium with an immediate 403, so there is no way to run production generation on a display-less machine without a virtual display (e.g. Xvfb) or a workstation. Plan for that when choosing where to run gflow-cli long-term; see [CONFIGURATION.md § `GFLOW_CLI_HEADLESS`](CONFIGURATION.md#gflow_cli_headless).
+A: Only for `auth login`. Sign-in needs Chromium so you can solve any 2FA/CAPTCHA challenge interactively, which needs a display once. After that, the measured image and video request shapes start Chrome headless only to mint the reCAPTCHA token and go to Flow over direct HTTP, with no display. The commands that still drive Flow's interface (reference-to-video, extend, edit, character create and others) open a headed window and need a display, or a virtual one such as Xvfb. The per-command list is [BROWSER_MODES](BROWSER_MODES.md); the setting is [CONFIGURATION.md § `GFLOW_CLI_HEADLESS`](CONFIGURATION.md#gflow_cli_headless). macOS and Linux are unmeasured for the headless mint.
 
 **Q: Does this support Google Workspace SSO?**
 A: Yes — sign in normally during `auth login`. Whatever your IdP flow looks like in the browser, that's what you'll go through. The captured cookies are the same.

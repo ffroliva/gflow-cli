@@ -27,6 +27,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
 from gflow_cli.config import get_settings
 from gflow_cli.paths import image_output_path
+from gflow_cli._cli_helpers import client_visibility
 
 console = Console()
 
@@ -85,7 +86,7 @@ async def main() -> int:
         f"[bold]Smoke test:[/bold] T2I '{escape(args.prompt)}' "
         f"(model={args.model}, aspect={args.aspect}, count={args.count})"
     )
-    async with FlowApiClient(profile_dir=pdir, headless=settings.headless) as client:
+    async with FlowApiClient(profile_dir=pdir, visibility=client_visibility(settings)) as client:
         project = await client.create_project(title="gflow-cli smoke image")
         console.print(f"  Project: [dim]{escape(project.project_id)}[/dim]")
 

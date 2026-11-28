@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from gflow_cli._cli_helpers import client_visibility
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.config import get_settings
 from gflow_cli.mcp import tools as mcp_tools
@@ -50,7 +51,7 @@ async def test_mcp_character_list_matches_the_cli_client(
     settings = get_settings()
     async with FlowApiClient(
         profile_dir=settings.profile_subdir(profile),
-        headless=settings.headless,
+        visibility=client_visibility(settings),
     ) as client:
         via_client = await client.list_characters(character_project)
 

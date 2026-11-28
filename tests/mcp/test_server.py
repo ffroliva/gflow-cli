@@ -504,9 +504,10 @@ async def test_negative_video_cap_is_rejected_before_rate_limit(
 
 
 def test_video_payload_round_trips_max_credits() -> None:
+    from gflow_cli.mcp.generation_params import VideoPayloadInputs
     from gflow_cli.mcp.tools import _build_video_payload
 
-    common = dict(
+    common: dict[str, Any] = dict(
         prompt="cat",
         mode="t2v",
         aspect="9:16",
@@ -518,9 +519,13 @@ def test_video_payload_round_trips_max_credits() -> None:
         project=None,
         project_name=None,
     )
-    assert _build_video_payload(**common, max_credits=12)["max_credits"] == 12
-    assert "max_credits" not in _build_video_payload(**common, max_credits=None)
-    assert _build_video_payload(**common, max_credits=-1)["max_credits"] == -1
+
+    def payload(max_credits: int | None) -> dict[str, Any]:
+        return _build_video_payload(VideoPayloadInputs(**common, max_credits=max_credits))
+
+    assert payload(12)["max_credits"] == 12
+    assert "max_credits" not in payload(None)
+    assert payload(-1)["max_credits"] == -1
 
 
 # ---------------------------------------------------------------------------

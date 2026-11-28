@@ -197,6 +197,7 @@ async def gflow_extend_video(  # noqa: PLR0913
     project_name: str | None = None,
     out_file: OutFileParam = None,
     wait: common._WaitParam = True,  # pyright: ignore[reportPrivateUsage]
+    browser_visibility: common.BrowserVisibilityParam = None,
 ) -> dict[str, Any]:
     """Continue a local video file or Flow clip UUID by one segment on flow.google.com."""
     checked, pre_err = _preflight_extend_inputs(
@@ -237,6 +238,7 @@ async def gflow_extend_video(  # noqa: PLR0913
     if payload_err is not None:
         return payload_err
     assert payload is not None
+    payload["browser_visibility"] = browser_visibility
     result = await common._run_generation_task(  # pyright: ignore[reportPrivateUsage]
         profile=resolved_profile, task_type="extend", payload=payload, wait=wait
     )

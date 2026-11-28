@@ -82,9 +82,6 @@ def _project_no_cards(
     fake_client_holder["client"] = client
 
     monkeypatch.setattr(cli_instructions, "FlowApiClient", lambda **kw: client)
-    monkeypatch.setattr(
-        cli_instructions, "get_settings", lambda: type("S", (), {"headless": True})()
-    )
     monkeypatch.setattr(cli_instructions, "_resolve_profile", lambda p: p or "default")
     monkeypatch.setattr(cli_instructions, "_make_provider_dir", lambda name: Path("/fake"))
 
@@ -107,9 +104,6 @@ def _project_active_card(
     fake_client_holder["client"] = client
 
     monkeypatch.setattr(cli_instructions, "FlowApiClient", lambda **kw: client)
-    monkeypatch.setattr(
-        cli_instructions, "get_settings", lambda: type("S", (), {"headless": True})()
-    )
     monkeypatch.setattr(cli_instructions, "_resolve_profile", lambda p: p or "default")
     monkeypatch.setattr(cli_instructions, "_make_provider_dir", lambda name: Path("/fake"))
 

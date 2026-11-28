@@ -40,7 +40,6 @@ def _run(
     outcomes = asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=tuple(rows),
             output_dir=tmp_path / "out",
@@ -142,7 +141,6 @@ def test_a_local_file_is_uploaded_once_and_referenced_in_place(tmp_path: Path) -
     asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=rows,
             output_dir=tmp_path / "out",
@@ -180,7 +178,6 @@ def test_a_failed_upload_fails_that_row_and_a_later_row_retries(tmp_path: Path) 
     outcomes = asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=rows,
             output_dir=tmp_path / "out",
@@ -216,7 +213,6 @@ def test_an_upload_with_an_unknown_outcome_is_never_uploaded_again(tmp_path: Pat
     outcomes = asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=rows,
             output_dir=tmp_path / "out",

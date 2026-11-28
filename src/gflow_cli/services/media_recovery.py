@@ -148,7 +148,7 @@ async def download_media(
     target_dir = out_dir or settings.output_dir
     profile_dir = _make_provider_dir(asset.profile_name)
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         clip = await recover_clip(
             client.page,
             project_id=asset.flow_project_id,

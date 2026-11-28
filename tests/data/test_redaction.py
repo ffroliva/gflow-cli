@@ -134,6 +134,15 @@ class TestBatchexecuteSecrets:
         assert "0cAF" not in out
         assert "<redacted:token>" in out
 
+    def test_redacts_03AF_and_0cAF_tokens(self) -> None:  # noqa: N802
+        token_03 = "03AFcWeA" + "x1Y_-z" * 60
+        token_0c = "0cAFcWeA" + "x1Y_-z" * 60
+        detail = f"minted tokens {token_03} and {token_0c} in response"
+        out = redact_error_detail(detail)
+        assert "03AF" not in out
+        assert "0cAF" not in out
+        assert out == "minted tokens <redacted:token> and <redacted:token> in response"
+
     def test_the_at_xsrf_value_is_scrubbed_plain_and_url_encoded(self) -> None:
         encoded = self._AT.replace(":", "%3A")
         # Bare tokens (e.g. in JSON/headers/prose) without at= prefix scrub to <redacted:token>

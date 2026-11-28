@@ -86,7 +86,6 @@ def _mock_recording_runner(monkeypatch: pytest.MonkeyPatch, runner_state: dict[s
         *,
         profile_name: str,
         profile_dir: Path,
-        headless: bool,
         req: Any,
         count: int,
         out: Path | None,

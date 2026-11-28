@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports import mode_control
 from gflow_cli.api.transports.mode_control import AGENT_TOGGLE_SELECTOR, CROP_SELECTORS
 from tests.e2e.conftest import skip_on_migrated_host
@@ -134,7 +135,9 @@ async def test_expanded_sidebar_hides_both_affordances_and_is_recoverable(
     """The #493 fingerprint is real, and production recovers from it."""
     from gflow_cli.api.client import FlowApiClient
 
-    async with FlowApiClient(profile_dir=e2e_profile_dir, headless=False) as client:
+    async with FlowApiClient(
+        profile_dir=e2e_profile_dir, visibility=BrowserVisibility.HEADED
+    ) as client:
         page = await _open_editor(client, _any_project_id(e2e_profile_dir))
         if not await _drive_into_sidebar_state(page):
             pytest.skip("composer did not expose the Agent toggle / expand affordance")
@@ -163,7 +166,9 @@ async def test_recovers_when_the_scoped_close_selector_misses(
     """
     from gflow_cli.api.client import FlowApiClient
 
-    async with FlowApiClient(profile_dir=e2e_profile_dir, headless=False) as client:
+    async with FlowApiClient(
+        profile_dir=e2e_profile_dir, visibility=BrowserVisibility.HEADED
+    ) as client:
         page = await _open_editor(client, _any_project_id(e2e_profile_dir))
         if not await _drive_into_sidebar_state(page):
             pytest.skip("composer did not expose the Agent toggle / expand affordance")

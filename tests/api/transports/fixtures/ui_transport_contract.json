@@ -43,6 +43,7 @@
     "_overlay_blocks_page": "classmethod (cls, page: 'Page') -> 'bool' sha=0e17d3a358707e2b",
     "_park_composer_page": "function (self, page: 'Any', *, event: 'str') -> 'None' sha=4d885b883eb039f1",
     "_probe_page_block": "staticmethod (page: 'Page') -> 'dict[str, Any] | None' sha=97d757181b95c7bb",
+    "_raise_if_torn_down": "function (self) -> 'None' sha=645304594772a3ef",
     "_read_displayed_count": "staticmethod (page: 'Page') -> 'int | None' sha=27dd5f430901ac0d",
     "_require_unblocked": "function (self, page: 'Page', out_dir: 'Path | None', *, epoch: 'str') -> 'None' sha=537b3b1042077a05",
     "_run_one_prompt_in_batch": "function (self, *, page: 'Page', idx: 'int', req: 'GenerateImageRequest', project_id: 'str', out_dir: 'Path | None', ui_driver: 'Any') -> 'tuple[BatchSubmissionResult, GFlowError | None]' sha=1968d5710fad9432",
@@ -70,7 +71,7 @@
     "refresh_auth": "function (self) -> 'None' sha=297acb70041a01d0",
     "setup": "function (self, profile_dir: 'Path', *, page: 'Page | None' = None) -> 'None' sha=59e74f31c06b1bc4",
     "teardown": "function (self) -> 'None' sha=a531ba2425e881cd",
-    "upload_reference": "function (self, *, project_id: 'str', path: 'Path') -> 'ImageRef | None' sha=8e150160e9e33232",
+    "upload_reference": "function (self, *, project_id: 'str', path: 'Path') -> 'ImageRef | None' sha=41c0a5b93e10edaa",
     "uses_page_owned_image_recaptcha": "function (self) -> 'bool' sha=bec85e8e63d14947"
   },
   "module_names": {

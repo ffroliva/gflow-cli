@@ -221,9 +221,88 @@ It does not affect direct requests (they click nothing), and it is the likely ca
 `create_project` click that was "visible but did not take the click" on that account the same
 afternoon. Recorded for the UI transport, not measured further here.
 
+## Headless UI automation
+
+**Script:** [`scripts/dev/spike_headless_ui.py`](../../../scripts/dev/spike_headless_ui.py) · **Cost:** $0
+
+`ui_automation.py` passes `headless=False` only on its own-context path (a transport used
+without a client). The production session is `FlowApiClient`, which launches Chrome with
+`headless=<flag>` and hands its page to the transport, so the spike launches through
+`FlowApiClient(headless=True)` and drives the read-only surfaces with the production helpers.
+No generate or submit button was clicked. One account served `flow.google.com` (Portuguese UI),
+one project with media, three fresh browsers per arm.
+
+| Surface | Production path and anchor | Headless | Headed |
+|---|---|---|---|
+| Composer | `MigratedComposer.ensure_editor`: `.settings-trigger-button`, `[contenteditable='true']`; kind `classic` | 3/3 (3.1–4.1 s) | 3/3 (2.7–4.0 s) |
+| Settings pane | `_open_pane`: 4 `[role='radiogroup']` with a checked radio each; model picker (`arrow_drop_down`) opened, 5 `[role='menuitem']`, closed with Escape | 3/3 (1.1–1.3 s) | 3/3 (1.2–1.4 s) |
+| Characters | `FlowApiClient.list_characters` (the `gflow character list` path; `Zzl0ze` read through the page) | 3/3, 0 characters (2.3–3.1 s) | 3/3, 0 characters (2.0–2.1 s) |
+| Media view | `/project/<id>/edit/<media_id>` of the first `img[data-media-id]`: a `video`/`img` at least 200 px wide painted, and the `download` button visible | 3/3 (2.6–3.1 s) | 3/3 (2.0–2.1 s) |
+
+Launch took 6.3–7.2 s headless and 6.1–7.8 s headed. In both arms the page carried no
+reCAPTCHA challenge frame (`iframe[src*='bframe']`), no `/about` landing and no sign-in
+redirect, and rendered the same text length on every surface (773 characters on the project
+page, 604 on the media view); the headless arm reported `HeadlessChrome` in `navigator.userAgent`,
+and `navigator.webdriver` was `null` in both. The checked radios and the bound model were
+identical across all six runs (Video, Ingredients, 16:9, x1, Veo 3.1 Lite).
+
+The billed path was also driven headless once, on the account `spike_direct_video.py` defaults
+to (English UI): the route-aborted
+`--capture-defaults` run below went through the settings pane, a Frames start-frame upload
+(`maseQ`) and the submit click for both t2v and i2v, and each produced exactly one submit frame,
+aborted in the browser.
+
+Two misses in a first trial run were the probe's own: the media check matched the hidden 32 px
+account avatar (`img.gbii`) as the first `video, img`, and a "redeem bonus credits" modal covered
+the media view. The check now requires a large painted element and calls `_dismiss_dialog` first;
+both arms ran with the corrected probe.
+
+Reading against the pre-registered table: every surface N/N in both arms, so **headless can drive
+the composer, the settings pane, the character read and the media view** on this account.
+
+## The default video shape over direct HTTP
+
+What the CLI sends with no `--model`, `--duration` or `--resolution`:
+
+| Field | t2v | i2v | Where |
+|---|---|---|---|
+| Aspect | 9:16 | 9:16 | `cli_video.py:1234` (t2v), `cli_video.py:1440` (i2v), `default="9:16"`; DTO `api/video.py:293` |
+| Model | `None`: the picker is not touched, Flow's per-account sticky selection applies | `VEO_3_1_LITE` | `api/video.py:295`, `_mc_settings_pane.py:157`; i2v `api/video.py:93` bound at `_mc_settings_pane.py:155` |
+| Duration, resolution | `None`: not touched | `None`: not touched | `_mc_settings_pane.py:160-161` |
+| Count | 1 | 1 | `cli_video.py:1272`, `api/video.py:297` |
+
+The wire key is composed by Flow's app from that pane state, so no file holds the t2v key: it is
+whatever the account last selected. `--capture-defaults` (route-aborted, headless, same
+account) recorded the key the app built for these requests:
+
+| Mode | rpcid | Key | Aspect slot | Item beyond the spike's frame | Batch tail | reCAPTCHA actions |
+|---|---|---|---|---|---|---|
+| t2v | `YhhmEf` | `macaron_cookie_t2v_4s_360p` | `1` | `[…, ids, null, null, [4]]` | `["<uuid>", 1]` | `VIDEO_GENERATION` |
+| i2v | `eb1hJf` | `veo_3_1_i2v_lite` | `1` | none; crop `[null, 0.352344, 1, 0.647656]` (a 1200x630 frame into 9:16) | `["<uuid>", 1]` | `UPLOAD_IMAGE`, `VIDEO_GENERATION` |
+
+The t2v key is account state: earlier UI runs on this account had selected Omni 1.2 Flash at 4 s
+and 360p, and the picker kept it. The app's frame differs from the spike's hand-built one in two
+places: a trailing `[4]` slot on the t2v item (the duration) and `1`, not `2`, in the batch tail.
+
+Each captured frame was then sent once over direct HTTP (`--replay`: the captured frame verbatim,
+with a fresh headless token and fresh client UUIDs), headless, in the capture's project:
+
+| Mode | Key | Mint | POST | Render (`jwpduf`) | Download | Credits |
+|---|---|---|---|---|---|---|
+| t2v | `macaron_cookie_t2v_4s_360p`, 9:16 | 1352 ms | 3.6 s | 21.9 s | 360x640 mp4, size = `DETAILS[13]` | 188 → 184 |
+| i2v | `veo_3_1_i2v_lite`, 9:16 | 186 ms | 4.0 s | 38.4 s | 720x1280 mp4, size matches | 184 → 174 |
+
+Both accepted with no error; 14 credits. Reading against the pre-registered table: **the default
+shapes can go direct** on this account. Veo 3.1 Lite i2v renders 720p and costs 10 credits;
+the sticky Omni t2v key costs 4.
+
 ## Not measured
 
 - Concurrency above 8, and several warm pages on one profile.
-- End frames (`nprQif`), ingredients (`MZZa6b`), extend, i2v in portrait, 4K upscale, and keys
-  other than the three measured.
+- End frames (`nprQif`), ingredients (`MZZa6b`), extend, 4K upscale, and keys other than the four
+  measured.
+- The t2v default on an account whose sticky selection is a Veo model, and the UI's own default
+  for an account that never chose one.
+- Headless UI on a project with characters (the read returned 0 in both arms), on a video
+  media view (the first tile was an image), and on a second account for the read-only surfaces.
 - macOS and Linux; accounts served labs.google (none here can reach it).

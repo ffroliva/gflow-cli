@@ -436,6 +436,22 @@ def test_deprecated_env_var_flags(
         assert successor in text
 
 
+def test_doctor_flags_gflow_cli_headless(
+    tmp_path: Path,
+    healthy_doctor_env: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _clean_db(tmp_path)
+    monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
+    reset_settings()
+    flagged = _flagged(run_all(db, get_settings()), "env.deprecated_vars")
+    assert flagged
+    text = " ".join(f.summary + " " + f.remediation for f in flagged)
+    assert "GFLOW_CLI_HEADLESS" in text
+    assert "GFLOW_CLI_BROWSER_VISIBILITY" in text
+    assert "false now means auto" in text
+
+
 def test_db_path_env_settings_disagreement_flags(
     tmp_path: Path,
     healthy_doctor_env: None,

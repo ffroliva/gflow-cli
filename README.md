@@ -21,7 +21,76 @@
 
 <!-- sponsors-gold:end -->
 
-An independent project, not affiliated with Google. It drives your own signed-in Flow session in a real Chrome window, so Google's terms apply to your account: read the [DISCLAIMER](DISCLAIMER.md) and [ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md).
+**Why it exists: automation.** gflow-cli lets agents, harnesses and scripts generate images and videos on a user's own Google Flow account, predictably, and spend the credits the user pays for along a correct, accountable path. For these users Flow's web interface is noise. The browser is used only where it is strictly necessary, to mint the reCAPTCHA token each request carries, and it runs headless by default; the measured request shapes then go to Flow over direct HTTP. Which commands use a browser, and how, is listed per command in [BROWSER_MODES](docs/BROWSER_MODES.md). The remaining limits are stated under [Architecture & current limitations](#architecture--current-limitations).
+
+<!-- browser-modes-table -->
+
+Which commands open a browser, with the default `GFLOW_CLI_BROWSER_VISIBILITY=auto` (copied from [BROWSER_MODES](docs/BROWSER_MODES.md), the single source):
+
+**Headless** (direct HTTP; the browser only mints the reCAPTCHA token)
+
+| Command | Browser mode in v0.108.0 | Why |
+|---|---|---|
+| `image t2i` | headless | Text-to-image with `nano2` (any aspect, count 1-4), or `nano2-lite` / `nano-pro` at 9:16, count 1, no reference: the measured image shapes |
+| `image generate` | headless | Resolves to `t2i` or `i2i`; the same rules apply to the resolved command |
+| `image i2i` | headless | With `nano2` and exactly one in-project reference, or one saved character passed as `--reference-entity` with its `--reference-entity-name` (count 1-4) |
+| `run` | per row | Each image row routes on its own shape; a row with a `"ref"` or a character takes the UI path, and a run with any UI row launches headed for the whole run |
+| `video t2v` | headless | `--model omni-1.2-flash --duration 4 --resolution 360p`, 9:16 or 16:9, count 1: the measured text-to-video key. With no `--model`, the key is built from the model selected in the account's Flow settings, and the command goes direct when that selection forms a measured key |
+| `video i2v` | headless | A **local** start frame, 9:16, the default model (Veo 3.1 Lite) or `--model veo-lite`, no `--duration` / `--resolution`: the measured image-to-video key. A JPEG whose EXIF orientation is a quarter turn (a phone photo taken upright) takes the UI path |
+| `video generate` | headless | Resolves to `t2v` / `i2v` / `r2v`; the rules of the resolved command apply |
+| `video upscale --scale 1080p` | headless | Only for a clip in the local catalog that is Omni 1.2 Flash, 4 s, 16:9: the measured upscale source |
+| `video chain` | per clip | Direct when every clip is a measured shape; a chain with any UI clip launches headed for the whole chain |
+| `serve` | same rules | The MCP tools and the HTTP endpoint route each request exactly as the CLI does; `browser_visibility` is the per-call twin of `--browser-visibility` |
+| `mcp run` | same rules | As `serve` |
+
+**Headed** (Flow's UI)
+
+| Command | Browser mode in v0.108.0 | Why |
+|---|---|---|
+| `auth login` | headed | Interactive sign-in; needs a display once |
+| `image batch` | headed | The stay-mounted UI batch drives the composer |
+| `image i2i --ref` | headed | A local `--ref` file is uploaded through the UI |
+| `image upload` | headed | Uploads through the project's UI |
+| `image upscale` | headed | Drives the image's download menu |
+| `movie run` | headed | Scene requests carry no resolution, so no scene forms a measured key; characters and instruction cards are UI surfaces too |
+| `video r2v` | headed | Reference-to-video is not measured over direct HTTP |
+| `video extend` | headed | Not measured over direct HTTP |
+| `video edit` | headed | Not measured over direct HTTP |
+| `video i2v --end-frame` | headed | An end frame, or a start frame that is already in the project, is not a measured shape |
+| `video upscale --scale 4k` | headed | 4K, 720p and the 270p GIF, and 1080p of a clip the local catalog does not hold, drive the download menu |
+| `scene create` | headed | Scenes are built in the UI |
+| `scene show` | headed | Reads the scene in the UI |
+| `character create` | headed | Character creation is a UI surface |
+| `character list` | headed | Reads the project's characters in the UI (also `character show` and `character rm`) |
+| `instructions add` | headed | Agent-mode instruction cards are a UI surface (every `instructions` subcommand) |
+| `media trash` | headed | Trash and restore are UI actions (also `media restore`) |
+| `project create` | headed | Creates the project in the UI (also `project rename`) |
+| `data sync` | headed | Reads the project in the profile's browser |
+| `video t2v --max-credits` | headed | Any credit-capped video (`--max-credits`, `GFLOW_CLI_MAX_CREDITS`, MCP `max_credits`) reads Flow's quote in the UI; direct video has no wire quote |
+
+**No browser**
+
+| Command | Browser mode in v0.108.0 | Why |
+|---|---|---|
+| `video assemble` | none | Local ffmpeg processing |
+| `video captions` | none | Local ffmpeg processing |
+| `video transcribe` | none | Calls the configured transcription endpoint |
+| `audio narrate` | none | Calls the configured text-to-speech service |
+| `docs` | none | Bundled documentation |
+| `data list` | none | Local catalog (every `data` subcommand except `data sync`) |
+| `telemetry status` | none | Local settings and one weekly upload (every `telemetry` subcommand) |
+| `update` | none | Runs the installer |
+| `models list` | none | Static model catalog (also `models show`) |
+| `capabilities` | none | Static capability report |
+| `cancel` | none | Local job queue |
+| `auth renew` | none or headless | Refreshes saved sessions headlessly, with no sign-in |
+| `credits user` | none or headless | Read directly when the saved session is accepted; otherwise in the profile's browser (also `credits list`) |
+
+A direct submit that Flow refuses as unusual activity is retried **once** from a new headless browser; a second refusal is final, and a headed window opens only when `--browser-visibility headed` (or `GFLOW_CLI_BROWSER_VISIBILITY=headed`) is set. Measured on Windows; macOS and Linux are unmeasured. The route rule and the conditions that force the UI path: [BROWSER_MODES](docs/BROWSER_MODES.md).
+
+<!-- /browser-modes-table -->
+
+An independent project, not affiliated with Google. It works on your own signed-in Flow session, so Google's terms apply to your account: read the [DISCLAIMER](DISCLAIMER.md) and [ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md).
 
 ## gflow-cli at a glance
 
@@ -75,13 +144,13 @@ The Claude Code plugin ships disabled, because enabling it starts a server that 
 **Before you install**, check that you have:
 
 - Python 3.11 or newer (`uv tool install` fetches it) and [`uv`](https://docs.astral.sh/uv/getting-started/installation/);
-- Google Chrome (sign-in and generation drive a real Chrome window);
-- a display for the one-time sign-in (on Linux servers, Xvfb);
+- Google Chrome (it mints the reCAPTCHA token, headless by default, and hosts the sign-in);
+- a display only for the one-time sign-in and for the commands that still drive Flow's interface ([BROWSER_MODES](docs/BROWSER_MODES.md));
 - a Google account with Flow access, in a [region where Google offers Flow](https://support.google.com/flow/answer/16353544).
 
 If PyPI, the Chromium download or Google is not reachable directly, read [Behind a proxy or a package mirror](https://github.com/ffroliva/gflow-cli/blob/develop/docs/USER_GUIDE.md#15-behind-a-proxy-or-a-package-mirror) first.
 
-Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x86_64 / Xvfb).
+Compatible with **macOS** (Apple Silicon & Intel), **Windows**, and **Linux** (x86_64). The headless mint and direct HTTP transport were measured on Windows; macOS and Linux are unmeasured.
 
 ```bash
 # 1 · Install (uv recommended; also: pip install gflow-cli)
@@ -160,7 +229,7 @@ Video comes in 16:9 and 9:16; images in 16:9, 4:3, 1:1, 3:4 and 9:16. Which mode
 - **Cost before commitment on multi-clip runs.** `video chain`, `video extend` and `movie run` take `--dry-run` to show the plan without submitting anything, and `chain` and `extend` ask before they spend.
 - **Never billed twice.** A billed request is sent once and never retried automatically, and `gflow run --resume` regenerates only the rows the local catalog does not already hold.
 - **Every error says whether you were charged.** Errors carry `charged: yes | no | maybe` and a `next_action` (`retry`, `reauth`, `reconcile`) in both the CLI's `--json` output and MCP replies ([ERRORS](docs/ERRORS.md)).
-- **Paced like a person.** gflow uses a real Chrome window with randomised interaction timing and paced submissions. It does no IP rotation, uses no proxy unless you set one, and does no fingerprint spoofing by default ([ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)).
+- **Paced, not disguised.** gflow paces its submissions, and the commands that still drive Flow's interface use randomised interaction timing. The headless browser reports itself as `HeadlessChrome`. It does no IP rotation, uses no proxy unless you set one, and does no fingerprint spoofing by default ([ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)).
 - **Fails loudly.** When Flow's interface changes, the run stops with a distinct exit code (selector drift is exit 23) instead of guessing.
 
 ## How does gflow-cli compare with other Google Flow automation tools?
@@ -226,7 +295,7 @@ Not when you register `gflow mcp run --no-spend`: the credit-spending tools are 
 
 ### Does it run headless or on a server?
 
-Sign-in needs a display once. Generation drives a real Chrome window, so on Linux servers it runs under Xvfb. A pure-HTTP transport for video is blocked by Google's reCAPTCHA (see [Architecture](#architecture--current-limitations)).
+Mostly, yes. Sign-in needs a display once. After that, the measured image and video shapes mint their reCAPTCHA token in a headless Chrome and go to Flow over direct HTTP, with no visible window. Commands that still drive Flow's interface (for example `video r2v`, `video extend`, `video edit`, `character create`) open a headed window and need a display; on a Linux server that means Xvfb. The per-command list is in [BROWSER_MODES](docs/BROWSER_MODES.md); macOS, Linux and accounts Flow serves on labs.google are unmeasured (see [Architecture](#architecture--current-limitations)).
 
 ### Does it work with flow.google.com as well as labs.google?
 
@@ -259,7 +328,7 @@ One command in, real Flow output back. Left: `gflow image t2i` generating a phot
 
 ![gflow image t2i runs a single 9:16 prompt, streams structlog output, and writes a PNG to disk](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/example-run.gif)
 
-A single `gflow image t2i "..." --aspect 9:16 --model nano2` call against a logged-in Flow profile. The terminal streams the run's `structlog` JSON, then lists the written PNG. Chromium drives the Flow editor silently in the background.
+A single `gflow image t2i "..." --aspect 9:16 --model nano2` call against a logged-in Flow profile. The terminal streams the run's `structlog` JSON, then lists the written PNG. Chrome starts headless only to mint the reCAPTCHA token; the request itself goes to Flow over direct HTTP, so no browser window opens.
 
 Reproduce the recording with [`scripts/record_demo.ps1`](scripts/record_demo.ps1) (Windows, OBS, ffmpeg, gifski). More formats, including the side-by-side split-screen: **[docs/DEMOS.md](docs/DEMOS.md)**.
 
@@ -303,14 +372,12 @@ Onboard any agent in one line. Paste this into your agent of choice:
 ## Architecture & current limitations
 
 ```text
-gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (tests)
-                                              ↓
-                                      Playwright Chromium (headed — login AND generation, by default)
-                                              ↓
-                              aisandbox-pa.googleapis.com  (Google's private Flow API)
+gflow CLI / MCP server
+   ├─ measured shapes ─→ headless Chrome mints the reCAPTCHA token ─→ direct HTTP ─→ Flow
+   └─ other surfaces  ─→ headed Chrome drives Flow's interface (ui_automation)    ─→ Flow
 ```
 
-**Current transport:** `ui_automation` drives Flow through a persistent Playwright Chromium profile. It is the production transport and is verified end-to-end every release (see the per-release `LIVE_VERIFICATION_*` evidence files).
+**Current transport.** For the request shapes that have been measured, gflow-cli starts Chrome headless only to mint the reCAPTCHA token and sends the request to Flow over direct HTTP: text-to-image, image-to-image with one in-project reference or one saved character, the image rows of `gflow run` that carry no reference, text-to-video at measured settings, image-to-video from a local start frame, and the 1080p video upscale. `gflow serve` and `gflow mcp run` follow the same rules. Flow refuses some submits as unusual activity without billing them; such a refusal is retried once, from a new headless browser process. `GFLOW_CLI_BROWSER_VISIBILITY` (`auto`, `headless`, `headed`; default `auto`) or `--browser-visibility headed` shows the window. The per-command list is in [BROWSER_MODES](docs/BROWSER_MODES.md); the evidence is the [direct video and headless mint spike](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md) ([#1371](https://github.com/ffroliva/gflow-cli/issues/1371)). How the product worked before v0.108.0 is recorded once, in [ARCHITECTURE § Before v0.108.0](docs/ARCHITECTURE.md#before-v01080-a-headed-browser-for-generation).
 
 **Two Flow frontends:** Google is moving accounts from `labs.google` to `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). It is the same product with a different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). The migrated driver covers:
 
@@ -322,9 +389,13 @@ Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ff
 
 These keep the labs driver until they are ported: other UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
 
-**What's blocked:** a pure HTTP transport for video generation. The video upload endpoint returns HTTP 401 under non-Chrome browsers. The transport also needs a reCAPTCHA token that the project cannot create in a headless browser. Three earlier HTTP strategies (`evaluate_fetch`, `bearer`, `sapisidhash`) live under `src/gflow_cli/api/transports/experimental/` for research, off the production path.
+**Remaining limits.**
 
-**How you can help:** if you have driven `aisandbox-pa.googleapis.com` from outside a real Chrome session, or you understand Google's anti-bot stack here, please open an issue. A working REST transport would enable serverless deployments and true horizontal concurrency. Details: [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation).
+- The one-time `auth login` is interactive and needs a display.
+- Reference-to-video, `video extend`, `video edit`, image-to-video with an end frame, the 4K, 720p and GIF upscales, `scene create`, `character create`, `instructions`, the agent-only composer, `media trash`/`restore`, image-to-image from local `--ref` files, and any video run with a credit cap (`--max-credits`, MCP `max_credits`) still drive Flow's interface in a headed browser. Headless operation of these surfaces is tracked in [#1554](https://github.com/ffroliva/gflow-cli/issues/1554).
+- Request shapes that have not been measured fall back to the interface path.
+- The headless mint was measured on Windows only, on accounts served flow.google.com. macOS, Linux and accounts Flow serves on labs.google are unmeasured.
+- The headless browser reports itself as `HeadlessChrome`. It is not a stealth technique, and Google may treat it differently in future.
 
 ## Project status
 

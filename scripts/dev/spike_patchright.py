@@ -81,6 +81,7 @@ from gflow_cli.api.image import Aspect, GenerateImageRequest, Model  # noqa: E40
 from gflow_cli.api.recaptcha import RecaptchaError, discover_site_key  # noqa: E402
 from gflow_cli.browser_manager import channel_for_profile  # noqa: E402
 from gflow_cli.profile_lease import ProfileLease  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 _EXECUTE_JS = recaptcha_mod._EXECUTE_JS  # noqa: SLF001 — spike reuses the production mint JS
 
@@ -236,7 +237,7 @@ async def probe_generation(
         req = GenerateImageRequest(
             prompt=prompt, aspect=Aspect.from_cli(aspect), model=Model.from_cli(model)
         )
-        async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+        async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
             # Attach a response listener to every pooled page (scenario 4 — assert
             # the batchGenerateImages body parses, not just that a callback fires).
             def _on_response(resp: Any) -> None:

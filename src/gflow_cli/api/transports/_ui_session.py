@@ -16,6 +16,7 @@ from gflow_cli.api.transports._ui_common import (
     ONBOARDING_SELECTORS,
     _jitter_ms,
 )
+from gflow_cli.errors import BrowserSessionClosedError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -95,6 +96,16 @@ class UiSessionMixin:
         self._output_dir = config.output_dir
         self._record_generation_request = config.record_generation_request
         self._account_locale = config.account_locale
+
+    def _raise_if_torn_down(self) -> None:
+        """Call under ``_generate_lock``: a run queued behind a client relaunch finds this
+        transport torn down, and nothing has been sent for it."""
+        if not self._setup_done or self._page is None:
+            raise BrowserSessionClosedError(
+                detail="the browser was relaunched while this run waited; nothing was sent",
+                charged="no",
+                remediation_hint="Nothing was sent or charged. Run the command again.",
+            )
 
     async def _bypass_onboarding(self, page: Page) -> None:
         """Click through cookie banners and 'Get Started' pages if they appear."""

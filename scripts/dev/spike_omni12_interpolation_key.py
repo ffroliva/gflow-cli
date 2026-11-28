@@ -46,6 +46,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports import migrated_composer as mc
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 CASES: tuple[tuple[VideoModel, int, str], ...] = (
     (VideoModel.OMNI_FLASH, 8, "360p"),  # positive control
@@ -112,7 +113,7 @@ async def run_case(
 
     mc.MigratedComposer.attach_start_frame = rec_start  # type: ignore[method-assign]
     mc.MigratedComposer.attach_end_frame = rec_end  # type: ignore[method-assign]
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         page = await client._checkout_page()
         try:
             await page.route(mc.BATCHEXECUTE_GLOB, block)
