@@ -19,6 +19,7 @@ from gflow_cli.errors import (
     TransportTimeoutError,
     UiSelectorDriftError,
     UpscaleUnavailableError,
+    WafRejectionError,
     WireFormatError,
 )
 from tests.api._upscale_fakes import FakeItem, emit_response, fake_page
@@ -364,3 +365,25 @@ async def test_migrated_video_upscale_undecodable_base64() -> None:
 
     with pytest.raises(WireFormatError, match="undecodable stream data"):
         await _run(page)
+
+
+@pytest.mark.parametrize("rpcid", ["p0UkFb", "jwpduf"])
+async def test_migrated_video_upscale_unusual_activity_raises_waf_rejection(rpcid: str) -> None:
+    status = [
+        7,
+        None,
+        [["type.googleapis.com/google.rpc.ErrorInfo", ["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]],
+    ]
+    body = ")]}'\n\n1234\n" + json.dumps([["wrb.fr", rpcid, None, None, None, status]])
+    holder: list[MagicMock] = []
+
+    async def refuse() -> None:
+        await emit_response(holder[0], body, rpcid=rpcid)
+
+    page = fake_page([FakeItem("720p Upscaled", on_click=refuse)])
+    holder.append(page)
+
+    with pytest.raises(WafRejectionError, match="PUBLIC_ERROR_UNUSUAL_ACTIVITY") as exc_info:
+        await _run(page, "720p", timeout_s=30.0)
+    assert exc_info.value.route == f"batchexecute:{rpcid}"
+    assert "Re-run the export" not in exc_info.value.remediation_hint
