@@ -348,11 +348,11 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 **两个 Flow 前端：** Google 正在把账号从 `labs.google` 迁移到 `flow.google.com`（[#639](https://github.com/ffroliva/gflow-cli/issues/639)）。两者是同一个产品，但界面组件库和通信协议不同（使用 `batchexecute` 而不是 `aisandbox-pa`）。flow.google.com 驱动支持：
 
-- 文生视频、基于本地首帧的图生视频，以及基于本地文件的参考图生视频；
+- 文生视频、基于本地首尾帧或同一 `--project` 中已编目图片 UUID 的图生视频，以及基于本地文件的参考图生视频；
 - 文生图，以及基于本地文件的图生图；
 - 单段 `video extend`。
 
-图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅 Agent** 编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当本地媒体库记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>` 会原地引用（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）。
+图片生成支持 Nano Banana 2.1（`nano2`，[#958](https://github.com/ffroliva/gflow-cli/issues/958)）、2 Lite 和 Pro，支持在该域名上测得的五种画面比例（16:9、4:3、1:1、3:4、9:16），数量为 1 到 4。传输层要求已有项目。图片可以用 `@Name` 引用角色；参考图生视频用 `--reference-entity` 和 `--reference-entity-name` 指定具名角色（[#723](https://github.com/ffroliva/gflow-cli/issues/723)）。被分配到**仅 Agent** 编辑器（[#799](https://github.com/ffroliva/gflow-cli/issues/799)）的账号只能使用文生图和文生视频。当本地媒体库记录显示图片在同一个 `--project` 中时，图片的 `--ref <uuid>`（[#995](https://github.com/ffroliva/gflow-cli/issues/995)）以及视频 `i2v` 的 `--initial-frame` / `--end-frame <uuid>`（[#1542](https://github.com/ffroliva/gflow-cli/issues/1542)）均会原地绑定，无需重复上传。
 
 在移植完成之前，以下功能继续使用 labs 驱动：其他 UUID 媒体引用、没有名称的实体 ID、指令卡、Imagen 4，以及矩阵中的其余部分（`GFLOW_CLI_FLOW_HOST`，见 [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)）。
 

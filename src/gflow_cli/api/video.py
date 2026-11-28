@@ -312,6 +312,10 @@ class GenerateVideoRequest:
     end_image_ref_local_path: Path | None = None
     start_image_ref_local_sha256: str = ""
     end_image_ref_local_sha256: str = ""
+    # True when the local catalog records this frame UUID in the target project
+    # (#1542, mirroring ImageRef.in_project from #913/#995).
+    start_image_ref_in_project: bool = False
+    end_image_ref_in_project: bool = False
     # Display name of the target project for the media picker's project-menu
     # match (#287: the menu lists projects by NAME, not id). Optional override
     # (--project-name / GFLOW_CLI_PROJECT_NAME); when None the transport
@@ -415,13 +419,22 @@ class GenerateVideoRequest:
             raise ValueError(msg)
 
     def _validate_frame_ref_ids(self) -> None:
-        for slot, ref_id, display_name, local_path, local_sha256, alternatives in (
+        for (
+            slot,
+            ref_id,
+            display_name,
+            local_path,
+            local_sha256,
+            in_project,
+            alternatives,
+        ) in (
             (
                 "start",
                 self.start_image_ref_id,
                 self.start_image_ref_display_name,
                 self.start_image_ref_local_path,
                 self.start_image_ref_local_sha256,
+                self.start_image_ref_in_project,
                 (self.start_image, self.start_image_ref_name),
             ),
             (
@@ -430,9 +443,13 @@ class GenerateVideoRequest:
                 self.end_image_ref_display_name,
                 self.end_image_ref_local_path,
                 self.end_image_ref_local_sha256,
+                self.end_image_ref_in_project,
                 (self.end_image, self.end_image_ref_name),
             ),
         ):
+            if in_project and ref_id is None:
+                msg = f"{slot}_image_ref_in_project requires {slot}_image_ref_id"
+                raise ValueError(msg)
             if display_name and ref_id is None:
                 msg = f"{slot}_image_ref_display_name requires {slot}_image_ref_id"
                 raise ValueError(msg)

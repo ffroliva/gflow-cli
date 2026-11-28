@@ -53,7 +53,7 @@ from gflow_cli.api.dto import (
 from gflow_cli.api.image import (
     Model as ImageModel,  # noqa: F401 # pyright: ignore[reportUnusedImport]
 )
-from gflow_cli.api.transports import _mc_media
+from gflow_cli.api.transports import _mc_media, migrated_existing_frames
 from gflow_cli.api.transports._common import (
     extract_project_id,
     flow_landing_kind,
@@ -198,6 +198,9 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     PICKER as PICKER,
+)
+from gflow_cli.api.transports._mc_common import (
+    PICKER_CONFIRM as PICKER_CONFIRM,
 )
 from gflow_cli.api.transports._mc_common import (
     PICKER_OPTION as PICKER_OPTION,
@@ -375,9 +378,10 @@ def _refuse_unported_video(unported: str) -> FlowHostMigratedError:
     return FlowHostMigratedError(
         detail=(
             "Flow served flow.google.com, where gflow drives text-to-video, "
-            "image-to-video from local start (and end) frames, and reference-to-video "
-            f"from local files; {unported} is not ported yet (#639) — pass "
-            "--initial-frame / --ref as local files"
+            "image-to-video from local start/end frames or catalogued image UUIDs in "
+            "this --project, and reference-to-video from local files; "
+            f"{unported} is not ported yet (#639) — pass --initial-frame / --ref as "
+            "local files, or use an image UUID catalogued in this --project"
         ),
     )
 
@@ -465,6 +469,16 @@ async def _submit_video_with_evidence(
         started_ids.append(started.media_id)
         return on_started(started) if on_started is not None else None
 
+    # Only run-unique maseQ uploads are safe for lost-reply adoption (#1112): an existing
+    # in-project image UUID may already appear on older clips in this project (#1542).
+    uploaded_frame_ids = tuple(
+        mid
+        for is_uploaded, mid in (
+            (request.start_image is not None, expect_media_id),
+            (request.end_image is not None, expect_end_media_id),
+        )
+        if is_uploaded and mid
+    )
     try:
         return await composer.submit_and_observe(
             page,
@@ -474,7 +488,7 @@ async def _submit_video_with_evidence(
             expect_media_id=expect_media_id,
             expect_end_media_id=expect_end_media_id,
             expect_reference_ids=reference_ids + entity_ids,
-            adopt_ids=tuple(i for i in (expect_media_id, expect_end_media_id) if i) + reference_ids,
+            adopt_ids=uploaded_frame_ids + reference_ids,
             adopt_prompt=(
                 request.prompt if request.mode is Mode.T2V and request.count == 1 else None
             ),
@@ -535,16 +549,22 @@ async def run_video(
     # Everything up to the submit click spends nothing (#1320); a stray Enter while a
     # mention picker closes could submit, so the watch withholds the claim if one left.
     with SubmitWatch(page) as watch, nothing_submitted(sent=watch.seen):
+        existing_ids = migrated_existing_frames.existing_frame_ref_ids(request)
+        # Resolve in-project UUID grid tokens BEFORE apply_video_settings() so any reload
+        # waiting for a newly generated tile cannot wipe chosen video settings (#1542).
+        frame_tokens = (
+            await migrated_existing_frames.await_existing_frame_tokens(
+                composer, page, pid, existing_ids
+            )
+            if existing_ids
+            else {}
+        )
         quoted_credits = await composer.apply_video_settings(page, request)
-        media_id: str | None = None
-        end_media_id: str | None = None
+        media_id, end_media_id = await migrated_existing_frames.attach_video_frames(
+            composer, page, pid, request, frame_tokens
+        )
         reference_ids: tuple[str, ...] = ()
         entity_ids: tuple[str, ...] = ()
-        frame = request.start_image
-        if request.mode is Mode.I2V and frame is not None:
-            media_id = await composer.attach_start_frame(page, pid, frame)
-        if request.mode is Mode.I2V and request.end_image is not None:
-            end_media_id = await composer.attach_end_frame(page, pid, request.end_image)
         if request.mode is Mode.R2V and request.reference_images:
             reference_ids = await composer.attach_references(page, pid, request.reference_images)
         if request.reference_entities:

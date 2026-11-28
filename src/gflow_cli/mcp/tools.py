@@ -816,9 +816,8 @@ def _enrich_image_refs(
         if asset is None:
             continue
         entry = _ref_meta_entry(asset)
-        # Image-only: lets the worker mark a ref of the task's own project
-        # in_project (#995). Kept out of _ref_meta_entry so it never makes an
-        # i2v frame look usable.
+        # Kept out of _ref_meta_entry so a bare flow_project_id alone never satisfies
+        # the i2v "usable frame" check (#995/#1542).
         if asset.flow_project_id:
             entry["flow_project_id"] = asset.flow_project_id
         if entry:
@@ -841,61 +840,61 @@ def _ref_meta_entry(asset: AssetLookup) -> dict[str, str]:
     return entry
 
 
+def _resolve_i2v_payload_refs(
+    data_repo: DataRepository, profile: str, payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Enrich i2v UUID frames with catalog caption, local fallback, and project id (#1542)."""
+    for ref_key in ("start_image_ref", "end_image_ref"):
+        ref_id = payload.get(ref_key)
+        if ref_id is None:
+            continue
+        asset = data_repo.get_asset_by_flow_media_id(profile, ref_id)
+        if asset is None:
+            return _bad_param(
+                "Reference Not Found",
+                f"'{ref_id}' was not found in your asset catalog for profile "
+                f"{profile!r}. Generate the image first, or pass a local file path.",
+            )
+        if asset.kind is not AssetKind.IMAGE:
+            return _bad_param(
+                "Reference Not Usable",
+                f"'{ref_id}' is not an image asset and cannot be an I2V frame.",
+            )
+        entry = _ref_meta_entry(asset)
+        if not entry:
+            return _bad_param(
+                "Reference Not Usable",
+                f"'{ref_id}' has neither a catalog display name nor a verified "
+                "local image fallback.",
+            )
+        if display_name := entry.get("display_name"):
+            payload[f"{ref_key}_display_name"] = display_name
+        if local_path := entry.get("local_path"):
+            payload[f"{ref_key}_local_path"] = local_path
+            payload[f"{ref_key}_local_sha256"] = entry["local_sha256"]
+        if asset.flow_project_id:
+            payload[f"{ref_key}_flow_project_id"] = asset.flow_project_id
+    return None
+
+
 def _resolve_payload_refs(
     data_repo: DataRepository,
     profile: str,
     payload: dict[str, Any],
     task_type: str,
 ) -> dict[str, Any] | None:
-    """Resolve media-id refs in ``payload`` in place, by task type.
-
-    I2V start/end frame refs retain their UUID identity and gain catalog picker
-    metadata. R2V ``refs`` are merged into ``reference_images`` for local upload.
-    Image task types: refs are *enriched* with
-    display_name/local_path so the transport selects the existing asset in the
-    picker (see _enrich_image_refs). Returns an error envelope on the first
-    unresolvable VIDEO UUID, else ``None`` (image enrichment never errors).
-    """
+    """Resolve media-id refs in ``payload`` in place, by task type."""
     if task_type not in _VIDEO_TASK_TYPES:
         _enrich_image_refs(data_repo, profile, payload)
         return None
     if task_type == "i2v":
-        for ref_key in ("start_image_ref", "end_image_ref"):
-            ref_id = payload.get(ref_key)
-            if ref_id is None:
-                continue
-            asset = data_repo.get_asset_by_flow_media_id(profile, ref_id)
-            if asset is None:
-                return _bad_param(
-                    "Reference Not Found",
-                    f"'{ref_id}' was not found in your asset catalog for profile "
-                    f"{profile!r}. Generate the image first, or pass a local file path.",
-                )
-            if asset.kind is not AssetKind.IMAGE:
-                return _bad_param(
-                    "Reference Not Usable",
-                    f"'{ref_id}' is not an image asset and cannot be an I2V frame.",
-                )
-            entry = _ref_meta_entry(asset)
-            if not entry:
-                return _bad_param(
-                    "Reference Not Usable",
-                    f"'{ref_id}' has neither a catalog display name nor a verified "
-                    "local image fallback.",
-                )
-            if display_name := entry.get("display_name"):
-                payload[f"{ref_key}_display_name"] = display_name
-            if local_path := entry.get("local_path"):
-                payload[f"{ref_key}_local_path"] = local_path
-                payload[f"{ref_key}_local_sha256"] = entry["local_sha256"]
-        return None
+        return _resolve_i2v_payload_refs(data_repo, profile, payload)
     if "refs" in payload:
         resolved_paths: list[str] = []
         for ref in payload["refs"]:
             path, err = _resolve_ref_local_path(data_repo, profile, ref)
             if err is not None:
                 return err
-            # path is never None when err is None (see _resolve_ref_local_path).
             assert path is not None
             resolved_paths.append(path)
         payload["reference_images"] = list(payload.get("reference_images", [])) + resolved_paths
@@ -1358,16 +1357,13 @@ async def gflow_generate_video(  # NOSONAR
             images. See ``docs/REFERENCE_STRATEGIES.md``.
         mode: Generation mode — 't2v', 'i2v', or 'r2v'.
         aspect: Aspect ratio — '9:16' or '16:9'.
-        initial_frame: Path to start frame image (required for i2v). On an
-            account Google has moved to flow.google.com a **local file** is the
-            only form served there — uploaded through the editor, then bound from
-            the Frames picker under a **run-unique** name (``hero.png`` is listed
-            as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
-            earlier upload (#792); a Flow media UUID returns the
-            exit-36-equivalent envelope.
-        end_frame: Path to end frame image (optional for i2v). Local files are
-            driven on flow.google.com; UUID/@Name refs return the
-            exit-36-equivalent envelope on a moved account.
+        initial_frame: Path or in-project Flow media UUID for the start frame (required
+            for i2v). On flow.google.com, local files upload under a run-unique name (#792),
+            and captioned image UUIDs catalogued in ``project`` bind in place with zero
+            upload (#1542); cross-project or un-captioned UUIDs return exit 36.
+        end_frame: Optional end frame (local file or in-project captioned image UUID on
+            flow.google.com, #1542); cross-project/un-captioned UUIDs and ``@Name`` refs
+            return exit 36 on a moved account.
         reference_images: List of reference image paths (ingredients) for r2v.
         reference_entities: Saved Flow CHARACTER entity **ids** to attach
             (mirrors the CLI ``--reference-entity``). Same wire as an
@@ -1418,15 +1414,12 @@ async def gflow_generate_video(  # NOSONAR
             omitted, ``GFLOW_CLI_PROJECT`` is used if set and ``project_name`` is
             not; otherwise a fresh project is created (titled ``project_name`` when
             given) on labs.google or flow.google.com, whichever serves the
-            account. On an account served flow.google.com (``GFLOW_CLI_FLOW_HOST``,
-            read from the server/daemon environment, not per call) the ported
-            modes are 't2v'; 'i2v' with a local ``initial_frame`` with or without
-            a local ``end_frame``; and 'r2v' with local ``reference_images``, plus
-            ``reference_entities`` paired with ``reference_entity_names`` (#723). A
-            UUID frame, an end frame by UUID/``@Name``, r2v by ``ref_names``, and
-            ``reference_entities`` on 't2v' or without a paired name return the
-            exit-36-equivalent envelope. On an agent-only composer
-            (#799) only 't2v' is ported; 'i2v' and 'r2v' return that envelope too.
+            account. On flow.google.com (``GFLOW_CLI_FLOW_HOST``), ported modes are
+            't2v'; 'i2v' with local frames or captioned image UUIDs catalogued in
+            ``project`` (#1542); and 'r2v' with local ``reference_images`` plus named
+            ``reference_entities`` (#723). Cross-project/un-captioned UUID frames,
+            ``@Name`` frames, r2v ``ref_names``, and ``reference_entities`` on 't2v' or
+            without names return exit 36 (agent-only composers, #799, take 't2v' only).
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
             including 'r2v'). Labs video only has a classic driver:

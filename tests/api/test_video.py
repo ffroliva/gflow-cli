@@ -276,6 +276,39 @@ class TestI2VFrameRefIds:
                 start_image_ref_local_path=Path("fallback.png"),
             )
 
+    def test_start_in_project_requires_start_ref_id(self) -> None:
+        with pytest.raises(ValueError, match="start_image_ref_in_project requires"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.I2V,
+                start_image=Path("a.png"),
+                start_image_ref_in_project=True,
+            )
+
+    def test_end_in_project_requires_end_ref_id(self) -> None:
+        with pytest.raises(ValueError, match="end_image_ref_in_project requires"):
+            GenerateVideoRequest(
+                prompt="x",
+                mode=Mode.I2V,
+                start_image=Path("a.png"),
+                end_image=Path("b.png"),
+                end_image_ref_in_project=True,
+            )
+
+    def test_in_project_flags_accepted_with_matching_ref_ids(self) -> None:
+        req = GenerateVideoRequest(
+            prompt="x",
+            mode=Mode.I2V,
+            start_image_ref_id=_REF_UUID,
+            start_image_ref_display_name="Stone corridor",
+            start_image_ref_in_project=True,
+            end_image_ref_id=_REF_UUID,
+            end_image_ref_display_name="Stone corridor",
+            end_image_ref_in_project=True,
+        )
+        assert req.start_image_ref_in_project is True
+        assert req.end_image_ref_in_project is True
+
     def test_malformed_ref_id_rejected(self) -> None:
         with pytest.raises(ValueError, match="not a valid media UUID"):
             GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_id="not-a-uuid")

@@ -39,6 +39,7 @@ from gflow_cli.api.credit_cap import (
     enforce_credit_cap,
 )
 from gflow_cli.api.extend_chain import run_extend_chain
+from gflow_cli.api.image import recorded_in_project
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.video import (
@@ -505,6 +506,8 @@ class _I2VParams:
     end_frame_ref_local_path: Path | None = None
     image_ref_local_sha256: str = ""
     end_frame_ref_local_sha256: str = ""
+    image_ref_in_project: bool = False
+    end_frame_ref_in_project: bool = False
     reference_entities: tuple[str, ...] = ()
     reference_entity_names: tuple[str, ...] = ()
     # Requested Flow UI arm (#299); agentic is rejected at the CLI edge.
@@ -512,22 +515,42 @@ class _I2VParams:
     max_credits: int | None = None
 
 
+def _record_frame_asset_meta(
+    media_id: str,
+    asset: Any,
+    display_names: dict[str, str],
+    local_files: dict[str, tuple[Path, str]],
+    project_ids: dict[str, str],
+) -> None:
+    display_name = asset.metadata_json.get("display_name")
+    if isinstance(display_name, str) and display_name:
+        display_names[media_id] = display_name
+    flow_project_id = getattr(asset, "flow_project_id", None)
+    if isinstance(flow_project_id, str) and flow_project_id:
+        project_ids[media_id] = flow_project_id
+    for local_file in asset.local_files:
+        if (path := verified_local_path(local_file)) is not None:
+            assert local_file.sha256 is not None
+            local_files[media_id] = (path, local_file.sha256)
+            break
+
+
 def _media_picker_metadata(
     media_ids: Sequence[str | None], profile_name: str
-) -> tuple[dict[str, str], dict[str, tuple[Path, str]]]:
-    """Resolve UUID frames to picker names and extant local fallbacks.
+) -> tuple[dict[str, str], dict[str, tuple[Path, str]], dict[str, str]]:
+    """Resolve UUID frames to picker names, extant local fallbacks, and catalog project ids.
 
     The CLI owns catalog access; the transport receives only the name used to
-    filter the browser picker and still verifies the exact UUID in the result
-    tile's thumbnail URL. Agentic, redacted-history, and legacy rows may lack a
-    name; their exact recorded image bytes are the bounded fallback. Best-effort:
-    unknown/non-image assets and an unavailable catalog produce no entry.
+    filter the browser picker and still verifies the exact UUID via the grid's
+    ``/asb/<token>`` or thumbnail URL. Best-effort: unknown/non-image assets and
+    an unavailable catalog produce no entry.
     """
     ids = tuple(media_id for media_id in media_ids if media_id)
     if not ids:
-        return {}, {}
+        return {}, {}, {}
     display_names: dict[str, str] = {}
     local_files: dict[str, tuple[Path, str]] = {}
+    project_ids: dict[str, str] = {}
     try:
         with DataStore.open(get_settings().resolved_db_path()) as store:
             repo = DataRepository(store)
@@ -535,17 +558,10 @@ def _media_picker_metadata(
                 asset = repo.get_asset_by_flow_media_id(profile_name, media_id)
                 if asset is None or asset.kind is not AssetKind.IMAGE:
                     continue
-                display_name = asset.metadata_json.get("display_name")
-                if isinstance(display_name, str) and display_name:
-                    display_names[media_id] = display_name
-                for local_file in asset.local_files:
-                    if (path := verified_local_path(local_file)) is not None:
-                        assert local_file.sha256 is not None
-                        local_files[media_id] = (path, local_file.sha256)
-                        break
+                _record_frame_asset_meta(media_id, asset, display_names, local_files, project_ids)
     except (DataStoreError, OSError) as exc:
         logger.debug("video.frame_ref_enrich_skipped", error=str(exc)[:120])
-    return display_names, local_files
+    return display_names, local_files, project_ids
 
 
 async def _run_i2v(
@@ -601,6 +617,8 @@ async def _run_i2v(
         end_image_ref_local_path=params.end_frame_ref_local_path,
         start_image_ref_local_sha256=params.image_ref_local_sha256,
         end_image_ref_local_sha256=params.end_frame_ref_local_sha256,
+        start_image_ref_in_project=params.image_ref_in_project,
+        end_image_ref_in_project=params.end_frame_ref_in_project,
         project_name=params.project_name,
         reference_entities=params.reference_entities,
         reference_entity_names=params.reference_entity_names,
@@ -1535,7 +1553,9 @@ def i2v(  # NOSONAR
 
     profile_name = _resolve_profile(profile)
     project_id = default_project(project_id, project_name, profile_name)
-    display_names, local_files = _media_picker_metadata([start_ref_id, end_ref_id], profile_name)
+    display_names, local_files, project_ids = _media_picker_metadata(
+        [start_ref_id, end_ref_id], profile_name
+    )
     start_local = local_files.get(start_ref_id or "")
     end_local = local_files.get(end_ref_id or "")
     provider_dir = _make_provider_dir(profile_name)
@@ -1563,6 +1583,14 @@ def i2v(  # NOSONAR
         end_frame_ref_local_path=end_local[0] if end_local else None,
         image_ref_local_sha256=start_local[1] if start_local else "",
         end_frame_ref_local_sha256=end_local[1] if end_local else "",
+        image_ref_in_project=(
+            recorded_in_project(project_ids.get(start_ref_id), project_id)
+            if start_ref_id
+            else False
+        ),
+        end_frame_ref_in_project=(
+            recorded_in_project(project_ids.get(end_ref_id), project_id) if end_ref_id else False
+        ),
         ui_mode=UiMode(ui_mode) if ui_mode else None,
         max_credits=max_credits,
     )

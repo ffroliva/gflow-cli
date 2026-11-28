@@ -52,16 +52,18 @@ _MIGRATED_IMAGE = (
     "text-to-image only."
 )
 _MIGRATED_VIDEO = (
-    "flow.google.com: gflow drives text-to-video, image-to-video from a local "
-    "--initial-frame, reference-to-video from local --ref files and/or a named "
-    "character, single-clip video-to-video edit (`video edit` from a local video "
-    "file with 0-5 local --ref files, or an existing clip UUID without --ref), and "
-    "single-segment "
+    "flow.google.com: gflow drives text-to-video, image-to-video from local "
+    "start/end frames or image UUIDs the catalog records in this --project (#1542), "
+    "reference-to-video from local --ref files and/or a named character, single-clip "
+    "video-to-video edit (`video edit` from a local video file with 0-5 local --ref "
+    "files, or an existing clip UUID without --ref), and single-segment "
     "extend from a Flow media UUID or local video file (with optional --duration "
-    "3-10 and up to 3 local --ref images). Not driven there yet (exit 36): a frame "
-    "or reference given by Flow media UUID or @Name, character references on "
-    "t2v/i2v, a character given by id without a name, and extend chains, --scene "
-    "and --seed. The agent-only composer (#799) takes text-to-video only."
+    "3-10 and up to 3 local --ref images). Not driven there yet (exit 36): a video "
+    "frame UUID the catalog does not record in this --project (or without a caption), "
+    "an r2v reference by Flow media UUID or @Name, a frame by @Name, character "
+    "references on t2v/i2v, a character given by id without a name, and extend "
+    "chains, --scene and --seed. The agent-only composer (#799) takes text-to-video "
+    "only."
 )
 _CREDIT_CAP_NOTE = (
     "The billed video commands accept a per-command `--max-credits` cap (also "
@@ -84,9 +86,9 @@ _UPLOAD_BASE = (
     "`upload` yet (#1200)."
 )
 _UPLOAD_MIGRATED = (
-    " flow.google.com: an uploaded id is not taken as a video frame or reference "
-    "(exit 36), and as an image reference only when the catalog records it in the same "
-    "--project (#995)."
+    " flow.google.com: an uploaded id is not taken as a video r2v reference (exit 36), "
+    "and as an image reference or video i2v frame only when the catalog records it in "
+    "the same --project (#995/#1542)."
 )
 _NO_SPEND = (
     "This MCP server runs no-spend (GFLOW_MCP_NO_SPEND / --no-spend): the generate "

@@ -542,14 +542,44 @@ IMAGE_MODEL_WIRE_TOKENS: dict[ImageModel, tuple[str, ...]] = {
 }
 
 
+def _unported_i2v_form(request: GenerateVideoRequest) -> str | None:
+    """The unported i2v frame form on flow.google.com, or ``None`` when supported (#1542)."""
+    slots = (
+        (
+            "an end frame",
+            request.end_image_ref_id,
+            request.end_image_ref_in_project,
+            request.end_image_ref_display_name,
+            request.end_image_ref_name,
+        ),
+        (
+            "a frame",
+            request.start_image_ref_id,
+            request.start_image_ref_in_project,
+            request.start_image_ref_display_name,
+            request.start_image_ref_name,
+        ),
+    )
+    for noun, ref_id, in_project, display_name, ref_name in slots:
+        if ref_id:
+            if not in_project:
+                return (
+                    f"{noun} given by Flow media UUID the catalog does not record in this --project"
+                )
+            if not display_name.strip():
+                return f"{noun} given by Flow media UUID without a catalog caption"
+        if ref_name:
+            return f"{noun} given by @Name"
+    if not isinstance(request.start_image, Path) and not request.start_image_ref_id:
+        return "image-to-video without a local start frame or in-project media UUID"
+    return None
+
+
 def _unported_form(request: GenerateVideoRequest) -> str | None:
-    """The noun for what this request asks of the new host that slice 1 does not
-    drive, or ``None`` when the composer takes it. i2v is ported for **local**
-    start AND end frames: the Frames picker on this host lists assets by display
-    name with no UUID in its DOM (2026-09-05 spike), so a frame given by media UUID
-    or ``@Name`` has nothing to anchor on yet. The End chip itself was measured on
-    2026-09-15 (scripts/dev/spike_migrated_end_frame.py): two empty chips, Start
-    and End by text, and clicking the End chip opens the library picker."""
+    """The noun for what this request asks of the new host that is not driven yet,
+    or ``None`` when the composer takes it. i2v is ported for local start/end frames
+    AND for image UUIDs the catalog records in the target ``--project`` with a Flow
+    caption (#1542), matching the ``image i2i`` contract (#913/#995)."""
     # Character entities are a different attach surface (a chip with an entity_id, in a
     # different wire slot), ported for r2v only. This check is MODE-INDEPENDENT and must stay
     # ahead of every early return (#716): it used to live inside the R2V branch, so a
@@ -578,7 +608,7 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
     if request.mode is Mode.T2V:
         return None
     if request.mode is Mode.R2V:
-        # Local files only, for the same reason i2v is: the picker lists assets by
+        # Local files only, for the same reason i2v used to be: the picker lists assets by
         # display name and exposes no media id, so a reference gflow did not upload
         # itself has nothing to anchor on. Character entities are the exception above:
         # they are addressed by name on purpose, and verified by entity id after the fact.
@@ -587,17 +617,7 @@ def _unported_form(request: GenerateVideoRequest) -> str | None:
         return None
     if request.mode is not Mode.I2V:  # pragma: no cover - a fourth Mode would land here
         return f"the {request.mode.value} mode"
-    if request.end_image_ref_id:
-        return "an end frame given by Flow media UUID"
-    if request.end_image_ref_name:
-        return "an end frame given by @Name"
-    if request.start_image_ref_id:
-        return "a frame given by Flow media UUID"
-    if request.start_image_ref_name:
-        return "a frame given by @Name"
-    if not isinstance(request.start_image, Path):
-        return "image-to-video without a local start frame"
-    return None
+    return _unported_i2v_form(request)
 
 
 def migrated_can_serve(request: GenerateVideoRequest, project_id: str | None) -> bool:
