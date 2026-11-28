@@ -7,7 +7,8 @@ their own. A direct attempt that does not end ``Accepted`` raises ``DirectAttemp
 * ``RetryDirect`` (Flow refused the token, not billed): write ``submit_refused``, relaunch
   the browser process at the setting's launch visibility, and send once more.
 * ``FallbackUi`` (nothing reached Flow): relaunch when the page's visibility differs, write
-  ``submit_attempted`` through the submit gate, then run the UI path. The UI transport never
+  ``submit_attempted`` through the submit gate, then run the UI path. A failed relaunch here
+  raises ``RelaunchFailed`` (not charged), naming any earlier refusal. The UI transport never
   receives ``on_before_submit``, so this is the one place its checkpoint is written.
 * ``Stop``: a second refusal is final and not charged; past the send the error says
   reconcile; a signed-out session raises the UI path's auth error.
@@ -117,19 +118,19 @@ async def run_with_retry(
 
     emit = _Checkpoints(on_checkpoint)
     hook = None if on_checkpoint is None else emit.submit_attempted
-    retried = False
+    refused: str | None = None  # the reason of a refusal already retried
     while True:
         try:
             return await direct(hook)
         except DirectAttemptEnded as exc:
             ended = exc
-        step = next_step(ended.outcome, setting=setting, retried=retried)
+        step = next_step(ended.outcome, setting=setting, retried=refused is not None)
         if isinstance(step, RetryDirect):
             await _relaunch_after_refusal(host, step, ended, emit)
-            retried = True
+            refused = _reason(ended)
         elif isinstance(step, FallbackUi):
             if host.visibility != step.visibility:
-                await host.relaunch(step.visibility)
+                await _relaunch_for_ui(host, step.visibility, refused)
             log.info("direct.fallback_to_ui", reason=_reason(ended))
             emit.submit_attempted()
             return await ui()
@@ -165,6 +166,20 @@ async def _relaunch_after_refusal(
         await host.relaunch(step.visibility)
     except RelaunchFailed as failed:
         raise waf_refusal_final(reason=_reason(ended), attempts=1) from failed
+
+
+async def _relaunch_for_ui(
+    host: RetryHost, visibility: BrowserVisibility, refused: str | None
+) -> None:
+    """Nothing is sent before a UI fallback, so a failed relaunch is raised as itself
+    (not charged), naming the refusal that came before it, if any."""
+    try:
+        await host.relaunch(visibility)
+    except RelaunchFailed as failed:
+        if refused is None:
+            raise
+        detail = f"{failed.detail}; Flow had refused the token before it ({refused})"
+        raise RelaunchFailed(detail) from failed
 
 
 def _reason(ended: DirectAttemptEnded) -> str:

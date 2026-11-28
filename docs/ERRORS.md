@@ -206,6 +206,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/security` | `SecurityError` | 13 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/auth-browser-rejected` | `AuthBrowserRejectedError` | 14 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/browser-session-closed` | `BrowserSessionClosedError` | 15 | `maybe` | `retry` |
+| `https://gflow-cli.dev/errors/relaunch-failed` | `RelaunchFailed` | 15 | `no` | `retry` |
 | `https://gflow-cli.dev/errors/data-integrity` | `DataIntegrityError` | 16 | `maybe` | `fix_input` |
 | `https://gflow-cli.dev/errors/data-migration` | `DataMigrationError` | 16 | `maybe` | `fix_input` |
 | `https://gflow-cli.dev/errors/data-store` | `DataStoreError` | 16 | `maybe` | `fix_input` |

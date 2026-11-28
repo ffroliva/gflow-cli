@@ -320,7 +320,8 @@ async def test_relaunch_failure_raises_final_refusal_not_charged() -> None:
 @pytest.mark.asyncio
 async def test_a_failed_relaunch_before_the_ui_fallback_is_final_and_not_charged() -> None:
     """Nothing reached Flow and no refusal happened: the relaunch failure is reported as
-    itself (not charged, nothing to retry on this client), not as a refusal."""
+    itself (not charged; this client is unusable, a new run is the remedy), not as a
+    refusal."""
     host = FakeHost(BrowserVisibility.HEADLESS, fail=RelaunchFailed("boom"))
     with pytest.raises(RelaunchFailed) as caught:
         await run_with_retry(
@@ -841,3 +842,29 @@ async def test_upload_indeterminate_not_resent(
     assert events == ["maseQ"]
     assert (caught.value.charged, caught.value.resolved_next_action()) == ("maybe", "reconcile")
     flow_wire.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_fallback_relaunch_failure_exit_code_and_not_charged() -> None:
+    """A relaunch that fails before the UI fallback is reported as itself: nothing was sent,
+    a stable exit code (the browser-session-closed family, 15), and the earlier refusal named
+    in its detail."""
+
+    class FailsSecond(FakeHost):
+        async def relaunch(self, visibility: BrowserVisibility) -> None:
+            if self.relaunches:
+                raise RelaunchFailed("Browser relaunch failed: boom")
+            await super().relaunch(visibility)
+
+    host = FailsSecond(BrowserVisibility.HEADLESS)
+    script = Script(_REFUSED, NotSent("navigation_failed:TimeoutError"))
+
+    with pytest.raises(RelaunchFailed) as caught:
+        await run_with_retry(host, direct=script.direct, ui=_no_ui, setting=VisibilitySetting.AUTO)
+
+    err = caught.value
+    assert exit_code_for(err) == 15
+    assert (err.charged, err.resolved_next_action()) == ("no", "retry")
+    assert "boom" in err.detail
+    assert UNUSUAL_ACTIVITY_REASON in err.detail
+    assert host.relaunches == [BrowserVisibility.HEADLESS]

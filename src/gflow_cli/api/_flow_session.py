@@ -31,7 +31,6 @@ from gflow_cli.errors import (
     AuthMissingError,
     BrowserSessionClosedError,
     ContentPolicyError,
-    GFlowError,
     NetworkError,
     RateLimitError,
     WafRejectionError,
@@ -392,16 +391,19 @@ def _redact_in_client_context(client_context: Any) -> None:
             recaptcha_dict["token"] = "<redacted>"  # noqa: S105 - not a password: a redaction marker or a JS snippet name
 
 
-class RelaunchFailed(GFlowError):  # noqa: N818 — per plan naming
+class RelaunchFailed(BrowserSessionClosedError):  # noqa: N818 — per plan naming
     """Raised when relaunching the browser process under a held lease fails.
 
-    Leaves the lease held and the client unusable; the retry loop turns this
-    into the final not-charged refusal (Task 13).
+    Leaves the lease held and the client unusable. Nothing is sent by a relaunch, so it is
+    never charged. After a refusal the retry loop raises the final refusal instead; before
+    a UI fallback it raises this error, naming any earlier refusal in its detail. Exit 15
+    through the ``BrowserSessionClosedError`` entry: this client's browser is gone, and a
+    new run (a new client) is the remedy.
     """
 
     problem_type = "https://gflow-cli.dev/errors/relaunch-failed"
     charged = "no"
-    next_action = "none"
+    next_action = "retry"
     title = "Browser relaunch failed"
     _default_remediation = (
         "Nothing was charged. Close other Chrome windows using this profile and run the "
