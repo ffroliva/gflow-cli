@@ -135,7 +135,7 @@ class UploadFrameMixin(SettingsPaneMixin):
         # A FilePayload, not a path: the display name Flow lists the asset under is ours
         # to choose, so uniqueness needs no copy on disk. `read_bytes` is off-thread: the
         # file is up to MAX_IMAGE_BYTES.
-        status, text = await toolbar_upload(
+        text = await toolbar_upload(
             page,
             {
                 "name": display_name,
@@ -147,6 +147,7 @@ class UploadFrameMixin(SettingsPaneMixin):
             timeout_s=FRAME_UPLOAD_S,
             noun="image",
             request_name=UPLOAD_RPC,
+            reply_from=f"the upload rpc {UPLOAD_RPC}",
             route=route,
             timeout_hint=(
                 "If the request left the page, Flow accepted the upload and did not "
@@ -157,12 +158,6 @@ class UploadFrameMixin(SettingsPaneMixin):
                 "image does NOT help; three different files were ruled out in #719."
             ),
         )
-        if status != 200:
-            raise MediaUploadRejectedError(
-                detail=f"migrated host: the upload rpc {UPLOAD_RPC} answered HTTP {status}",
-                status=status,
-                route=route,
-            )
         if text is None:
             service_error = _unreadable_rpc_error(
                 UPLOAD_RPC, location=f"{safe_page_url(page.url)} (upload={display_name})"
@@ -191,7 +186,7 @@ class UploadFrameMixin(SettingsPaneMixin):
                     f"migrated host: Flow declined the image {display_name} "
                     f"({UPLOAD_RPC} answered INVALID_ARGUMENT)"
                 ),
-                status=status,
+                status=200,
                 route=route,
                 remediation_hint=(
                     "Flow refuses very small or degenerate images. Re-try with a "
@@ -201,7 +196,7 @@ class UploadFrameMixin(SettingsPaneMixin):
         if media_id is None:
             raise MediaUploadRejectedError(
                 detail=f"migrated host: {UPLOAD_RPC} answered 200 without a media id",
-                status=status,
+                status=200,
                 route=route,
             )
         if media_id.lower() == project_id.lower():
@@ -214,10 +209,10 @@ class UploadFrameMixin(SettingsPaneMixin):
                     f"project id ({project_id}), not a new media id — the reply "
                     "shape changed and the upload cannot be bound safely"
                 ),
-                status=status,
+                status=200,
                 route=route,
             )
-        log.info("migrated.frame_uploaded", media_id=media_id, status=status)
+        log.info("migrated.frame_uploaded", media_id=media_id, status=200)
         return media_id, display_name
 
     @staticmethod

@@ -151,7 +151,7 @@ async def upload_video_for_mention(page: Page, project_id: str, video_path: Path
 
 async def _upload(page: Page, project_id: str, video_path: Path) -> tuple[str, str]:
     route = "flow:upload/video"
-    status, raw = await toolbar_upload(
+    raw = await toolbar_upload(
         page,
         str(video_path),
         is_upload_url=lambda url: VIDEO_UPLOAD_PATH_MARKER in url,
@@ -159,6 +159,7 @@ async def _upload(page: Page, project_id: str, video_path: Path) -> tuple[str, s
         timeout_s=video_upload_timeout_s(video_path.stat().st_size),
         noun="video",
         request_name="video upload",
+        reply_from="Flow video upload",
         route=route,
         timeout_hint=(
             "If nothing left the page, check flow.google.com for a one-time video "
@@ -167,18 +168,12 @@ async def _upload(page: Page, project_id: str, video_path: Path) -> tuple[str, s
             "was spent."
         ),
     )
-    if status != 200:
-        raise MediaUploadRejectedError(
-            detail=f"migrated host: Flow video upload answered HTTP {status}",
-            status=status,
-            route=route,
-        )
     ids = _parse_upload_reply(raw or "", project_id=project_id)
     if ids is None:
         raise MediaUploadRejectedError(
             detail="migrated host: Flow video upload answered 200 without mediaId/workflowId",
-            status=status,
+            status=200,
             route=route,
         )
-    log.info("migrated.video_uploaded", media_id=ids[0], status=status)
+    log.info("migrated.video_uploaded", media_id=ids[0], status=200)
     return ids

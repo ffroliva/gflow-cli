@@ -53,7 +53,7 @@ def _record(rpcids: list[str], body: str, **_: Any) -> None:
     )
 
 
-def recording_verdict(rpcids: list[str], body: str, **kw: Any) -> None:
+def recording_verdict(rpcids: list[str], body: str, *_: Any, **kw: Any) -> None:
     _record(rpcids, body, **kw)
     return None
 

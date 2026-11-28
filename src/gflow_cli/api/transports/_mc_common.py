@@ -1709,13 +1709,16 @@ async def toolbar_upload(  # noqa: PLR0913
     timeout_s: float,
     noun: str,
     request_name: str,
+    reply_from: str,
     route: str,
     timeout_hint: str,
-) -> tuple[int, str | None]:
-    """Hand ``files`` to the toolbar uploader and return the app's own upload reply.
+) -> str | None:
+    """Hand ``files`` to the toolbar uploader and return the text of the app's own reply.
 
     ``read_reply`` turns a matching response into ``(status, text)``, or ``None`` to keep
-    waiting (a resumable upload answers more than once). Nothing is replayed.
+    waiting (a resumable upload answers more than once). A final status other than 200 is
+    exit 27, named after ``reply_from`` ("<reply_from> answered HTTP <status>"); the text
+    of a 200 may be ``None`` when it could not be read. Nothing is replayed.
     """
     reply: asyncio.Future[tuple[int, str | None]] = asyncio.get_running_loop().create_future()
     # The response listener alone cannot tell "the page never asked" from "Flow was
@@ -1748,7 +1751,7 @@ async def toolbar_upload(  # noqa: PLR0913
         dialogs_before = await page.locator(DIALOG).count()
         await chooser.set_files(files)
         try:
-            return await asyncio.wait_for(reply, timeout=timeout_s)
+            answer = await asyncio.wait_for(reply, timeout=timeout_s)
         except TimeoutError:
             try:
                 opened = await page.locator(DIALOG).count() > dialogs_before
@@ -1782,3 +1785,11 @@ async def toolbar_upload(  # noqa: PLR0913
     finally:
         page.remove_listener("response", on_response)
         page.remove_listener("request", on_request)
+    status, text = answer
+    if status != 200:
+        raise MediaUploadRejectedError(
+            detail=f"migrated host: {reply_from} answered HTTP {status}",
+            status=status,
+            route=route,
+        )
+    return text

@@ -6188,3 +6188,65 @@ async def test_image_result_arriving_during_refusal_wait_is_returned_1518(
         page, GenerateImageRequest(prompt="a blue cup")
     )
     assert len(images) == 1
+
+
+# --- the image upload: final status, detail and log ------------------------------------
+
+
+@pytest.mark.parametrize("status", [202, 302, 400])
+async def test_image_upload_keeps_the_final_http_status_and_its_diagnostic(
+    tmp_path: Path, status: int
+) -> None:
+    page = FakePage()
+    page.dom.maseq_reply = status
+    with pytest.raises(MediaUploadRejectedError) as caught:
+        await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
+    assert caught.value.detail == f"migrated host: the upload rpc maseQ answered HTTP {status}"
+    assert caught.value.status == status
+    assert caught.value.route == "batchexecute:maseQ"
+    assert page.listeners("request") == []
+    assert page.listeners("response") == []
+
+
+async def test_an_empty_readable_image_reply_is_refused_without_a_readback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def send_empty_reply(chooser: FakeFileChooser, _files: Any) -> None:
+        chooser.page._fire_response(FakeResponse(_batch_url("maseQ"), "", 200))
+
+    monkeypatch.setattr(FakeFileChooser, "set_files", send_empty_reply)
+    snapshot = AsyncMock(return_value=("title", []))
+    monkeypatch.setattr(_mc_upload_frame, "_project_snapshot", snapshot)
+    with pytest.raises(MediaUploadRejectedError, match="answered 200 without a media id") as caught:
+        await migrated_composer.MigratedComposer().upload(FakePage(), PROJ_UUID, _png(tmp_path))
+    assert caught.value.status == 200
+    snapshot.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("reply", "message"),
+    [
+        ("declined", "INVALID_ARGUMENT"),
+        ("no_id", "without a media id"),
+        ("project_first", "project id"),
+    ],
+)
+async def test_an_image_reply_refused_after_http_200_reports_status_200(
+    tmp_path: Path, reply: str, message: str
+) -> None:
+    page = FakePage()
+    page.dom.maseq_reply = reply
+    with pytest.raises(MediaUploadRejectedError, match=message) as caught:
+        await migrated_composer.MigratedComposer().upload(page, PROJ_UUID, _png(tmp_path))
+    assert caught.value.status == 200
+    assert caught.value.route == "batchexecute:maseQ"
+
+
+async def test_a_successful_image_upload_logs_http_200(tmp_path: Path) -> None:
+    with capture_logs() as logs:
+        media_id, _name = await migrated_composer.MigratedComposer().upload(
+            FakePage(), PROJ_UUID, _png(tmp_path)
+        )
+    event = next(e for e in logs if e["event"] == "migrated.frame_uploaded")
+    assert event["media_id"] == media_id
+    assert event["status"] == 200

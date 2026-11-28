@@ -59,17 +59,63 @@ CREDIT_COST_LABEL = (
 )
 
 
+#: The duration control, in the generation settings and in the Extend popover alike.
+DURATION_SLIDER = "flow-duration-slider"
+SLIDER_INPUT = 'input[type="range"]'
+#: The pre-submit price label, in the same two places.
+CREDIT_QUOTE_LABEL = "flow-credit-cost-label.settings-credit-cost"
+
+
+async def read_credit_label(pane: Any, *selectors: str, last: bool = False) -> int | None:
+    """The quote shown by the first of *selectors* in *pane* that reads as one, or ``None``.
+
+    A label Flow does not render (a Playwright error) or one that is not a single number
+    passes on to the next selector. ``last`` reads the last match instead of the first.
+    """
+    for selector in selectors:
+        try:
+            labels = pane.locator(selector)
+            label = await (labels.last if last else labels.first).inner_text(timeout=2000)
+        except PlaywrightError:
+            continue
+        quoted = parse_credit_quote(label)
+        if quoted is not None:
+            return quoted
+    return None
+
+
+async def slider_scale(slider: Any, *, ambiguous: str) -> tuple[str | None, str | None, str | None]:
+    """``(min, max, step)`` of *slider*, which must match exactly one range input."""
+    if await slider.count() != 1:
+        raise UiSelectorDriftError(detail=ambiguous)
+    return (
+        await slider.get_attribute("min"),
+        await slider.get_attribute("max"),
+        await slider.get_attribute("step"),
+    )
+
+
+async def press_slider(slider: Any, steps: int) -> None:
+    """Move *slider* ``steps`` past its start: Home, then ArrowRight, then let it settle.
+
+    The caller reads the value and its label back and checks them; the scale, the range
+    check and the messages stay with the caller.
+    """
+    await slider.press("Home")
+    for _ in range(steps):
+        await slider.press("ArrowRight")
+    await asyncio.sleep(0.2)
+
+
 async def _read_credit_quote(page: Page, max_credits: int | None) -> int | None:
     if max_credits is None:
         return None
     try:
         pane = page.locator(".cdk-overlay-pane flow-prompt-box-settings")
-        label = await pane.locator("flow-credit-cost-label.settings-credit-cost").first.inner_text(
-            timeout=2000
-        )
     except PlaywrightError:
-        label = ""
-    quoted = parse_credit_quote(label)
+        quoted = None
+    else:
+        quoted = await read_credit_label(pane, CREDIT_QUOTE_LABEL)
     log.info("migrated.credit_quote_checked", quoted=quoted, max_credits=max_credits)
     return enforce_credit_cap(
         quoted=quoted,
@@ -420,8 +466,8 @@ class SettingsPaneMixin(EditorGateMixin):
         duration or reinterpret a changed slider: validate the structure and read
         both its index and displayed seconds back before leaving settings.
         """
-        component = pane.locator("flow-duration-slider")
-        slider = component.locator('input[type="range"]')
+        component = pane.locator(DURATION_SLIDER)
+        slider = component.locator(SLIDER_INPUT)
         try:
             await page.locator(MENU_ITEM).first.wait_for(state="hidden", timeout=4000)
             await slider.first.wait_for(state="visible", timeout=4000)
@@ -429,11 +475,9 @@ class SettingsPaneMixin(EditorGateMixin):
             raise UiSelectorDriftError(
                 detail="Omni 1.2 duration slider missing (model menu open or slider unmounted)"
             ) from exc
-        if await slider.count() != 1:
-            raise UiSelectorDriftError(detail="Omni 1.2 duration slider ambiguous")
-        minimum = await slider.get_attribute("min")
-        maximum = await slider.get_attribute("max")
-        step = await slider.get_attribute("step")
+        minimum, maximum, step = await slider_scale(
+            slider, ambiguous="Omni 1.2 duration slider ambiguous"
+        )
         if minimum != "0" or maximum not in ("7", "12") or step != "1":
             raise UiSelectorDriftError(detail="Omni 1.2 duration slider range changed")
         index = seconds - 3
@@ -442,10 +486,7 @@ class SettingsPaneMixin(EditorGateMixin):
                 detail=f"Omni 1.2 duration {seconds}s is not offered by this account",
                 remediation_hint="Choose an offered duration; 11–15s requires a Google AI plan.",
             )
-        await slider.press("Home")
-        for _ in range(index):
-            await slider.press("ArrowRight")
-        await asyncio.sleep(0.2)
+        await press_slider(slider, index)
         label = await component.locator(".duration-slider-value").inner_text()
         actual_index = await slider.input_value()
         if actual_index != str(index) or not _duration(f"{seconds}s").search(label):
