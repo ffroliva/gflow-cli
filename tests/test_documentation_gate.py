@@ -109,17 +109,20 @@ def test_changelog_unreleased_notes_video_batch_removal() -> None:
     assert "removed" in section
 
 
-# Production-readiness hardening (task F1, design spec §9): headed real Chrome
-# is the production default for UI automation, not headless. Stale docs
-# claimed headless was the default and that flipping to headed was merely an
-# occasional reCAPTCHA workaround; `config.py`'s `headless` field defaults to
-# `False`. CONFIGURATION.md is the canonical reference doc and must state
-# both facts plainly.
-def test_current_docs_describe_headed_default_and_waf_safe_mode() -> None:
+# Production-readiness hardening (task F1, design spec §9), revised for v0.108.0
+# (#1371): `GFLOW_CLI_BROWSER_VISIBILITY` defaults to `auto` (headless mint for the
+# measured direct shapes, headed for the Flow UI surfaces), and the deprecated
+# `GFLOW_CLI_HEADLESS=false` now pins `headed`. CONFIGURATION.md is the canonical
+# reference doc and must state the default, the alias mapping and the kill switch.
+def test_current_docs_describe_auto_default_and_headed_pin() -> None:
     text = (ROOT / "docs/CONFIGURATION.md").read_text(encoding="utf-8")
-    assert "GFLOW_CLI_HEADLESS=false" in text
-    assert "headed" in text.lower()
-    assert "**Default:** `false`" in text
+    section = text.split("### `GFLOW_CLI_BROWSER_VISIBILITY`", 1)[1].split("\n### ", 1)[0]
+    assert "**Default:** `auto`" in section
+    assert "headless" in section and "headed" in section
+    assert "GFLOW_CLI_TRANSPORT=ui_automation" in section
+    alias = text.split("### `GFLOW_CLI_HEADLESS`", 1)[1].split("\n### ", 1)[0]
+    assert "GFLOW_CLI_HEADLESS=false` is **`headed`**" in alias
+    assert "`gflow doctor` flags it" in alias
 
 
 # 2026-09-07: two sessions worked this repo at once. One held the `denon82`

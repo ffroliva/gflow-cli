@@ -455,16 +455,17 @@ predictably, and spend the user's credits along an accountable path. The browser
 used only where it is strictly necessary.
 
 - **Direct HTTP with a headless mint (v0.108.0, #1371).** For the measured request shapes
-  (text-to-image, image-to-image with one in-project reference or one `@Character`, the image
-  rows of `image batch` and `gflow run`, text-to-video at measured settings, image-to-video from a
-  start frame, the 1080p upscale), Chrome starts headless on the profile only to mint the
+  (text-to-image, image-to-image with one in-project reference or one saved character, the image
+  rows of `gflow run` that carry no reference, text-to-video at measured settings, image-to-video
+  from a local start frame, the 1080p upscale), Chrome starts headless on the profile only to mint the
   reCAPTCHA Enterprise token, and the request goes to Flow over direct HTTP. A refusal Flow
   reports as `PUBLIC_ERROR_UNUSUAL_ACTIVITY`, which is not billed, is retried once from a new
   headless browser process ([KNOWN_ISSUES](KNOWN_ISSUES.md)). The evidence is
   [the direct video and headless mint spike](superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md):
   30/30 cold headless mints accepted on two accounts, and headless and headed video submits
   accepted 6/6 each on fresh browsers.
-- **The UI transport (`ui_automation`) for the other surfaces.** Reference-to-video, extend,
+- **The UI transport (`ui_automation`) for the other surfaces.** `image batch`, `movie run`,
+  reference-to-video, extend,
   edit, end-frame image-to-video, the 4K/720p/GIF upscales, scene and character create,
   instructions, the agent-only composer, media trash/restore, local `--ref` image-to-image and
   credit-capped video still drive Flow's page in a headed browser. Headless operation of these
@@ -474,8 +475,8 @@ used only where it is strictly necessary.
   `GFLOW_CLI_HEADLESS` is a deprecated alias that `gflow doctor` flags. The per-command list is
   [BROWSER_MODES](BROWSER_MODES.md).
 - **Limits.** The headless browser announces itself as `HeadlessChrome`; it is not a stealth
-  technique. macOS, Linux and accounts Flow serves on labs.google are unmeasured. Mints share
-  one page per profile, so per-account concurrency is bounded by that page.
+  technique. macOS, Linux and accounts Flow serves on labs.google are unmeasured. At most 4
+  direct submits are in flight per process and profile.
 
 **The migrated `flow.google.com` host (#639, v0.67.0).** Google is moving accounts off `labs.google` onto `flow.google.com`, a rewritten frontend with a different widget toolkit and a `batchexecute` wire instead of `aisandbox-pa` REST. `src/gflow_cli/api/transports/migrated_composer.py` drives that editor for text-to-video, local-file image-to-video/reference-to-video, text-to-image, and local-file image-to-image — still through the same real-Chrome Playwright session — by operating the composer UI and then *observing* the app's own replies. Video uses `YhhmEf`/`eb1hJf`/`MZZa6b` submit plus `jwpduf`/`as29s` status/result; image uses synchronous `ogiZ0b` replies carrying signed JPEG URLs. **Both mechanisms are measured, and neither is a push channel**: `ogiZ0b` is one response held open ~19.7 s, while `jwpduf` is a fixed 5.00 s timer owned by *Flow's page* — gflow observes it and adds no traffic, so the interval is a floor we read rather than a latency knob we hold, and "subscribe instead of polling" is refuted on both paths (`docs/superpowers/spikes/2026-09-14-generation-wire-no-push-channel.md`, `docs/superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md`). Local files go through the editor's own `maseQ` upload and the resulting media ids are asserted in the outgoing submit body before the run is trusted (`WireFormatError` otherwise). The migrated page owns image reCAPTCHA minting; the client skips the labs token path so moved accounts no longer fail with `RecaptchaError` on the root grid. `GFLOW_CLI_FLOW_HOST` routes between the two (`auto` keeps migrated images on moved accounts and uses labs for them on unmoved accounts; `--project` is required on the migrated path); unsupported UUID/entity/instruction/Imagen-4 image forms still fail before submit. Recon: `docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md`.
 

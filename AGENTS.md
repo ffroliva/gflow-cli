@@ -59,10 +59,10 @@ In v0.108.0:
 
 - **Measured request shapes go over direct HTTP.** Chrome starts headless only to mint the
   reCAPTCHA token (text-to-image, image-to-image with one in-project reference or one
-  `@Character`, image rows of `image batch`/`gflow run`, text-to-video at measured settings,
-  image-to-video from a start frame, 1080p upscale; `serve` and `mcp run` follow the same rules).
+  saved character, `gflow run` image rows without a reference, text-to-video at measured settings,
+  image-to-video from a local start frame, 1080p upscale; `serve` and `mcp run` follow the same rules).
   An unbilled `PUBLIC_ERROR_UNUSUAL_ACTIVITY` refusal is retried once from a new headless process.
-- **The remaining UI surfaces stay headed** (`ui_automation`: r2v, extend, edit, end-frame i2v,
+- **The remaining UI surfaces stay headed** (`ui_automation`: `image batch`, `movie run`, r2v, extend, edit, end-frame i2v,
   4K/720p/GIF upscale, scene/character create, instructions, the agent composer, media
   trash/restore, local `--ref` i2i, credit-capped video). Headless UI is tracked in #1554.
 - **`auth login`** is interactive and needs a display once; `auth renew` and the credits read
