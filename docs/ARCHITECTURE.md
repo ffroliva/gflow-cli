@@ -462,7 +462,7 @@ used only where it is strictly necessary.
   reports as `PUBLIC_ERROR_UNUSUAL_ACTIVITY`, which is not billed, is retried once from a new
   headless browser process ([KNOWN_ISSUES](../KNOWN_ISSUES.md)). The evidence is
   [the direct video and headless mint spike](superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md):
-  30/30 cold headless mints accepted on two accounts, and headless and headed video submits
+  15/15 headless cold mints accepted on two accounts (30/30 counting both visibilities), and headless and headed video submits
   accepted 6/6 each on fresh browsers.
 - **The UI transport (`ui_automation`) for the other surfaces.** `image batch`, `movie run`,
   reference-to-video, extend,

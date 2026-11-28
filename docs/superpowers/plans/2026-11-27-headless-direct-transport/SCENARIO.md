@@ -174,7 +174,7 @@ Feature: Headless direct images
 ## Known-issues cross-reference
 
 - reCAPTCHA / WAF entries in `KNOWN_ISSUES.md`: the headless claim there ("headless → immediate
-  403") is contradicted by the spike (30/30 cold headless mints accepted on two accounts) and is
+  403") is contradicted by the spike (15/15 headless cold mints accepted on two accounts) and is
   rewritten in this change, along with `docs/ACCOUNT_SAFETY.md`, `skills/gflow-cli/SKILL.md`,
   `.env.template`, `docs/CONFIGURATION.md`, the README FAQ, the AGENTS.md "Headed-browser
   dependency" section, `docs/DIRECT_TRANSPORT.md`, `docs/MCP.md` and the remediation hints in

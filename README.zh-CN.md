@@ -303,7 +303,7 @@ Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/f
 
 ![gflow image t2i 运行一个 9:16 提示词，输出 structlog 日志，并把 PNG 写入磁盘](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/example-run.gif)
 
-在已登录的 Flow 账号配置（profile）上运行一次 `gflow image t2i "..." --aspect 9:16 --model nano2`。终端实时输出本次运行的 `structlog` JSON 日志，然后列出写入的 PNG 文件。Chromium 在后台静默驱动 Flow 编辑器。
+在已登录的 Flow 账号配置（profile）上运行一次 `gflow image t2i "..." --aspect 9:16 --model nano2`。终端实时输出本次运行的 `structlog` JSON 日志，然后列出写入的 PNG 文件。Chrome 仅以无头模式启动以生成 reCAPTCHA 令牌；请求本身通过直接 HTTP 发送到 Flow，因此不会打开浏览器窗口。
 
 ## 文档
 

@@ -14,7 +14,7 @@ starts **headless** and only mints the reCAPTCHA token; the request goes to Flow
 (`batchexecute` on `flow.google.com`), with no visible window. `direct_http` is the default
 transport.
 
-- **Direct HTTP shapes:** text-to-image with `nano2` (any aspect, count 1-4, one in-project
+- **Direct HTTP shapes:** text-to-image or image-to-image with `nano2` (any aspect, count 1-4, one in-project
   reference or one saved character) and with `nano2-lite` / `nano-pro` (9:16, one image);
   text-to-video with `omni-1.2-flash` at 4 s, 360p, 9:16 or 16:9, and with no `--model` when the
   account's selected model forms a measured key; image-to-video from a local start frame with

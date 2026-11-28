@@ -1086,7 +1086,7 @@ default. Statements are honest, not promotional: no claim beyond the evidence, a
 limits are stated plainly.
 
 **What is true in v0.108.0 (the content every rewrite draws on):** a headless mint is accepted
-(the spike: 30/30 cold headless mints on two accounts; headless and headed video 6/6 each on fresh
+(the spike: 15/15 headless cold mints on two accounts, 30/30 counting both visibilities; headless and headed video 6/6 each on fresh
 browsers); the measured shapes go over direct HTTP; the browser's remaining roles are minting the
 token (headless), the one-time interactive `auth login`, and the UI-transport surfaces, which stay
 headed (#1554); unmeasured: macOS, Linux, accounts Flow serves on labs.google.
