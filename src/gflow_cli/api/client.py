@@ -124,6 +124,9 @@ def _check_display_server(visibility: BrowserVisibility) -> None:
                 ),
             )
             error.detail = "A headed browser cannot start: no display server (DISPLAY is unset)."
+            # The class default says retry (a flapping UI arm); a missing display never flaps.
+            error.retryable = False
+            error.next_action = "fix_input"
             raise error
 
 

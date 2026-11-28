@@ -34,7 +34,7 @@ import pytest
 
 from gflow_cli.api.client import FlowApiClient, RelaunchFailed
 from gflow_cli.api.submit_policy import BrowserVisibility
-from gflow_cli.errors import ConfigurationError, UiModeUnavailableError
+from gflow_cli.errors import ConfigurationError, UiModeUnavailableError, is_retryable
 
 
 def _probe_lease_subprocess(profile_dir: Path) -> bool:
@@ -319,6 +319,23 @@ async def test_headed_launch_without_display_raises_before_playwright(
         assert "xvfb-run" in (err.remediation_hint or str(err))
         # Playwright must NEVER have been started
         mock_pw_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_headed_launch_without_display_is_not_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing display does not change between runs: an agent told to retry would retry
+    forever, so the error asks for the environment to be fixed instead."""
+    _no_display(monkeypatch)
+    with patch("gflow_cli.api.client.async_playwright"):
+        with pytest.raises(UiModeUnavailableError) as exc_info:
+            async with FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADED):
+                pass
+    err = exc_info.value
+    assert is_retryable(err) is False
+    assert err.resolved_next_action() == "fix_input"
+    assert err.to_problem_details()["next_action"] == "fix_input"
 
 
 @pytest.mark.asyncio
