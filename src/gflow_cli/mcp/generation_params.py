@@ -6,6 +6,7 @@ name, so the tool module does not grow.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -114,39 +115,52 @@ def validate_image_ui_and_thinking(
     return norm_ui, norm_think, None
 
 
-def build_video_payload(
-    prompt: str,
-    mode: str,
-    aspect: str,
-    count: int,
-    model: str | None,
-    duration: int | None,
-    resolution: str | None,
-    tool_specs: Any,
-    project: str | None,
-    project_name: str | None,
-    output: str | None = None,
-    ui_mode: str | None = None,
-    reference_entities: list[str] | None = None,
-    reference_entity_names: list[str] | None = None,
-    max_credits: int | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"prompt": prompt, "mode": mode, "aspect": aspect, "count": count}
-    names = list(reference_entity_names) if reference_entity_names else None
+@dataclass(frozen=True)
+class VideoPayloadInputs:
+    """A ``gflow_generate_video`` call's options, as the queued payload carries them."""
+
+    prompt: str
+    mode: str
+    aspect: str
+    count: int
+    model: str | None
+    duration: int | None
+    resolution: str | None
+    tool_specs: Any
+    project: str | None
+    project_name: str | None
+    output: str | None = None
+    ui_mode: str | None = None
+    reference_entities: list[str] | None = None
+    reference_entity_names: list[str] | None = None
+    max_credits: int | None = None
+
+
+def build_video_payload(inputs: VideoPayloadInputs) -> dict[str, Any]:
+    """The queued video payload: the required keys, then every option that is set."""
+    i = inputs
+    payload: dict[str, Any] = {
+        "prompt": i.prompt,
+        "mode": i.mode,
+        "aspect": i.aspect,
+        "count": i.count,
+    }
+    names = list(i.reference_entity_names) if i.reference_entity_names else None
+    refs = list(i.reference_entities) if i.reference_entities else None
     payload.update(
         {
             key: value
             for key, value in (
-                ("ui_mode", ui_mode),
-                ("model", model),
-                ("duration", duration),
-                ("resolution", resolution),
-                ("project_id", project),
-                ("project_name", project_name),
-                ("output_file", output),
-                ("max_credits", max_credits),
-                ("tool_specs", list(tool_specs) if tool_specs else None),
-                ("reference_entities", list(reference_entities) if reference_entities else None),
+                ("ui_mode", i.ui_mode),
+                ("model", i.model),
+                ("duration", i.duration),
+                ("resolution", i.resolution),
+                ("project_id", i.project),
+                ("project_name", i.project_name),
+                ("output_file", i.output),
+                ("max_credits", i.max_credits),
+                ("tool_specs", list(i.tool_specs) if i.tool_specs else None),
+                ("reference_entities", refs),
                 ("reference_entity_names", names),
             )
             if value is not None

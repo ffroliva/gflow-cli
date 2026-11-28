@@ -56,7 +56,7 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.auth_status_errors import auth_status_error
 from gflow_cli.mcp.envelope_status import outcome_of
-from gflow_cli.mcp.generation_params import BrowserVisibilityParam
+from gflow_cli.mcp.generation_params import BrowserVisibilityParam, VideoPayloadInputs
 from gflow_cli.mcp.generation_params import bad_param as _bad_param
 from gflow_cli.mcp.generation_params import browser_visibility as _browser_visibility
 from gflow_cli.mcp.generation_params import build_video_payload as _build_video_payload
@@ -1505,21 +1505,23 @@ async def gflow_generate_video(  # NOSONAR
     assert media is not None
 
     payload = _build_video_payload(
-        prompt=prompt,
-        mode=mode,
-        aspect=aspect,
-        count=count,
-        model=model,
-        duration=duration,
-        resolution=resolution,
-        tool_specs=tool_specs,
-        project=project,
-        project_name=project_name,
-        output=output,
-        ui_mode=ui_mode,
-        reference_entities=reference_entities,
-        reference_entity_names=reference_entity_names,
-        max_credits=max_credits,
+        VideoPayloadInputs(
+            prompt=prompt,
+            mode=mode,
+            aspect=aspect,
+            count=count,
+            model=model,
+            duration=duration,
+            resolution=resolution,
+            tool_specs=tool_specs,
+            project=project,
+            project_name=project_name,
+            output=output,
+            ui_mode=ui_mode,
+            reference_entities=reference_entities,
+            reference_entity_names=reference_entity_names,
+            max_credits=max_credits,
+        )
     )
     payload.update(media)
     payload["browser_visibility"] = browser_visibility

@@ -152,6 +152,13 @@ def _resolve_home() -> Path:
     return paths.default_home()
 
 
+def _truthy(value: object) -> bool:
+    """The deprecated ``GFLOW_CLI_HEADLESS`` value read as a boolean, as pydantic reads one."""
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "t", "yes", "y", "on")
+    return bool(value)
+
+
 def _env_files() -> tuple[str, str]:
     """Dotenv files for :class:`Settings`, in pydantic-settings order (later wins):
     a CWD ``.env`` takes precedence over ``<home>/.env`` (docs/CONFIGURATION.md).
@@ -660,21 +667,14 @@ class Settings(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _resolve_browser_visibility_alias(cls, data: object) -> object:
-        if isinstance(data, dict):
-            raw = dict(cast("dict[str, object]", data))
-            if "browser_visibility" not in raw:
-                if "headless" in raw:
-                    val = raw["headless"]
-                    is_h = (
-                        val.strip().lower() in ("1", "true", "t", "yes", "y", "on")
-                        if isinstance(val, str)
-                        else bool(val)
-                    )
-                    raw["browser_visibility"] = "headless" if is_h else "headed"
-            if "browser_visibility" in raw:
-                raw["headless"] = raw["browser_visibility"] == "headless"
-            return raw
-        return data
+        if not isinstance(data, dict):
+            return data
+        raw = dict(cast("dict[str, object]", data))
+        if "browser_visibility" not in raw and "headless" in raw:
+            raw["browser_visibility"] = "headless" if _truthy(raw["headless"]) else "headed"
+        if "browser_visibility" in raw:
+            raw["headless"] = raw["browser_visibility"] == "headless"
+        return raw
 
     browser_engine: BrowserEngine = Field(
         default=BrowserEngine.PLAYWRIGHT,
