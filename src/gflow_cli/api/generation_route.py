@@ -166,6 +166,71 @@ def choose_image_route(
     return Route.DIRECT
 
 
+def _is_environment_supported(*, flow_host: str, proxy_configured: bool) -> bool:
+    return flow_host != "labs.google" and not proxy_configured
+
+
+def _has_credit_cap(effective_max_credits: int | None, request_cap: int | None) -> bool:
+    return effective_max_credits is not None or request_cap is not None
+
+
+def _has_video_references(request: GenerateVideoRequest) -> bool:
+    return bool(
+        request.reference_images
+        or request.ref_names
+        or request.reference_entities
+        or request.reference_entity_names
+        or request.reference_audio is not None
+    )
+
+
+def _is_video_request_supported(
+    request: GenerateVideoRequest,
+    effective_max_credits: int | None,
+) -> bool:
+    if _has_credit_cap(effective_max_credits, request.max_credits):
+        return False
+    if request.count != 1 or _has_video_references(request):
+        return False
+    return True
+
+
+def _has_start_frame(request: GenerateVideoRequest) -> bool:
+    return bool(
+        request.start_image
+        or request.start_image_ref_name
+        or request.start_image_ref_id
+        or request.start_image_ref_display_name
+    )
+
+
+def _has_end_frame(request: GenerateVideoRequest) -> bool:
+    return bool(
+        request.end_image
+        or request.end_image_ref_name
+        or request.end_image_ref_id
+        or request.end_image_ref_display_name
+    )
+
+
+def _resolve_video_model(request: GenerateVideoRequest) -> VideoModel | None:
+    if request.mode == Mode.I2V:
+        if not _has_start_frame(request) or _has_end_frame(request):
+            return None
+        return request.model if request.model is not None else I2V_DEFAULT_MODEL
+    if request.mode == Mode.T2V:
+        return request.model
+    return None
+
+
+def _is_video_tuple_measured(
+    model: VideoModel,
+    request: GenerateVideoRequest,
+) -> bool:
+    key_tuple = (model, request.mode, request.duration, request.resolution, request.aspect)
+    return key_tuple in MEASURED_VIDEO_KEYS
+
+
 def choose_video_route(
     request: GenerateVideoRequest | ExtendVideoRequest | EditVideoRequest,
     *,
@@ -178,57 +243,18 @@ def choose_video_route(
     The caller must resolve any environment or profile credit caps before calling.
     An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
     """
-    if flow_host == "labs.google":
+    if not _is_environment_supported(flow_host=flow_host, proxy_configured=proxy_configured):
         return Route.UI
-    if proxy_configured:
-        return Route.UI
-
     if isinstance(request, (ExtendVideoRequest, EditVideoRequest)):
         return Route.UI
-
-    if effective_max_credits is not None or request.max_credits is not None:
+    if not _is_video_request_supported(request, effective_max_credits):
         return Route.UI
 
-    if request.count != 1:
+    model = _resolve_video_model(request)
+    if model is None:
         return Route.UI
 
-    if request.reference_images or request.ref_names:
-        return Route.UI
-
-    if request.reference_entities or request.reference_entity_names:
-        return Route.UI
-
-    if request.reference_audio is not None:
-        return Route.UI
-
-    model = request.model
-    if request.mode == Mode.I2V:
-        if model is None:
-            model = I2V_DEFAULT_MODEL
-        has_start_frame = bool(
-            request.start_image
-            or request.start_image_ref_name
-            or request.start_image_ref_id
-            or request.start_image_ref_display_name
-        )
-        if not has_start_frame:
-            return Route.UI
-        has_end_frame = bool(
-            request.end_image
-            or request.end_image_ref_name
-            or request.end_image_ref_id
-            or request.end_image_ref_display_name
-        )
-        if has_end_frame:
-            return Route.UI
-    elif request.mode == Mode.T2V:
-        if model is None:
-            return Route.UI
-    else:
-        return Route.UI
-
-    key_tuple = (model, request.mode, request.duration, request.resolution, request.aspect)
-    if key_tuple in MEASURED_VIDEO_KEYS:
+    if _is_video_tuple_measured(model, request):
         return Route.DIRECT
 
     return Route.UI

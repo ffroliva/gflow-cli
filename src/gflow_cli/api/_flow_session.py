@@ -403,6 +403,10 @@ class RelaunchFailed(GFlowError):  # noqa: N818 — per plan naming
     charged = "no"
     next_action = "none"
     title = "Browser relaunch failed"
+    _default_remediation = (
+        "Nothing was charged. Close other Chrome windows using this profile and run the "
+        "command again; if it keeps failing, run `gflow doctor`."
+    )
 
 
 class FlowSession:
