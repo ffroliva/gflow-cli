@@ -316,6 +316,7 @@ For each scene, `gflow movie` merges global manifest cards with scene overrides 
 | `--dry-run` | off | Print the pending video operation plan; make **no** API calls. |
 | `--fail-fast` / `--continue-on-error` | continue | Stop on the first scene failure, or attempt the rest (default). |
 | `--stitch` | off | After generating, hard-concat all clips into one preview mp4 (ffmpeg, no transitions). |
+| `--browser-visibility [auto\|headless\|headed]` | `GFLOW_CLI_BROWSER_VISIBILITY` (`auto`) | Browser window policy for this run, as on the other billed video commands ([BROWSER_MODES](BROWSER_MODES.md)). |
 
 ## Credits
 

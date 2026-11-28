@@ -36,6 +36,7 @@ from rich.markup import escape
 from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
+    browser_visibility_option,
     no_max_credits_option,
     resolve_max_credits,
     run_with_handlers,
@@ -228,6 +229,7 @@ def template(output: Path, force: bool) -> None:
         "(ffmpeg, no transitions). Not a deliverable."
     ),
 )
+@browser_visibility_option()
 def run(
     manifest_path: Path,
     profile: str | None,

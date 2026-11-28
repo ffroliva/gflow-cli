@@ -74,6 +74,7 @@ def test_invalid_value_is_a_usage_error() -> None:
         ("video", "i2v"),
         ("video", "generate"),
         ("video", "upscale"),
+        ("movie", "run"),
         ("run",),
     ],
 )
