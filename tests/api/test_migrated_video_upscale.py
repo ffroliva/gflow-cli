@@ -342,6 +342,7 @@ def test_a_gif_export_gets_a_longer_budget_than_an_mp4() -> None:
     from gflow_cli.api.transports.migrated_video_upscale import export_timeout_s
 
     assert export_timeout_s("270p") >= 300.0
+    assert export_timeout_s("720p") >= 240.0
     assert export_timeout_s("1080p") == export_timeout_s("720p") < export_timeout_s("270p")
 
 
@@ -364,3 +365,58 @@ async def test_migrated_video_upscale_undecodable_base64() -> None:
 
     with pytest.raises(WireFormatError, match="undecodable stream data"):
         await _run(page)
+
+
+async def test_open_download_menu_retries_click_when_menu_delayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gflow_cli.api.transports.migrated_video_upscale as mvu
+
+    clicks = 0
+
+    class _Btn:
+        async def click(self) -> None:
+            nonlocal clicks
+            clicks += 1
+
+    async def _fake_wait_for_or_none(_page: object, sel: str, _timeout_ms: int) -> object | None:
+        if "download" in sel:
+            return _Btn()
+        return object() if clicks >= 2 else None
+
+    monkeypatch.setattr(mvu, "wait_for_or_none", _fake_wait_for_or_none)
+    page = MagicMock()
+    page.goto = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+
+    await mvu._open_download_menu(page, project_id=_PROJECT_ID, media_id=_MEDIA_ID)  # noqa: SLF001
+    assert clicks == 2
+
+
+async def test_open_download_menu_waits_for_clip_hydration_and_menu_settle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gflow_cli.api.transports.migrated_video_upscale as mvu
+
+    timeouts: list[int] = []
+
+    class _Btn:
+        async def click(self) -> None:
+            return None
+
+    async def _fake_wait_for_or_none(_page: object, _sel: str, _timeout_ms: int) -> object:
+        return _Btn()
+
+    page = fake_page([])
+
+    async def _fake_wait_for_timeout(ms: int) -> None:
+        timeouts.append(ms)
+        if ms == 200 and len(timeouts) == 1:
+            await emit_response(page, ")]}'\n\n2\n[]", rpcid="as29s")
+
+    page.wait_for_timeout = AsyncMock(side_effect=_fake_wait_for_timeout)
+    monkeypatch.setattr(mvu, "wait_for_or_none", _fake_wait_for_or_none)
+
+    await mvu._open_download_menu(page, project_id=_PROJECT_ID, media_id=_MEDIA_ID)  # noqa: SLF001
+    assert timeouts == [200, 500]
+    assert page.response_handlers == []

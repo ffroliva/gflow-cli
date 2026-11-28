@@ -45,7 +45,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_TIMEOUT_S = 120.0
+#: Default MP4 export budget; slower 720p/1080p upscales on longer clips can exceed 120s.
+_DEFAULT_TIMEOUT_S = 240.0
 #: 4K video upscale on Flow Ultra measured ~97 s for a 4 s clip; longer 10-15 s clips need headroom.
 _4K_TIMEOUT_S = 360.0
 #: Flow renders the 270p GIF client-side, and the delay varies: measured 2026-10-07 the blob
@@ -147,17 +148,41 @@ def _check_mp4_resolution(video_bytes: bytes, scale: str) -> None:
         )
 
 
+async def _wait_for_clip_hydrated(page: Page, clip_loaded: asyncio.Event) -> None:
+    """Wait briefly for ``/edit/<media_id>`` to receive its initial ``as29s`` hydration."""
+    for _ in range(15):
+        if clip_loaded.is_set():
+            return
+        await page.wait_for_timeout(200)
+
+
 async def _open_download_menu(page: Page, *, project_id: str, media_id: str) -> None:
     """Open the clip's download menu: the clip editor first, the project grid second."""
-    await page.goto(
-        MIGRATED_CLIP_URL.format(project_id=project_id, media_id=media_id),
-        wait_until="domcontentloaded",
-    )
-    download_btn = await wait_for_or_none(page, DOWNLOAD_BUTTON_SELECTOR, 15_000)
-    if download_btn:
-        await download_btn.click()
-        await page.wait_for_timeout(500)
-        return
+    clip_loaded = asyncio.Event()
+
+    async def _on_clip_response(response: Response) -> None:
+        if "as29s" in str(getattr(response, "url", "")):
+            clip_loaded.set()
+
+    page.on("response", _on_clip_response)
+    try:
+        await page.goto(
+            MIGRATED_CLIP_URL.format(project_id=project_id, media_id=media_id),
+            wait_until="domcontentloaded",
+        )
+        download_btn = await wait_for_or_none(page, DOWNLOAD_BUTTON_SELECTOR, 15_000)
+        if download_btn:
+            await _wait_for_clip_hydrated(page, clip_loaded)
+            for attempt in range(2):
+                await download_btn.click()
+                if await wait_for_or_none(page, '[role="menuitem"]', 2_000) is not None:
+                    await page.wait_for_timeout(500)
+                    return
+                if attempt == 0:
+                    await page.wait_for_timeout(800)
+            return
+    finally:
+        page.remove_listener("response", _on_clip_response)
     await open_tile_download_menu(
         page,
         project_id=project_id,
