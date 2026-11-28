@@ -1174,6 +1174,16 @@ profile reproducibly 403s on `batchGenerateImages` even after a fresh
 (re-authenticated the same day) succeeded end-to-end across one t2i + a 4-image
 batch — so it is not a global incompatibility but a per-profile WAF state.
 
+**What gflow does about it (v0.108.0, #1371):** a refused submit is not billed, and
+gflow retries it **once**, from a new headless browser process. In the
+[direct video and headless mint spike](docs/superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md),
+a page Flow had refused stayed refused for about 20 minutes, while fresh pages in new
+browser processes were accepted in both headless and headed mode: page freshness, not
+visibility, was the variable. Any refused page is discarded, so the next mint uses a new
+one. A second refusal is final, not charged, and its remediation names
+`--browser-visibility headed` and the 30–60 minute cooldown in
+[ACCOUNT_SAFETY § When Google does push back](docs/ACCOUNT_SAFETY.md#when-google-does-push-back).
+
 **Likely contributing factors:**
 - Repeated automated runs on the same profile within a short window
 - Playwright-driven Chrome leaks small fingerprint differences vs. unautomated

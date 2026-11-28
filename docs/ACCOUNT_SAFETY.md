@@ -37,12 +37,16 @@ so most failure modes cost you nothing but time — see the cost note in the
 None of this is stealth. It is the difference between "software using a browser"
 and "software that obviously is not a human".
 
-**It drives real, headed Chrome.** The `ui_automation` transport requires headed
-system Chrome (`channel=chrome`). Headless Chromium is rejected by reCAPTCHA
-Enterprise with an immediate 403 regardless of anything else you do, so headless
-is not an option the tool quietly takes — it is a supported setting only for
-transports that never touch the Flow UI. A silent downgrade from real Chrome to
-bundled Chromium is treated as a **fatal error**, not a fallback (#222).
+**It uses system Chrome, and only where it must.** Every browser gflow starts is
+system Chrome (`channel=chrome`) on the saved profile; a silent downgrade to bundled
+Chromium is treated as a **fatal error**, not a fallback (#222). For the measured
+request shapes, Chrome runs headless only to mint the reCAPTCHA token, and the request
+goes to Flow over direct HTTP. The commands that still drive Flow's interface run it
+headed; `GFLOW_CLI_BROWSER_VISIBILITY=headed` shows the window for every command. The
+per-command list is in [BROWSER_MODES](BROWSER_MODES.md). The headless mint was
+measured as accepted on two accounts on Windows
+([spike](superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md)); macOS,
+Linux and accounts Flow serves on labs.google are unmeasured.
 
 **Except credit reads.** On Windows and Linux, `gflow credits` and `gflow_get_credits` send
 the profile's saved Google session from gflow's own HTTP client by default, with no browser
@@ -88,7 +92,9 @@ auto-retry, because retrying only inflates per-profile heat.**
   you" checks or reCAPTCHA refusals on your account.
 - **No fingerprint spoofing**, beyond the opt-in patched engine below. No canvas
   noise, no UA lying, no timezone games.
-- **No headless "unlock".** The patchright option is explicitly *not* one.
+- **No stealth headless mode.** The headless browser announces itself as
+  `HeadlessChrome` in its user agent; gflow does not hide that. The patchright option
+  is not a headless disguise either.
 - **No pretence that it is not automation.** It drives a browser; Google can see a
   browser being driven.
 - **No ToS circumvention claim.** Automating Flow may violate Google's terms. That
@@ -124,6 +130,11 @@ guidance: [DEBUGGING § WAF cadence](DEBUGGING.md#waf-cadence).
 You will see `WafRejectionError` (exit 10) and `PUBLIC_ERROR_UNUSUAL_ACTIVITY`.
 It is **per profile, not per account** — the same code path on a different
 profile of the same account has succeeded the same day.
+
+gflow retries a refused submit **once**, from a new headless browser process: a page
+Flow has refused stayed refused for about 20 minutes in measurement, while a fresh
+browser process was accepted. A second refusal is final and not charged; its message
+points here.
 
 1. **Stop.** Each rejected request can raise the score further.
 2. **Cool down** 30–60 min, then probe with a single small generation before

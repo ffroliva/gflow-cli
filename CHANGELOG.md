@@ -7,10 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Highlights: headless by default ([#1371](https://github.com/ffroliva/gflow-cli/issues/1371))
+
+This release changes the browser's role. For the request shapes that have been measured, Chrome
+starts **headless** and only mints the reCAPTCHA token; the request goes to Flow over direct HTTP
+(`batchexecute` on `flow.google.com`), with no visible window. `direct_http` is the default
+transport.
+
+- **Direct HTTP shapes:** text-to-image or image-to-image with `nano2` (any aspect, count 1-4, one in-project
+  reference or one saved character) and with `nano2-lite` / `nano-pro` (9:16, one image);
+  text-to-video with `omni-1.2-flash` at 4 s, 360p, 9:16 or 16:9, and with no `--model` when the
+  account's selected model forms a measured key; image-to-video from a local start frame with
+  Veo 3.1 Lite at 9:16; and the 1080p upscale of a catalogued Omni 1.2 Flash 4 s 16:9 clip. The
+  same routing applies to `gflow run` rows, `video chain` clips, `gflow serve` and the MCP server.
+- **Route before launch:** the route is decided from the request before the browser starts. A
+  run with any item that needs Flow's UI launches headed for the whole run. `--json` output, MCP
+  results and the catalog report `route` (`direct` / `ui`), `visibility` (`headless` / `headed`)
+  and `retried`.
+- **One retry on a refusal Flow did not charge:** a direct submit refused as
+  `PUBLIC_ERROR_UNUSUAL_ACTIVITY` is sent once more with a token from a new headless browser
+  process. A second refusal is final: `WafRejectionError` (exit 10) with `charged: "no"`,
+  `retryable: false`, `next_action: "none"`, naming the cooldown in `docs/ACCOUNT_SAFETY.md`. A
+  failure after a direct submit was sent is never resent (`charged: "maybe"`, `reconcile`).
+- **Still headed (Flow's UI):** `auth login`, `image batch`, `movie run`, `video r2v` / `extend` /
+  `edit`, end-frame image-to-video, the 4K / 720p / GIF upscale, scenes, characters,
+  instructions, the agent-only composer, `media trash` / `restore`, image-to-image with a local
+  `--ref`, and any credit-capped video. Running those headless is tracked in
+  [#1554](https://github.com/ffroliva/gflow-cli/issues/1554).
+- **Limits per process:** at most 4 direct submits in flight per profile; a page idle for more
+  than 600 s re-arms before it mints; a refused page is discarded. A zero video balance ends a
+  planned direct video with exit 37 before any browser starts.
+- **Unmeasured:** macOS, Linux, and accounts Flow serves on labs.google (those take the UI path).
+- The per-command list is the new [docs/BROWSER_MODES.md](docs/BROWSER_MODES.md).
+
+The direct-transport roadmap was confirmed and accelerated by the independent project
+[flowfast](https://github.com/JvanLeeuwen4/flowfast) (MIT), which built on gflow-cli and published
+its wire map and measurements. gflow-cli re-derived every shape from its own captures.
+
+### Migration notes
+
+- **`GFLOW_CLI_BROWSER_VISIBILITY` (`auto` / `headless` / `headed`, default `auto`)** and the
+  per-command `--browser-visibility` option (MCP: `browser_visibility`) select the browser mode.
+  `headed` shows a window for every Flow command. An explicit `headless` also runs Flow UI shapes
+  headless; that is unsupported in this release (#1554).
+- **`GFLOW_CLI_HEADLESS` is deprecated** and flagged by `gflow doctor`. `true` maps to
+  `headless`; **`false` now pins `headed`**, so a `.env` that still sets
+  `GFLOW_CLI_HEADLESS=false` shows a window for every command, the direct shapes included. Remove
+  the line to get the default.
+- **Kill switch:** `GFLOW_CLI_TRANSPORT=ui_automation` (environment or `.env`) sends every request
+  through Flow's UI, headed, as before this release.
+- **Behaviour change:** a not-charged refusal on a direct submit is now resent once, from a new
+  headless browser process. The post-send redirect / 401 / 403 resend through the UI transport
+  is removed: those now stop the run as possibly charged.
+- **New error class:** `RelaunchFailed` (exit 15, `charged: "no"`) when the browser cannot be
+  restarted for a UI fallback.
+- **Python API:** `FlowApiClient` takes `visibility=BrowserVisibility.HEADLESS | HEADED` in place
+  of `headless=`; omitted, it launches for the UI path.
+
 ### Added
 
 - **`gflow doctor` reports drift between Flow's model catalog and gflow's model list ([#1550](https://github.com/ffroliva/gflow-cli/issues/1550)).** A new check, `models.catalog_drift`, reads Flow's model catalog (`HTrJv`) for the default profile with at most one direct GET and one POST, no browser and zero credits, under the same rules as the direct credits read (nothing is sent when `GFLOW_CLI_WIRE_READS=0` or a proxy is configured). Each difference is classified once (`api/model_catalog.py::classify_catalog`). A `warn` (exit `33`) names a break: a mapped family Flow no longer lists before the retirement date gflow carries for it, an image model key Flow dropped, a changed retirement date on a mapped video family, or a reply with no families. Everything else is `info` and never turns `gflow doctor` into exit `33`: a family, image key or retirement date Flow added that gflow does not carry (no user can map it), a retiring family gone on or after its date (`abra`, `veo_3_1_fast` and `veo_3_1_quality` from 2026-12-05), and a change to a family gflow deliberately ignores. A catalog that cannot be read or decoded, including an unexpected read error, is `info`. `api/model_catalog.py` now maps the image models to their catalog families (`IMAGE_FAMILY`) and lists the families gflow deliberately leaves unmapped, each with a reason (`IGNORED_FAMILIES`: upscalers and text-to-speech), and `Imagen 4`, which the catalog no longer lists (`UNLISTED_MODELS`). An offline test runs the same comparison on the recorded catalog fixture, so a re-recorded fixture with a new or vanished model fails until the mapping is updated. `scripts/dev/record_htrjv_fixture.py` now reads through `flow_wire.read_model_catalog` and prints the differences it finds, and the nightly canary's comment gains a `MODEL-DRIFT` section with the same check for the canary's profile. `gflow doctor` has no MCP twin (#542), so neither does the check.
-- **The experimental `direct_http` image transport now serves Nano Banana 2 Lite (`nano2-lite`, `HARBOR_SEAL`) and Nano Banana Pro (`nano-pro`, `GEM_PIX_2`) ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)).** Both were generated live by a direct `ogiZ0b` request, for the measured shape only: 9:16, one image, no reference and no character (the CLI default aspect is 9:16; the MCP image tool defaults to 1:1, so over MCP pass `aspect="9:16"`). Every other shape of these models takes the UI path. Previously both were routed to the UI transport because their wire names had not been measured. `imagen4` is still routed to the UI transport.
+- **The `direct_http` image transport now serves Nano Banana 2 Lite (`nano2-lite`, `HARBOR_SEAL`) and Nano Banana Pro (`nano-pro`, `GEM_PIX_2`) ([#1549](https://github.com/ffroliva/gflow-cli/issues/1549)).** Both were generated live by a direct `ogiZ0b` request, for the measured shape only: 9:16, one image, no reference and no character (the CLI default aspect is 9:16; the MCP image tool defaults to 1:1, so over MCP pass `aspect="9:16"`). Every other shape of these models takes the UI path. Previously both were routed to the UI transport because their wire names had not been measured. `imagen4` is still routed to the UI transport.
 
 ### Fixed
 

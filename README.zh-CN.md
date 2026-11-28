@@ -13,7 +13,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: beta](https://img.shields.io/badge/status-beta-blue.svg)](docs/PROJECT_STATUS.md)
 
-本项目是独立项目，与 Google 无关联。它在真实的 Chrome 窗口中驱动你自己已登录的 Flow 会话，因此 Google 的条款适用于你的账号：请阅读 [DISCLAIMER](DISCLAIMER.md) 和 [ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)。
+**存在的目的：自动化。** gflow-cli 让 Agent、自动化框架和脚本在用户自己的 Google Flow 账号上生成图片和视频，结果可预期，并沿着正确、可追溯的路径花费用户付费购买的积分。对这些用户而言，Flow 的网页界面只是干扰。浏览器只在绝对必要时使用，即生成每个请求所需的 reCAPTCHA 令牌，并且默认以无头（headless）模式运行；已测量的请求形态随后通过直接 HTTP 发送给 Flow。哪些命令使用浏览器、以何种方式使用，按命令列在 [BROWSER_MODES](docs/BROWSER_MODES.md) 中。其余限制见[架构与当前限制](#架构与当前限制)。
+
+<!-- browser-modes-table -->
+
+本项目是独立项目，与 Google 无关联。它使用你自己已登录的 Flow 会话，因此 Google 的条款适用于你的账号：请阅读 [DISCLAIMER](DISCLAIMER.md) 和 [ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)。
 
 ## gflow-cli 概览
 
@@ -67,13 +71,13 @@ Claude Code 插件默认处于禁用状态，因为启用后会启动一个可�
 **安装之前**，请确认你具备：
 
 - Python 3.11 或更高版本（`uv tool install` 会自动获取）和 [`uv`](https://docs.astral.sh/uv/getting-started/installation/)；
-- Google Chrome（登录和生成都会驱动真实的 Chrome 窗口）；
-- 一个图形界面，用于一次性登录（Linux 服务器上使用 Xvfb）；
+- Google Chrome（默认以无头模式生成 reCAPTCHA 令牌，并承载登录）；
+- 图形界面只在一次性登录和仍需驱动 Flow 界面的命令中需要（[BROWSER_MODES](docs/BROWSER_MODES.md)）；
 - 一个有 Flow 使用权限的 Google 账号，且所在地区在 [Google 提供 Flow 服务的地区](https://support.google.com/flow/answer/16353544)之内。
 
 如果 PyPI、Chromium 下载或 Google 无法直接访问，请先阅读下文的[网络与地区](#网络与地区)。
 
-支持 **macOS**（Apple Silicon 和 Intel）、**Windows** 和 **Linux**（x86_64 / Xvfb）。
+支持 **macOS**（Apple Silicon 和 Intel）、**Windows** 和 **Linux**（x86_64）。无头令牌生成和直接 HTTP 传输在 Windows 上测量过；macOS 和 Linux 尚未测量。
 
 ```bash
 # 1 · 安装（推荐 uv；也可以用 pip install gflow-cli）
@@ -201,7 +205,7 @@ gflow auth login --browser chrome
 - **多片段运行先看费用。** `video chain`、`video extend` 和 `movie run` 支持 `--dry-run`，只显示计划而不提交；`chain` 和 `extend` 在花费积分前会先询问。
 - **绝不重复扣费。** 计费请求只发送一次，绝不自动重试；`gflow run --resume` 只重新生成本地媒体库中还没有的条目。
 - **每个错误都说明是否扣费。** 错误信息带有 `charged: yes | no | maybe` 和 `next_action`（`retry`、`reauth`、`reconcile`），在命令行的 `--json` 输出和 MCP 回复中都有（[ERRORS](docs/ERRORS.md)）。
-- **节奏接近真人。** gflow 使用真实的 Chrome 窗口，交互时间随机化，提交有节奏控制。它不轮换 IP，除非你自行设置，否则不使用代理，默认也不伪造浏览器指纹（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)）。
+- **控制节奏，不做伪装。** gflow 控制提交节奏，仍需驱动 Flow 界面的命令使用随机化的交互时间。无头浏览器会以 `HeadlessChrome` 标识自己。它不轮换 IP，除非你自行设置，否则不使用代理，默认也不伪造浏览器指纹（[ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)）。
 - **出错时明确报告。** 当 Flow 的界面发生变化时，运行会以专门的退出码停止（选择器失效为退出码 23），而不是去猜测。
 
 ## gflow-cli 与其他 Google Flow 自动化工具相比如何？
@@ -267,7 +271,7 @@ gflow auth login --browser chrome
 
 ### 能在无头环境或服务器上运行吗？
 
-登录时需要一次图形界面。生成过程会驱动真实的 Chrome 窗口，因此在 Linux 服务器上需要在 Xvfb 下运行。视频的纯 HTTP 传输被 Google 的 reCAPTCHA 阻挡（见[架构与当前限制](#架构与当前限制)）。
+大部分可以。登录时需要一次图形界面。之后，已测量的图片和视频请求形态在无头 Chrome 中生成 reCAPTCHA 令牌，并通过直接 HTTP 发送给 Flow，不会出现可见窗口。仍需驱动 Flow 界面的命令（例如 `video r2v`、`video extend`、`video edit`、`character create`）会打开有头窗口并需要图形界面；在 Linux 服务器上即需要 Xvfb。逐命令列表见 [BROWSER_MODES](docs/BROWSER_MODES.md)；macOS、Linux 以及 Flow 在 labs.google 上提供服务的账号尚未测量（见[架构与当前限制](#架构与当前限制)）。
 
 ### 除了 labs.google，它也支持 flow.google.com 吗？
 
@@ -299,7 +303,7 @@ Google 在[在哪些地区可以使用 Google Flow](https://support.google.com/f
 
 ![gflow image t2i 运行一个 9:16 提示词，输出 structlog 日志，并把 PNG 写入磁盘](https://raw.githubusercontent.com/ffroliva/gflow-cli/main/docs/assets/example-run.gif)
 
-在已登录的 Flow 账号配置（profile）上运行一次 `gflow image t2i "..." --aspect 9:16 --model nano2`。终端实时输出本次运行的 `structlog` JSON 日志，然后列出写入的 PNG 文件。Chromium 在后台静默驱动 Flow 编辑器。
+在已登录的 Flow 账号配置（profile）上运行一次 `gflow image t2i "..." --aspect 9:16 --model nano2`。终端实时输出本次运行的 `structlog` JSON 日志，然后列出写入的 PNG 文件。Chrome 仅以无头模式启动以生成 reCAPTCHA 令牌；请求本身通过直接 HTTP 发送到 Flow，因此不会打开浏览器窗口。
 
 ## 文档
 
@@ -337,14 +341,12 @@ Agent 也可以直接从命令行读取完整命令树：`gflow --help --json`�
 ## 架构与当前限制
 
 ```text
-gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (tests)
-                                              ↓
-                                      Playwright Chromium (headed — login AND generation, by default)
-                                              ↓
-                              aisandbox-pa.googleapis.com  (Google's private Flow API)
+gflow CLI / MCP server
+   ├─ measured shapes ─→ headless Chrome mints the reCAPTCHA token ─→ direct HTTP ─→ Flow
+   └─ other surfaces  ─→ headed Chrome drives Flow's interface (ui_automation)    ─→ Flow
 ```
 
-**当前传输方式：** `ui_automation` 通过持久化的 Playwright Chromium 账号配置（profile）驱动 Flow。它是生产环境使用的传输方式，并在每个版本中端到端验证（见各版本的 `LIVE_VERIFICATION_*` 实测验证记录）。
+**当前传输方式：** 对已测量的请求形态，gflow-cli 只为生成 reCAPTCHA 令牌而以无头模式启动 Chrome，然后通过直接 HTTP 把请求发送给 Flow：文生图、带一张同项目参考图或一个已保存角色的图生图、`gflow run` 中不带参考图的图片行、在已测量设置下的文生视频、基于本地首帧的图生视频，以及 1080p 视频放大。`gflow serve` 和 `gflow mcp run` 遵循相同规则。Flow 会把部分提交判定为异常活动而拒绝，且不计费；这种拒绝会从一个新的无头浏览器进程重试一次。`GFLOW_CLI_BROWSER_VISIBILITY`（`auto`、`headless`、`headed`；默认 `auto`）或 `--browser-visibility headed` 可显示窗口。逐命令列表见 [BROWSER_MODES](docs/BROWSER_MODES.md)；证据见[直接视频与无头令牌实测](https://github.com/ffroliva/gflow-cli/blob/main/docs/superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md)（[#1371](https://github.com/ffroliva/gflow-cli/issues/1371)）。v0.108.0 之前的工作方式只在一处记录：[ARCHITECTURE § Before v0.108.0](docs/ARCHITECTURE.md#before-v01080-a-headed-browser-for-generation)。
 
 **两个 Flow 前端：** Google 正在把账号从 `labs.google` 迁移到 `flow.google.com`（[#639](https://github.com/ffroliva/gflow-cli/issues/639)）。两者是同一个产品，但界面组件库和通信协议不同（使用 `batchexecute` 而不是 `aisandbox-pa`）。flow.google.com 驱动支持：
 
@@ -356,9 +358,13 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 在移植完成之前，以下功能继续使用 labs 驱动：其他 UUID 媒体引用、没有名称的实体 ID、指令卡、Imagen 4，以及矩阵中的其余部分（`GFLOW_CLI_FLOW_HOST`，见 [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)）。
 
-**目前受阻的部分：** 视频生成的纯 HTTP 传输。在非 Chrome 浏览器下，视频上传接口返回 HTTP 401，并且需要一个本项目无法在无头浏览器中生成的 reCAPTCHA 令牌。早期的三种 HTTP 方案（`evaluate_fetch`、`bearer`、`sapisidhash`）保存在 `src/gflow_cli/api/transports/experimental/` 中用于研究，未用于正式生成链路。
+**其余限制：**
 
-**你可以如何帮助：** 如果你曾在真实 Chrome 会话之外调用过 `aisandbox-pa.googleapis.com`，或者了解 Google 在这里的反机器人机制，请提交 issue。可用的 REST 传输将支持无服务器部署和真正的横向并发。详见 [docs/ARCHITECTURE.md § Headed-browser dependency](docs/ARCHITECTURE.md#headed-browser-dependency--current-limitation)。
+- 一次性的 `auth login` 是交互式的，需要图形界面。
+- 参考图生视频、`video extend`、`video edit`、带尾帧的图生视频、4K/720p/GIF 放大、`scene create`、`character create`、`instructions`、仅 Agent 编辑器、`media trash`/`restore`、基于本地 `--ref` 文件的图生图，以及任何设置了积分上限的视频运行（`--max-credits`、MCP `max_credits`），仍在有头浏览器中驱动 Flow 界面。这些界面的无头运行在 [#1554](https://github.com/ffroliva/gflow-cli/issues/1554) 中跟踪。
+- 未测量的请求形态会回退到界面路径。
+- 无头令牌生成只在 Windows 上、在 Flow 提供 flow.google.com 服务的账号上测量过。macOS、Linux 以及 Flow 在 labs.google 上提供服务的账号尚未测量。
+- 无头浏览器会以 `HeadlessChrome` 标识自己。这不是隐身技术，Google 将来也可能区别对待它。
 
 ## 项目状态
 

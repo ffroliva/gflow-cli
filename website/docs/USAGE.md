@@ -2937,13 +2937,18 @@ import asyncio
 from pathlib import Path
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model, Aspect
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.config import get_settings
 
 async def main() -> None:
     settings = get_settings()
     profile_dir = settings.profile_subdir("default")
-    async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.IMAGE4)
+    # A measured shape (here nano2 text-to-image) needs only a headless browser to mint
+    # the reCAPTCHA token; omit `visibility` for a shape that drives Flow's UI (headed).
+    async with FlowApiClient(
+        profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS
+    ) as client:
+        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.NARWHAL)
         # project_id is optional — omit it and a new project is created automatically.
         image = await client.generate_image(req=req)
         saved = await client.download_image(image, Path("lake.png"))
@@ -2951,6 +2956,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+Omitted, `visibility` follows `GFLOW_CLI_BROWSER_VISIBILITY` for a Flow UI shape (headed under `auto`). The per-command list is [BROWSER_MODES](BROWSER_MODES.md).
 
 `project_id` defaults to `None`. When omitted, `generate_image()` (and `generate_images_batch()`) call `create_project()` internally. Pass an explicit `project_id` when you want multiple generations to land in the same Flow project.
 
