@@ -30,3 +30,21 @@ Directive (2026-05-18): **real-browser authentication is mandatory** for UI-auto
 **How to apply:** Any UI-automation script/transport that drives the Flow UI must require a Chrome-strategy profile and **fail fast** with a clear error pointing to `gflow auth login --browser chrome` when `channel_for_profile()` returns `None`. The Phase 0 spike `scripts/smoke_video_editor.py` was hardened with exactly this guard in `main()` (commit a04b9b7). See [[video-generation-spec]].
 
 **Interactive sign-in inside a Playwright-driven browser is now allowed — with flags.** If you write one, it must carry `--disable-blink-features=AutomationControlled`, `ignore_default_args=["--enable-automation"]`, `chromium_sandbox=True` (Playwright otherwise injects `--no-sandbox`, which is both an automation signal and Chrome's "unsupported command-line flag" banner) and `no_viewport=True` (an explicit `viewport=` emulates a size independent of the OS window and pushes Google's sign-in form off-screen on scaled displays). Both stealth flags were only ever measured together; keep both.
+
+## Amendment (2026-11-28, v0.108.0): headless token mint by default
+
+**What changed.** From v0.108.0 the measured request shapes (text-to-image and image-to-image with
+the measured models, text-to-video and local-frame image-to-video at measured settings, the 1080p
+upscale) no longer drive the Flow UI. Chrome starts **headless** only to mint the
+reCAPTCHA-Enterprise token in a real Flow page, and the request goes to Flow over direct HTTP
+(`batchexecute`). The evidence is
+[`2026-11-27-direct-video-and-headless-mint`](../spikes/2026-11-27-direct-video-and-headless-mint.md):
+headless mints were accepted at a rate comparable to headed ones, and page freshness, not
+visibility, decided acceptance. A not-charged refusal is retried once from a fresh headless process.
+
+**What did not change.** The real browser is still required: the token is minted only inside a real
+Flow page in the profile's Chrome, never synthesised, stored or replayed. Every unmeasured surface
+(r2v, extend, edit, end-frame i2v, 4K/720p/GIF upscale, scenes, characters, instructions, the agent
+composer, credit-capped video) still drives the Flow UI, headed. The Chrome-channel rule above binds
+headless launches exactly as headed ones: a marker-less profile still downgrades to bundled Chromium,
+so generation paths still require a Chrome-strategy profile.

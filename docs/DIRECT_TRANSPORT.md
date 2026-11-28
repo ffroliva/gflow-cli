@@ -87,8 +87,10 @@ had left the process when it failed.
 Every rejected reply drops the cached session token, so a stale one cannot stick in a
 long-running MCP server or worker. A reCAPTCHA mint is retried for up to 10 seconds while the
 page loads its reCAPTCHA script, because a mint spends nothing. The armed page is reused for the
-life of one process; a page idle for more than 600 s re-arms before it mints, and a page Flow
-refused is discarded. At most 4 direct submits are in flight per process and profile.
+life of one command, or of one MCP tool call or worker job (a long-running `gflow serve` or
+`gflow mcp run` opens a new browser session per job); a page idle for more than 600 s re-arms
+before it mints, and a page Flow refused is discarded. At most 4 direct submits are in flight per
+command or job, and submits refused together share one relaunch.
 
 ## What it records
 

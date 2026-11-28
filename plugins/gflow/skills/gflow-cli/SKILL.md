@@ -2,7 +2,7 @@
 name: gflow-cli
 version: "1.2"
 skillopt_epoch: 0
-description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Flow commands drive the real Flow web UI through headed Chrome; audio narration uses an external TTS provider and needs no Flow account.
+description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Flow commands run in real Chrome: for measured request shapes it starts headless only to mint the reCAPTCHA token and sends the request over direct HTTP, and the other surfaces drive the Flow web UI headed; audio narration uses an external TTS provider and needs no Flow account.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'

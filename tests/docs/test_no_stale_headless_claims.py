@@ -9,6 +9,7 @@ _STALE = (
     "Headless Chromium is rejected",
     "headless mode *causes*",
     "cannot create in a headless browser",
+    "drive the real Flow web UI through headed Chrome",
 )
 _HISTORY = re.compile(r"<!-- history -->.*?<!-- /history -->", re.DOTALL)
 

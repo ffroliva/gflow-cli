@@ -34,9 +34,12 @@ transport.
   instructions, the agent-only composer, `media trash` / `restore`, image-to-image with a local
   `--ref`, and any credit-capped video. Running those headless is tracked in
   [#1554](https://github.com/ffroliva/gflow-cli/issues/1554).
-- **Limits per process:** at most 4 direct submits in flight per profile; a page idle for more
-  than 600 s re-arms before it mints; a refused page is discarded. A zero video balance ends a
-  planned direct video with exit 37 before any browser starts.
+- **Limits per command or job:** at most 4 direct submits in flight in one command, MCP tool
+  call or worker job (a long-running `gflow serve` or MCP server opens a new browser session per
+  job, so the limit, the start-rate warning and the armed page do not carry between jobs); a page
+  idle for more than 600 s re-arms before it mints; a refused page is discarded; submits refused
+  together share one relaunch. A zero video balance ends a planned direct video with exit 37
+  before any browser starts.
 - **Unmeasured:** macOS, Linux, and accounts Flow serves on labs.google (those take the UI path).
 - The per-command list is the new [docs/BROWSER_MODES.md](docs/BROWSER_MODES.md).
 

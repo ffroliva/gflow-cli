@@ -126,14 +126,19 @@ and take the UI path. A headed launch on Linux with neither `DISPLAY` nor `WAYLA
 fails with `UiModeUnavailableError` (exit 28); a headless launch needs no display. The headless
 browser announces `HeadlessChrome`; it is not stealth ([ACCOUNT_SAFETY](ACCOUNT_SAFETY.md)).
 
-## Limits per process
+## Limits per command or job
+
+Each limit belongs to one browser session: one CLI command, or one MCP tool call or worker job.
+A long-running `gflow serve` or `gflow mcp run` opens a new session for every job, so nothing
+below (the in-flight count, the start history, the armed page) carries from one job to the next.
 
 | Value | Design value |
 |---|---|
-| Direct submits in flight per process and profile | at most 4 (`GFLOW_CLI_CONCURRENCY` cannot raise it) |
-| Start-rate warning | `direct.start_rate_high` is logged when more than 8 submits start within 120 s on one profile; nothing is blocked |
+| Direct submits in flight per command or job | at most 4 (`GFLOW_CLI_CONCURRENCY` cannot raise it) |
+| Start-rate warning | `direct.start_rate_high` is logged when more than 8 submits start within 120 s in one command or job; nothing is blocked, and separate jobs are not counted together |
 | Re-arm | a page idle for more than 600 s (wall clock, so a resumed laptop counts) re-arms before it mints |
 | Refused page | discarded; the next mint uses a new page |
+| Relaunch after a refusal | at most one per refusal window: submits refused together share one fresh browser process |
 
 ## Forcing a mode
 
