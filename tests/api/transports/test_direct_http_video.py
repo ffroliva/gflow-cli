@@ -643,3 +643,37 @@ def test_crop_rounding_to_zero_sends_null() -> None:
     """A fraction that rounds to 0 is sent as null, one that rounds to 1 as the integer 1."""
     box = centred_crop(16_000_001, 9_000_000, aspect_slot=2)
     assert json.dumps(box) == "[null, null, 1, 1]"
+
+
+@pytest.mark.asyncio
+async def test_logs_never_carry_token_or_signed_url(tmp_path: Path) -> None:
+    """Row 29: a refused, retried and finished direct clip, then one past the send that ends
+    indeterminate, log their path events; no event carries the token, a cookie, the prompt
+    or the signed mp4 URL."""
+    from structlog.testing import capture_logs
+
+    flow = _happy(YhhmEf=[_error_frame("YhhmEf", UNUSUAL_ACTIVITY_REASON), _submitted()])
+    client, _ = _client(tmp_path, flow)
+    with capture_logs() as logs:
+        result = await client.generate_video(req=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path)
+        lost = _happy(as29s=[_done("as29s", url=None)])
+        lost_client, _ = _client(tmp_path, lost)
+        with pytest.raises(WireFormatError):
+            await lost_client.generate_video(req=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path)
+
+    assert (result.transport, result.visibility, result.retried) == (
+        "direct_http",
+        "headless",
+        True,
+    )
+    events = {e["event"]: e for e in logs}
+    assert events["mint.retried"]["visibility"] == "headless"
+    assert events["mint.retried"]["new_process"] is True
+    assert events["mint.rearmed"]["reason"] == "refused"
+    for name in ("direct.video_post", "direct.video_poll", "direct.indeterminate"):
+        assert name in events, name
+    path = events["generation.path"]
+    assert (path["route"], path["visibility"], path["retried"]) == ("direct", "headless", True)
+    text = repr(logs)
+    for secret in ("mock_token", "sid-1", _OMNI_T2V.prompt, _VIDEO_URL, "Signature="):
+        assert secret not in text, secret

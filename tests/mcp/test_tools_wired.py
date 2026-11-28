@@ -53,6 +53,8 @@ class _FakeImage:
     fife_url: str = "http://fake"
     display_name: str | None = None  # mirrors GeneratedImage.display_name
     transport: str | None = None  # mirrors GeneratedImage.transport
+    visibility: str | None = None  # mirrors GeneratedImage.visibility
+    retried: bool = False  # mirrors GeneratedImage.retried
 
 
 def _completed_video_result(media_id: str = "media-vid-wired") -> VideoResult:

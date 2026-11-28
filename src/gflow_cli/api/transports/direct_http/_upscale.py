@@ -109,6 +109,7 @@ async def run_direct_upscale(
                 why = f"{', '.join(ended.outcome.reasons)}, gRPC {ended.outcome.code}"
                 raise _unavailable(source.media_id, why) from ended
             raise
+        log.info("direct.upscale_post", media_id=source.media_id)
         read = _reader(client, page, profile_dir, shell, f"/project/{project_id}")
         record = await _poll(
             read, f"{source.workflow_id}_upsampled", _POLL_TIMEOUT_S, poll_interval_s
