@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
+import structlog
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.submit_policy import not_sent
@@ -15,6 +17,11 @@ from gflow_cli.config import get_settings
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
+
+log = structlog.get_logger(__name__)
+
+#: The composer's saved picker state on flow.google.com (spike 2026-11-27-selected-video-model).
+PROMPT_BOX_SETTINGS_KEY = "flow-prompt-box-settings"
 
 _AUTH_REASONS = frozenset(
     {
@@ -74,3 +81,19 @@ async def _shell(client: httpx.AsyncClient, page: Page, profile_dir: Path) -> fl
         except Exception as exc:
             raise not_sent(f"shell_tokens:{type(exc).__name__}") from exc
     raise AssertionError("unreachable")  # pragma: no cover - the loop returns or raises
+
+
+async def _prompt_box_settings(page: Page) -> dict[str, object] | None:
+    """The account's selected composer settings, or ``None`` when they cannot be read.
+
+    One ``localStorage`` read on a page already on flow.google.com (the armed mint page): no
+    navigation, no click. ``localStorage`` belongs to the browser profile, which is the gflow
+    profile, so this is the selection Flow's own UI would send.
+    """
+    try:
+        raw = await page.evaluate("k => localStorage.getItem(k)", PROMPT_BOX_SETTINGS_KEY)
+        parsed: object = json.loads(raw) if isinstance(raw, str) else None
+    except Exception as exc:  # noqa: BLE001 - an unread selection routes to the UI path
+        log.info("direct.selection_unread", cause=type(exc).__name__)
+        return None
+    return cast("dict[str, object]", parsed) if isinstance(parsed, dict) else None
