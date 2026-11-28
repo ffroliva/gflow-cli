@@ -150,8 +150,8 @@ def _characters_measured(request: GenerateImageRequest) -> bool:
 def choose_image_route(
     request: GenerateImageRequest,
     *,
-    flow_host: str = "",
-    proxy_configured: bool = False,
+    flow_host: str,
+    proxy_configured: bool,
 ) -> Route:
     """Decide whether an image generation request can be served directly over HTTP.
 
@@ -169,9 +169,9 @@ def choose_image_route(
 def choose_video_route(
     request: GenerateVideoRequest | ExtendVideoRequest | EditVideoRequest,
     *,
-    flow_host: str = "",
-    proxy_configured: bool = False,
-    effective_max_credits: int | None = None,
+    flow_host: str,
+    proxy_configured: bool,
+    effective_max_credits: int | None,
 ) -> Route:
     """Decide whether a video generation request can be served directly over HTTP.
 
@@ -253,8 +253,8 @@ def choose_upscale_route(
     scale: str,
     catalog_row: object | None,
     *,
-    flow_host: str = "",
-    proxy_configured: bool = False,
+    flow_host: str,
+    proxy_configured: bool,
 ) -> Route:
     """Decide whether a video upscale request can be served directly over HTTP.
 

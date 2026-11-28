@@ -82,9 +82,38 @@ def test_route_never_reads_settings_or_environment(monkeypatch: pytest.MonkeyPat
     )
     row = FakeCatalogRow()
 
-    assert choose_image_route(img_req) == Route.DIRECT
-    assert choose_video_route(vid_req) == Route.DIRECT
-    assert choose_upscale_route("1080p", row) == Route.DIRECT
+    assert choose_image_route(img_req, flow_host="", proxy_configured=False) == Route.DIRECT
+    assert (
+        choose_video_route(
+            vid_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.DIRECT
+    )
+    assert choose_upscale_route("1080p", row, flow_host="", proxy_configured=False) == Route.DIRECT
+
+
+def test_route_functions_have_no_environment_defaults() -> None:
+    """Environmental parameters must be required keyword-only with no default."""
+    import inspect
+
+    expected_params: dict[object, set[str]] = {
+        choose_image_route: {"flow_host", "proxy_configured"},
+        choose_video_route: {"flow_host", "proxy_configured", "effective_max_credits"},
+        choose_upscale_route: {"flow_host", "proxy_configured"},
+    }
+
+    for fn, params in expected_params.items():
+        assert callable(fn)
+        sig = inspect.signature(fn)
+        for param_name in params:
+            assert param_name in sig.parameters, f"{fn.__name__} missing parameter {param_name}"
+            param = sig.parameters[param_name]
+            assert param.kind == inspect.Parameter.KEYWORD_ONLY, (
+                f"{fn.__name__}.{param_name} must be keyword-only"
+            )
+            assert param.default is inspect.Parameter.empty, (
+                f"{fn.__name__}.{param_name} must not have a default (was {param.default!r})"
+            )
 
 
 def test_extend_and_edit_video_route_ui() -> None:
@@ -101,13 +130,23 @@ def test_extend_and_edit_video_route_ui() -> None:
         model_key="veo_3_1_extension_lite",
         aspect="16:9",
     )
-    assert choose_video_route(extend_req) == Route.UI
+    assert (
+        choose_video_route(
+            extend_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     edit_req = EditVideoRequest(
         prompt="edit clip",
         source_media_id="00000000-0000-0000-0000-000000000001",
     )
-    assert choose_video_route(edit_req) == Route.UI
+    assert (
+        choose_video_route(
+            edit_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
 
 def test_unmeasured_shapes_route_ui() -> None:
@@ -121,7 +160,12 @@ def test_unmeasured_shapes_route_ui() -> None:
         mode=Mode.R2V,
         reference_images=(Path("ref.png"),),
     )
-    assert choose_video_route(r2v_req) == Route.UI
+    assert (
+        choose_video_route(
+            r2v_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Extend
     extend_req = ExtendVideoRequest(
@@ -133,14 +177,24 @@ def test_unmeasured_shapes_route_ui() -> None:
         model_key="veo_3_1_extension_lite",
         aspect="16:9",
     )
-    assert choose_video_route(extend_req) == Route.UI
+    assert (
+        choose_video_route(
+            extend_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Edit
     edit_req = EditVideoRequest(
         prompt="edit clip",
         source_media_id="00000000-0000-0000-0000-000000000001",
     )
-    assert choose_video_route(edit_req) == Route.UI
+    assert (
+        choose_video_route(
+            edit_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # End frame on I2V
     end_frame_req = GenerateVideoRequest(
@@ -153,7 +207,12 @@ def test_unmeasured_shapes_route_ui() -> None:
         start_image=Path("start.png"),
         end_image=Path("end.png"),
     )
-    assert choose_video_route(end_frame_req) == Route.UI
+    assert (
+        choose_video_route(
+            end_frame_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Ingredients (reference images on R2V)
     ingredients_req = GenerateVideoRequest(
@@ -161,7 +220,12 @@ def test_unmeasured_shapes_route_ui() -> None:
         mode=Mode.R2V,
         reference_images=(Path("ingredient.png"),),
     )
-    assert choose_video_route(ingredients_req) == Route.UI
+    assert (
+        choose_video_route(
+            ingredients_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Character reference entities (on R2V)
     char_req = GenerateVideoRequest(
@@ -170,10 +234,18 @@ def test_unmeasured_shapes_route_ui() -> None:
         reference_entities=("char-uuid",),
         reference_entity_names=("CharName",),
     )
-    assert choose_video_route(char_req) == Route.UI
+    assert (
+        choose_video_route(
+            char_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # 4K upscale
-    assert choose_upscale_route("4K", FakeCatalogRow()) == Route.UI
+    assert (
+        choose_upscale_route("4K", FakeCatalogRow(), flow_host="", proxy_configured=False)
+        == Route.UI
+    )
 
     # Omni I2V at 9:16 (unmeasured: only 16:9 is measured)
     omni_i2v_portrait = GenerateVideoRequest(
@@ -185,7 +257,12 @@ def test_unmeasured_shapes_route_ui() -> None:
         aspect=VideoAspect.PORTRAIT,
         start_image=Path("start.png"),
     )
-    assert choose_video_route(omni_i2v_portrait) == Route.UI
+    assert (
+        choose_video_route(
+            omni_i2v_portrait, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
 
 def test_credit_capped_video_routes_ui() -> None:
@@ -200,7 +277,12 @@ def test_credit_capped_video_routes_ui() -> None:
         aspect=VideoAspect.LANDSCAPE,
         max_credits=10,
     )
-    assert choose_video_route(req_capped) == Route.UI
+    assert (
+        choose_video_route(
+            req_capped, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Cap passed as effective_max_credits
     req_uncapped = GenerateVideoRequest(
@@ -211,10 +293,20 @@ def test_credit_capped_video_routes_ui() -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_video_route(req_uncapped, effective_max_credits=10) == Route.UI
+    assert (
+        choose_video_route(
+            req_uncapped, flow_host="", proxy_configured=False, effective_max_credits=10
+        )
+        == Route.UI
+    )
 
     # No cap routes direct
-    assert choose_video_route(req_uncapped, effective_max_credits=None) == Route.DIRECT
+    assert (
+        choose_video_route(
+            req_uncapped, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.DIRECT
+    )
 
 
 test_capped_video_routes_ui = test_credit_capped_video_routes_ui
@@ -232,7 +324,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 duration=4,
                 resolution="360p",
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.DIRECT
     )
@@ -247,7 +342,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 duration=4,
                 resolution="360p",
                 aspect=VideoAspect.PORTRAIT,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.DIRECT
     )
@@ -263,7 +361,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 resolution="360p",
                 aspect=VideoAspect.LANDSCAPE,
                 start_image=Path("start.png"),
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.DIRECT
     )
@@ -278,7 +379,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 duration=None,
                 resolution=None,
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.DIRECT
     )
@@ -294,7 +398,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 resolution=None,
                 aspect=VideoAspect.PORTRAIT,
                 start_image=Path("start.png"),
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.DIRECT
     )
@@ -307,7 +414,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 mode=Mode.T2V,
                 model=VideoModel.VEO_3_1_FAST,
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.UI
     )
@@ -320,7 +430,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 mode=Mode.T2V,
                 model=VideoModel.VEO_3_1_QUALITY,
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.UI
     )
@@ -335,7 +448,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 duration=4,
                 resolution="360p",
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.UI
     )
@@ -350,7 +466,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 duration=6,
                 resolution="360p",
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.UI
     )
@@ -365,7 +484,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 duration=4,
                 resolution="720p",
                 aspect=VideoAspect.LANDSCAPE,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.UI
     )
@@ -381,7 +503,10 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
                 resolution="360p",
                 aspect=VideoAspect.LANDSCAPE,
                 count=2,
-            )
+            ),
+            flow_host="",
+            proxy_configured=False,
+            effective_max_credits=None,
         )
         == Route.UI
     )
@@ -397,7 +522,12 @@ def test_i2v_model_none_normalises_to_veo_3_1_i2v_lite_and_routes_direct() -> No
         aspect=VideoAspect.PORTRAIT,
         start_image=Path("start.png"),
     )
-    assert choose_video_route(i2v_req) == Route.DIRECT
+    assert (
+        choose_video_route(
+            i2v_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.DIRECT
+    )
 
     # T2V with model=None routes UI
     t2v_req = GenerateVideoRequest(
@@ -406,7 +536,12 @@ def test_i2v_model_none_normalises_to_veo_3_1_i2v_lite_and_routes_direct() -> No
         model=None,
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_video_route(t2v_req) == Route.UI
+    assert (
+        choose_video_route(
+            t2v_req, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
 
 def test_omni_with_unset_duration_or_resolution_routes_ui() -> None:
@@ -420,7 +555,12 @@ def test_omni_with_unset_duration_or_resolution_routes_ui() -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_video_route(req_no_dur) == Route.UI
+    assert (
+        choose_video_route(
+            req_no_dur, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Unset resolution
     req_no_res = GenerateVideoRequest(
@@ -431,7 +571,12 @@ def test_omni_with_unset_duration_or_resolution_routes_ui() -> None:
         resolution=None,
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_video_route(req_no_res) == Route.UI
+    assert (
+        choose_video_route(
+            req_no_res, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
     # Unset both
     req_neither = GenerateVideoRequest(
@@ -442,7 +587,12 @@ def test_omni_with_unset_duration_or_resolution_routes_ui() -> None:
         resolution=None,
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_video_route(req_neither) == Route.UI
+    assert (
+        choose_video_route(
+            req_neither, flow_host="", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
 
 def test_proxy_routes_ui() -> None:
@@ -456,8 +606,11 @@ def test_proxy_routes_ui() -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_image_route(img_req, proxy_configured=True) == Route.UI
-    assert choose_video_route(vid_req, proxy_configured=True) == Route.UI
+    assert choose_image_route(img_req, flow_host="", proxy_configured=True) == Route.UI
+    assert (
+        choose_video_route(vid_req, flow_host="", proxy_configured=True, effective_max_credits=None)
+        == Route.UI
+    )
 
 
 def test_labs_host_routes_ui() -> None:
@@ -471,47 +624,109 @@ def test_labs_host_routes_ui() -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
     )
-    assert choose_image_route(img_req, flow_host="labs.google") == Route.UI
-    assert choose_video_route(vid_req, flow_host="labs.google") == Route.UI
+    assert choose_image_route(img_req, flow_host="labs.google", proxy_configured=False) == Route.UI
+    assert (
+        choose_video_route(
+            vid_req, flow_host="labs.google", proxy_configured=False, effective_max_credits=None
+        )
+        == Route.UI
+    )
 
 
 def test_upscale_source_not_in_catalog_routes_ui() -> None:
     """choose_upscale_route routes DIRECT only for 1080p and measured catalog source."""
     # Not in catalog
-    assert choose_upscale_route("1080p", None) == Route.UI
+    assert choose_upscale_route("1080p", None, flow_host="", proxy_configured=False) == Route.UI
 
     # Missing workflow_id
     assert (
-        choose_upscale_route("1080p", FakeCatalogRow(workflow_id=None, flow_workflow_id=None))
+        choose_upscale_route(
+            "1080p",
+            FakeCatalogRow(workflow_id=None, flow_workflow_id=None),
+            flow_host="",
+            proxy_configured=False,
+        )
         == Route.UI
     )
 
     # Missing aspect
-    assert choose_upscale_route("1080p", FakeCatalogRow(aspect=None, aspect_ratio=None)) == Route.UI
+    assert (
+        choose_upscale_route(
+            "1080p",
+            FakeCatalogRow(aspect=None, aspect_ratio=None),
+            flow_host="",
+            proxy_configured=False,
+        )
+        == Route.UI
+    )
 
     # Unmeasured model sources
-    assert choose_upscale_route("1080p", FakeCatalogRow(model="veo_3_1_lite")) == Route.UI
-    assert choose_upscale_route("1080p", FakeCatalogRow(model="veo_3_1_quality")) == Route.UI
+    assert (
+        choose_upscale_route(
+            "1080p",
+            FakeCatalogRow(model="veo_3_1_lite"),
+            flow_host="",
+            proxy_configured=False,
+        )
+        == Route.UI
+    )
+    assert (
+        choose_upscale_route(
+            "1080p",
+            FakeCatalogRow(model="veo_3_1_quality"),
+            flow_host="",
+            proxy_configured=False,
+        )
+        == Route.UI
+    )
 
     # Measured source clips: 1080p -> DIRECT
     assert (
-        choose_upscale_route("1080p", FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"))
+        choose_upscale_route(
+            "1080p",
+            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            flow_host="",
+            proxy_configured=False,
+        )
         == Route.DIRECT
     )
     assert (
-        choose_upscale_route("1080p", FakeCatalogRow(model="macaron_cookie_i2v_4s_360p"))
+        choose_upscale_route(
+            "1080p",
+            FakeCatalogRow(model="macaron_cookie_i2v_4s_360p"),
+            flow_host="",
+            proxy_configured=False,
+        )
         == Route.DIRECT
     )
 
     # Non-1080p scales -> UI
     assert (
-        choose_upscale_route("4K", FakeCatalogRow(model="macaron_cookie_t2v_4s_360p")) == Route.UI
+        choose_upscale_route(
+            "4K",
+            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            flow_host="",
+            proxy_configured=False,
+        )
+        == Route.UI
     )
     assert (
-        choose_upscale_route("720p", FakeCatalogRow(model="macaron_cookie_t2v_4s_360p")) == Route.UI
+        choose_upscale_route(
+            "720p",
+            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            flow_host="",
+            proxy_configured=False,
+        )
+        == Route.UI
     )
     assert (
-        choose_upscale_route("GIF", FakeCatalogRow(model="macaron_cookie_t2v_4s_360p")) == Route.UI
+        choose_upscale_route(
+            "GIF",
+            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            flow_host="",
+            proxy_configured=False,
+        )
+        == Route.UI
     )
 
 
@@ -547,7 +762,14 @@ def test_auto_ui_route_launches_headed() -> None:
     # R2V
     r2v_req = GenerateVideoRequest(prompt="p", mode=Mode.R2V, reference_images=(Path("r.png"),))
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_video_route(r2v_req)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [
+                choose_video_route(
+                    r2v_req, flow_host="", proxy_configured=False, effective_max_credits=None
+                )
+            ],
+        )
         == BrowserVisibility.HEADED
     )
 
@@ -560,25 +782,44 @@ def test_auto_ui_route_launches_headed() -> None:
         resolution="360p",
         aspect=VideoAspect.LANDSCAPE,
         start_image=Path("s.png"),
-        end_image=Path("e.png"),
+        end_image=Path("end.png"),
     )
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_video_route(end_frame_req)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [
+                choose_video_route(
+                    end_frame_req,
+                    flow_host="",
+                    proxy_configured=False,
+                    effective_max_credits=None,
+                )
+            ],
+        )
         == BrowserVisibility.HEADED
     )
 
     # 4K / 720p / GIF upscale
     valid_row = FakeCatalogRow(model="macaron_cookie_t2v_4s_360p")
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_upscale_route("4K", valid_row)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [choose_upscale_route("4K", valid_row, flow_host="", proxy_configured=False)],
+        )
         == BrowserVisibility.HEADED
     )
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_upscale_route("720p", valid_row)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [choose_upscale_route("720p", valid_row, flow_host="", proxy_configured=False)],
+        )
         == BrowserVisibility.HEADED
     )
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_upscale_route("GIF", valid_row)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [choose_upscale_route("GIF", valid_row, flow_host="", proxy_configured=False)],
+        )
         == BrowserVisibility.HEADED
     )
 
@@ -589,7 +830,10 @@ def test_auto_ui_route_launches_headed() -> None:
         ref_paths=[Path("local.png")],
     )
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_image_route(local_ref_req)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [choose_image_route(local_ref_req, flow_host="", proxy_configured=False)],
+        )
         == BrowserVisibility.HEADED
     )
     local_ref_obj_req = GenerateImageRequest(
@@ -598,7 +842,10 @@ def test_auto_ui_route_launches_headed() -> None:
         refs=[ImageRef("ref-uuid", local_path="local.png", local_sha256="sha256abc")],
     )
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_image_route(local_ref_obj_req)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [choose_image_route(local_ref_obj_req, flow_host="", proxy_configured=False)],
+        )
         == BrowserVisibility.HEADED
     )
 
@@ -613,7 +860,14 @@ def test_auto_ui_route_launches_headed() -> None:
         max_credits=5,
     )
     assert (
-        plan_visibility(VisibilitySetting.AUTO, [choose_video_route(capped_vid)])
+        plan_visibility(
+            VisibilitySetting.AUTO,
+            [
+                choose_video_route(
+                    capped_vid, flow_host="", proxy_configured=False, effective_max_credits=None
+                )
+            ],
+        )
         == BrowserVisibility.HEADED
     )
 
@@ -627,7 +881,14 @@ def test_explicit_headless_keeps_ui_shapes_headless() -> None:
     # Unmeasured UI shape under explicit headless
     r2v_req = GenerateVideoRequest(prompt="p", mode=Mode.R2V, reference_images=(Path("r.png"),))
     assert (
-        plan_visibility(VisibilitySetting.HEADLESS, [choose_video_route(r2v_req)])
+        plan_visibility(
+            VisibilitySetting.HEADLESS,
+            [
+                choose_video_route(
+                    r2v_req, flow_host="", proxy_configured=False, effective_max_credits=None
+                )
+            ],
+        )
         == BrowserVisibility.HEADLESS
     )
 
@@ -678,7 +939,7 @@ def test_gem_pix_2_route_mirrors_harbor_seal() -> None:
         aspect=ImageAspect.PORTRAIT,
         count=1,
     )
-    assert choose_image_route(req_direct) == Route.DIRECT
+    assert choose_image_route(req_direct, flow_host="", proxy_configured=False) == Route.DIRECT
 
     # 16:9 (landscape) -> UI
     req_land = GenerateImageRequest(
@@ -687,7 +948,7 @@ def test_gem_pix_2_route_mirrors_harbor_seal() -> None:
         aspect=ImageAspect.LANDSCAPE,
         count=1,
     )
-    assert choose_image_route(req_land) == Route.UI
+    assert choose_image_route(req_land, flow_host="", proxy_configured=False) == Route.UI
 
     # n2 -> UI
     req_n2 = GenerateImageRequest(
@@ -696,7 +957,7 @@ def test_gem_pix_2_route_mirrors_harbor_seal() -> None:
         aspect=ImageAspect.PORTRAIT,
         count=2,
     )
-    assert choose_image_route(req_n2) == Route.UI
+    assert choose_image_route(req_n2, flow_host="", proxy_configured=False) == Route.UI
 
     # reference -> UI
     req_ref = GenerateImageRequest(
@@ -706,7 +967,7 @@ def test_gem_pix_2_route_mirrors_harbor_seal() -> None:
         count=1,
         refs=[ImageRef("uuid-1", in_project=True, display_name="img1")],
     )
-    assert choose_image_route(req_ref) == Route.UI
+    assert choose_image_route(req_ref, flow_host="", proxy_configured=False) == Route.UI
 
 
 def test_direct_can_serve_rules() -> None:
