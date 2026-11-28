@@ -178,11 +178,13 @@ def test_a_video_source_returns_its_workflow() -> None:
 # --- the route guard's verdicts (mitigation 3) ------------------------------
 
 
-_IDS: dict[str, Any] = {"media_id": MEDIA, "workflow_id": WF, "aspect": None}
+_EXPECT = mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect=None)
 
 
 def _check(rpcid: str, body: str, aspect: str | None = None) -> Any:
-    return mx.extend_request_problem(rpcid, body, media_id=MEDIA, workflow_id=WF, aspect=aspect)
+    return mx.extend_request_problem(
+        rpcid, body, mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect=aspect)
+    )
 
 
 def test_the_page_built_requests_pass() -> None:
@@ -226,7 +228,9 @@ def test_a_matching_or_absent_aspect_passes() -> None:
     "body", [_fzytfe(wf=OTHER_WF), _fzytfe(aspect_idx=1), 'f.req=[[["fZytfe", 1]]]']
 )
 def test_no_verdict_ever_carries_the_token(body: str) -> None:
-    err = mx.extend_request_problem("fZytfe", body, media_id=MEDIA, workflow_id=WF, aspect="16:9")
+    err = mx.extend_request_problem(
+        "fZytfe", body, mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect="16:9")
+    )
     assert err is not None
     assert TOKEN not in str(err)
     assert TOKEN[:40] not in err.detail
@@ -597,7 +601,7 @@ async def test_a_second_extend_after_a_released_one_is_aborted(
 
 def test_the_observer_check_judges_every_frame_of_a_batch() -> None:
     body = _BatchedRequest(("uwAyfb", [SCENE]), ("fZytfe", _fzytfe_inner(wf=OTHER_WF))).post_data
-    assert mx.batch_request_problem(["uwAyfb"], body, **_IDS) is not None
+    assert mx.batch_request_problem(["uwAyfb"], body, _EXPECT) is not None
 
 
 @pytest.mark.asyncio
@@ -792,64 +796,56 @@ def test_extend_guard_verifies_duration_and_reference_ids() -> None:
         mx.extend_request_problem(
             "fZytfe",
             good,
-            media_id=MEDIA,
-            workflow_id=WF,
-            aspect="16:9",
-            duration=6,
-            expected_reference_ids=(REF1, REF2),
+            mx.ExtendExpectation(
+                media_id=MEDIA,
+                workflow_id=WF,
+                aspect="16:9",
+                duration=6,
+                reference_ids=(REF1, REF2),
+            ),
         )
         is None
     )
     wrong_dur = mx.extend_request_problem(
         "fZytfe",
         good,
-        media_id=MEDIA,
-        workflow_id=WF,
-        aspect="16:9",
-        duration=5,
-        expected_reference_ids=(REF1, REF2),
+        mx.ExtendExpectation(
+            media_id=MEDIA, workflow_id=WF, aspect="16:9", duration=5, reference_ids=(REF1, REF2)
+        ),
     )
     assert isinstance(wrong_dur, WireFormatError)
     missing_ref = mx.extend_request_problem(
         "fZytfe",
         _fzytfe_with_refs(key="macaron_cookie_extend_6s", ref_ids=(REF1,)),
-        media_id=MEDIA,
-        workflow_id=WF,
-        aspect="16:9",
-        duration=6,
-        expected_reference_ids=(REF1, REF2),
+        mx.ExtendExpectation(
+            media_id=MEDIA, workflow_id=WF, aspect="16:9", duration=6, reference_ids=(REF1, REF2)
+        ),
     )
     assert isinstance(missing_ref, WireFormatError)
     assert REF2 in missing_ref.detail
     extra_ref = mx.extend_request_problem(
         "fZytfe",
         _fzytfe_with_refs(key="macaron_cookie_extend_6s", ref_ids=(REF1,)),
-        media_id=MEDIA,
-        workflow_id=WF,
-        aspect="16:9",
-        duration=6,
-        expected_reference_ids=(),
+        mx.ExtendExpectation(
+            media_id=MEDIA, workflow_id=WF, aspect="16:9", duration=6, reference_ids=()
+        ),
     )
     assert isinstance(extra_ref, WireFormatError)
     reordered = mx.extend_request_problem(
         "fZytfe",
         _fzytfe_with_refs(key="macaron_cookie_extend_6s", ref_ids=(REF2, REF1)),
-        media_id=MEDIA,
-        workflow_id=WF,
-        aspect="16:9",
-        duration=6,
-        expected_reference_ids=(REF1, REF2),
+        mx.ExtendExpectation(
+            media_id=MEDIA, workflow_id=WF, aspect="16:9", duration=6, reference_ids=(REF1, REF2)
+        ),
     )
     assert isinstance(reordered, WireFormatError)
     assert "order" in reordered.detail
     duplicated = mx.extend_request_problem(
         "fZytfe",
         _fzytfe_with_refs(key="macaron_cookie_extend_6s", ref_ids=(REF1, REF1)),
-        media_id=MEDIA,
-        workflow_id=WF,
-        aspect="16:9",
-        duration=6,
-        expected_reference_ids=(REF1,),
+        mx.ExtendExpectation(
+            media_id=MEDIA, workflow_id=WF, aspect="16:9", duration=6, reference_ids=(REF1,)
+        ),
     )
     assert isinstance(duplicated, WireFormatError)
 
@@ -859,7 +855,7 @@ def test_extend_guard_rejects_multiple_entries_or_frames() -> None:
     two_entries = _body("fZytfe", [[inner[0][0], inner[0][0]], inner[1], inner[2]])
     assert isinstance(
         mx.extend_request_problem(
-            "fZytfe", two_entries, media_id=MEDIA, workflow_id=WF, aspect=None
+            "fZytfe", two_entries, mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect=None)
         ),
         WireFormatError,
     )
@@ -872,7 +868,7 @@ def test_extend_guard_rejects_multiple_entries_or_frames() -> None:
     two_frames = f"f.req={json.dumps(outer)}&at=x&"
     assert isinstance(
         mx.extend_request_problem(
-            "fZytfe", two_frames, media_id=MEDIA, workflow_id=WF, aspect=None
+            "fZytfe", two_frames, mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect=None)
         ),
         WireFormatError,
     )
@@ -1340,7 +1336,9 @@ def test_an_unreadable_reference_entry_fails_closed(unreadable: list[Any]) -> No
     entry = mx._at(mx._inner("fZytfe", body), 0, 0)  # noqa: SLF001
     assert mx._at(entry, 8) == unreadable  # noqa: SLF001 - the fixture really carries it
     err = mx.extend_request_problem(
-        "fZytfe", body, media_id=MEDIA, workflow_id=WF, aspect=None, expected_reference_ids=()
+        "fZytfe",
+        body,
+        mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect=None, reference_ids=()),
     )
     assert isinstance(err, WireFormatError)
     assert "reference slots" in err.detail
@@ -1775,3 +1773,11 @@ async def test_every_expectation_field_reaches_both_submit_checks(
         duration=6,
         poll_timeout_s=30.0,
     )
+
+
+def test_extend_expectation_is_frozen() -> None:
+    from dataclasses import FrozenInstanceError
+
+    expect = mx.ExtendExpectation(media_id=MEDIA, workflow_id=WF, aspect=None)
+    with pytest.raises(FrozenInstanceError):
+        expect.duration = 6  # type: ignore[misc]

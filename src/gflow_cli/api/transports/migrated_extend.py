@@ -140,6 +140,23 @@ class SourceClip:
 
 
 @dataclass(frozen=True, slots=True)
+class ExtendExpectation:
+    """What every request of one extend run must agree with, checked before Flow bills.
+
+    ``media_id`` is the source clip, ``workflow_id`` the workflow the extend must continue,
+    ``aspect`` the aspect the caller asked for (``None``: the source's own), ``duration``
+    the seconds the slider was set to (``None``: not set) and ``reference_ids`` the
+    uploaded references the submit must carry, in order.
+    """
+
+    media_id: str
+    workflow_id: str
+    aspect: str | None
+    duration: int | None = None
+    reference_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ExtendOutcome:
     record: GenerationRecord
     video: bytes | None
@@ -496,16 +513,8 @@ def _check_scene_create(body: str, *, media_id: str, route: str) -> GFlowError |
     return None
 
 
-def _check_extend_submit(
-    body: str,
-    *,
-    media_id: str,
-    workflow_id: str,
-    aspect: str | None,
-    duration: int | None,
-    expected_reference_ids: tuple[str, ...],
-    route: str,
-) -> GFlowError | None:
+def _check_extend_submit(body: str, expect: ExtendExpectation, *, route: str) -> GFlowError | None:
+    media_id, workflow_id, aspect = expect.media_id, expect.workflow_id, expect.aspect
     entry, entry_err = _single_extend_entry(body, route=route)
     if entry_err is not None:
         return entry_err
@@ -537,51 +546,27 @@ def _check_extend_submit(
             remediation_hint="Drop --aspect; the extension keeps the source clip's aspect.",
         )
     return _check_extend_duration(
-        model_key, duration=duration, route=route
+        model_key, duration=expect.duration, route=route
     ) or _check_extend_reference_ids(
-        entry, expected_reference_ids=expected_reference_ids, route=route
+        entry, expected_reference_ids=expect.reference_ids, route=route
     )
 
 
-def extend_request_problem(  # noqa: PLR0913
-    rpcid: str,
-    body: str,
-    *,
-    media_id: str,
-    workflow_id: str,
-    aspect: str | None,
-    duration: int | None = None,
-    expected_reference_ids: tuple[str, ...] = (),
-) -> GFlowError | None:
+def extend_request_problem(rpcid: str, body: str, expect: ExtendExpectation) -> GFlowError | None:
     """Why this outgoing request is not the extend the user asked for, or ``None``.
 
     The verdicts name ids only — never the body, which carries a page-minted token.
     """
     route = f"batchexecute:{rpcid}"
     if rpcid == SCENE_CREATE_RPC:
-        return _check_scene_create(body, media_id=media_id, route=route)
+        return _check_scene_create(body, media_id=expect.media_id, route=route)
     if rpcid != EXTEND_SUBMIT_RPC:
         return None
-    return _check_extend_submit(
-        body,
-        media_id=media_id,
-        workflow_id=workflow_id,
-        aspect=aspect,
-        duration=duration,
-        expected_reference_ids=expected_reference_ids,
-        route=route,
-    )
+    return _check_extend_submit(body, expect, route=route)
 
 
-def batch_request_problem(  # noqa: PLR0913
-    rpcids: list[str],
-    body: str,
-    *,
-    media_id: str,
-    workflow_id: str,
-    aspect: str | None,
-    duration: int | None = None,
-    expected_reference_ids: tuple[str, ...] = (),
+def batch_request_problem(
+    rpcids: list[str], body: str, expect: ExtendExpectation
 ) -> GFlowError | None:
     """The first problem of any rpc this (possibly batched) request carries, or ``None``.
 
@@ -589,15 +574,7 @@ def batch_request_problem(  # noqa: PLR0913
     (``rpcids=uwAyfb,fZytfe``) must not ride through on the first id's verdict.
     """
     for rpcid in batch_rpcids(rpcids, body):
-        problem = extend_request_problem(
-            rpcid,
-            body,
-            media_id=media_id,
-            workflow_id=workflow_id,
-            aspect=aspect,
-            duration=duration,
-            expected_reference_ids=expected_reference_ids,
-        )
+        problem = extend_request_problem(rpcid, body, expect)
         if problem is not None:
             return problem
     return None
@@ -1079,27 +1056,11 @@ async def _upload_extend_inputs(
 # --- route guard plumbing ----------------------------------------------------
 
 
-def _request_verdict(  # noqa: PLR0913
-    rpcids: list[str],
-    body: str,
-    *,
-    media_id: str,
-    workflow_id: str,
-    aspect: str | None,
-    duration: int | None,
-    expected_reference_ids: tuple[str, ...],
-    released_submits: int,
+def _request_verdict(
+    rpcids: list[str], body: str, expect: ExtendExpectation, *, released_submits: int
 ) -> GFlowError | None:
     """Why one intercepted ``batchexecute`` request must be aborted, or ``None``."""
-    verdict = batch_request_problem(
-        rpcids,
-        body,
-        media_id=media_id,
-        workflow_id=workflow_id,
-        aspect=aspect,
-        duration=duration,
-        expected_reference_ids=expected_reference_ids,
-    )
+    verdict = batch_request_problem(rpcids, body, expect)
     if verdict is None and EXTEND_SUBMIT_RPC in rpcids and released_submits:
         # One billed extend per run: a second fZytfe would bill a second clip.
         verdict = WireFormatError(
@@ -1116,14 +1077,8 @@ def _released_rpc(rpcids: list[str], *, is_submit: bool) -> str | None:
     return rpcids[0] if rpcids else None
 
 
-def _route_guard(  # noqa: PLR0913
-    *,
-    media_id: str,
-    workflow_id: str,
-    aspect: str | None,
-    duration: int | None,
-    expected_reference_ids: tuple[str, ...],
-    facts: dict[str, str | None],
+def _route_guard(
+    expect: ExtendExpectation, *, facts: dict[str, str | None]
 ) -> Callable[[Any, Any], Awaitable[None]]:
     """The ``page.route`` handler: abort a wrong request, release a right one."""
     released_submits = 0
@@ -1132,16 +1087,7 @@ def _route_guard(  # noqa: PLR0913
         nonlocal released_submits
         body = request_body(request)
         rpcids = batch_rpcids(url_rpcids(str(getattr(request, "url", ""))), body)
-        verdict = _request_verdict(
-            rpcids,
-            body,
-            media_id=media_id,
-            workflow_id=workflow_id,
-            aspect=aspect,
-            duration=duration,
-            expected_reference_ids=expected_reference_ids,
-            released_submits=released_submits,
-        )
+        verdict = _request_verdict(rpcids, body, expect, released_submits=released_submits)
         is_submit = EXTEND_SUBMIT_RPC in rpcids
         if verdict is not None:
             await route.abort()
@@ -1359,25 +1305,18 @@ async def run_extend(  # noqa: PLR0913
 
     facts: dict[str, str | None] = {}
 
-    def check(rpcid: str, body: str) -> GFlowError | None:
-        return batch_request_problem(
-            [rpcid],
-            body,
-            media_id=resolved_media_id,
-            workflow_id=workflow_id,
-            aspect=aspect,
-            duration=duration,
-            expected_reference_ids=expected_ref_ids,
-        )
-
-    guard = _route_guard(
+    expect = ExtendExpectation(
         media_id=resolved_media_id,
         workflow_id=workflow_id,
         aspect=aspect,
         duration=duration,
-        expected_reference_ids=expected_ref_ids,
-        facts=facts,
+        reference_ids=expected_ref_ids,
     )
+
+    def check(rpcid: str, body: str) -> GFlowError | None:
+        return batch_request_problem([rpcid], body, expect)
+
+    guard = _route_guard(expect, facts=facts)
     started = _started_handler(
         workflow_id=workflow_id,
         facts=facts,
@@ -1427,6 +1366,7 @@ __all__ = [
     "EXTEND_SETTINGS_TRIGGER",
     "EXTEND_SUBMIT_RPC",
     "MAX_EXTEND_REFERENCE_IMAGES",
+    "ExtendExpectation",
     "ExtendOutcome",
     "SourceClip",
     "batch_request_problem",
