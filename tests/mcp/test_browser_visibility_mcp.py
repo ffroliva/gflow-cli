@@ -240,6 +240,7 @@ async def test_mcp_reauth_stop_envelope_not_charged(wired: MagicMock) -> None:
 async def test_upscale_video_takes_browser_visibility_and_reports_the_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from gflow_cli.api.generation_route import Route
     from gflow_cli.config import reset_settings
     from gflow_cli.mcp.tools import gflow_upscale_video
 
@@ -251,7 +252,7 @@ async def test_upscale_video_takes_browser_visibility_and_reports_the_path(
     seen: dict[str, Any] = {}
 
     class _Client:
-        upscale_route = None  # the menu ran without recording a direct attempt
+        upscale_route = Route.UI  # a 720p export drives the download menu
 
         def __init__(self, **kwargs: Any) -> None:
             seen.update(kwargs)
@@ -298,7 +299,7 @@ async def test_upscale_video_reports_the_route_taken_not_the_planned_one(
     out_file.write_bytes(b"\x00" * 16)
 
     class _Client:
-        upscale_route: Route | None = None
+        upscale_route = Route.DIRECT  # set by upsample_video below
 
         def __init__(self, **kwargs: Any) -> None:
             self.visibility = kwargs["visibility"]

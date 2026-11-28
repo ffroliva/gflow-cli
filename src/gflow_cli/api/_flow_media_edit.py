@@ -133,9 +133,10 @@ def _is_png_or_jpeg(data: bytes) -> bool:
 class MediaEditSurface(GenerationSurface):
     """Media edit surface: upscale and extend an existing image or clip."""
 
-    #: The route the last ``upsample_video`` took (direct, or the download menu), which can
-    #: differ from the planned one when a direct attempt ends ``NotSent``.
-    upscale_route: Route | None = None
+    #: The route the last successful ``upsample_video`` took (direct, or the download menu),
+    #: which can differ from the planned one when a direct attempt ends ``NotSent``. Set by
+    #: every path of that call; declared without a default so the facade contract is unchanged.
+    upscale_route: Route
 
     async def capability_listing(self, project_id: str) -> JsonObject:
         """`projectInitialData` for *project_id*, fetched once per client session.
