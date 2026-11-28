@@ -35,6 +35,7 @@ from gflow_cli.api.transports.direct_http._video import (
 from gflow_cli.api.transports.frame_builder import centred_crop
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.video import Mode
+from gflow_cli.config import get_settings
 from gflow_cli.errors import InsufficientCreditsError
 from gflow_cli.paths import image_dimensions, jpeg_exif_orientation
 
@@ -56,8 +57,11 @@ async def refuse_empty_balance(profile_dir: Path) -> None:
     The read is browser-free (``nzlxg``, the ``gflow credits`` read) and runs before launch
     only: it reads the on-disk cookie jar, which the profile's Chrome holds while it runs.
     Only an empty balance is refused: no price is readable without the browser, so a partial
-    balance is left to Flow (a price comparison is tracked separately).
+    balance is left to Flow (a price comparison is tracked separately). Skipped when
+    ``GFLOW_CLI_WIRE_READS`` is off (the macOS default), as ``gflow credits`` skips it.
     """
+    if not get_settings().wire_reads:
+        return
     try:
         balance = (await flow_wire.read_credits(profile_dir)).credits
     except Exception as exc:  # noqa: BLE001 - an unreadable balance never blocks a submit

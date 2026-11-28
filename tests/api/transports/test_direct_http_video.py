@@ -45,6 +45,7 @@ from gflow_cli.api.video import (
     VideoStatus,
 )
 from gflow_cli.errors import (
+    InsufficientCreditsError,
     MediaDownloadError,
     NetworkError,
     TransportTimeoutError,
@@ -839,3 +840,34 @@ async def test_selection_invalid_duration_ends_not_sent(tmp_path: Path) -> None:
         await transport.generate_video(request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path)
     assert ended.value.outcome == NotSent("t2v_key_unresolved")
     assert flow.events == []
+
+
+@pytest.mark.asyncio
+async def test_zero_balance_check_skipped_when_wire_reads_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``GFLOW_CLI_WIRE_READS=0`` (and the macOS default) turns off every browser-free read,
+    so the pre-launch balance check never opens the cookie store (no Keychain prompt)."""
+    from gflow_cli.api.transports.direct_http._transport import refuse_empty_balance
+    from gflow_cli.config import reset_settings
+
+    balance = AsyncMock(return_value=CreditsInfo(0))
+    monkeypatch.setattr(flow_wire, "read_credits", balance)
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "0")
+    reset_settings()
+    await refuse_empty_balance(tmp_path)
+    balance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_zero_balance_refused_before_launch_when_wire_reads_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api.transports.direct_http._transport import refuse_empty_balance
+    from gflow_cli.config import reset_settings
+
+    monkeypatch.setattr(flow_wire, "read_credits", AsyncMock(return_value=CreditsInfo(0)))
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")
+    reset_settings()
+    with pytest.raises(InsufficientCreditsError):
+        await refuse_empty_balance(tmp_path)
