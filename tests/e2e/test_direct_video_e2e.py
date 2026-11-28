@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video]
 
-_T2V_KEY = ("--model", "omni_1_2_flash", "--duration", "4", "--resolution", "360p")
+_T2V_KEY = ("--model", "omni-1.2-flash", "--duration", "4", "--resolution", "360p")
 _T2V_COST, _I2V_COST = 4, 10  # macaron_cookie_t2v_4s_360p, veo_3_1_i2v_lite (one account)
 
 
