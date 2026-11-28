@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import unquote_plus, urlsplit
+from urllib.parse import parse_qs, unquote_plus, urlsplit
 from uuid import uuid4
 
 import structlog
@@ -921,6 +921,11 @@ def url_rpcid(url: str) -> str | None:
     return m.group(1) if m else None
 
 
+def url_rpcids(url: str) -> list[str]:
+    """Every rpcid in a ``batchexecute`` URL's ``rpcids=`` query parameter."""
+    return [r for v in parse_qs(urlsplit(url).query).get("rpcids", []) for r in v.split(",") if r]
+
+
 def body_rpcid(body: str) -> str | None:
     """The rpc name inside a ``batchexecute`` POST body, or ``None``.
 
@@ -930,6 +935,31 @@ def body_rpcid(body: str) -> str | None:
     """
     m = re.search(r'f\.req=\[\[\["([A-Za-z0-9]+)"', body or "")
     return m.group(1) if m else None
+
+
+def body_rpcids(body: str) -> list[str]:
+    """Every rpcid carried by an ``f.req`` body frame, in order."""
+    start = (body or "").find("f.req=")
+    if start >= 0:
+        try:
+            outer, _ = json.JSONDecoder().raw_decode(body, start + len("f.req="))
+        except ValueError:
+            outer = None
+        if isinstance(outer, list) and outer and isinstance(outer[0], list):
+            return list(
+                dict.fromkeys(
+                    frame[0]
+                    for frame in cast("list[Any]", outer[0])
+                    if isinstance(frame, list) and frame and isinstance(frame[0], str)
+                )
+            )
+    single = body_rpcid(body)
+    return [single] if single else []
+
+
+def request_rpcids(url: str, body: str) -> list[str]:
+    """Every distinct rpcid named by *url*'s ``rpcids=`` or *body*'s ``f.req`` frames."""
+    return list(dict.fromkeys([*url_rpcids(url), *body_rpcids(body)]))
 
 
 @dataclass
@@ -1354,18 +1384,22 @@ async def _guard_image_submit(
     entity_ids: tuple[str, ...] = (),
     *,
     on_judged: Callable[[bool], None] | None = None,
+    on_refused: Callable[[str], None] | None = None,
 ) -> str | None:
     """Abort an ``ogiZ0b`` submit that does not carry its references, before Flow acts.
 
     The observer path (``_image_body_problem`` in ``on_request``) only refuses to *report*
     such a run: by then Flow has generated it, spent quota and added an image (#913,
     SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
-    ``on_judged(aborted)`` runs before the route is settled (#1518).
+    ``on_judged(aborted)`` and ``on_refused(problem)`` run before the route is settled
+    (#1518, #1529).
     """
     problem = _image_body_problem(request_body(request), reference_ids, model, entity_ids)
     if on_judged is not None:
         on_judged(problem is not None)
     if problem is not None:
+        if on_refused is not None:
+            on_refused(problem)
         await route.abort()
         return problem
     await route.continue_()
