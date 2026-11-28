@@ -13,13 +13,13 @@ import pytest
 from gflow_cli.api import flow_wire
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, ImageRef, Model
+from gflow_cli.api.submit_policy import DirectAttemptEnded, Indeterminate, NotSent
 from gflow_cli.api.transports._mc_common import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.direct_http import DirectHttpTransport, direct_can_serve
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings
 from gflow_cli.errors import NetworkError, WafRejectionError, WireFormatError
-from tests.api.transports._direct_client import generate_like_the_client, upload_like_the_client
 from tests.api.transports.test_migrated_images import MEDIA, URL, WORKFLOW, image_payload
 
 
@@ -191,7 +191,7 @@ async def test_direct_http_happy_path(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    images = await generate_like_the_client(transport, project_id="proj-123", request=req)
+    images = await transport.generate_images(project_id="proj-123", request=req)
 
     assert len(images) == 1
     assert images[0].transport == "direct_http"
@@ -222,9 +222,11 @@ async def test_direct_http_unsupported_shape_falls_back_to_ui(
 
     # A model with no measured wire name: refused by the selector, before any HTTP work.
     req = GenerateImageRequest(prompt="a blue cup", model=Model.IMAGEN_3_5)
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("unsupported_shape")
 
-    assert ui_called
+    assert not ui_called  # the transport never runs the UI path; the loop does
     assert calls == []
 
 
@@ -259,11 +261,13 @@ async def test_direct_http_agentic_ui_mode_setting_falls_back_to_ui(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="a blue cup")
-    )
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="a blue cup")
+        )
+    assert ended.value.outcome == NotSent("unsupported_shape")
 
-    assert ui_called
+    assert not ui_called  # the transport never runs the UI path; the loop does
     assert calls == []
 
 
@@ -291,35 +295,39 @@ async def test_direct_http_pre_send_cookie_failure_falls_back(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("cookie_error:RuntimeError")
 
-    assert ui_called
+    assert not ui_called  # the transport never runs the UI path; the loop does
     assert post_count == 0
 
 
 @pytest.mark.asyncio
-async def test_direct_http_pre_send_shell_tokens_failure_falls_back(
+async def test_pre_send_shell_401_ends_not_sent_auth(
     transport: DirectHttpTransport, mock_mint_and_body: None
 ) -> None:
+    """A 401 on the shell GET is a signed-out session: ``NotSent`` with ``auth=True``, no
+    POST and no UI run. The loop stops for reauth on it (``test_flow_retry.py``)."""
+    posts = 0
+
     def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal posts
         if request.method == "GET":
             return httpx.Response(401, text="Unauthorized")
+        posts += 1
         return httpx.Response(200, text=_valid_ogiz0b_text())
 
     transport._http_transport = httpx.MockTransport(handler)
-    ui_called = False
-
-    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
-        nonlocal ui_called
-        ui_called = True
-        return []
-
-    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+    ui = _watch_ui(transport)
 
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
 
-    assert ui_called
+    assert ended.value.outcome == NotSent("http_401", auth=True)
+    assert posts == 0
+    assert ui == []
 
 
 @pytest.mark.asyncio
@@ -355,9 +363,11 @@ async def test_direct_http_pre_send_mint_failure_falls_back(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("mint_failure:RuntimeError")
 
-    assert ui_called
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -382,9 +392,11 @@ async def test_direct_http_pre_send_connect_error_falls_back(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("connect:ConnectError")
 
-    assert ui_called
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -416,10 +428,12 @@ async def test_direct_http_post_403_is_reconcile_never_ui(
 
     req = GenerateImageRequest(prompt="a blue cup")
     # After the send a 403 is indeterminate: the UI fallback could submit twice.
-    with pytest.raises(NetworkError) as exc_info:
-        await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
 
-    assert exc_info.value.next_action == "reconcile"
+    assert ended.value.outcome == Indeterminate("ogiZ0b", "HTTP 403", 403)
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
     assert not ui_called
     assert post_count == 1
 
@@ -452,11 +466,13 @@ async def test_direct_http_post_500_raises_network_error(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    with pytest.raises(NetworkError) as exc_info:
-        await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
 
-    assert exc_info.value.next_action == "reconcile"
-    assert "not resent" in exc_info.value.detail
+    assert ended.value.outcome == Indeterminate("ogiZ0b", "HTTP 500", 500)
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
+    assert "not resent" in ended.value.error.detail
     assert not ui_called
     assert post_count == 1
 
@@ -489,11 +505,13 @@ async def test_direct_http_post_timeout_raises_network_error(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    with pytest.raises(NetworkError) as exc_info:
-        await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
 
-    assert exc_info.value.next_action == "reconcile"
-    assert "not resent" in exc_info.value.detail
+    assert ended.value.outcome == Indeterminate("ogiZ0b", "ReadTimeout (Request timed out)", None)
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
+    assert "not resent" in ended.value.error.detail
     assert not ui_called
     assert post_count == 1
 
@@ -503,7 +521,7 @@ async def test_direct_http_setup_not_done_raises(transport: DirectHttpTransport)
     transport._setup_done = False
     req = GenerateImageRequest(prompt="a blue cup")
     with pytest.raises(RuntimeError, match="setup.*must be called"):
-        await generate_like_the_client(transport, project_id="proj-123", request=req)
+        await transport.generate_images(project_id="proj-123", request=req)
 
 
 @pytest.mark.asyncio
@@ -519,8 +537,10 @@ async def test_direct_http_no_project_id_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id=None, request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id=None, request=req)
+    assert ended.value.outcome == NotSent("no_project")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -537,8 +557,10 @@ async def test_direct_http_no_profile_dir_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("no_profile_dir")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -556,8 +578,10 @@ async def test_direct_http_route_not_migrated_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("flow_host_labs")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -574,8 +598,10 @@ async def test_direct_http_proxy_configured_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("proxy_configured")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -593,7 +619,7 @@ async def test_direct_http_page_navigates_to_project_when_needed(
 
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    await transport.generate_images(project_id="proj-123", request=req)
     # The first navigation is the mint's.
     assert (
         transport._page.goto.await_args_list[0].args[0]
@@ -625,8 +651,10 @@ async def test_direct_http_navigation_error_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("navigation_failed:RuntimeError")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -653,11 +681,15 @@ async def test_direct_http_post_transport_error_raises_network_error(
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
 
     req = GenerateImageRequest(prompt="a blue cup")
-    with pytest.raises(NetworkError) as exc_info:
-        await generate_like_the_client(transport, project_id="proj-123", request=req)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
 
-    assert exc_info.value.next_action == "reconcile"
-    assert "not resent" in exc_info.value.detail
+    assert ended.value.outcome == Indeterminate(
+        "ogiZ0b", "ProtocolError (Protocol violation)", None
+    )
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
+    assert "not resent" in ended.value.error.detail
     assert not ui_called
 
 
@@ -675,8 +707,10 @@ async def test_direct_http_empty_cookies_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("cookies_empty")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -697,7 +731,7 @@ async def test_direct_http_user_agent_included(
 
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    await transport.generate_images(project_id="proj-123", request=req)
     assert recorded_ua == "CustomUA/1.0"
 
 
@@ -719,8 +753,10 @@ async def test_direct_http_shell_tokens_unexpected_error_falls_back(
 
     transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
     req = GenerateImageRequest(prompt="a blue cup")
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui_called
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("shell_tokens:RuntimeError")
+    assert not ui_called  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -760,8 +796,8 @@ async def test_direct_http_sends_the_migrated_wire_model(
         return httpx.Response(200, text=_valid_ogiz0b_text())
 
     transport._http_transport = httpx.MockTransport(handler)
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x", model=model)
+    await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x", model=model)
     )
     assert builder.call_args.kwargs["model"] == wire
 
@@ -798,7 +834,7 @@ async def test_direct_http_sends_one_seed_per_image_and_the_aspect(
 
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="x", aspect=Aspect.LANDSCAPE, count=2)
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    await transport.generate_images(project_id="proj-123", request=req)
     kwargs = builder.call_args.kwargs
     assert len(kwargs["entry_seeds"]) == 2
     assert len(set(kwargs["entry_seeds"])) == 2
@@ -853,8 +889,8 @@ async def test_a_mint_on_a_page_still_loading_recaptcha_is_retried_not_dropped(
 
     transport._http_transport = httpx.MockTransport(handler)
     transport._page.url = "about:blank"  # type: ignore[union-attr]
-    images = await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    images = await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x")
     )
     assert images[0].transport == "direct_http"
     assert mint.await_count == 2
@@ -921,7 +957,7 @@ async def test_direct_http_sends_reference_with_multiple_seeds(
 
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="a sailboat", refs=(_IN_PROJECT,), count=2)
-    images = await generate_like_the_client(transport, project_id="proj-123", request=req)
+    images = await transport.generate_images(project_id="proj-123", request=req)
     assert post_count == 1
     assert len(images) == 2
     assert all(img.transport == "direct_http" for img in images)
@@ -957,7 +993,7 @@ async def test_direct_http_sends_character_with_multiple_seeds(
 
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="standing on pier", count=2, **_SKIPPER)  # type: ignore[arg-type]
-    images = await generate_like_the_client(transport, project_id="proj-123", request=req)
+    images = await transport.generate_images(project_id="proj-123", request=req)
     assert post_count == 1
     assert len(images) == 2
     assert all(img.transport == "direct_http" for img in images)
@@ -990,7 +1026,7 @@ async def test_direct_http_sends_the_character_pair(
         AsyncMock(return_value=_project_with("Mate", "Skipper")),
     )
     req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
 
 
@@ -1042,10 +1078,12 @@ async def test_a_rejected_post_drops_the_cached_shell_tokens(
     """CR-B: a stale at stuck in a long-lived process failed every later direct job."""
     transport._http_transport = _shell_and(httpx.Response(500))
     _watch_ui(transport)
-    with pytest.raises(NetworkError):
-        await generate_like_the_client(
-            transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
         )
+    assert ended.value.outcome == Indeterminate("ogiZ0b", "HTTP 500", 500)
+    assert isinstance(ended.value.error, NetworkError)
     assert transport._profile_dir not in flow_wire._tokens
 
 
@@ -1057,10 +1095,12 @@ async def test_a_connection_that_never_opened_falls_back(
     """CR-D: ConnectTimeout is not a ConnectError; nothing was sent, so no reconcile."""
     transport._http_transport = _shell_and(exc)
     ui = _watch_ui(transport)
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
-    )
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
+        )
+    assert ended.value.outcome == NotSent(f"connect:{type(exc).__name__}")
+    assert ui == []  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -1072,11 +1112,13 @@ async def test_a_redirect_or_401_after_send_is_reconcile_not_a_fallback(
     and the UI path does not run (it could submit a second time)."""
     transport._http_transport = _shell_and(httpx.Response(status))
     ui = _watch_ui(transport)
-    with pytest.raises(NetworkError) as caught:
-        await generate_like_the_client(
-            transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
         )
-    assert caught.value.next_action == "reconcile"
+    assert ended.value.outcome == Indeterminate("ogiZ0b", f"HTTP {status}", status)
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
     assert ui == []
 
 
@@ -1090,9 +1132,7 @@ async def test_no_about_blank_park_after_direct_call(
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     park = AsyncMock()
     transport._park_composer_page = park  # type: ignore[method-assign]
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
-    )
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
     park.assert_not_awaited()
 
 
@@ -1104,8 +1144,8 @@ async def test_no_proxy_alone_does_not_disable_the_direct_path(
     monkeypatch.setattr(flow_wire, "getproxies", lambda: {"no": "localhost"})
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     ui = _watch_ui(transport)
-    images = await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    images = await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x")
     )
     assert ui == []
     assert images[0].transport == "direct_http"
@@ -1131,10 +1171,12 @@ async def test_an_account_served_labs_falls_back_before_any_post(
 
     transport._http_transport = httpx.MockTransport(handler)
     ui = _watch_ui(transport)
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
-    )
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
+        )
+    assert ended.value.outcome == NotSent("served_labs")
+    assert ui == []  # the transport never runs the UI path; the loop does
     assert posts == []
 
 
@@ -1152,13 +1194,15 @@ async def test_a_mint_that_never_settles_is_bounded(
     monkeypatch.setattr("gflow_cli.api.recaptcha.TokenMinter.mint", never)
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     ui = _watch_ui(transport)
-    await asyncio.wait_for(
-        generate_like_the_client(
-            transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
-        ),
-        timeout=5,
-    )
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await asyncio.wait_for(
+            transport.generate_images(
+                project_id="proj-123", request=GenerateImageRequest(prompt="x")
+            ),
+            timeout=5,
+        )
+    assert ended.value.outcome == NotSent("mint_failure:TimeoutError")
+    assert ui == []  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -1190,9 +1234,7 @@ async def test_cookies_are_matched_by_domain_not_by_a_url_filter(
         return httpx.Response(200, text=_valid_ogiz0b_text())
 
     transport._http_transport = httpx.MockTransport(handler)
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
-    )
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
     assert sent == ["SID=a; XS=b", "SID=a; XS=b"]
     # Read live before each request (the shell GET and the POST), never with a URL filter.
     calls = page.context.cookies.await_args_list
@@ -1244,7 +1286,7 @@ async def test_a_bare_mention_is_resolved_to_the_project_character_id(
     )
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     req = GenerateImageRequest(prompt="Skipper on a pier", reference_entity_names=("Skipper",))
-    images = await generate_like_the_client(transport, project_id="proj-123", request=req)
+    images = await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
     assert images[0].transport == "direct_http"
 
@@ -1273,8 +1315,10 @@ async def test_a_mention_with_no_or_several_matches_falls_back_before_any_post(
     transport._http_transport = httpx.MockTransport(handler)
     ui = _watch_ui(transport)
     req = GenerateImageRequest(prompt="Skipper on a pier", reference_entity_names=("Skipper",))
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent(f"character_matches:{len(names)}")
+    assert ui == []  # the transport never runs the UI path; the loop does
     assert posts == []
 
 
@@ -1292,7 +1336,7 @@ async def test_a_mention_matches_the_picker_rule_trimmed_and_case_insensitive(
     monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.read_project", read)
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     req = GenerateImageRequest(prompt="kael on a pier", reference_entity_names=("kael",))
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Kael "),)
     assert read.await_args.kwargs["timeout_s"] == 15.0
 
@@ -1312,8 +1356,10 @@ async def test_names_differing_only_in_case_are_ambiguous(
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     ui = _watch_ui(transport)
     req = GenerateImageRequest(prompt="Kael on a pier", reference_entity_names=("Kael",))
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("character_matches:2")
+    assert ui == []  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -1341,8 +1387,10 @@ async def test_an_entity_id_the_project_does_not_hold_falls_back_before_any_post
     transport._http_transport = httpx.MockTransport(handler)
     ui = _watch_ui(transport)
     req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(project_id="proj-123", request=req)
+    assert ended.value.outcome == NotSent("character_matches:0")
+    assert ui == []  # the transport never runs the UI path; the loop does
     assert posts == []
 
 
@@ -1364,7 +1412,7 @@ async def test_an_entity_id_uses_the_name_flow_holds_for_it(
     req = GenerateImageRequest(
         prompt="x", reference_entities=("entity-1",), reference_entity_names=("skipper",)
     )
-    await generate_like_the_client(transport, project_id="proj-123", request=req)
+    await transport.generate_images(project_id="proj-123", request=req)
     assert builder.call_args.kwargs["characters"] == (("entity-1", "Skipper"),)
 
 
@@ -1405,7 +1453,7 @@ async def test_a_local_file_is_uploaded_with_one_direct_maseq_post(
     transport._http_transport = httpx.MockTransport(handler)
     ui = AsyncMock()
     monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
-    ref = await upload_like_the_client(transport, project_id="proj-123", path=_png(tmp_path))
+    ref = await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
     assert ref is not None
     assert ref.name == _UPLOADED
     assert ref.in_project is True
@@ -1424,8 +1472,10 @@ async def test_an_upload_that_cannot_start_uses_the_ui_upload(
     page.context.cookies = AsyncMock(return_value=[])  # no session: nothing can be sent
     ui = AsyncMock(return_value=None)
     monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
-    await upload_like_the_client(transport, project_id="proj-123", path=_png(tmp_path))
-    ui.assert_awaited_once()
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    assert ended.value.outcome == NotSent("cookies_empty")
+    ui.assert_not_awaited()  # the loop runs the UI upload, not the transport
 
 
 @pytest.mark.asyncio
@@ -1438,10 +1488,12 @@ async def test_an_upload_failing_after_the_send_is_not_resent(
     transport._http_transport = _shell_and(httpx.Response(500))
     ui = AsyncMock()
     monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
-    with pytest.raises(NetworkError) as caught:
-        await upload_like_the_client(transport, project_id="proj-123", path=_png(tmp_path))
-    assert caught.value.next_action == "reconcile"
-    assert "upload" in (caught.value.remediation_hint or "")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    assert ended.value.outcome == Indeterminate("maseQ", "HTTP 500", 500)
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
+    assert "upload" in (ended.value.error.remediation_hint or "")
     ui.assert_not_awaited()
 
 
@@ -1456,10 +1508,14 @@ async def test_an_upload_reply_without_a_media_id_is_reconciled_not_resent(
     transport._http_transport = _shell_and(httpx.Response(200, text=")]}'\n[]"))
     ui = AsyncMock()
     monkeypatch.setattr(UiAutomationTransport, "upload_reference", ui)
-    with pytest.raises(NetworkError) as caught:
-        await upload_like_the_client(transport, project_id="proj-123", path=_png(tmp_path))
-    assert caught.value.next_action == "reconcile"
-    assert "upload" in (caught.value.remediation_hint or "")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.upload_reference(project_id="proj-123", path=_png(tmp_path))
+    assert ended.value.outcome == Indeterminate(
+        "maseQ", "unparseable reply or missing rpc frame", 200
+    )
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
+    assert "upload" in (ended.value.error.remediation_hint or "")
     ui.assert_not_awaited()
 
 
@@ -1480,10 +1536,12 @@ async def test_the_character_read_has_one_outer_deadline(
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     ui = _watch_ui(transport)
     req = GenerateImageRequest(prompt="x", reference_entity_names=("Skipper",))
-    await asyncio.wait_for(
-        generate_like_the_client(transport, project_id="proj-123", request=req), timeout=5
-    )
-    assert ui == [True]
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await asyncio.wait_for(
+            transport.generate_images(project_id="proj-123", request=req), timeout=5
+        )
+    assert ended.value.outcome == NotSent("character_read:TimeoutError")
+    assert ui == []  # the transport never runs the UI path; the loop does
 
 
 @pytest.mark.asyncio
@@ -1499,5 +1557,5 @@ async def test_the_upload_mime_type_comes_from_the_bytes_not_the_name(
     transport._http_transport = _shell_and(httpx.Response(200, text=_maseq_reply()))
     portrait = tmp_path / "portrait"  # no extension
     portrait.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 32)
-    await upload_like_the_client(transport, project_id="proj-123", path=portrait)
+    await transport.upload_reference(project_id="proj-123", path=portrait)
     assert builder.call_args.kwargs["mime"] == "image/jpeg"

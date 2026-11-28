@@ -33,7 +33,6 @@ from gflow_cli.api.transports.direct_http._gateway import (
     _post_request,
 )
 from gflow_cli.errors import ContentPolicyError, NetworkError, WafRejectionError, WireFormatError
-from tests.api.transports._direct_client import generate_like_the_client, upload_like_the_client
 from tests.api.transports.test_migrated_images import image_payload
 
 _SHELL_HTML = '<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
@@ -172,13 +171,15 @@ async def test_post_send_403_is_indeterminate_never_ui_fallback(
 
     transport = _transport(tmp_path, handler)
     ui = _watch_ui(transport)
-    with pytest.raises(NetworkError) as caught:
-        await generate_like_the_client(
-            transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
         )
-    assert caught.value.next_action == "reconcile"
-    assert caught.value.status == status
-    assert "not resent" in caught.value.detail
+    assert ended.value.outcome == Indeterminate("ogiZ0b", f"HTTP {status}", status)
+    assert isinstance(ended.value.error, NetworkError)
+    assert ended.value.error.next_action == "reconcile"
+    assert ended.value.error.status == status
+    assert "not resent" in ended.value.error.detail
     assert ui == []
     assert posts == 1
     assert tmp_path not in flow_wire._tokens  # the cached `at` is dropped
@@ -204,12 +205,12 @@ async def test_an_unusual_activity_reply_is_refused_not_billed_never_ui(
 
     transport = _transport(tmp_path, handler)
     ui = _watch_ui(transport)
-    with pytest.raises(WafRejectionError) as caught:
-        await generate_like_the_client(
-            transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
         )
-    assert isinstance(caught.value.__cause__, DirectAttemptEnded)
-    assert caught.value.__cause__.outcome == RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
+    assert ended.value.outcome == RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
+    assert isinstance(ended.value.error, WafRejectionError)
     assert ui == []
     assert posts == 1
     assert tmp_path not in flow_wire._tokens
@@ -336,8 +337,8 @@ async def test_shell_401_refreshes_at_before_mint(
 
     transport = _transport(tmp_path, handler)
     ui = _watch_ui(transport)
-    images = await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    images = await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="x")
     )
     assert events == ["GET", "GET", "mint", "POST"]
     assert ui == []
@@ -374,9 +375,7 @@ async def test_cookies_read_live_before_each_request(
 
     transport = _transport(tmp_path, handler, page)
     _watch_ui(transport)
-    await generate_like_the_client(
-        transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
-    )
+    await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
     assert sent == [("GET", "SID=sid-1"), ("POST", "SID=sid-2")]
 
 
@@ -394,13 +393,16 @@ async def test_httpx_exception_with_fsid_url_is_scrubbed_in_detail(
 
     transport = _transport(tmp_path, handler)
     _watch_ui(transport)
-    with pytest.raises(NetworkError) as caught:
-        await generate_like_the_client(
-            transport, project_id="proj-123", request=GenerateImageRequest(prompt="x")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_images(
+            project_id="proj-123", request=GenerateImageRequest(prompt="x")
         )
-    assert secret not in caught.value.detail
-    assert "ReadError" in caught.value.detail
-    assert caught.value.next_action == "reconcile"
+    assert ended.value.outcome == Indeterminate("ogiZ0b", ended.value.outcome.cause, None)
+    assert ended.value.outcome.cause.startswith("ReadError (")  # type: ignore[union-attr]
+    assert isinstance(ended.value.error, NetworkError)
+    assert secret not in ended.value.error.detail
+    assert "ReadError" in ended.value.error.detail
+    assert ended.value.error.next_action == "reconcile"
 
 
 @pytest.mark.asyncio
@@ -527,9 +529,10 @@ async def test_an_accepted_upload_frame_without_a_media_id_is_reconciled(
     image = tmp_path / "face.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
     transport = _transport(tmp_path, handler)
-    with pytest.raises(WireFormatError) as caught:
-        await upload_like_the_client(transport, project_id="proj-123", path=image)
-    assert caught.value.retryable is False
-    assert caught.value.resolved_next_action() == "reconcile"
-    assert isinstance(caught.value.__cause__, DirectAttemptEnded)
-    assert isinstance(caught.value.__cause__.outcome, Indeterminate)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.upload_reference(project_id="proj-123", path=image)
+    assert ended.value.outcome == Indeterminate("maseQ", ended.value.outcome.cause, None)
+    assert ended.value.outcome.cause.startswith("WireFormatError (")  # type: ignore[union-attr]
+    assert isinstance(ended.value.error, WireFormatError)
+    assert ended.value.error.retryable is False
+    assert ended.value.error.resolved_next_action() == "reconcile"

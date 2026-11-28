@@ -330,6 +330,28 @@ async def test_signed_out_profile_matches_ui_auth_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_with_retry_not_sent_auth_raises_auth_expired_no_ui_no_relaunch() -> None:
+    """The transport's ``NotSent(auth=True)`` (a 401 shell) stops for reauth: no relaunch,
+    no UI run, no send, and no ``submit_attempted`` checkpoint."""
+    events: list[str] = []
+    host = FakeHost(BrowserVisibility.HEADLESS, events=events)
+    ui = AsyncMock()
+
+    with pytest.raises(AuthExpiredError) as caught:
+        await run_with_retry(
+            host,
+            direct=Script(NotSent("http_401", auth=True), events=events).direct,
+            ui=ui,
+            setting=VisibilitySetting.AUTO,
+            on_checkpoint=_observer(events),
+        )
+
+    assert "http_401" in caught.value.detail
+    ui.assert_not_awaited()
+    assert events == []
+
+
+@pytest.mark.asyncio
 async def test_explicit_headed_without_display_fails_before_launch(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

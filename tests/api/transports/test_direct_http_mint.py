@@ -15,7 +15,7 @@ from structlog.testing import capture_logs
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.submit_policy import MAX_IN_FLIGHT, DirectAttemptEnded
+from gflow_cli.api.submit_policy import MAX_IN_FLIGHT, DirectAttemptEnded, RefusedNotBilled
 from gflow_cli.api.transports.base import SupportsQuiesce
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http import DirectHttpTransport
@@ -23,7 +23,6 @@ from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource
 from gflow_cli.config import reset_settings
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
-from tests.api.transports._direct_client import generate_like_the_client
 from tests.api.transports.test_migrated_images import image_payload
 
 _SHELL_HTML = '<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
@@ -116,7 +115,7 @@ def _transport(tmp_path: Path, posts: _Posts, page: MagicMock | None = None) -> 
 
 def _generate(t: DirectHttpTransport, project_id: str = "proj-123") -> Any:
     return asyncio.create_task(
-        generate_like_the_client(t, project_id=project_id, request=GenerateImageRequest(prompt="x"))
+        t.generate_images(project_id=project_id, request=GenerateImageRequest(prompt="x"))
     )
 
 
@@ -285,8 +284,10 @@ async def test_refusal_discards_page_next_mint_uses_new_page(
     pool_page.context.new_page = AsyncMock(return_value=fresh)
     t = _transport(tmp_path, posts, pool_page)
 
-    with pytest.raises(WafRejectionError):
+    with pytest.raises(DirectAttemptEnded) as ended:
         await _generate(t)
+    assert ended.value.outcome == RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
+    assert isinstance(ended.value.error, WafRejectionError)
     images = await _generate(t)
 
     assert images[0].transport == "direct_http"
@@ -398,13 +399,15 @@ async def test_character_read_uses_rearmed_page(
     pool_page, fresh = _page(), _page("about:blank")
     pool_page.context.new_page = AsyncMock(return_value=fresh)
     t = _transport(tmp_path, posts, pool_page)
-    with pytest.raises(WafRejectionError):
+    with pytest.raises(DirectAttemptEnded) as ended:
         await _generate(t)  # discards the pool page; the next attempt re-arms
+    assert ended.value.outcome == RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
+    assert isinstance(ended.value.error, WafRejectionError)
     await _generate(t)  # re-arms during its mint; the read before it ran on the pool page
     request = GenerateImageRequest(
         prompt="x", reference_entities=("entity-0",), reference_entity_names=("Skipper",)
     )
-    await generate_like_the_client(t, project_id="proj-123", request=request)
+    await t.generate_images(project_id="proj-123", request=request)
     assert read.await_args is not None
     assert read.await_args.args[0] is fresh
 
