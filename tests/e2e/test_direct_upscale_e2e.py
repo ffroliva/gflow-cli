@@ -1,6 +1,7 @@
 """Live E2E for the direct 1080p upscale (headless direct transport, Task 15).
 
-One profile, headless, over ``GFLOW_CLI_TRANSPORT=direct_http``. The source clip is a
+One profile over ``GFLOW_CLI_TRANSPORT=direct_http``, at the outer
+``GFLOW_CLI_BROWSER_VISIBILITY`` (default ``auto``, headless). The source clip is a
 billed t2v at the measured upscale source (Omni 1.2 Flash, 4 s, 360p, 16:9), recorded in
 this test's own catalog as ``omni_1_2_flash`` / ``landscape`` / 4 s, the row
 ``choose_upscale_route`` allowlists; then
@@ -25,6 +26,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from gflow_cli.api.transports.migrated_video_upscale import mp4_track_dimensions
+from tests.e2e._visibility import OUTER_VISIBILITY
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +53,7 @@ def _gflow(env: RedactedEnv, *args: str) -> subprocess.CompletedProcess[str]:
         env=env
         | {
             "GFLOW_CLI_TRANSPORT": "direct_http",
-            "GFLOW_CLI_BROWSER_VISIBILITY": "auto",
+            "GFLOW_CLI_BROWSER_VISIBILITY": OUTER_VISIBILITY,
             "GFLOW_CLI_LOG_LEVEL": "INFO",
         },
     )

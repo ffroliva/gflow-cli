@@ -1,6 +1,7 @@
 """Live E2E for direct text-to-video and image-to-video (headless direct transport, Task 14).
 
-Two billed runs on one profile, headless, over ``GFLOW_CLI_TRANSPORT=direct_http``:
+Two billed runs on one profile over ``GFLOW_CLI_TRANSPORT=direct_http``, at the outer
+``GFLOW_CLI_BROWSER_VISIBILITY`` (default ``auto``, headless):
 
 * t2v at an explicit measured key (Omni 1.2 Flash, 4 s, 360p, 9:16: ``YhhmEf``), a
   360x640 mp4, 4 credits measured;
@@ -11,7 +12,7 @@ Two billed runs on one profile, headless, over ``GFLOW_CLI_TRANSPORT=direct_http
   measured key), set once in Flow's settings pane, and
   ``GFLOW_CLI_E2E_SELECTED_VIDEO_MODEL=omni_1_2_flash`` naming it; it is skipped otherwise.
 
-Each asserts exit 0, route ``direct`` and visibility ``headless`` in the ``--json`` result,
+Each asserts exit 0, route ``direct`` and the expected visibility in the ``--json`` result,
 the mp4's dimensions, and a balance drop equal to the key's measured cost (spike 2026-11-27,
 "The default video shape over direct HTTP"). Spends Veo credits; opt in with:
 
@@ -32,6 +33,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from gflow_cli.api.transports.migrated_video_upscale import mp4_track_dimensions
+from tests.e2e._visibility import OUTER_VISIBILITY, expected_visibility
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,7 +60,8 @@ def _gflow(env: RedactedEnv, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
-        env=env | {"GFLOW_CLI_TRANSPORT": "direct_http", "GFLOW_CLI_BROWSER_VISIBILITY": "auto"},
+        env=env
+        | {"GFLOW_CLI_TRANSPORT": "direct_http", "GFLOW_CLI_BROWSER_VISIBILITY": OUTER_VISIBILITY},
     )
 
 
@@ -88,7 +91,7 @@ def _assert_direct_clip(
     assert proc.returncode == 0, f"gflow video failed (exit {proc.returncode})"
     payload = json.loads(proc.stdout)  # --json keeps stdout to the one document
     assert payload.get("route") == "direct"
-    assert payload.get("visibility") == "headless"
+    assert payload.get("visibility") == expected_visibility()
     data = out.read_bytes()
     assert data[4:8] == b"ftyp", f"{out} is not an mp4"
     assert mp4_track_dimensions(data) == dims
@@ -164,7 +167,7 @@ def test_bare_t2v_veo_selection_falls_back_ui(e2e_env: RedactedEnv, tmp_path: Pa
         env=e2e_env
         | {
             "GFLOW_CLI_TRANSPORT": "direct_http",
-            "GFLOW_CLI_BROWSER_VISIBILITY": "auto",
+            "GFLOW_CLI_BROWSER_VISIBILITY": OUTER_VISIBILITY,
             "GFLOW_CLI_LOG_FORMAT": "json",
             "GFLOW_CLI_LOG_LEVEL": "INFO",
         },

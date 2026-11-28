@@ -1,7 +1,8 @@
 """Live E2E for the MCP twins of the headless direct transport (Task 19).
 
-The MCP tools run in this process against one real profile, headless, over
-``GFLOW_CLI_TRANSPORT=direct_http`` with ``browser_visibility="auto"``:
+The MCP tools run in this process against one real profile over
+``GFLOW_CLI_TRANSPORT=direct_http``, passing ``browser_visibility`` from the outer
+``GFLOW_CLI_BROWSER_VISIBILITY`` (default ``auto``, so the headed matrix runs headed):
 
 * ``gflow_generate_image`` at a measured shape (zero credits, daily quota);
 * ``gflow_generate_video`` at the measured t2v key (Omni 1.2 Flash, 4 s, 360p), once with
@@ -9,7 +10,8 @@ The MCP tools run in this process against one real profile, headless, over
 * ``gflow_upscale_video`` at 1080p on the ``wait=true`` clip, a 16:9 4 s Omni 1.2 Flash clip,
   the source shape the direct upscale allowlists.
 
-Each asserts ``route == "direct"``, ``visibility == "headless"`` and a written file. The image
+Each asserts ``route == "direct"``, the visibility that setting launches (``headed`` under
+``headed``, else ``headless``) and a written file. The image
 run needs only the profile; the video runs spend Veo credits:
 
     GFLOW_CLI_E2E_PROFILE=<profile> uv run pytest -m e2e_image -v \\
@@ -30,6 +32,7 @@ import pytest
 
 from gflow_cli.config import get_settings, reset_settings
 from gflow_cli.mcp import tools as mcp_tools
+from tests.e2e._visibility import OUTER_VISIBILITY, expected_visibility
 
 if TYPE_CHECKING:
     from tests.e2e._redacted_env import RedactedEnv
@@ -66,7 +69,7 @@ def _video_opt_in() -> None:
 def _assert_direct_headless(result: dict[str, Any]) -> None:
     assert result["status"] in ("completed", "ok"), result
     assert result["route"] == "direct", result
-    assert result["visibility"] == "headless", result
+    assert result["visibility"] == expected_visibility(), result
 
 
 def _written(path: str) -> Path:
@@ -83,7 +86,7 @@ def test_mcp_image_auto_goes_direct_headless(mcp_env: str) -> None:
             prompt="a paper boat on a pond",
             aspect="16:9",
             profile=mcp_env,
-            browser_visibility="auto",
+            browser_visibility=OUTER_VISIBILITY,
             wait=True,
         )
     )
@@ -112,14 +115,14 @@ def test_mcp_video_direct_wait_and_queued_then_1080p_upscale(mcp_env: str) -> No
         waited = await mcp_tools.gflow_generate_video(
             prompt="a paper boat drifting on a pond",
             profile=mcp_env,
-            browser_visibility="auto",
+            browser_visibility=OUTER_VISIBILITY,
             wait=True,
             **_T2V_KEY,
         )
         handle = await mcp_tools.gflow_generate_video(
             prompt="a lantern floating on a lake at dusk",
             profile=mcp_env,
-            browser_visibility="auto",
+            browser_visibility=OUTER_VISIBILITY,
             wait=False,
             **_T2V_KEY,
         )
@@ -130,7 +133,7 @@ def test_mcp_video_direct_wait_and_queued_then_1080p_upscale(mcp_env: str) -> No
             scale="1080p",
             project=waited["flow_project_id"],
             profile=mcp_env,
-            browser_visibility="auto",
+            browser_visibility=OUTER_VISIBILITY,
         )
         return waited, queued, upscaled
 
