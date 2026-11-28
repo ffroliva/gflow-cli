@@ -9,7 +9,12 @@ moment on, every failure (a reply, a parse, a later cookie read, a poll, a downl
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import secrets
+import time
+from collections import deque
+from collections.abc import AsyncGenerator, Callable
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import TYPE_CHECKING
 
@@ -18,6 +23,8 @@ import structlog
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.submit_policy import (
+    MAX_IN_FLIGHT,
+    START_RATE_WINDOW_S,
     Accepted,
     DirectAttemptEnded,
     Indeterminate,
@@ -25,6 +32,7 @@ from gflow_cli.api.submit_policy import (
     RefusedNotBilled,
     classify_reply,
     not_sent,
+    starts_exceed,
 )
 from gflow_cli.api.transports._mc_common import _submit_refusal
 from gflow_cli.errors import ContentPolicyError, GFlowError, NetworkError
@@ -183,6 +191,75 @@ def _post_request(
             "sec-fetch-dest": "empty",
         },
     )
+
+
+class InFlightGate:
+    """Admission for one transport's direct attempts, used as ``async with gate.slot():``.
+
+    At most ``MAX_IN_FLIGHT`` attempts run at once (``GFLOW_CLI_CONCURRENCY`` sizes the UI
+    page pool only and never raises it). ``quiesce()`` blocks new starts and waits for the
+    in-flight ones, for a browser relaunch; entering it from inside a slot deadlocks.
+    Every start is recorded, and a start rate above the measured limit is logged once per
+    window; nothing waits or refuses on it. ``clock`` is wall time, like the re-arm check.
+    """
+
+    def __init__(self, *, clock: Callable[[], float] = time.time) -> None:
+        self._slots = asyncio.Semaphore(MAX_IN_FLIGHT)
+        self._open = asyncio.Event()
+        self._open.set()
+        self._idle = asyncio.Event()
+        self._idle.set()
+        self._in_flight = 0
+        self._quiescing = 0
+        self._clock = clock
+        self._starts: deque[float] = deque()
+        self._warned_at: float | None = None
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> AsyncGenerator[None]:
+        # The slot first, then the open check: an attempt queued on a slot when a quiesce
+        # begins must not run (mint, POST) once the slot frees; it hands the slot back.
+        while True:
+            await self._slots.acquire()
+            if self._open.is_set():
+                break
+            self._slots.release()
+            await self._open.wait()
+        self._in_flight += 1
+        self._idle.clear()
+        try:
+            self._record_start()
+            yield
+        finally:
+            self._slots.release()
+            self._in_flight -= 1
+            if self._in_flight == 0:
+                self._idle.set()
+
+    @contextlib.asynccontextmanager
+    async def quiesce(self) -> AsyncGenerator[None]:
+        # Counted: the gate reopens only when the last of several holders exits.
+        self._quiescing += 1
+        self._open.clear()
+        try:
+            await self._idle.wait()
+            yield
+        finally:
+            self._quiescing -= 1
+            if self._quiescing == 0:
+                self._open.set()
+
+    def _record_start(self) -> None:
+        now = self._clock()
+        self._starts.append(now)
+        while self._starts and now - self._starts[0] > START_RATE_WINDOW_S:
+            self._starts.popleft()
+        recent = self._warned_at is not None and now - self._warned_at <= START_RATE_WINDOW_S
+        if not recent and starts_exceed(self._starts, now, window_s=START_RATE_WINDOW_S):
+            self._warned_at = now
+            log.warning(
+                "direct.start_rate_high", count=len(self._starts), window_s=START_RATE_WINDOW_S
+            )
 
 
 def _client(http_transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:

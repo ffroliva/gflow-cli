@@ -24,7 +24,6 @@ from gflow_cli.api.transports.direct_http._gateway import (
     _client,
     _post_request,
 )
-from gflow_cli.api.transports.direct_http._mint import _mint
 from gflow_cli.api.transports.direct_http._session import _session_headers, _shell
 from gflow_cli.api.transports.frame_builder import build_maseq_body, build_ogiz0b_body
 from gflow_cli.api.transports.migrated_character import read_project
@@ -32,10 +31,13 @@ from gflow_cli.errors import WireFormatError
 from gflow_cli.paths import extension_from_magic
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from playwright.async_api import Page
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.submit_policy import RecaptchaTokenSource
 
 log = structlog.get_logger(__name__)
 
@@ -67,24 +69,13 @@ _UPLOAD_MIME = {
 }
 
 
-class _PageTokenSource:
-    """The ``RecaptchaTokenSource`` that mints on the project page through ``_mint``."""
-
-    def __init__(self, page: Page, project_id: str) -> None:
-        self._page = page
-        self._project_id = project_id
-
-    async def mint(self, action: str) -> str:
-        return await _mint(self._page, self._project_id, action)
-
-
 async def _resolve_character(
     page: Page, project_id: str, request: GenerateImageRequest
 ) -> tuple[str, str]:
     """Read path: the ``(entity_id, name)`` pair the frame carries, as the project holds it.
 
-    Both forms are checked against Flow's own project reply (``read_project``, which also
-    lands the page on the project for the mint), as the UI does when it attaches one:
+    Both forms are checked against Flow's own project reply (``read_project``), as the UI
+    does when it attaches one:
     - an id (``--reference-entity``) must be one the project holds; the chip uses Flow's
       name for it. A stale or foreign id falls back before any POST.
     - a bare mention carries only the name: exactly one character must match it by the
@@ -115,25 +106,30 @@ async def _resolve_character(
 
 async def run_direct_images(
     *,
+    tokens: RecaptchaTokenSource,
     page: Page,
     profile_dir: Path,
     project_id: str,
     request: GenerateImageRequest,
+    page_lock: asyncio.Lock,
+    armed_page: Callable[[], Page],
     http_transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[GeneratedImage]:
     """One direct image generation: read the session, mint, build, send once, parse.
 
-    The reply is parsed inside the attempt: a failure after the send is indeterminate.
+    ``page`` serves the cookie reads. A character's project read navigates a page, so it
+    runs on ``armed_page()`` (the page the mint uses) under ``page_lock``; the token comes
+    from ``tokens``. The reply is parsed inside the attempt: a failure after the send is
+    indeterminate.
     """
     started = time.perf_counter()
-    attempt = SubmitAttempt(_SUBMIT, profile_dir, _PageTokenSource(page, project_id))
+    attempt = SubmitAttempt(_SUBMIT, profile_dir, tokens)
     async with _client(http_transport) as client, attempt:
-        tokens = await _shell(client, page, profile_dir)
-        characters = (
-            (await _resolve_character(page, project_id, request),)
-            if request.reference_entity_names
-            else ()
-        )
+        shell = await _shell(client, page, profile_dir)
+        characters: tuple[tuple[str, str], ...] = ()
+        if request.reference_entity_names:
+            async with page_lock:  # a re-arm also holds it, so armed_page() stays open
+                characters = (await _resolve_character(armed_page(), project_id, request),)
         mint_started = time.perf_counter()
         token = await attempt.mint()
         mint_ms = int((time.perf_counter() - mint_started) * 1000)
@@ -142,7 +138,7 @@ async def run_direct_images(
             model=_WIRE_MODEL[request.model],
             project_id=project_id,
             recaptcha_token=token,
-            at_token=tokens.at,
+            at_token=shell.at,
             batch_id=str(uuid.uuid4()).upper(),
             entry_seeds=tuple(1 + secrets.randbelow(2**31 - 1) for _ in range(request.count)),
             aspect=request.aspect,
@@ -158,7 +154,7 @@ async def run_direct_images(
         headers = await _session_headers(page, profile_dir)
         post_started = time.perf_counter()
         response = await attempt.send(
-            client, _post_request("ogiZ0b", f"/project/{project_id}", tokens, headers, body)
+            client, _post_request("ogiZ0b", f"/project/{project_id}", shell, headers, body)
         )
         log.info(
             "direct.image_post",
@@ -173,6 +169,7 @@ async def run_direct_images(
 
 async def run_direct_upload(
     *,
+    tokens: RecaptchaTokenSource,
     page: Page,
     profile_dir: Path,
     project_id: str,
@@ -185,16 +182,16 @@ async def run_direct_upload(
     unique suffix, as the UI's own upload does, so a later chip names this image only.
     """
     started = time.perf_counter()
-    attempt = SubmitAttempt(_UPLOAD, profile_dir, _PageTokenSource(page, project_id))
+    attempt = SubmitAttempt(_UPLOAD, profile_dir, tokens)
     async with _client(http_transport) as client, attempt:
-        tokens = await _shell(client, page, profile_dir)
+        shell = await _shell(client, page, profile_dir)
         token = await attempt.mint()
         image = await asyncio.to_thread(path.read_bytes)
         display_name = f"{path.stem}-{secrets.token_hex(4)}{path.suffix}"
         body = build_maseq_body(
             project_id=project_id,
             recaptcha_token=token,
-            at_token=tokens.at,
+            at_token=shell.at,
             image_bytes=image,
             mime=_UPLOAD_MIME[extension_from_magic(image[:12]) or ".png"],
             display_name=display_name,
@@ -202,7 +199,7 @@ async def run_direct_upload(
         )
         headers = await _session_headers(page, profile_dir)
         response = await attempt.send(
-            client, _post_request("maseQ", f"/project/{project_id}", tokens, headers, body)
+            client, _post_request("maseQ", f"/project/{project_id}", shell, headers, body)
         )
         media_id = _first_uuid(response.text)
         if media_id is None:  # past the send: indeterminate, the upload may be stored

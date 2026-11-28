@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 
 #: Maximum concurrent direct submit attempts allowed in flight per process and profile.
 MAX_IN_FLIGHT: int = 4
+#: The start-rate warning's window: more than 8 starts in it is logged.
+START_RATE_WINDOW_S: float = 120.0
 
 #: Wall-clock threshold in seconds beyond which an idle page must re-arm before minting.
 REARM_GAP_SECONDS: float = 600.0
@@ -259,7 +261,7 @@ def starts_exceed(
     now: float,
     *,
     limit: int = 8,
-    window_s: float = 120.0,
+    window_s: float = START_RATE_WINDOW_S,
 ) -> bool:
     """Return whether recorded submit start timestamps in the window exceed limit."""
     count = sum(1 for ts in history if 0.0 <= (now - ts) <= window_s)
