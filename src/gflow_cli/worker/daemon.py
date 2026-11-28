@@ -23,6 +23,7 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoResult, VideoStarted
@@ -68,6 +69,22 @@ def _apply_configured_video_cap(
     configured = getattr(settings, "max_credits", None)
     effective = resolve_max_credits(request.max_credits, configured)
     return replace(request, max_credits=effective) if effective != request.max_credits else request
+
+
+def with_browser_visibility(settings: Any, visibility: VisibilitySetting | None) -> Any:
+    """``settings`` with one job's ``browser_visibility`` (an MCP parameter) applied.
+
+    The client, its launch visibility and the retry loop's relaunch all read this one
+    object, as ``--browser-visibility`` makes them read the one setting on the CLI.
+    """
+    if visibility is None:
+        return settings
+    return settings.model_copy(
+        update={
+            "browser_visibility": visibility.value,
+            "headless": visibility is VisibilitySetting.HEADLESS,
+        }
+    )
 
 
 def _error_payload_for(exc: Exception) -> dict[str, Any]:
@@ -297,7 +314,7 @@ class FlowWorker:
         # observer fires classifies as a safe failure (queue.classify_interrupted).
         save_checkpoint("claimed", may_have_spent=False)
 
-        settings = get_settings()
+        settings = with_browser_visibility(get_settings(), codec.browser_visibility(task.payload))
         profile_dir = settings.profile_subdir(task.profile_name)
         transport = task.payload.get("transport", settings.transport)
         out_dir = (
