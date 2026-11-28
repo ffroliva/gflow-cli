@@ -2040,7 +2040,9 @@ async def _run_upscale_tool(
         "scale": scale_label,
         "path": str(target),
         "bytes": file_bytes,
-        "route": client.upscale_route.value,  # the route taken, not the planned one
+        # The route taken, not the planned one; only upsample_video sets it (an image
+        # upscale has no direct route, so its planned route is the one taken).
+        "route": (client.upscale_route if kind == "video" else route).value,
         "visibility": client.visibility.value,
     }
 
