@@ -1160,18 +1160,16 @@ class FlowHostMigratedError(GFlowError):
     _default_remediation = (
         "Google has moved this account's Flow from labs.google to flow.google.com. "
         "gflow drives that frontend for text-to-video, image-to-video from local "
-        "start (and end) frames, reference-to-video from local --ref files, "
-        "text-to-image, and image-to-image from local files or an image the catalog "
-        "records in the same --project (no UUID or @Name video frame; a character "
-        "goes in by @Name on images and by id plus its name on reference-to-video; "
-        "--project required) "
-        "(GFLOW_CLI_FLOW_HOST=auto, the default, or flow.google.com); you see this "
-        "error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated composer "
-        "off, or because this request type is not ported to the migrated host yet. "
-        "This is a per-account setting applied on every load, so retrying will not "
-        "land the old frontend. The REST surface (gflow project list, gflow data ...) "
-        "still works. Follow https://github.com/ffroliva/gflow-cli/issues/639 for "
-        "the migrated-frontend feature matrix."
+        "start/end frames or catalogued image UUIDs in the same --project, "
+        "reference-to-video from local --ref files, text-to-image, and image-to-image "
+        "from local files or a catalogued image in the same --project (no cross-project "
+        "or uncaptioned UUID/@Name video frame; characters go by @Name on images and "
+        "id+name on r2v; --project required; GFLOW_CLI_FLOW_HOST=auto or flow.google.com). "
+        "You see this error because GFLOW_CLI_FLOW_HOST=labs.google switched the migrated "
+        "composer off, or this request form is not ported yet. This is per-account on "
+        "every load, so retrying will not land the old frontend. The REST surface "
+        "(gflow project list, gflow data ...) still works. Follow "
+        "https://github.com/ffroliva/gflow-cli/issues/639 for the feature matrix."
     )
 
 

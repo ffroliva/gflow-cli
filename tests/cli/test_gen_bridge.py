@@ -355,7 +355,7 @@ def test_video_gen_forwards_the_same_arguments(
     mode: str, runner_name: str, args: list[str], png: Path, tmp_path: Path
 ) -> None:
     args = [a.replace("{png}", str(png)) for a in args]
-    with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {})):
+    with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {}, {})):
         direct = _captured("cli_video", runner_name, ["video", mode, *args], tmp_path)
         bridged = _captured("cli_video", runner_name, ["video", "generate", *args], tmp_path)
         aliased = _captured("cli_video", runner_name, ["video", "gen", *args], tmp_path)
@@ -381,7 +381,7 @@ def test_gen_out_file_reaches_the_modes_output_file(
     out = tmp_path / "x.out"
     argv = [*(a.replace("{png}", str(png)) for a in args), "--out-file", str(out)]
     module = f"cli_{group}"
-    with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {})):
+    with patch("gflow_cli.cli_video._media_picker_metadata", return_value=({}, {}, {})):
         direct = _captured(module, runner_name, [group, mode, *argv], tmp_path)
         bridged = _captured(module, runner_name, [group, "generate", *argv], tmp_path)
     assert bridged == direct

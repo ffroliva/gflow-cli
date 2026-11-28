@@ -310,6 +310,22 @@ def test_resolve_payload_refs_i2v_project_alone_is_not_usable() -> None:
     assert err["error"]["title"] == "Reference Not Usable"
 
 
+def test_resolve_payload_refs_i2v_records_flow_project() -> None:
+    """#1542: catalog flow_project_id rides in the i2v payload for same-project binding."""
+    from gflow_cli.mcp.tools import _resolve_payload_refs
+
+    repo = _FakeRepo(
+        asset=_Asset([], metadata_json={"display_name": "Stone corridor"}, flow_project_id="proj-1")
+    )
+    payload = {"start_image_ref": _A_UUID, "end_image_ref": _A_UUID, "project_id": "proj-1"}
+    err = _resolve_payload_refs(repo, "default", payload, task_type="i2v")
+    assert err is None
+    assert payload["start_image_ref_display_name"] == "Stone corridor"
+    assert payload["start_image_ref_flow_project_id"] == "proj-1"
+    assert payload["end_image_ref_display_name"] == "Stone corridor"
+    assert payload["end_image_ref_flow_project_id"] == "proj-1"
+
+
 def test_resolve_payload_refs_r2v_refs_merge_into_reference_images(tmp_path: Path) -> None:
     """r2v: UUID refs resolve to local paths appended to reference_images; the raw
     'refs' key is consumed and no 'ref_names' is produced."""

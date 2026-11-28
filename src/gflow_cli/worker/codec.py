@@ -308,6 +308,16 @@ def _retirement_warnings(task: QueueTask) -> list[dict[str, Any]]:
     return [{"type": "model_retiring", "model": model.value, "retires_on": when.isoformat()}]
 
 
+def _frame_in_project(payload: dict[str, Any], ref_id: str | None, key: str) -> bool:
+    """True when ``ref_id`` is catalogued in this video task's ``project_id`` (#1542)."""
+    if not ref_id:
+        return False
+    project_id = payload.get("project_id")
+    return recorded_in_project(
+        payload.get(key), project_id if isinstance(project_id, str) else None
+    )
+
+
 def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
     """Map a t2v/i2v/r2v queue payload dict onto ``GenerateVideoRequest``.
 
@@ -387,12 +397,18 @@ def build_video_request(payload: dict[str, Any]) -> GenerateVideoRequest:
         start_image_ref_display_name=start_image_ref_display_name,
         start_image_ref_local_path=start_image_ref_local_path,
         start_image_ref_local_sha256=start_image_ref_local_sha256,
+        start_image_ref_in_project=_frame_in_project(
+            payload, start_image_ref_id, "start_image_ref_flow_project_id"
+        ),
         end_image=end_image,
         end_image_ref_id=end_image_ref_id,
         end_image_ref_name=end_image_ref_name,
         end_image_ref_display_name=end_image_ref_display_name,
         end_image_ref_local_path=end_image_ref_local_path,
         end_image_ref_local_sha256=end_image_ref_local_sha256,
+        end_image_ref_in_project=_frame_in_project(
+            payload, end_image_ref_id, "end_image_ref_flow_project_id"
+        ),
         reference_images=reference_images,
         ref_names=ref_names,
         reference_entities=reference_entities,

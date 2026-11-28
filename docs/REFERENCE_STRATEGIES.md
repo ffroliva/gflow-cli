@@ -107,16 +107,19 @@ Other video modes still refuse characters (exit 36), and a video `@Name` exits 2
   carries media at one slot and characters at another. It must hold exactly the
   requested local references plus the committed character: one missing or one extra
   aborts the submit before Flow generates anything.
-- **An earlier image of the same project rides in place too ([#995](https://github.com/ffroliva/gflow-cli/issues/995)).**
-  `--ref <uuid>` (and an MCP image task's `refs`) is referenced through the same picker
-  path as `batch:N`, with no upload, when the local catalog records that image in the
-  `--project` being generated in and kept its Flow caption (the default
-  `GFLOW_CLI_HISTORY_PROMPTS=store`). The catalog only routes it: the tile must still be in
-  the page's project grid, so a stale row fails with exit 32 instead of attaching something
-  else. A UUID from another project, or one without a recorded caption, still exits 36.
-  Because nothing is uploaded, this path never meets Flow's one-time upload-terms dialog.
-  **Behaviour change:** a same-project image since deleted in Flow used to exit 36 at
-  once; it now spends up to ~90 s (`EXISTING_REF_WAIT_S`) reloading the grid, then exits 32.
+- **An earlier image of the same project rides in place too ([#995](https://github.com/ffroliva/gflow-cli/issues/995), [#1542](https://github.com/ffroliva/gflow-cli/issues/1542)).**
+  `image i2i --ref <uuid>` (and an MCP image task's `refs`) and `video i2v --initial-frame` /
+  `--end-frame <uuid>` (and MCP `gflow_generate_video(mode="i2v", ...)`) bind in place, with
+  no upload, when the local catalog records that image in the `--project` being generated in
+  and kept its Flow caption (the default `GFLOW_CLI_HISTORY_PROMPTS=store`). The catalog only
+  routes it: the tile must still be in the page's project grid (matched by `/asb/<token>`),
+  so a stale row fails with exit 32 instead of attaching something else. A UUID from another
+  project, or one without a recorded caption, still exits 36. Because nothing is uploaded,
+  this path never meets Flow's one-time upload-terms dialog. On `video i2v`, mixed local +
+  UUID pairs are supported, and if a stored caption was renamed in Flow the Frames picker
+  clears the search box to match the exact `/asb/<token>` in the unfiltered project list.
+  **Behaviour change:** a same-project image since deleted in Flow used to exit 36 at once;
+  it now spends up to ~90 s (`EXISTING_REF_WAIT_S`) reloading the grid, then exits 32.
 - **A renamed image heals itself (#546).** If the image was renamed in Flow after gflow
   recorded it, the stored caption no longer matches the picker. gflow reads the current
   caption from the page's own `@` picker and retries within the same reload budget, then

@@ -302,6 +302,26 @@ class UploadFrameMixin(SettingsPaneMixin):
                 # "the picker never listed it", and must not be reported as one.
                 await options.first.click(timeout=4000)
                 break
+        await self._confirm_frame_bound(
+            page,
+            media_id,
+            label=repr(name),
+            chip_label=chip_label,
+            expect_bound_chips=expect_bound_chips,
+        )
+
+    async def _confirm_frame_bound(
+        self,
+        page: Page,
+        media_id: str,
+        *,
+        label: str,
+        chip_label: str = "Start",
+        expect_bound_chips: int = 1,
+        event_name: str = "migrated.frame_bound",
+    ) -> None:
+        """Wait for the frame picker to close (handling #792's confirm cohort) and
+        assert ``expect_bound_chips`` bound thumbnails are visible."""
         try:
             await _picker_pane(page).wait_for(
                 state="hidden", timeout=int(FRAME_COMMIT_GRACE_S * 1000)
@@ -344,7 +364,7 @@ class UploadFrameMixin(SettingsPaneMixin):
                     detail=(
                         "migrated host: the frame picker stayed open "
                         f"{FRAME_COMMIT_GRACE_S + FRAME_COMMIT_HIDDEN_S:.1f}s after picking "
-                        f"{name!r} {why} (host=migrated)"
+                        f"{label} {why} (host=migrated)"
                     ),
                 ) from e
         try:
@@ -356,10 +376,10 @@ class UploadFrameMixin(SettingsPaneMixin):
         except Exception as e:
             raise UiSelectorDriftError(
                 detail=(
-                    f"migrated host: the {chip_label} chip did not bind {name!r} — "
+                    f"migrated host: the {chip_label} chip did not bind {label} — "
                     f"fewer than {expect_bound_chips} bound chip(s) within "
                     f"{FRAME_THUMB_VISIBLE_S:.0f}s of the pick; refusing to submit what "
                     "would go out as text-to-video (host=migrated)"
                 ),
             ) from e
-        log.info("migrated.frame_bound", media_id=media_id)
+        log.info(event_name, media_id=media_id, chip_label=chip_label)

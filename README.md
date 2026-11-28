@@ -314,11 +314,11 @@ gflow CLI  →  Provider (interchangeable)  →  Flow (ui_automation) / Mock (te
 
 **Two Flow frontends:** Google is moving accounts from `labs.google` to `flow.google.com` ([#639](https://github.com/ffroliva/gflow-cli/issues/639)). It is the same product with a different widget toolkit and wire protocol (`batchexecute` instead of `aisandbox-pa`). The migrated driver covers:
 
-- text-to-video, image-to-video from a local start frame, and reference-to-video from local files;
+- text-to-video, image-to-video from local start/end frames or catalogued image UUIDs in the same `--project`, and reference-to-video from local files;
 - text-to-image and image-to-image from local files;
 - a single-segment `video extend`.
 
-Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ffroliva/gflow-cli/issues/958)), 2 Lite and Pro. It supports the five aspect ratios measured on that host (16:9, 4:3, 1:1, 3:4, 9:16) and counts 1–4. An existing project is required at the transport boundary. Images can tag a character by `@Name`. Reference-to-video takes a named character with `--reference-entity` and `--reference-entity-name` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)). An account that is served the **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gets text-to-image and text-to-video only. An image `--ref <uuid>` is referenced in place when the catalog records it in the same `--project` ([#995](https://github.com/ffroliva/gflow-cli/issues/995)).
+Image generation supports Nano Banana 2.1 (`nano2`, [#958](https://github.com/ffroliva/gflow-cli/issues/958)), 2 Lite and Pro. It supports the five aspect ratios measured on that host (16:9, 4:3, 1:1, 3:4, 9:16) and counts 1–4. An existing project is required at the transport boundary. Images can tag a character by `@Name`. Reference-to-video takes a named character with `--reference-entity` and `--reference-entity-name` ([#723](https://github.com/ffroliva/gflow-cli/issues/723)). An account that is served the **agent-only** composer ([#799](https://github.com/ffroliva/gflow-cli/issues/799)) gets text-to-image and text-to-video only. An image `--ref <uuid>` ([#995](https://github.com/ffroliva/gflow-cli/issues/995)) or a video `i2v` `--initial-frame` / `--end-frame <uuid>` ([#1542](https://github.com/ffroliva/gflow-cli/issues/1542)) is bound in place, with no upload, when the catalog records it in the same `--project`.
 
 These keep the labs driver until they are ported: other UUID media references, an entity id without a name, instructions, Imagen 4, and the rest of the matrix (`GFLOW_CLI_FLOW_HOST`, see [CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_flow_host)).
 

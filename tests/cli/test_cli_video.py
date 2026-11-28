@@ -870,6 +870,7 @@ def test_media_picker_metadata_ignores_unknown_and_unnamed_assets(
     assert cli_video._media_picker_metadata(["uuid-unnamed", "uuid-unknown", None], "ffroliva") == (
         {},
         {},
+        {},
     )
 
 
@@ -883,13 +884,13 @@ def test_media_picker_metadata_swallows_catalog_errors(
 
     monkeypatch.setattr(cli_video.DataStore, "open", staticmethod(_boom))
 
-    assert cli_video._media_picker_metadata(["uuid-1"], "ffroliva") == ({}, {})
+    assert cli_video._media_picker_metadata(["uuid-1"], "ffroliva") == ({}, {}, {})
 
 
 def test_media_picker_metadata_resolves_names_per_uuid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Each frame UUID carries its own catalog name into picker search."""
+    """Each frame UUID carries its own catalog name and project id into picker search."""
     from gflow_cli import cli_video
 
     class _FakeStore:
@@ -914,6 +915,7 @@ def test_media_picker_metadata_resolves_names_per_uuid(
                 if name is None
                 else SimpleNamespace(
                     kind=AssetKind.IMAGE,
+                    flow_project_id="proj-1" if media_id == "uuid-start" else "proj-2",
                     metadata_json={"display_name": name},
                     local_files=[],
                 )
@@ -922,7 +924,7 @@ def test_media_picker_metadata_resolves_names_per_uuid(
     monkeypatch.setattr(cli_video.DataStore, "open", staticmethod(lambda _p: _FakeStore()))
     monkeypatch.setattr(cli_video, "DataRepository", _FakeRepo)
 
-    names, local_paths = cli_video._media_picker_metadata(
+    names, local_paths, project_ids = cli_video._media_picker_metadata(
         ["uuid-start", "uuid-end", "uuid-unknown", None], "ffroliva"
     )
 
@@ -931,6 +933,7 @@ def test_media_picker_metadata_resolves_names_per_uuid(
         "uuid-end": "Brass key on wooden bench",
     }
     assert local_paths == {}
+    assert project_ids == {"uuid-start": "proj-1", "uuid-end": "proj-2"}
 
 
 def test_media_picker_metadata_filters_non_images_and_stale_files(
@@ -992,7 +995,7 @@ def test_media_picker_metadata_filters_non_images_and_stale_files(
 
     assert cli_video._media_picker_metadata(
         ["uuid-image", "uuid-mutated", "uuid-stale", "uuid-video", None], "default"
-    ) == ({}, {"uuid-image": (valid, hashlib.sha256(valid.read_bytes()).hexdigest())})
+    ) == ({}, {"uuid-image": (valid, hashlib.sha256(valid.read_bytes()).hexdigest())}, {})
 
 
 def test_i2v_uuid_frame_gets_catalog_display_name(tmp_path: Path) -> None:
@@ -1017,6 +1020,7 @@ def test_i2v_uuid_frame_gets_catalog_display_name(tmp_path: Path) -> None:
             return_value=(
                 {uuid_ref: "Brass key on marble surface"},
                 {uuid_ref: (recorded, digest)},
+                {},
             ),
         ) as names,
     ):
@@ -1053,7 +1057,7 @@ def test_i2v_unnamed_uuid_preserves_identity_and_recorded_fallback(tmp_path: Pat
         patch("gflow_cli.cli_video._generate_and_report", new=_capture),
         patch(
             "gflow_cli.cli_video._media_picker_metadata",
-            return_value=({}, {uuid_ref: (recorded, digest)}),
+            return_value=({}, {uuid_ref: (recorded, digest)}, {}),
         ),
     ):
         result = runner.invoke(
@@ -1067,6 +1071,50 @@ def test_i2v_unnamed_uuid_preserves_identity_and_recorded_fallback(tmp_path: Pat
     assert request.start_image_ref_id == uuid_ref  # type: ignore[attr-defined]
     assert request.start_image_ref_local_path == recorded  # type: ignore[attr-defined]
     assert request.start_image_ref_local_sha256 == digest  # type: ignore[attr-defined]
+
+
+def test_i2v_uuid_frame_marks_in_project_from_catalog(tmp_path: Path) -> None:
+    """#1542: CLI marks Start/End UUID frames in_project when catalog project matches --project."""
+    captured: dict[str, object] = {}
+
+    async def _capture(request: object, **_kwargs: object) -> None:
+        captured["request"] = request
+
+    start_uuid = "11111111-1111-4111-8111-111111111111"
+    end_uuid = "22222222-2222-4222-8222-222222222222"
+    target_project = "f6caf027-aaaa-4111-8111-111111111111"
+    other_project = "99999999-bbbb-4111-8111-111111111111"
+    runner = CliRunner()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path),
+        patch("gflow_cli.cli_video._generate_and_report", new=_capture),
+        patch(
+            "gflow_cli.cli_video._media_picker_metadata",
+            return_value=(
+                {start_uuid: "Stone corridor", end_uuid: "Warm lamp"},
+                {},
+                {start_uuid: target_project, end_uuid: other_project},
+            ),
+        ),
+    ):
+        result = runner.invoke(
+            video,
+            [
+                "i2v",
+                "--initial-frame",
+                start_uuid,
+                "--end-frame",
+                end_uuid,
+                "pan",
+                "--project",
+                target_project,
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    req = captured["request"]
+    assert req.start_image_ref_in_project is True  # type: ignore[attr-defined]
+    assert req.end_image_ref_in_project is False  # type: ignore[attr-defined]
 
 
 def test_i2v_no_image_raises_usage_error(tmp_path: Path) -> None:
