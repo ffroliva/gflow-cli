@@ -234,6 +234,21 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "0")
 
 
+@pytest.fixture(autouse=True)
+def _reset_winsec_caches() -> Iterator[None]:
+    """Keep process-wide SID and file-ACL caches from leaking fake responses between tests."""
+    from gflow_cli import winsec
+
+    clear_sid = getattr(winsec._current_user_sid, "cache_clear", None)
+    if clear_sid is not None:
+        clear_sid()
+    winsec._file_acl_cache.clear()
+    yield
+    if clear_sid is not None:
+        clear_sid()
+    winsec._file_acl_cache.clear()
+
+
 @pytest.fixture
 def install_log_capture() -> Iterator[structlog.testing.LogCapture]:
     """Install a fresh structlog ``LogCapture`` processor + ``merge_contextvars``.

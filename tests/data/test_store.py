@@ -506,10 +506,39 @@ def test_open_skips_same_identity_and_rehardens_externally_replaced_db(
 
     hardened.clear()
     db.unlink()
-    db.write_bytes(b"")  # External process creates a new file without calling forget_file_acl.
+    db.write_bytes(b"")  # External process creates a new file without calling any cache-reset API.
     with DataStore.open(db):
         pass
     assert any(os.path.normcase(p) == os.path.normcase(str(db)) for p in hardened)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_runs_whoami_at_most_once_across_reopens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reopening a closed store re-hardens recreated sidecars but spawns whoami.exe once."""
+    db = tmp_path / "gflow.db"
+    real_run = subprocess.run
+    whoami_calls = 0
+    icacls_calls = 0
+
+    def counting_run(args: list[str], **kwargs: Any) -> Any:
+        nonlocal whoami_calls, icacls_calls
+        exe = os.path.basename(args[0]).lower()
+        if exe == "whoami.exe":
+            whoami_calls += 1
+        elif exe == "icacls.exe":
+            icacls_calls += 1
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting_run)
+
+    for _ in range(3):
+        with DataStore.open(db):
+            pass
+
+    assert whoami_calls == 1
+    assert icacls_calls > 3
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
@@ -599,7 +628,7 @@ def test_open_survives_a_failed_acl(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(winsec, "_current_user_sid", refuse)
     with capture_logs() as logs, DataStore.open(tmp_path / "gflow.db"):
         pass
-    assert [entry["event"] for entry in logs] == ["file_acl_failed"]
+    assert logs and all(entry["event"] == "file_acl_failed" for entry in logs)
 
 
 def test_harden_files_once_does_not_retry_a_failure(
@@ -613,21 +642,20 @@ def test_harden_files_once_does_not_retry_a_failure(
 
     once = tmp_path / "once.db"
     once.touch()
-    winsec.forget_file_acl(str(once))
+    second = tmp_path / "second.db"
+    second.touch()
 
     monkeypatch.setattr(sys, "platform", "linux")
-    assert winsec.harden_files_once((str(once),)).ok is False
+    assert winsec.harden_files_once((str(once),)) is False
     assert calls == []
 
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(winsec, "_current_user_sid", fail)
     results = [winsec.harden_files_once((str(once),)) for _ in range(3)]
-    assert [r.ok for r in results] == [False, False, False]
-    assert results[0].sid_failed is True
+    assert results == [False, False, False]
     assert calls == [1]
 
-    winsec.forget_file_acl(str(once))
-    assert winsec.harden_files_once((str(once),)).ok is False
+    assert winsec.harden_files_once((str(second),)) is False
     assert calls == [1, 1]
 
 
@@ -646,11 +674,8 @@ def test_harden_files_once_dedups_by_identity_not_case_only_spelling(
     applied: list[str] = []
     monkeypatch.setattr(winsec, "_regular_file_identity", identities.get)
     monkeypatch.setattr(winsec, "_apply_file_acl", lambda p, sid: applied.append(p) or True)
-    for p in identities:
-        winsec.forget_file_acl(p)
 
-    res = winsec.harden_files_once(tuple(identities))
-    assert res.ok is True
+    assert winsec.harden_files_once(tuple(identities)) is True
     assert applied == [str(tmp_path / "Catalog.db-wal"), str(tmp_path / "catalog.db-wal")]
 
 

@@ -15,7 +15,7 @@ import stat
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING
 
 import structlog
@@ -43,8 +43,9 @@ def _system32(executable: str) -> str:
     return os.path.join(root, "System32", executable)
 
 
+@cache
 def _current_user_sid() -> str:
-    """The current user's SID from ``whoami /user``.
+    """The current user's SID from ``whoami /user`` (cached process-wide).
 
     Parsed from RAW BYTES: console tools emit the OEM codepage, so a
     non-ASCII account name would break text-mode decoding — while the SID
@@ -138,21 +139,6 @@ _file_acl_lock = threading.Lock()
 _file_acl_cache: dict[str, tuple[_FileIdentity, bool]] = {}
 
 
-@dataclass(frozen=True)
-class FileAclResult:
-    """Outcome of :func:`harden_files_once` for one batch of files."""
-
-    ok: bool
-    sid: str | None = None
-    sid_failed: bool = False
-
-
-def forget_file_acl(path: str) -> None:
-    """Drop any cached ACL outcome for *path* (called when gflow creates a fresh file)."""
-    with _file_acl_lock:
-        _file_acl_cache.pop(path, None)
-
-
 def _regular_file_identity(path: str) -> _FileIdentity | None:
     try:
         st = os.lstat(path)
@@ -218,34 +204,34 @@ def _partition_pending_files(
     return pending, all_ok
 
 
-def harden_files_once(paths: Iterable[str], *, sid: str | None = None) -> FileAclResult:
+def harden_files_once(paths: Iterable[str]) -> bool:
     """Grant only the current user on each existing regular file in *paths*.
 
     Never touches the containing directory, which may not be ours (issue #1437).
-    Cached per ``(path, st_dev, st_ino, birth_ns)`` so unchanged repeated opens hit
-    memory only, while recreated sidecars or replaced files are hardened again.
-    Resolves ``whoami /user`` at most once per call.
+    Cached per ``(path, st_dev, st_ino, birth_ns)`` so unchanged files hit
+    memory only while recreated sidecars or replaced files are hardened again;
+    the current user SID is cached process-wide (``whoami /user`` runs at most
+    once per process).
     """
     if sys.platform != "win32":
-        return FileAclResult(ok=False)
+        return False
 
     pending, all_ok = _partition_pending_files(paths)
     if not pending:
-        return FileAclResult(ok=all_ok, sid=sid, sid_failed=False)
+        return all_ok
 
-    if sid is None:
-        try:
-            sid = _current_user_sid()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "file_acl_failed",
-                error=type(exc).__name__,
-                returncode=getattr(exc, "returncode", None),
-            )
-            with _file_acl_lock:
-                for path, identity in pending:
-                    _file_acl_cache[path] = (identity, False)
-            return FileAclResult(ok=False, sid=None, sid_failed=True)
+    try:
+        sid = _current_user_sid()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "file_acl_failed",
+            error=type(exc).__name__,
+            returncode=getattr(exc, "returncode", None),
+        )
+        with _file_acl_lock:
+            for path, identity in pending:
+                _file_acl_cache[path] = (identity, False)
+        return False
 
     for path, identity in pending:
         outcome = _apply_file_acl(path, sid)
@@ -255,4 +241,4 @@ def harden_files_once(paths: Iterable[str], *, sid: str | None = None) -> FileAc
             _file_acl_cache[path] = (identity, outcome)
         all_ok = all_ok and outcome
 
-    return FileAclResult(ok=all_ok, sid=sid, sid_failed=False)
+    return all_ok

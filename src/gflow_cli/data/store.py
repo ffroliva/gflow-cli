@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Self
 import structlog
 
 from gflow_cli.errors import DataMigrationError, DataStoreError
-from gflow_cli.winsec import FileAclResult, forget_file_acl, harden_files_once
+from gflow_cli.winsec import harden_files_once
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
@@ -43,7 +43,7 @@ def _win32_sidecar_paths(path: Path, real: str) -> tuple[str, ...]:
     return tuple(f"{base}{suffix}" for base in bases for suffix in ("-wal", "-shm"))
 
 
-def _secure_store_files(path: Path) -> tuple[str | None, FileAclResult]:
+def _secure_store_files(path: Path) -> str | None:
     """Create the database owner-only, or drop group/other access from an existing one.
 
     Runs before SQLite opens the file. An existing directory is left alone:
@@ -61,14 +61,13 @@ def _secure_store_files(path: Path) -> tuple[str | None, FileAclResult]:
         # connecting between this open and close.
         with _create_lock:
             os.close(os.open(real, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
-        if sys.platform == "win32":
-            forget_file_acl(real)  # a recreated file needs its own ACL
     except FileExistsError:
         pass
     if not os.path.isfile(real):
-        return None, FileAclResult(ok=True)  # no regular db, so "<path>-wal" is no sidecar
+        return None  # no regular db, so "<path>-wal" is no sidecar
     if sys.platform == "win32":
-        return real, harden_files_once((real, *_win32_sidecar_paths(path, real)))
+        harden_files_once((real, *_win32_sidecar_paths(path, real)))
+        return real
     for target in (real, f"{real}-wal", f"{real}-shm"):
         try:
             mode = os.lstat(target).st_mode
@@ -82,7 +81,7 @@ def _secure_store_files(path: Path) -> tuple[str | None, FileAclResult]:
                 file=os.path.basename(target),
                 error=type(exc).__name__,
             )
-    return real, FileAclResult(ok=True)
+    return real
 
 
 def _utc_now() -> str:
@@ -274,7 +273,7 @@ class DataStore:
     @classmethod
     def open(cls, path: Path) -> DataStore:
         try:
-            real, acl = _secure_store_files(path)
+            real = _secure_store_files(path)
             conn = sqlite3.connect(path, isolation_level=None)
             try:
                 conn.row_factory = sqlite3.Row
@@ -283,8 +282,8 @@ class DataStore:
                 conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
                 store = cls(conn=conn, path=path)
                 store.apply_migrations()
-                if sys.platform == "win32" and real is not None and not acl.sid_failed:
-                    harden_files_once(_win32_sidecar_paths(path, real), sid=acl.sid)
+                if sys.platform == "win32" and real is not None:
+                    harden_files_once(_win32_sidecar_paths(path, real))
                 return store
             except BaseException:
                 conn.close()
