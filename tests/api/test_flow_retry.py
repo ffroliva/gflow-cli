@@ -6,6 +6,7 @@ Rows cite docs/superpowers/plans/2026-11-27-headless-direct-transport/SCENARIO.m
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -33,11 +34,13 @@ from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.errors import (
     AuthExpiredError,
     NetworkError,
+    RateLimitError,
     TaskCancelledError,
     UiModeUnavailableError,
     WafRejectionError,
     exit_code_for,
 )
+from tests.api.transports.test_direct_http import _UPLOADED, _maseq_reply, _png
 from tests.api.transports.test_direct_http_gateway import _SHELL_HTML, _error_reply, _ogiz0b_reply
 
 _REFUSED = RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
@@ -82,9 +85,21 @@ class Script:
             before()
         self.sends += 1
         self.events.append("send")
-        if isinstance(answer, RefusedNotBilled | Indeterminate):
+        if isinstance(answer, RefusedNotBilled):
             raise DirectAttemptEnded(answer)
+        if isinstance(answer, Indeterminate):
+            # As the gateway does: an outcome past the send carries its reconcile error.
+            raise DirectAttemptEnded(answer, error=_reconcile_error(answer))
         return answer
+
+
+def _reconcile_error(outcome: Indeterminate) -> NetworkError:
+    return NetworkError(
+        detail=f"{outcome.cause} on an image submit; not resent",
+        status=outcome.status,
+        route=f"batchexecute:{outcome.rpcid}",
+        next_action="reconcile",
+    )
 
 
 def _observer(events: list[str]) -> Any:
@@ -672,3 +687,157 @@ def _direct_transport(tmp_path: Path, handler: Any) -> DirectHttpTransport:
     t._page = _fake_page()
     t.park_deferred_page = AsyncMock()  # type: ignore[method-assign]
     return t
+
+
+@pytest.mark.asyncio
+async def test_reauth_error_charged_no() -> None:
+    """The reauth stop happens before any send, so its error says nothing was charged."""
+    with pytest.raises(AuthExpiredError) as caught:
+        await run_with_retry(
+            FakeHost(),
+            direct=Script(NotSent("signed_out_shell", auth=True)).direct,
+            ui=_no_ui,
+            setting=VisibilitySetting.AUTO,
+        )
+    assert caught.value.charged == "no"
+    assert caught.value.resolved_next_action() == "reauth"
+
+
+@pytest.mark.asyncio
+async def test_post_send_error_reports_reconcile() -> None:
+    """A typed error that says ``charged="no"`` but ended past the send may have billed: the
+    loop raises it as ``maybe`` so ``next_action`` reads reconcile."""
+    typed = RateLimitError(detail="HTTP 429 after the send")
+    assert typed.charged == "no"
+
+    async def direct(before: Any) -> str:
+        raise DirectAttemptEnded(Indeterminate("ogiZ0b", "HTTP 429", 429), error=typed)
+
+    with pytest.raises(RateLimitError) as caught:
+        await run_with_retry(FakeHost(), direct=direct, ui=_no_ui, setting=VisibilitySetting.AUTO)
+    assert caught.value is typed
+    assert (caught.value.charged, caught.value.retryable) == ("maybe", False)
+    assert caught.value.resolved_next_action() == "reconcile"
+
+
+#: Any reason Flow names other than UNUSUAL_ACTIVITY (and not a content-safety reason).
+_OTHER_REASON = "PUBLIC_ERROR_OUT_OF_CREDITS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [httpx.Response(429), httpx.Response(200, text=_error_reply(_OTHER_REASON))],
+    ids=["http_429", "other_reason"],
+)
+async def test_429_and_out_of_credits_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reply: httpx.Response
+) -> None:
+    """Only an UNUSUAL_ACTIVITY refusal is resent: a 429, or any other reason, is one POST,
+    no relaunch, and a reconcile error."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    monkeypatch.setattr(
+        "gflow_cli.api.transports.direct_http._images.build_ogiz0b_body",
+        MagicMock(return_value="f.req=mock_body&at=at-x&"),
+    )
+    monkeypatch.setattr(flow_wire, "getproxies", dict)
+    flow_wire.reset_state()
+    posts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=_SHELL_HTML)
+        posts.append("POST")
+        return reply
+
+    transport = _direct_transport(tmp_path, handler)
+    host = FakeHost()
+    request = GenerateImageRequest(prompt="x")
+
+    with pytest.raises(NetworkError) as caught:
+        await run_with_retry(
+            host,
+            direct=lambda before: transport.generate_images(
+                project_id="proj-123", request=request, on_before_submit=before
+            ),
+            ui=_no_ui,
+            setting=VisibilitySetting.AUTO,
+        )
+    assert posts == ["POST"]
+    assert host.relaunches == []
+    assert (caught.value.charged, caught.value.resolved_next_action()) == ("maybe", "reconcile")
+    flow_wire.reset_state()
+
+
+def _maseq_error(reason: str) -> str:
+    frame = [["wrb.fr", "maseQ", None, None, None, [3, None, [[reason]]], "generic"]]
+    return f")]}}'\n{json.dumps(frame)}"
+
+
+def _upload_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replies: list[httpx.Response]
+) -> tuple[FlowApiClient, list[str]]:
+    """A client whose transport uploads direct; ``relaunch`` is recorded, the UI is fenced."""
+    monkeypatch.setattr(
+        "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
+    )
+    monkeypatch.setattr(flow_wire, "getproxies", dict)
+    monkeypatch.setattr(
+        UiAutomationTransport, "upload_reference", AsyncMock(side_effect=AssertionError("UI"))
+    )
+    flow_wire.reset_state()
+    events: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, text=_SHELL_HTML)
+        events.append(request.url.params["rpcids"])
+        return replies.pop(0)
+
+    client = FlowApiClient(tmp_path, visibility=BrowserVisibility.HEADLESS)
+    client.transport = _direct_transport(tmp_path, handler)
+
+    async def relaunch(visibility: BrowserVisibility) -> None:
+        events.append(f"relaunch:{visibility.value}")
+
+    client.relaunch = relaunch  # type: ignore[method-assign]
+    return client, events
+
+
+@pytest.mark.asyncio
+async def test_upload_refused_reuploads_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused ``maseQ`` is not billed: one relaunch, one more upload, and its media id."""
+    client, events = _upload_client(
+        tmp_path,
+        monkeypatch,
+        [
+            httpx.Response(200, text=_maseq_error(UNUSUAL_ACTIVITY_REASON)),
+            httpx.Response(200, text=_maseq_reply()),
+        ],
+    )
+
+    ref = await client.upload_reference_in_place("proj-123", _png(tmp_path))
+
+    assert ref is not None
+    assert ref.name == _UPLOADED
+    assert events == ["maseQ", "relaunch:headless", "maseQ"]
+    flow_wire.reset_state()
+
+
+@pytest.mark.asyncio
+async def test_upload_indeterminate_not_resent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An upload that may have landed is never sent again, nor retried through the UI."""
+    client, events = _upload_client(tmp_path, monkeypatch, [httpx.Response(500)])
+
+    with pytest.raises(NetworkError) as caught:
+        await client.upload_reference_in_place("proj-123", _png(tmp_path))
+
+    assert events == ["maseQ"]
+    assert (caught.value.charged, caught.value.resolved_next_action()) == ("maybe", "reconcile")
+    flow_wire.reset_state()

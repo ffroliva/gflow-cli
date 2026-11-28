@@ -35,7 +35,7 @@ from gflow_cli.api.submit_policy import (
     Stop,
     next_step,
 )
-from gflow_cli.errors import AuthExpiredError, GFlowError, NetworkError
+from gflow_cli.errors import AuthExpiredError, GFlowError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -187,19 +187,12 @@ def _stop_error(step: RetryStep, ended: DirectAttemptEnded) -> GFlowError:
                 "nothing was sent."
             ),
             route="direct_http.shell",
+            charged="no",
         )
-    if ended.error is not None:
-        ended.error.retryable = False  # past the send it is never a retry
-        return ended.error
-    rpcid = outcome.rpcid if isinstance(outcome, Indeterminate) else ""
-    return NetworkError(
-        detail=f"{_reason(ended)} on a direct submit; not resent",
-        route=f"batchexecute:{rpcid}",
-        next_action="reconcile",
-        retryable=False,
-        charged="maybe",
-        remediation_hint=(
-            "Flow may have accepted this request before the error, so gflow did not resend "
-            "it. Check the project in Flow before running the command again."
-        ),
-    )
+    # The transport attaches the error to every outcome past the send (``_gateway.py``).
+    if ended.error is None:  # pragma: no cover - unreachable by that contract
+        raise AssertionError(f"an attempt ended past the send carries its error: {outcome!r}")
+    ended.error.retryable = False  # past the send it is never a retry
+    if ended.error.charged == "no":
+        ended.error.charged = "maybe"  # it was sent, so Flow may have billed it: reconcile
+    return ended.error

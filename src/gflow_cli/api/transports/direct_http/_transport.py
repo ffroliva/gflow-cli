@@ -177,10 +177,4 @@ class DirectHttpTransport(UiAutomationTransport):
             return "unsupported_shape"
         if project_id is None:
             return "no_project"
-        if self._profile_dir is None:
-            return "no_profile_dir"
-        if get_settings().flow_host == "labs.google":
-            return "flow_host_labs"
-        if _proxy_configured():
-            return "proxy_configured"
-        return None
+        return self._why_not_direct_upload()
