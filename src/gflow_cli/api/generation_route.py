@@ -290,12 +290,25 @@ def choose_video_route(
     # A mention can resolve to a reference after launch, which the direct frame cannot carry.
     if "@" in request.prompt:
         return Route.UI
-    # A bare t2v plans direct (headless): the transport reads the selection on the armed page
-    # and ends NotSent when it is unread or unmeasured, so an unmeasured selection costs at
-    # most one extra (headed) launch for the UI path.
+    # A bare t2v plans direct (headless) unless an explicit duration or resolution rules out
+    # every measured key: the transport reads the selection on the armed page and ends NotSent
+    # when it is unread or unmeasured, so an unmeasured selection costs at most one extra
+    # (headed) launch for the UI path.
     if is_bare_t2v(request):
-        return Route.DIRECT
+        return Route.DIRECT if _bare_t2v_can_key(request) else Route.UI
     return Route.DIRECT if video_target(request) is not None else Route.UI
+
+
+def _bare_t2v_can_key(request: GenerateVideoRequest) -> bool:
+    """Some measured t2v key carries the request's aspect and any explicit duration and
+    resolution (they win over the selection, so a key without them is never reached)."""
+    return any(
+        mode is Mode.T2V
+        and aspect is request.aspect
+        and request.duration in (None, duration)
+        and request.resolution in (None, resolution)
+        for (_, mode, duration, resolution, aspect) in MEASURED_VIDEO_KEYS
+    )
 
 
 def _catalog_value(row: object, name: str) -> object:

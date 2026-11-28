@@ -1139,3 +1139,26 @@ def test_bare_t2v_with_an_unmeasured_shape_routes_ui(request_: GenerateVideoRequ
         request_, flow_host="flow.google.com", proxy_configured=False, effective_max_credits=None
     )
     assert route is Route.UI
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({"resolution": "720p"}, Route.UI),  # no measured t2v key is 720p
+        ({"duration": 8}, Route.UI),  # nor 8 s
+        ({"duration": 4, "resolution": "360p"}, Route.DIRECT),  # the measured key itself
+        ({"duration": 4}, Route.DIRECT),
+        ({"resolution": "360p"}, Route.DIRECT),
+    ],
+)
+def test_bare_t2v_with_unmeasurable_explicit_fields_routes_ui_before_launch(
+    fields: dict[str, object], expected: Route
+) -> None:
+    """An explicit ``--duration`` / ``--resolution`` that no measured key carries cannot be
+    keyed from any selection, so the route is UI before launch (no headless launch that
+    ends ``NotSent`` and relaunches headed)."""
+    request = GenerateVideoRequest(prompt="p", **fields)  # type: ignore[arg-type]
+    route = choose_video_route(
+        request, flow_host="flow.google.com", proxy_configured=False, effective_max_credits=None
+    )
+    assert route is expected
