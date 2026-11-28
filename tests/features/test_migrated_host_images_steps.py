@@ -13,6 +13,7 @@ from pytest_bdd import given, scenarios, then, when
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest, ImageRef, Model
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.batchexecute import image_records
 from gflow_cli.api.transports.migrated_composer import (
     _image_body_problem,
@@ -139,6 +140,7 @@ def _shared_request(image_world: dict[str, Any]) -> None:
     transport = image_world["transport"]
     client = FlowApiClient.__new__(FlowApiClient)
     client.transport = transport
+    client.visibility = BrowserVisibility.HEADED  # set by __init__ on a real client
     client._mint_recaptcha_token = AsyncMock(side_effect=AssertionError("page owns token"))
     image_world["result"] = asyncio.run(
         client._drive_images_generation(
