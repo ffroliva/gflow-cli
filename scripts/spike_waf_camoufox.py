@@ -55,6 +55,7 @@ if _SRC.exists() and str(_SRC) not in sys.path:
 sys.path.insert(0, str(_ROOT / "scripts" / "dev"))
 
 from _spike_common import default_out_path, resolve_profile_dir, step  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 if TYPE_CHECKING:
     pass
@@ -134,7 +135,7 @@ async def _run(args: argparse.Namespace, profile_dir: Path) -> SpikeResult:
     started = time.time()
     started_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(started))
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=args.headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS if args.headless else BrowserVisibility.HEADED) as client:
         project_id = args.project
         if project_id is None:
             project = await client.create_project(title=f"waf-spike {args.engine}")

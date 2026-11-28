@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import random
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
@@ -57,7 +58,6 @@ from gflow_cli.media import extract_last_frame
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
     from gflow_cli.api.client import FlowApiClient
     from gflow_cli.api.video import VideoResult, VideoStartedCallback
@@ -71,6 +71,7 @@ __all__ = [
     "LinkCompletedHook",
     "LinkFailedHook",
     "LinkStartedHook",
+    "planned_link_requests",
     "reject_unusable_links",
     "run_chain",
 ]
@@ -244,6 +245,34 @@ def _build_link_request(
         original_prompt=spec.original_prompt,
         tool=spec.tool,
     )
+
+
+def planned_link_requests(
+    *,
+    links: Sequence[ChainLinkSpec],
+    model: VideoModel,
+    aspect: Aspect,
+    start_index: int = 0,
+    max_credits: int | None = None,
+) -> list[GenerateVideoRequest]:
+    """The request each remaining link sends, built before launch so its route is known.
+
+    A link after the first is seeded from the previous clip's last frame, extracted at run
+    time, so it carries a placeholder start frame of the same kind (a local file).
+    """
+    return [
+        replace(
+            _build_link_request(
+                spec=spec,
+                index=index,
+                model=model,
+                aspect=aspect,
+                prev_frame=Path("planned-seed-frame.png") if index > 0 else None,
+            ),
+            max_credits=max_credits,
+        )
+        for index, spec in enumerate(links, start=start_index)
+    ]
 
 
 def reject_unusable_links(*, model: VideoModel, links: Sequence[ChainLinkSpec]) -> None:

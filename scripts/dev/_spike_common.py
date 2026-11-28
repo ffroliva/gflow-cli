@@ -38,6 +38,7 @@ if _SRC.exists() and str(_SRC) not in sys.path:
 # ---------------------------------------------------------------------------
 from gflow_cli import auth as _auth_mod  # noqa: E402
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 if TYPE_CHECKING:
     pass
@@ -98,7 +99,7 @@ async def build_client(
     headless=False is the safe default — reCAPTCHA scores headed sessions
     higher (memory: real-browser-auth-mandatory).
     """
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS if headless else BrowserVisibility.HEADED) as client:
         yield client
 
 

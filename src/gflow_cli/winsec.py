@@ -11,14 +11,17 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import subprocess
 import sys
+import threading
 from functools import cache
 from typing import TYPE_CHECKING
 
 import structlog
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
 logger = structlog.get_logger(__name__)
@@ -40,8 +43,9 @@ def _system32(executable: str) -> str:
     return os.path.join(root, "System32", executable)
 
 
+@cache
 def _current_user_sid() -> str:
-    """The current user's SID from ``whoami /user``.
+    """The current user's SID from ``whoami /user`` (cached process-wide).
 
     Parsed from RAW BYTES: console tools emit the OEM codepage, so a
     non-ASCII account name would break text-mode decoding — while the SID
@@ -125,17 +129,33 @@ def ensure_profile_hardened(path: Path) -> bool:
     return True
 
 
-@cache
-def harden_file_once(path: str) -> bool:
-    """Grant only the current user on one file; attempted once per process and path.
+_FileIdentity = tuple[int, int, int]  # (st_dev, st_ino, birth_ns)
 
-    Never touches the containing directory, which may not be ours (issue #1437). A failure
-    is cached too: each attempt spawns two subprocesses.
-    """
-    if sys.platform != "win32":
-        return False
+#: Last-hardened file identity per exact path: path -> (identity, ok).
+#: Bounded to one entry per distinct path; including birth_ns alongside
+#: (st_dev, st_ino) distinguishes recreated sidecars even if an inode/file ID
+#: is reused on deletion.
+_file_acl_lock = threading.Lock()
+_file_acl_cache: dict[str, tuple[_FileIdentity, bool]] = {}
+
+
+def _regular_file_identity(path: str) -> _FileIdentity | None:
     try:
-        sid = _current_user_sid()
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.warning("file_acl_failed", error=type(exc).__name__)
+        return None
+    if not stat.S_ISREG(st.st_mode):
+        return None
+    # On Windows st_birthtime_ns (3.12+) or st_ctime_ns (3.11) is file creation time.
+    birth_ns = int(getattr(st, "st_birthtime_ns", st.st_ctime_ns))
+    return (st.st_dev, st.st_ino, birth_ns)
+
+
+def _apply_file_acl(path: str, sid: str) -> bool | None:
+    try:
         # Fixed System32 binary, argv list, no shell.
         subprocess.run(  # noqa: S603
             [_system32("icacls.exe"), path, "/inheritance:r", "/grant:r", f"*{sid}:F", "/q"],
@@ -145,6 +165,9 @@ def harden_file_once(path: str) -> bool:
             creationflags=_NO_WINDOW,
         )
     except Exception as exc:  # noqa: BLE001
+        if not os.path.lexists(path):
+            # Sidecar vanished before icacls ran (e.g. concurrent connection close).
+            return None
         # Best-effort: the caller must proceed. No stderr: icacls echoes the path.
         logger.warning(
             "file_acl_failed",
@@ -153,3 +176,69 @@ def harden_file_once(path: str) -> bool:
         )
         return False
     return True
+
+
+def _partition_pending_files(
+    paths: Iterable[str],
+) -> tuple[list[tuple[str, _FileIdentity]], bool]:
+    """Return uncached regular files in *paths* and whether cached entries succeeded."""
+    all_ok = True
+    pending: list[tuple[str, _FileIdentity]] = []
+    seen_paths: set[str] = set()
+    seen_ids: set[_FileIdentity] = set()
+    for path in paths:
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        identity = _regular_file_identity(path)
+        if identity is None or (identity[1] != 0 and identity in seen_ids):
+            continue
+        if identity[1] != 0:
+            seen_ids.add(identity)
+        with _file_acl_lock:
+            cached = _file_acl_cache.get(path)
+        if cached is not None and cached[0] == identity:
+            all_ok = all_ok and cached[1]
+            continue
+        pending.append((path, identity))
+    return pending, all_ok
+
+
+def harden_files_once(paths: Iterable[str]) -> bool:
+    """Grant only the current user on each existing regular file in *paths*.
+
+    Never touches the containing directory, which may not be ours (issue #1437).
+    Cached per ``(path, st_dev, st_ino, birth_ns)`` so unchanged files hit
+    memory only while recreated sidecars or replaced files are hardened again;
+    the current user SID is cached process-wide (``whoami /user`` runs at most
+    once per process).
+    """
+    if sys.platform != "win32":
+        return False
+
+    pending, all_ok = _partition_pending_files(paths)
+    if not pending:
+        return all_ok
+
+    try:
+        sid = _current_user_sid()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "file_acl_failed",
+            error=type(exc).__name__,
+            returncode=getattr(exc, "returncode", None),
+        )
+        with _file_acl_lock:
+            for path, identity in pending:
+                _file_acl_cache[path] = (identity, False)
+        return False
+
+    for path, identity in pending:
+        outcome = _apply_file_acl(path, sid)
+        if outcome is None:
+            continue
+        with _file_acl_lock:
+            _file_acl_cache[path] = (identity, outcome)
+        all_ok = all_ok and outcome
+
+    return all_ok

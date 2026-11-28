@@ -363,6 +363,59 @@ async def test_e2e_t2v_runs_on_flow_google_com_by_default(
 
 @pytest.mark.asyncio
 @pytest.mark.e2e_video
+async def test_e2e_t2v_settles_from_the_listing_when_every_status_body_is_evicted_1484(
+    e2e_profile_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install_log_capture: structlog.testing.LogCapture,
+) -> None:
+    """Bills one clip. #1484: Chrome evicts status reply bodies. With every `jwpduf` and
+    `as29s` body on the generating page unreadable, the run must still settle from the
+    project listing once Flow stops polling, and download the clip through its route."""
+    from playwright.async_api import Error as PlaywrightError
+    from playwright.async_api._generated import Response
+
+    project = _project_id()
+    _set_flow_host(monkeypatch, os.environ.get("GFLOW_CLI_E2E_FLOW_HOST") or None)
+    real_text = Response.text
+    evicted: list[str] = []
+
+    async def text(self: Response) -> str:
+        rpc = next((r for r in ("jwpduf", "as29s") if r in self.url), None)
+        if rpc and "/edit/" not in self.frame.url:  # the clip route's as29s stays readable
+            evicted.append(rpc)
+            raise PlaywrightError(
+                "Response.text: Protocol error (Network.getResponseBody): "
+                "No data found for resource with given identifier"
+            )
+        return await real_text(self)
+
+    monkeypatch.setattr(Response, "text", text)
+    req = GenerateVideoRequest(prompt=_PROMPT, mode=Mode.T2V, aspect=Aspect.LANDSCAPE)
+    transport = UiAutomationTransport()
+    try:
+        await transport.setup(e2e_profile_dir)
+        result: VideoResult = await transport.generate_video(
+            request=req, project_id=project, out_dir=tmp_path, poll_timeout_s=_POLL_TIMEOUT_S
+        )
+    finally:
+        await transport.teardown()
+
+    assert evicted, "no status body was evicted: the test exercised nothing"
+    listing = [
+        e
+        for e in install_log_capture.entries
+        if e["event"] == "migrated.status" and e.get("rpc") == "Zzl0ze"
+    ]
+    assert listing, "the run did not settle from the project listing"
+    assert result.status.succeeded, result.status
+    assert result.local_path is not None and result.local_path.exists()
+    body = result.local_path.read_bytes()
+    assert body[4:8] == b"ftyp" and len(body) > 100_000, body[:12]
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e_video
 async def test_e2e_r2v_binds_local_references_on_the_migrated_host(
     e2e_profile_dir: Path,
     tmp_path: Path,

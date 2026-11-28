@@ -27,3 +27,20 @@ probe. Two traps it must cover (#882 council):
 **How to apply:** for a new billed migrated surface, try the UI path first; replay an
 rpc only when no UI path exists, and then measure the mint action and every payload
 field before relying on them. Code: `src/gflow_cli/api/transports/migrated_extend.py`.
+
+## Amendment (2026-11-28, v0.108.0): when a direct replay is allowed
+
+**What changed.** v0.108.0 sends the measured request shapes over direct HTTP by default
+(`direct_http`, [`2026-11-27-direct-video-and-headless-mint`](../spikes/2026-11-27-direct-video-and-headless-mint.md)):
+`ogiZ0b` images, `maseQ` uploads, `YhhmEf` / `eb1hJf` video and the `p0UkFb` 1080p upscale. That is
+a replay, and it is allowed because each of the four guesses above was replaced by a measurement:
+the mint action, the mint guard, every payload field of each exact key tuple, and the request
+headers the page itself sends.
+
+**The rule now.** Only a **measured tuple** goes direct (`generation_route.py` holds the allowlists,
+decided before the browser launches). Anything unmeasured routes to the UI path and drives the page
+as described above, with its route guard. The token is still minted in a real Flow page, never
+built by gflow, and a send that may have reached Flow is never repeated: a failure past the send is
+reported for reconciliation, and only a not-charged refusal is retried, once. For a new billed
+surface the order is unchanged: drive the page first; add a direct route only after the tuple is
+measured live.

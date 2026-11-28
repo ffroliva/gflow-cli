@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.browser_manager import chrome_strategy_requested, disable_features_args
 from gflow_cli.errors import ConfigurationError
@@ -26,7 +27,7 @@ _MARKER = ".gflow_browser_strategy"
 def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
     """The seam returns exactly the kwargs the client launched with before the
     refactor — proving the extraction changed no behavior."""
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     kwargs = client._persistent_context_kwargs()  # noqa: SLF001
     assert kwargs["user_data_dir"] == str(tmp_path)
     assert kwargs["headless"] is True
@@ -60,7 +61,7 @@ def test_persistent_context_kwargs_are_unchanged(tmp_path: Path) -> None:
 
 def test_persistent_context_kwargs_omits_har_path_when_unset(tmp_path: Path) -> None:
     """No GFLOW_CLI_HAR_PATH -> no record_har_path key at all (not just None)."""
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     kwargs = client._persistent_context_kwargs()  # noqa: SLF001
     assert "record_har_path" not in kwargs
 
@@ -71,7 +72,9 @@ def test_persistent_context_kwargs_includes_har_path_when_set(tmp_path: Path) ->
 
     har_path = tmp_path / "captures" / "session.har"
     settings = Settings(har_path=har_path)
-    client = FlowApiClient(profile_dir=tmp_path, headless=True, settings=settings)
+    client = FlowApiClient(
+        profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS, settings=settings
+    )
     kwargs = client._persistent_context_kwargs()  # noqa: SLF001
     assert kwargs["record_har_path"] == str(har_path)
     assert har_path.parent.is_dir()
@@ -92,7 +95,9 @@ async def test_close_browser_resources_chmods_har_file(tmp_path: Path) -> None:
     har_path = tmp_path / "session.har"
     har_path.write_bytes(b"{}")  # simulate Playwright having already written it
     settings = Settings(har_path=har_path)
-    client = FlowApiClient(profile_dir=tmp_path, headless=True, settings=settings)
+    client = FlowApiClient(
+        profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS, settings=settings
+    )
     # _close_browser_resources only enters its close-block (where the chmod
     # lives) when self._context is not None — a fresh client that never
     # entered __aenter__ has _context=None, so a fake context is required
@@ -181,7 +186,7 @@ def test_guard_raises_on_macos_when_chrome_strategy_downgrades(
     # Construct BEFORE patching sys.platform: construction resolves dirs via
     # platformdirs, whose backend is sensitive to sys.platform. The guard path
     # itself does not touch platformdirs, so patch only around the call.
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     monkeypatch.setattr(sys, "platform", "darwin")
     with pytest.raises(ConfigurationError, match="chrome"):
         client._log_and_guard_launch({"channel": None})  # noqa: SLF001
@@ -197,7 +202,7 @@ def test_guard_warns_not_raises_off_macos(tmp_path: Path, monkeypatch: pytest.Mo
     import structlog
 
     (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     monkeypatch.setattr(sys, "platform", "win32")
     cap = structlog.testing.LogCapture()
     with patch("gflow_cli.api.client.logger", structlog.wrap_logger(None, processors=[cap])):
@@ -208,7 +213,7 @@ def test_guard_warns_not_raises_off_macos(tmp_path: Path, monkeypatch: pytest.Mo
 def test_guard_ok_when_channel_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """channel resolved to 'chrome' → no downgrade → no raise, even on macOS."""
     (tmp_path / _MARKER).write_text("chrome", encoding="utf-8")
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     monkeypatch.setattr(sys, "platform", "darwin")
     client._log_and_guard_launch({"channel": "chrome"})  # noqa: SLF001  (no raise)
 
@@ -220,7 +225,7 @@ def test_persistent_context_launch_event_fields(tmp_path: Path) -> None:
     that drops or renames one of these would otherwise ship green."""
     import structlog
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     kwargs = {
         "channel": None,
         "args": ["--password-store=basic", "--disable-dev-shm-usage"],
@@ -262,7 +267,7 @@ def _capture_cookie_state(client: FlowApiClient) -> dict:
 
 
 def _client_with_cookies(tmp_path: Path, cookies: list[dict]) -> FlowApiClient:
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     ctx = MagicMock()
     ctx.cookies = AsyncMock(return_value=cookies)
     client._context = ctx  # noqa: SLF001
@@ -315,7 +320,7 @@ def test_context_cookie_state_swallows_probe_error(tmp_path: Path) -> None:
 
     import structlog
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     ctx = MagicMock()
     ctx.cookies = AsyncMock(side_effect=PermissionError("locked"))
     client._context = ctx  # noqa: SLF001
@@ -335,7 +340,7 @@ def test_context_seeds_session_when_absent_and_preread_present(tmp_path: Path) -
     the on-disk store) but the pre-launch snapshot has it, seed it into the context."""
     import asyncio
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     ctx = MagicMock()
     ctx.cookies = AsyncMock(return_value=[])  # headed context loaded nothing
     ctx.add_cookies = AsyncMock()
@@ -355,7 +360,7 @@ def test_context_no_seed_when_session_present(tmp_path: Path) -> None:
     """#222: if the context already loaded the session cookie, do NOT seed."""
     import asyncio
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     ctx = MagicMock()
     ctx.cookies = AsyncMock(
         return_value=[{"name": "__Secure-next-auth.session-token", "expires": -1}]
@@ -371,7 +376,7 @@ def test_context_no_seed_when_preread_empty(tmp_path: Path) -> None:
     """#222: session absent AND no pre-read → nothing to seed, logs unavailable."""
     import asyncio
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     ctx = MagicMock()
     ctx.cookies = AsyncMock(return_value=[])
     ctx.add_cookies = AsyncMock()
@@ -393,7 +398,7 @@ def test_preread_flow_session_cookies_populates(
 
     from gflow_cli.auth.cookies import ChromeCookieSnapshot
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     snap = ChromeCookieSnapshot(
         httpx_cookies={"__Secure-next-auth.session-token": "tok", "other": "v"},
         google_session=True,
@@ -416,7 +421,7 @@ def test_preread_flow_session_cookies_best_effort(
     """#222: a failing snapshot read must never break launch — pre-read stays {}."""
     import asyncio
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
 
     async def _boom(_profile_dir: Path) -> object:
         raise PermissionError("cannot decrypt")
@@ -451,7 +456,7 @@ def test_preread_on_macos_reads_through_the_browser_not_browser_cookie3(
     browser = AsyncMock(return_value=snap)
     monkeypatch.setattr(cookies_mod, "_get_chrome_cookies_playwright", browser)
 
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     asyncio.run(client._preread_flow_session_cookies())  # noqa: SLF001
     assert client._preread_flow_cookies == {"__Secure-next-auth.session-token": "tok"}  # noqa: SLF001
     browser.assert_awaited_once_with(profile_dir=tmp_path)
@@ -472,7 +477,7 @@ def test_launch_guard_refuses_profile_written_by_newer_chromium(
 
     (tmp_path / "Last Version").write_text("999.0.0.0", encoding="utf-8")
     monkeypatch.setattr(bm, "installed_chromium_version", lambda: "149.0.7827.55")
-    client = FlowApiClient(profile_dir=tmp_path, headless=True)
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
     with pytest.raises(ProfileEngineDowngradeError, match="999"):
         client._log_and_guard_launch({"channel": None})  # noqa: SLF001
 

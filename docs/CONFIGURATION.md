@@ -417,21 +417,51 @@ outranks picker convenience.
 GFLOW_CLI_HISTORY_PROMPTS=redacted gflow image t2i "confidential brief"
 ```
 
+### `GFLOW_CLI_BROWSER_VISIBILITY`
+
+**What:** Whether the browser gflow launches for a Flow command is headless or headed (visible).
+`auth login` is always headed.
+**Values:** `auto` | `headless` | `headed`
+**Default:** `auto`. A request the direct transport can send (a measured shape) launches Chrome
+**headless**, and that browser only mints the reCAPTCHA token; a surface that still needs Flow's
+UI launches **headed**. A run that holds any UI item launches headed for the whole run. A
+refusal Flow did not charge is retried once from a new headless browser process. The
+per-command list is [BROWSER_MODES](BROWSER_MODES.md).
+**Per command:** `--browser-visibility auto|headless|headed` on the generation commands, and
+`browser_visibility` on the MCP generation tools, override this setting for one run.
+
+| Value | Measured shapes (direct HTTP) | Flow UI surfaces |
+|---|---|---|
+| `auto` | headless | headed |
+| `headed` | headed | headed |
+| `headless` | headless | headless: unsupported in v0.108.0, see [#1554](https://github.com/ffroliva/gflow-cli/issues/1554) |
+
+**Kill switch:** `GFLOW_CLI_TRANSPORT=ui_automation` (environment or `.env`) sends every request
+through Flow's UI, headed under `auto`, as before v0.108.0.
+
+```bash
+GFLOW_CLI_BROWSER_VISIBILITY=headed gflow image t2i "watch it run"
+```
+
 ### `GFLOW_CLI_HEADLESS`
 
-**What:** Run Playwright in headless mode for non-`auth login` commands.
+**Deprecated:** an alias for [`GFLOW_CLI_BROWSER_VISIBILITY`](#gflow_cli_browser_visibility),
+read only when that setting is unset; `gflow doctor` flags it.
 **Values:** `true` | `false`
-**Default:** `false` — **headed real Chrome is the production default**, not an opt-in fallback. The `ui_automation` transport (gflow-cli's only production transport) requires a headed browser: reCAPTCHA Enterprise rejects headless Chromium with an immediate 403, so `headless=true` is not a WAF workaround — it only exists for CI/CD environments running a non-`ui_automation` transport (e.g. `bearer`/`sapisidhash`, experimental).
-**WAF-sensitive runs:** set `GFLOW_CLI_HEADLESS=false` explicitly (it is already the default, but pin it in CI/CD env files or scripts that also set `headless=true` for a different transport, so a transport switch back to `ui_automation` doesn't silently regress to a rejected headless launch).
+**Default:** unset, which leaves `GFLOW_CLI_BROWSER_VISIBILITY` at `auto`.
+**Mapping:** `GFLOW_CLI_HEADLESS=true` is `headless`; `GFLOW_CLI_HEADLESS=false` is **`auto`**
+(the default), because `false` was the value earlier `.env.template` files shipped. To show a
+window for every Flow command, set `GFLOW_CLI_BROWSER_VISIBILITY=headed`.
 
 ### `GFLOW_CLI_BROWSER_WINDOW_POSITION`
 
 **What:** Where on screen the headed generation browser opens, as `X,Y` in pixels.
 **Values:** `X,Y` (integers, may be negative) | empty
-**Default:** `-30000,-30000`: off-screen. Generation needs a real **headed** Chrome (see
-[`GFLOW_CLI_HEADLESS`](#gflow_cli_headless)), and without this setting that window
-opens over whatever you are working on during every run. Off-screen it is still fully
-headed, so Flow and reCAPTCHA see exactly the same browser.
+**Default:** `-30000,-30000`: off-screen. A command that drives Flow's UI opens a **headed**
+Chrome (see [`GFLOW_CLI_BROWSER_VISIBILITY`](#gflow_cli_browser_visibility)), and without this
+setting that window opens over whatever you are working on during the run. Off-screen it is
+still fully headed, so Flow and reCAPTCHA see exactly the same browser. A headless launch has no
+window, so this setting does not apply to it.
 
 | Set it to | Result |
 |---|---|
@@ -527,7 +557,7 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **What:** Selects the browser-automation engine backing the Playwright API.
 **Values:** `playwright` | `patchright`
 **Default:** `playwright`
-**What `patchright` is:** an opt-in, drop-in patched Playwright (Chromium) that runs page evaluations in an isolated execution context to avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the **headed** path. It is **not** a headless unlock — Google still detects headless Chromium regardless of engine.
+**What `patchright` is:** an opt-in, drop-in patched Playwright (Chromium) that runs page evaluations in an isolated execution context to avoid the `Runtime.enable` CDP leak, for stronger reCAPTCHA-Enterprise evasion on the headed UI path. It is not needed for the headless mint of the direct shapes, which the default `playwright` engine serves ([BROWSER_MODES](BROWSER_MODES.md)).
 **Install:** `pip install 'gflow-cli[patchright]'` (or `pip install patchright==1.64.4`). Selecting `patchright` without it installed fails fast with exit code 24 and a pip remediation hint. When using system Chrome (the gflow default, `channel=chrome`) you do **not** need `patchright install chromium`.
 **Version:** use patchright `1.64.4` (the extra's pin). patchright `1.61.2` resolves `locator.last` to nothing, which makes every flow.google.com generation fail with exit 23 "0 option groups rendered" (#1319). Use gflow 0.101.2 or later with it: on 0.101.1, patchright 1.64.4 waits out the 30 s close timeout on every run and then force-closes the profile (#1324). From the release after 0.101.2, `gflow update` keeps installed extras and moves their pins (#1322). The update runs the installed version's code, so leaving 0.101.2 or earlier still needs one manual re-install: `pip install -U 'gflow-cli[patchright]'`, then check `pip show patchright`.
 **Reverting:** unset the variable (or set `playwright`) — the default path is byte-identical to a build without this feature, with no profile migration.
@@ -562,10 +592,10 @@ per-command `--proxy` flags (the setting covers one-off runs:
 **What:** Whether `gflow credits user`, `gflow credits list` and the MCP `gflow_get_credits` tool first read the balance **directly** from flow.google.com, with no browser ([#1229](https://github.com/ffroliva/gflow-cli/issues/1229)). The direct read takes the profile's saved cookies from its own cookie file, loads the app page once and asks for the balance once. If it fails (Flow does not accept the cookies, Chrome is open on the profile and holds the cookie file, a network error, an unexpected reply), gflow reads the balance in the profile's browser instead, as before. One exception: when Flow throttles the account (HTTP 429 or 503), the command reports that error (exit code as for any rate limit or network failure) rather than loading the page, because the page would send the same requests to the throttled account; further reads of that profile report it again, sending nothing, until the `Retry-After` window has passed (capped at 60 s; 60 s when Flow names none).
 **Values:** `1` / `true` — try the direct read first. `0` / `false` — always use the browser.
 **Default:** `true` on Windows and Linux; `false` on macOS, where reading Chrome's cookies can raise a Keychain prompt.
-**Safety:** the direct read never writes to the profile's cookies, ignores any cookie Flow sends back, and follows no redirect. A profile Flow answers "signed out" (or HTTP 401) is not tried again by credit reads in that process (a browser read succeeding does not change the saved cookies) until `--refresh` renews it with a session Flow authenticated, or, in a running MCP server, `gflow_auth_status` asks Flow again and is accepted (`gflow doctor` runs in its own process, so it cannot lift the mark); other profiles are unaffected.
+**Safety:** the direct read never writes to the profile's cookies, ignores any cookie Flow sends back, and follows no redirect. A profile Flow answers "signed out" (or HTTP 401) is suppressed for 5 minutes (300 s) in that process (a browser read succeeding does not change the saved cookies), or lifted earlier by a Flow-authenticated `--refresh` renewal (including `labs_stale` / `labs_unverified` for non-`/about` accounts) or, in a running MCP server, when `gflow_auth_status` reaches Flow and is accepted (`gflow doctor` runs in its own process, so it cannot lift the mark); other profiles are unaffected.
 **Risk:** the direct read sends the profile's saved Google session from gflow's own HTTP client, outside Chrome; see [KNOWN_ISSUES](../KNOWN_ISSUES.md#the-direct-credits-read-uses-the-profiles-saved-google-session-outside-chrome).
 **Proxy:** while any proxy is configured — `GFLOW_CLI_BROWSER_PROXY`, an `HTTPS_PROXY`/`ALL_PROXY`-style environment variable, or the operating system's proxy setting — the direct read is skipped (reason `proxy_configured`) and the browser reads the balance, so the profile's cookies never leave by a different route than its browser's. The direct read never takes a proxy from the environment.
-**Health:** `gflow doctor` (check `auth.wire_read`, the default profile) and the MCP `gflow_auth_status` tool (its `wire` field) report whether the direct read works: `status=accepted` with Flow's build label, or the reason it falls back (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …). Each sends one GET and one POST to flow.google.com, under every rule above, asking afresh even for a profile already marked signed out; with the setting off, any proxy configured, or inside a throttle window, neither sends anything.
+**Health:** `gflow doctor` (check `auth.wire_read`, the default profile) and the MCP `gflow_auth_status` tool (its `wire` field) report whether the direct read works: `status=accepted` with Flow's build label, or the reason it falls back (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, …). Each sends one GET and one POST to flow.google.com, under every rule above, asking afresh even for a profile already marked signed out while preserving any prior signed-out mark if the probe fails before Flow answers (`store_unreadable`, `network`, proxy, throttle, or unexpected); with the setting off, any proxy configured, or inside a throttle window, neither sends anything. `gflow doctor` also reads Flow's model catalog (`HTrJv`) the same way, under the same rules (at most one more GET and one more POST: the GET only when the credits read left no cached tokens), for its `models.catalog_drift` check ([#1550](https://github.com/ffroliva/gflow-cli/issues/1550)).
 
 ### `GFLOW_CLI_AGENT_CONFIRM`
 

@@ -15,6 +15,7 @@ _ROOT = Path(__file__).resolve().parents[2]
     ("page", "pattern"),
     [
         ("README.md", r"\*\*(\d+) MCP tools\*\*"),
+        ("README.zh-CN.md", r"\*\*(\d+) 个 MCP 工具\*\*"),
         ("index.html", r"serving (\d+) tools"),
         ("llms.txt", r"MCP server with (\d+) tools"),
         ("llms.txt", r"against gflow-cli's (\d+)"),
@@ -29,3 +30,11 @@ def test_published_mcp_tool_count_matches_the_server(
     assert int(match.group(1)) == registered, (
         f"{page} says {match.group(1)} MCP tools; the server registers {registered}"
     )
+
+
+def test_chinese_readme_lists_the_same_model_aliases() -> None:
+    alias = re.compile(r"`(omni-[\w.]+|veo-[\w]+|nano[\w-]*|imagen4)`")
+    english = set(alias.findall((_ROOT / "README.md").read_text(encoding="utf-8")))
+    chinese = set(alias.findall((_ROOT / "README.zh-CN.md").read_text(encoding="utf-8")))
+    assert english, "README.md must list model aliases"
+    assert chinese == english, f"README.zh-CN.md model aliases differ: {chinese ^ english}"

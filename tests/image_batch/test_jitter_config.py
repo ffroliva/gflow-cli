@@ -16,6 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.config import Settings, parse_jitter_range, reset_settings
 from gflow_cli.errors import ConfigurationError
 from gflow_cli.image_batch import (
@@ -132,7 +133,7 @@ def _run_batch(jitter_range: tuple[float, float] | None, n_items: int = 3) -> li
         with unittest.mock.patch("gflow_cli.image_batch.asyncio.sleep", recording_sleep):
             await run_sequential_batch(
                 profile_dir=Path("unused"),
-                headless=True,
+                visibility=BrowserVisibility.HEADLESS,
                 transport=None,
                 items=tuple(f"p{i}" for i in range(n_items)),
                 continue_on_error=True,

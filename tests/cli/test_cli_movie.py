@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
+from gflow_cli import config
 from gflow_cli.cli import main as cli_main
 from gflow_cli.composition import Character, ManifestCard, Scene, SceneInstructions, StyleSpec
 from gflow_cli.errors import UiSelectorDriftError
@@ -239,6 +241,22 @@ class TestMovieDryRun:
         _assert_no_numeric_credit_claim(result.output)
         assert "one per scene" not in result.output.lower()
         mock_client.assert_not_called()
+
+    def test_dry_run_rejects_unknown_scene_keys_1520(self, tmp_path: Path) -> None:
+        """#1520: unknown scene keys like initial_frame/end_frame fail with exit 11."""
+        runner = CliRunner()
+        toml = (
+            'title = "t"\nproject = "p"\n'
+            '[style]\nlook = "natural travel photograph"\n'
+            '[[scenes]]\nid = "s1"\naction = "A pavilion"\nframing = "wide"\n'
+            'duration = 4\ninitial_frame = "in/a.jpg"\nend_frame = "in/b.jpg"\n'
+        )
+        manifest = _write_toml(tmp_path / "movie.toml", toml)
+        result = runner.invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
+        assert result.exit_code == 11
+        assert "initial_frame" in result.output
+        assert "end_frame" in result.output
+        assert "allowed fields" in result.output
 
     def test_dry_run_no_api_calls(self, tmp_path: Path) -> None:
         """Dry-run must not invoke FlowApiClient."""
@@ -1233,3 +1251,28 @@ class TestMovieInstructionsSync:
         client.get_agent_info.assert_awaited_once()
         client.patch_agent_info.assert_awaited_once()
         assert cache.signature is not None
+
+
+class TestMovieOutputDirResolution:
+    """#1516: default output_dir for `gflow movie run` resolves under videos/."""
+
+    def test_default_output_dir_uses_videos_subfolder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pin the date so a run that crosses midnight cannot change the folder.
+        class _FixedDate(date):
+            @classmethod
+            def today(cls) -> _FixedDate:
+                return cls(2026, 1, 2)
+
+        monkeypatch.setattr("gflow_cli.paths.date", _FixedDate)
+        output_root = tmp_path / "gflow-out"
+        monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(output_root))
+        config.reset_settings()
+        manifest = _write_toml(tmp_path / "movie.toml", _VALID_MANIFEST)
+
+        result = CliRunner().invoke(cli_main, ["movie", "run", str(manifest), "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        unwrapped = "".join(result.output.splitlines())
+        assert str(output_root / "videos" / "2026-01-02") in unwrapped

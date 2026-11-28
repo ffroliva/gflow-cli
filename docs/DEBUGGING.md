@@ -256,6 +256,7 @@ First visible-and-clickable wins. Log:
 | Error class | Exit code | What it means | Recover by |
 |---|---|---|---|
 | `BrowserSessionClosedError` | 15 | Playwright page/context/browser was closed mid-call (translated from `TargetClosedError`) | Recreate `FlowApiClient` via `async with` |
+| `RelaunchFailed` | 15 | The browser could not be relaunched for the refusal retry or a UI fallback; nothing was charged (`charged: "no"`) | Re-run; check that Chrome can start (see [BROWSER_MODES.md](BROWSER_MODES.md)) |
 | `AuthExpiredError` | 3 | Session cookies no longer valid | `gflow auth login --profile <name>` |
 | `AuthBrowserRejectedError` | 14 | Google's sign-in rejected the browser for advertising automation; only the `internal` strategy surfaces it | Re-run `gflow auth login` (default `auto` picks the `chrome` strategy, which retries on a no-automation path) |
 | `AuthLoginTimeoutError` | 12 | User did not finish the OAuth flow in time | Run `gflow auth login` again; raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT` |

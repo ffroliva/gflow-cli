@@ -61,6 +61,7 @@ from gflow_cli.api.transports.ui_automation_video import (
 )
 from gflow_cli.api.video import VideoModel
 from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 PROMPT_INPUT_SELECTOR = 'div[role="textbox"][data-slate-editor="true"]'
 ENDPOINT_GLOB = "**/v1/video:batchAsync**"
@@ -95,7 +96,7 @@ async def capture(
         "prompt_text_len": len(prompt_text),
     }
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         transport = client.transport
         if transport is None:
             sys.exit("FlowApiClient.transport is None")

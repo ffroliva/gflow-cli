@@ -19,6 +19,8 @@ from playwright.async_api import BrowserContext, Page, Playwright
 
 from gflow_cli.api._engine import retryable_engine_errors
 from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
+from gflow_cli.api.generation_route import Route, plan_visibility
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
 )
@@ -390,6 +392,26 @@ def _redact_in_client_context(client_context: Any) -> None:
             recaptcha_dict["token"] = "<redacted>"  # noqa: S105 - not a password: a redaction marker or a JS snippet name
 
 
+class RelaunchFailed(BrowserSessionClosedError):  # noqa: N818 — per plan naming
+    """Raised when relaunching the browser process under a held lease fails.
+
+    Leaves the lease held and the client unusable. Nothing is sent by a relaunch, so it is
+    never charged. The retry loop raises it as itself, after a refusal or before a UI
+    fallback, naming any earlier refusal in its detail. Exit 15
+    through the ``BrowserSessionClosedError`` entry: this client's browser is gone, and a
+    new run (a new client) is the remedy.
+    """
+
+    problem_type = "https://gflow-cli.dev/errors/relaunch-failed"
+    charged = "no"
+    next_action = "retry"
+    title = "Browser relaunch failed"
+    _default_remediation = (
+        "Nothing was charged. Close other Chrome windows using this profile and run the "
+        "command again; if it keeps failing, run `gflow doctor`."
+    )
+
+
 class FlowSession:
     """Session state and primitives every surface uses: page pool, recorder hooks, incidents,
     access token, JSON verbs, retry.
@@ -399,13 +421,20 @@ class FlowSession:
         self,
         profile_dir: Path,
         *,
-        headless: bool = False,
+        visibility: BrowserVisibility | None = None,
         settings: Settings | None = None,
         transport: FlowTransportStrategy | str | None = None,
         out_dir: Path | None = None,
     ) -> None:
         self.profile_dir = profile_dir
-        self.headless = headless
+        self._unusable: bool = False
+        # Serialises relaunch(); the gate is cleared while one runs so _checkout_page
+        # waits for the new pool instead of blocking on the old, drained queue.
+        self._relaunch_lock = asyncio.Lock()
+        self._relaunch_gate = asyncio.Event()
+        self._relaunch_gate.set()
+        # Counts completed relaunches, so concurrent refusals on one client cost one.
+        self.relaunch_generation = 0
         # Optional directory for debug screenshots when a generation step
         # fails on a selector. Propagated to the transport (see __aenter__)
         # so long-lived workers can diagnose a "Could not find ... CTA"
@@ -415,6 +444,14 @@ class FlowSession:
         # construction time, which is fine for production but lets tests
         # opt out by supplying a fully built settings object.
         self.settings = settings if settings is not None else Settings()
+        # None is the UI path: headed under ``auto``, an explicit setting wins. Generation
+        # callers pass the visibility their planned routes need (``client_visibility``).
+        self.visibility = (
+            visibility
+            if visibility is not None
+            else plan_visibility(self.settings.browser_visibility, (Route.UI,))
+        )
+        self.headless = self.visibility == BrowserVisibility.HEADLESS
         # Transport lifecycle ownership (spec § 4.3):
         # - pre-initialized instance → caller owns (no setup/teardown invoked)
         # - str/None → client owns (resolves via make_transport, calls setup/teardown)
@@ -616,9 +653,13 @@ class FlowSession:
         having to populate the queue. Production code always enters via
         ``async with`` which initializes the queue.
         """
+        if self._page_queue is None and self._page is not None:
+            return self._page
+        # A relaunch resets queue and page together, so it always reaches this gate.
+        await self._relaunch_gate.wait()
+        if self._unusable:
+            raise RelaunchFailed("FlowApiClient is unusable after a failed browser relaunch")
         if self._page_queue is None:
-            if self._page is not None:
-                return self._page
             msg = "FlowApiClient not entered — use `async with`"
             raise RuntimeError(msg)
         return await self._page_queue.get()

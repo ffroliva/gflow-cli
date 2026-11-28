@@ -151,6 +151,16 @@ place today:
   scene back or the render itself) reads `yes` / `reconcile`. Its hint is the free
   re-render as a command that runs: `gflow scene create --project <id> <clip refs>
   --out-file <path>`.
+- A direct submit Flow refuses as `PUBLIC_ERROR_UNUSUAL_ACTIVITY` (HTTP 200, an error frame and
+  no generation record) is not billed, and is retried once from a new headless browser process.
+  A second refusal is final: `WafRejectionError`
+  with `charged: no`, `retryable: false` and `next_action: none`; its hint names the cooldown in
+  [ACCOUNT_SAFETY](ACCOUNT_SAFETY.md) and `--browser-visibility headed`
+  ([BROWSER_MODES](BROWSER_MODES.md#the-retry-rule)). Any failure after a direct submit was sent,
+  a redirect or HTTP 401/403 included, reads `maybe` / `reconcile` and is never resent.
+  `RelaunchFailed` (exit 15, `no` / `retry`) is raised when the browser cannot start again,
+  either for the retry after a refusal (its detail names the refusal) or for a request that
+  reached no Flow endpoint and falls back to the UI path.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 - On flow.google.com, a gflow error raised before the generation's submit click reads
@@ -161,7 +171,9 @@ place today:
   the tile and menu steps of `image upscale` and `video upscale` before the export click, and any failure of a reference upload (an upload is never a billed
   generation); `next_action` keeps the class default. A raw
   browser-driver timeout is not a gflow error and still reads `maybe`. A submit the route
-  guard aborts in the browser reads `no` / `retry`. A failure at or after the click keeps
+  guard aborts in the browser reads `no` / `retry`, unless a submit of the same run
+  had already left the browser: that refusal reads `maybe` / `reconcile`, since Flow may be
+  billing the one that left (#1518). A failure at or after the click keeps
   the class default. On the labs (`labs.google`) composer, a selector drift found while
   configuring settings, the prompt, navigation, video settings, the video editor mode or
   a character reads `no` as well
@@ -204,6 +216,7 @@ uses it for "findings present".
 | `https://gflow-cli.dev/errors/security` | `SecurityError` | 13 | `no` | `fix_input` |
 | `https://gflow-cli.dev/errors/auth-browser-rejected` | `AuthBrowserRejectedError` | 14 | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/browser-session-closed` | `BrowserSessionClosedError` | 15 | `maybe` | `retry` |
+| `https://gflow-cli.dev/errors/relaunch-failed` | `RelaunchFailed` | 15 | `no` | `retry` |
 | `https://gflow-cli.dev/errors/data-integrity` | `DataIntegrityError` | 16 | `maybe` | `fix_input` |
 | `https://gflow-cli.dev/errors/data-migration` | `DataMigrationError` | 16 | `maybe` | `fix_input` |
 | `https://gflow-cli.dev/errors/data-store` | `DataStoreError` | 16 | `maybe` | `fix_input` |
@@ -250,7 +263,7 @@ members. They have no exit code of their own.
 | `https://gflow-cli.dev/errors/cookie-store-unreadable` | MCP `gflow_auth_status` | — | `no` | `reauth` |
 | `https://gflow-cli.dev/errors/profile-unavailable` | MCP `gflow_auth_status`, the headless Chrome cookie read could not run (`detail` names the error class) | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/verification-error` | MCP `gflow_auth_status` | — | `no` | `retry` |
-| `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted | — | `maybe` | `reconcile` |
+| `https://gflow-cli.dev/errors/indeterminate-outcome` | Worker, interrupted after a submit was attempted, or MCP task row missing after execution | — | `maybe` | `reconcile` |
 | `https://gflow-cli.dev/errors/daemon-recovery` | Worker, interrupted before any submit | — | `no` | `retry` |
 | `https://gflow-cli.dev/errors/cancelled` | Worker queue, a task cancelled before any submit: `gflow cancel` / MCP `tasks/cancel` (state `cancelled`), or a server shutdown that stopped it | — | `no` | `none` |
 

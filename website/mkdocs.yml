@@ -68,6 +68,7 @@ nav:
       - Installation: installation.md
       - Authentication: AUTHENTICATION.md
       - Account safety: ACCOUNT_SAFETY.md
+      - Browser modes: BROWSER_MODES.md
   - User Guide: USER_GUIDE.md
   - Command Reference: USAGE.md
   - Features:

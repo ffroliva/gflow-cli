@@ -27,6 +27,9 @@ from gflow_cli.api.transports._common import (
     safe_page_url,
 )
 from gflow_cli.api.transports.batchexecute import (
+    UNUSUAL_ACTIVITY_REASON as UNUSUAL_ACTIVITY_REASON,
+)
+from gflow_cli.api.transports.batchexecute import (
     GenerationRecord,
     generation_records_matching,
     parse_frames,
@@ -186,6 +189,11 @@ DIALOG = "[role='dialog']"
 # docs/superpowers/spikes/2026-09-07-credit-shortfall-looks-like-selector-drift.md
 CREDITS_WARNING = "button.prompt-warning-button"
 DIALOG_CLOSE = f"{DIALOG} button:has(mat-icon:text-is('close'))"
+#: The close control of Flow's bonus-credit promo, which renders over the projects page
+#: after it settles and returns on every load (#1557). Never its claim or no-thanks
+#: buttons: either answers for the account.
+#: docs/superpowers/spikes/2026-11-27-out-of-credits-state.md
+PROMO_DIALOG_CLOSE = "flow-g1-promo-dialog button.close-button"
 
 #: Google's `glue` consent bar — a Google-wide component, not one of Flow's. It is
 #: `position: fixed`, `z-index: 1000`, and Flow's composer is bottom-anchored in the
@@ -756,11 +764,6 @@ def _picker_pane(page: Any) -> Any:
 def _ligature(page: Any, name: str) -> Any:
     """A ``mat-icon`` whose ligature text is exactly ``name`` — for ``filter(has=…)``."""
     return page.locator("mat-icon").filter(has_text=_exact(name))
-
-
-#: Google's ErrorInfo reason on a submit reCAPTCHA Enterprise scored as a bot. The labs
-#: REST path has always raised WafRejectionError for it (KNOWN_ISSUES, HTTP 403).
-UNUSUAL_ACTIVITY_REASON = "PUBLIC_ERROR_UNUSUAL_ACTIVITY"
 
 
 def _outcome_unknown(detail: str) -> TransportTimeoutError:
@@ -1349,14 +1352,19 @@ async def _guard_image_submit(
     reference_ids: tuple[str, ...],
     model: ImageModel | None,
     entity_ids: tuple[str, ...] = (),
+    *,
+    on_judged: Callable[[bool], None] | None = None,
 ) -> str | None:
     """Abort an ``ogiZ0b`` submit that does not carry its references, before Flow acts.
 
     The observer path (``_image_body_problem`` in ``on_request``) only refuses to *report*
     such a run: by then Flow has generated it, spent quota and added an image (#913,
     SCENARIO #15). Returns the problem when aborted, ``None`` when let through.
+    ``on_judged(aborted)`` runs before the route is settled (#1518).
     """
     problem = _image_body_problem(request_body(request), reference_ids, model, entity_ids)
+    if on_judged is not None:
+        on_judged(problem is not None)
     if problem is not None:
         await route.abort()
         return problem

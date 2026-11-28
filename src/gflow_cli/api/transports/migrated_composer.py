@@ -34,7 +34,7 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from playwright.async_api import (
@@ -59,6 +59,13 @@ from gflow_cli.api.transports._common import (
     flow_landing_kind,
     raise_if_known_landing,
     safe_page_url,
+)
+from gflow_cli.api.transports._mc_common import (
+    _CLICK_POSTMORTEM_JS,
+    NAVIGATION_GRACE_S,
+    SubmitWatch,
+    _as_list_any,
+    _write_outcome_unknown,
 )
 from gflow_cli.api.transports._mc_common import (
     _GRID_TOKEN_JS as _GRID_TOKEN_JS,
@@ -178,12 +185,6 @@ from gflow_cli.api.transports._mc_common import (
     MODEL_KEY as MODEL_KEY,
 )
 from gflow_cli.api.transports._mc_common import (
-    NAVIGATION_GRACE_S,
-    SubmitWatch,
-    _as_list_any,
-    _write_outcome_unknown,
-)
-from gflow_cli.api.transports._mc_common import (
     NEW_PROJECT_BUTTON as NEW_PROJECT_BUTTON,
 )
 from gflow_cli.api.transports._mc_common import (
@@ -206,6 +207,9 @@ from gflow_cli.api.transports._mc_common import (
 )
 from gflow_cli.api.transports._mc_common import (
     PROJECT_TITLE_INPUT as PROJECT_TITLE_INPUT,
+)
+from gflow_cli.api.transports._mc_common import (
+    PROMO_DIALOG_CLOSE as PROMO_DIALOG_CLOSE,
 )
 from gflow_cli.api.transports._mc_common import (
     RADIO as RADIO,
@@ -340,6 +344,7 @@ from gflow_cli.errors import (
     WireFormatError,
     nothing_submitted,
 )
+from gflow_cli.redaction import redact_sensitive_text
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -728,6 +733,26 @@ CREATE_LATE_REQUEST_GRACE_S = 1.0
 
 async def _click_create(page: Page, button: Locator) -> None:
     """Click Create. A click can time out after it dispatched, so the request decides."""
+    # #1557: the bonus-credit promo renders after the page settles, so the dismissal right
+    # after load comes too early. Playwright runs this handler whenever the promo is up
+    # before (or while retrying) the click; an account without it pays nothing.
+    promo = page.locator(PROMO_DIALOG_CLOSE).first  # strict mode: one match only
+
+    async def close_promo(close: Locator) -> None:
+        try:
+            await close.click(timeout=3000)
+            log.info("migrated.promo_dismissed", issue_ref="#1557")
+        except Exception as e:  # noqa: BLE001 - best-effort; the Create click reports a blocker
+            log.warning("migrated.promo_not_dismissed", error=str(e)[:200], issue_ref="#1557")
+
+    await page.add_locator_handler(promo, close_promo)
+    try:
+        await _click_create_once(page, button)
+    finally:
+        await page.remove_locator_handler(promo)  # the page is pooled; leave no handler on it
+
+
+async def _click_create_once(page: Page, button: Locator) -> None:
     with SubmitWatch(page, frozenset({CREATE_PROJECT_RPC})) as sent:
         try:
             await button.click(timeout=15_000)
@@ -737,11 +762,16 @@ async def _click_create(page: Page, button: Locator) -> None:
                 await asyncio.sleep(CREATE_LATE_REQUEST_GRACE_S)
             if sent.seen():
                 return  # Create reached Flow: wait for its reply, or recover it
+            try:
+                state: dict[str, Any] = await button.evaluate(_CLICK_POSTMORTEM_JS, timeout=2_000)
+                covered = f"; it is covered by {state['occluder']}" if state.get("occluder") else ""
+            except Exception:  # noqa: BLE001 - a diagnostic never replaces the failure
+                covered = ""
             raise UiSelectorDriftError(
-                detail=(
+                detail=redact_sensitive_text(
                     f"migrated host: the new-project button ({NEW_PROJECT_BUTTON}) was "
                     f"visible but did not take the click on {safe_page_url(page.url)}, "
-                    "and no create request was sent (host=migrated)"
+                    f"and no create request was sent{covered} (host=migrated)"
                 ),
                 charged="no",
                 remediation_hint=(

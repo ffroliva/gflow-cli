@@ -648,6 +648,20 @@ class VideoResult:
     flow_operation_id: str | None = None
     workflow_id: str | None = None  # see VideoStarted.workflow_id (#898)
     quoted_credits: int | None = None
+    #: ``"direct_http"`` when the clip was submitted over direct HTTP; ``None`` on the UI path.
+    transport: str | None = None
+    #: ``"headless"`` / ``"headed"``: the browser the clip's run used; ``None`` when unknown.
+    visibility: str | None = None
+    #: True when Flow refused the first direct submit and the retry produced this clip.
+    retried: bool = False
+    #: The resolved request the direct path sent (for a bare t2v, the account's selection);
+    #: ``None`` when the UI path ran, where the caller's request (or Flow's picker) is the answer.
+    sent_request: GenerateVideoRequest | None = None
+
+    @property
+    def route(self) -> str:
+        """``"direct"`` when the clip was submitted over direct HTTP, else ``"ui"``."""
+        return "direct" if self.transport == "direct_http" else "ui"
 
 
 # Callback type: invoked by the transport the moment a media_id becomes known,

@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.data.store import DataStore
 from gflow_cli.services.catalog_sync import parse_project_listing
 from tests.e2e._redacted_env import RedactedEnv
@@ -126,7 +127,7 @@ def test_e2e_sync_restores_names_marks_ghosts_idempotent(
     async def _fetch() -> dict[str, Any]:
         from gflow_cli.api.client import FlowApiClient
 
-        client = FlowApiClient(profile_dir=prof_dir, headless=True)
+        client = FlowApiClient(profile_dir=prof_dir, visibility=BrowserVisibility.HEADLESS)
         await client.__aenter__()
         try:
             return dict(await client.fetch_project_listing(project_id))

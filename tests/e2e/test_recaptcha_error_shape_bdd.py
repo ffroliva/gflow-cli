@@ -29,6 +29,7 @@ from pytest_bdd import given, scenarios, then, when
 from gflow_cli.api._engine import mint_evaluate_kwargs
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.recaptcha import RecaptchaError, TokenMinter
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.errors import GFlowError, is_retryable
 
 scenarios("../features/recaptcha_error_shape.feature")
@@ -72,7 +73,9 @@ def _project(e2e_profile_dir: Path) -> dict[str, Any]:
 @when("the client mints a token on it")
 def _mint_on_blank(world: dict[str, Any]) -> None:
     async def run() -> None:
-        async with FlowApiClient(profile_dir=world["profile"], headless=False) as client:
+        async with FlowApiClient(
+            profile_dir=world["profile"], visibility=BrowserVisibility.HEADED
+        ) as client:
             # Park EVERY pool page: the pool is FIFO, so with GFLOW_CLI_CONCURRENCY > 1 the
             # mint would otherwise be handed a healthy page and never fail.
             queue = client._page_queue  # noqa: SLF001
@@ -92,7 +95,9 @@ def _mint_on_blank(world: dict[str, Any]) -> None:
 @when("a mint races a navigation of that page")
 def _race(world: dict[str, Any]) -> None:
     async def run() -> None:
-        async with FlowApiClient(profile_dir=world["profile"], headless=False) as client:
+        async with FlowApiClient(
+            profile_dir=world["profile"], visibility=BrowserVisibility.HEADED
+        ) as client:
             project = await client.create_project(title="e2e recaptcha race (#915)")
             url = f"{_ROOT}/project/{project.project_id}"
             page = await client._checkout_page()  # noqa: SLF001

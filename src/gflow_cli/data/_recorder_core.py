@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api.dto import GeneratedImage
     from gflow_cli.api.image import GenerateImageRequest
-    from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest
+    from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoResult
     from gflow_cli.tools.invocation import AppliedTool
 
     # All generation/edit requests carry the tool-provenance fields the recorder reads.
@@ -39,6 +39,18 @@ if TYPE_CHECKING:
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+def _with_run_path(
+    metadata: dict[str, object], result: GeneratedImage | VideoResult
+) -> dict[str, object]:
+    """Return a copy of ``metadata`` carrying the transport and run path of ``result``."""
+    merged = dict(metadata)
+    if result.transport is not None:
+        merged["transport"] = result.transport
+    if result.visibility is not None:  # the path the run took, when the client saw it
+        merged.update(route=result.route, visibility=result.visibility, retried=result.retried)
+    return merged
 
 
 def _file_sha256(path: Path) -> str | None:

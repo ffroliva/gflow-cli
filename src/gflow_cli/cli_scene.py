@@ -112,13 +112,11 @@ def create(
             raise click.UsageError(msg)
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
-    settings = get_settings()
     is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_create(
             profile_name=profile_name,
             profile_dir=pdir,
-            headless=settings.headless,
             project_id=project_id,
             refs=refs,
             output=output,
@@ -147,12 +145,10 @@ def show(
     """Read back a scene's clip order and trims."""
     profile_name = _resolve_profile(profile)
     pdir = _make_provider_dir(profile_name)
-    settings = get_settings()
     is_json = as_json or output_format == OutputFormat.JSON.value
     run_with_handlers(
         lambda: _run_show(
             profile_dir=pdir,
-            headless=settings.headless,
             scene_id=scene_id,
             project_id=project_id,
             as_json=as_json,
@@ -209,7 +205,6 @@ async def _run_create(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     project_id: str,
     refs: list[ClipRef],
     output: Path | None = None,
@@ -220,7 +215,7 @@ async def _run_create(
     is_json = as_json or output_format == OutputFormat.JSON.value
     quiet_output = is_json or output_format == OutputFormat.ID.value
     try:
-        async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+        async with FlowApiClient(profile_dir=profile_dir) as client:
             source_ids = [r.workflow_id for r in refs]
             scene_obj = await client.create_scene(project_id=project_id, workflow_ids=source_ids)
             scene_obj = await _apply_trims(client, scene_obj, project_id, refs)
@@ -290,13 +285,12 @@ async def _run_create(
 async def _run_show(
     *,
     profile_dir: Path,
-    headless: bool,
     scene_id: str,
     project_id: str,
     as_json: bool = False,
     output_format: str = "table",
 ) -> None:
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         scene_obj = await client.get_scene_workflows(scene_id, project_id=project_id)
         if output_format == OutputFormat.ID.value:
             click.echo(scene_id)

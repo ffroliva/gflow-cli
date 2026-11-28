@@ -599,6 +599,13 @@ class FakeResponse:
         return self._text
 
 
+class _NoSecondTab:
+    async def new_page(self) -> Any:
+        from playwright.async_api import Error as PlaywrightError
+
+        raise PlaywrightError("this fake page opens no second tab")
+
+
 class FakePage:
     """Resolves the fixed set of CSS the composer is allowed to use."""
 
@@ -618,6 +625,9 @@ class FakePage:
         self.scripted_request: tuple[str | None, str] | None = (
             None  # (rpcid, body); None = bare URL
         )
+        # No second tab unless a test supplies one: the listing read fails closed on a
+        # Playwright error, as it does when the browser refuses a new page.
+        self.context: Any = _NoSecondTab()
 
     async def goto(self, url: str, **_: Any) -> None:
         self.gotos.append(url)
@@ -2214,7 +2224,8 @@ async def test_with_no_status_match_the_listing_in_a_second_tab_adopts_1112(
     rec, started = await _observe_lost(
         [(_batch_url("jwpduf"), LOST_BODY)], poll_timeout_s=2.0, tab=tab
     )
-    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url == VIDEO_URL
+    # The listing's URL is not kept (#948): the download takes the clip route.
+    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url is None
     assert len(started) == 1
     assert tab.gotos == [mc.MIGRATED_PROJECT_URL.format(project_id=PROJ)] and tab.closed
 
@@ -4883,3 +4894,1297 @@ async def test_a_request_check_verdict_is_aborted_by_the_guard_and_reads_unsent(
         )
     assert page.route_outcomes == ["abort"]
     assert (ei.value.charged, ei.value.resolved_next_action()) == ("no", "retry")
+
+
+async def test_a_lost_terminal_status_poll_recovers_the_finished_clip_from_the_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1484: once the clip finishes, Flow's frontend stops polling `jwpduf`. When Chrome
+    evicts the terminal `jwpduf` body after a successful submit, waiting out the full
+    600 s poll timeout drops a finished clip; re-reading `Zzl0ze` settles it."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tab = ListingTab(_listing(_ours(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    started: list[Any] = []
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=5.0,
+        on_started=started.append,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert [(s.media_id, s.workflow_id) for s in started] == [(MEDIA_OURS, WF_OURS)]
+    assert tab.closed
+
+
+async def test_an_intermediate_lost_status_poll_with_a_readable_poll_opens_no_listing_tab_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1484: if the clip is still running when one `jwpduf` body is evicted, the next 5 s
+    poll arrives and settles the run without opening a second tab."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.2)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(3, VIDEO_URL))),
+    ]
+    tabs = {"n": 0}
+
+    async def new_page() -> ListingTab:
+        tabs["n"] += 1
+        return ListingTab(_listing(_ours(3)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=None,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done and rec.video_url == VIDEO_URL
+    assert tabs["n"] == 0
+
+
+async def test_a_poll_timeout_re_reads_the_listing_before_raising_exit_9_1484() -> None:
+    """#1484: if the poll deadline expires because the page stopped delivering status polls
+    without an observed body-read error, check `Zzl0ze` once before raising exit 9."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+    ]
+    tab = ListingTab(_listing(_ours(3)))
+
+    async def new_page() -> ListingTab:
+        return tab
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=0.1,
+        on_started=None,
+        project_id=PROJ,
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert tab.closed
+
+
+class _LatePollsPage(FakePage):
+    """Fires ``late`` responses ``spacing_s`` apart once submit's own replies are out."""
+
+    def __init__(self, late: list[tuple[str, str]], *, spacing_s: float = 0.1) -> None:
+        super().__init__()
+        self.late, self.spacing_s = late, spacing_s
+
+    def _fire_submit(self) -> None:
+        super()._fire_submit()
+        loop = asyncio.get_event_loop()
+        for i, (url, text) in enumerate(self.late, start=1):
+            loop.call_later(i * self.spacing_s, self._fire_response, FakeResponse(url, text))
+
+
+def _spy_listing_reads(composer: Any) -> list[tuple[float, float]]:
+    """Record ``(monotonic_ts, budget_s)`` for every ``_read_listing`` call.
+
+    When ``poll_timeout_s < LISTING_READ_BUDGET_S``, in-loop reads arrive with
+    ``budget_s < LISTING_READ_BUDGET_S``, whereas the deadline read passes
+    ``LISTING_READ_BUDGET_S`` directly (#1530).
+    """
+    reads: list[tuple[float, float]] = []
+    orig = composer._read_listing
+
+    async def spy(page: Any, project_id: str, *, budget_s: float) -> Any | None:
+        reads.append((time.monotonic(), budget_s))
+        return await orig(page, project_id, budget_s=budget_s)
+
+    composer._read_listing = spy
+    return reads
+
+
+def _listing_tabs(page: FakePage, *listings: str) -> list[ListingTab]:
+    """Each read of the listing opens the next tab; the last one repeats."""
+    from types import SimpleNamespace
+
+    opened: list[ListingTab] = []
+
+    async def new_page() -> ListingTab:
+        opened.append(ListingTab(listings[min(len(opened), len(listings) - 1)]))
+        return opened[-1]
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    return opened
+
+
+async def test_a_loss_cleared_by_a_readable_poll_keeps_the_recovery_watching_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost `jwpduf` and a readable running `as29s` on one tick cleared the loss before
+    the loop looked; it read that as a timeout and stopped watching, so the later lost
+    terminal poll went unnoticed and a finished clip waited blind for the deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.02)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.2)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(2))),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(2)), _listing(_ours(3)))
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
+    )
+    assert rec.workflow_id == WF_OURS and rec.is_done
+    assert len(tabs) == 2 and len(reads) == 2
+    assert reads[1][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
+
+
+async def test_a_clip_settled_from_the_listing_carries_no_listing_url_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); the
+    download must go through the clip route, which fetches a signed one."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.02)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    _listing_tabs(page, _listing(_ours(3, "https://lh3.googleusercontent.com/unsigned")))
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_repeated_lost_polls_re_read_the_listing_a_bounded_number_of_times_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 6, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(2)))
+    with pytest.raises(TransportTimeoutError):
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
+        )
+    assert len(tabs) == 2  # one within the interval, one final read at the deadline
+
+
+async def test_the_default_fake_page_cannot_open_a_listing_tab() -> None:
+    """The listing read must fail closed on a Playwright error, not on AttributeError."""
+    from playwright.async_api import Error as PlaywrightError
+
+    with pytest.raises(PlaywrightError):
+        await FakePage().context.new_page()
+
+
+def _clip_done_after(page: FakePage, done_at_s: float) -> list[float]:
+    """Each listing read reports the clip running until ``done_at_s`` after the call."""
+    from types import SimpleNamespace
+
+    start = time.monotonic()
+    reads: list[float] = []
+
+    async def new_page() -> ListingTab:
+        reads.append(time.monotonic() - start)
+        status = 3 if reads[-1] >= done_at_s else 2
+        return ListingTab(_listing(_ours(status)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    return reads
+
+
+async def test_early_losses_leave_the_deadline_read_for_the_finished_clip_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losses while the clip still runs must not spend every listing read: the read at
+    the poll deadline is the last chance for a billed clip whose terminal poll was lost."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 5, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
+    reads = _clip_done_after(page, done_at_s=0.45)
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=0.6, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS
+    assert len(reads) == _mc_submit_observe.LISTING_REREADS_MAX
+
+
+async def test_a_loss_inside_the_read_interval_reads_once_the_interval_is_up_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flow sends no poll after the terminal one: a loss inside the interval must still be
+    followed by a read when the interval ends, not only at the poll deadline (#1530)."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.3)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 2, spacing_s=0.1)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [(_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2)))]
+    tabs = _listing_tabs(page, _listing(_ours(2)), _listing(_ours(3)))
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done
+    assert len(tabs) == 2 and len(reads) == 2
+    assert reads[1][0] - reads[0][0] >= 0.25, "second read fired before the interval elapsed"
+    assert reads[1][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "read only at the poll deadline"
+
+
+async def test_a_clip_adopted_from_the_listing_carries_no_listing_url_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The adoption path after a lost submit reply has the same unsigned lh3 URL (#948)."""
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.01)
+    lh3 = "https://lh3.googleusercontent.com/unsigned"
+    rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, lh3))))
+    assert rec.is_done and rec.video_url is None
+
+
+async def test_a_stale_running_frame_after_a_lost_terminal_poll_still_reads_the_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A readable running frame landing after the evicted terminal poll used to clear the
+    loss; Flow then sends nothing more and the finished clip waited for the deadline."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+        (_batch_url("as29s"), _frame("as29s", _ours(2))),
+    ]
+    tabs = _listing_tabs(page, _listing(_ours(3)))
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done and rec.workflow_id == WF_OURS
+    assert len(tabs) == 1 and len(reads) == 1
+    assert reads[0][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
+
+
+async def test_a_clip_settled_from_the_listing_skips_the_result_url_grace_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No as29s with a signed URL follows a listing read, so waiting for one is dead time."""
+    import structlog.testing
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.05)
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    _listing_tabs(page, _listing(_ours(3)))
+    with structlog.testing.capture_logs() as logs:
+        rec = await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=5.0, on_started=None, project_id=PROJ
+        )
+    assert rec.is_done and rec.video_url is None
+    assert not any(e.get("event") == "migrated.result_url_not_observed" for e in logs)
+
+
+class _OtherEngineError(Exception):
+    """Stands in for patchright's Error, which is not a playwright Error subclass."""
+
+
+def _with_other_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    from playwright.async_api import Error as PwError
+
+    from gflow_cli.api import _engine
+
+    monkeypatch.setattr(_engine, "retryable_engine_errors", lambda: (PwError, _OtherEngineError))
+
+
+async def test_a_billed_clip_unreadable_under_another_engine_says_recover_it_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """patchright raises its own Error class; the free-recovery hint must still apply."""
+    from gflow_cli.api.transports import migrated_recover
+    from gflow_cli.api.transports.batchexecute import GenerationRecord
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    _with_other_engine(monkeypatch)
+
+    async def read_clip(_page: Any, *, project_id: str, media_id: str) -> tuple[str, bytes]:
+        raise _OtherEngineError("goto: Timeout 30000ms exceeded")
+
+    monkeypatch.setattr(migrated_recover, "read_clip", read_clip)
+    with pytest.raises(MediaDownloadError) as ei:
+        await MigratedComposer.clip_bytes(
+            FakePage(), GenerationRecord(WF_OURS, PROJ_UUID, MEDIA_OURS, 3)
+        )
+    assert f"gflow data download {MEDIA_OURS}" in ei.value.remediation_hint
+
+
+async def test_a_finished_clip_adopted_from_the_listing_skips_the_url_grace_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No signed URL follows a listing read, so the adoption path must not wait for one."""
+    import structlog.testing
+
+    monkeypatch.setattr(_mc_submit_observe, "SUBMIT_REPLY_BUDGET_S", 0.05)
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.5)
+    with structlog.testing.capture_logs() as logs:
+        rec, _ = await _observe_lost([], tab=ListingTab(_listing(_ours(3, VIDEO_URL))))
+    assert rec.is_done and rec.video_url is None
+    assert not any(e.get("event") == "migrated.result_url_not_observed" for e in logs)
+
+
+class _FailingTab:
+    """A listing tab whose load and close both raise another engine's error."""
+
+    def on(self, *_: Any) -> None:
+        pass
+
+    async def goto(self, *_: Any, **__: Any) -> None:
+        raise _OtherEngineError("goto: Timeout 30000ms exceeded")
+
+    async def close(self) -> None:
+        raise _OtherEngineError("Target closed")
+
+
+class _CountingContext:
+    def __init__(self, tab: Any) -> None:
+        self.tab = tab
+        self.opened = 0
+
+    async def new_page(self) -> Any:
+        self.opened += 1
+        return self.tab
+
+
+async def test_a_listing_tab_failing_under_another_engine_reads_as_no_listing_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """patchright's errors are separate classes; the caller's exit 9 must still apply."""
+    _with_other_engine(monkeypatch)
+    page = FakePage()
+    page.context = _CountingContext(_FailingTab())
+    assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=5.0) is None
+
+
+async def test_a_spent_budget_opens_no_listing_tab_1484() -> None:
+    """goto(timeout=0) means no timeout at all, so a spent budget must not navigate."""
+    page = FakePage()
+    page.context = ctx = _CountingContext(_FailingTab())
+    assert await _mc_submit_observe.read_project_listing(page, PROJ, budget_s=0.0) is None
+    assert ctx.opened == 0
+
+
+async def test_polls_whose_bodies_are_all_lost_still_count_as_flow_working_1484(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flow polls while the clip runs; an evicted body is still a poll. Counting only
+    readable frames read every eviction as silence and spent the listing reads early."""
+    from types import SimpleNamespace
+
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "RESULT_URL_GRACE_S", 0.15)
+    monkeypatch.setattr(_mc_submit_observe, "LISTING_REREAD_INTERVAL_S", 0.0)
+    page = _LatePollsPage([(_batch_url("jwpduf"), LOST_BODY)] * 8, spacing_s=0.05)
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("MZZa6b"), _frame("MZZa6b", _ours(2))),
+        (_batch_url("jwpduf"), LOST_BODY),
+    ]
+    jwpduf_fired = 0
+    orig_fire = page._fire_response
+
+    def track_fire(response: FakeResponse) -> None:
+        nonlocal jwpduf_fired
+        if "jwpduf" in response.url:
+            jwpduf_fired += 1
+        orig_fire(response)
+
+    page._fire_response = track_fire  # type: ignore[method-assign]
+    polls_at_read: list[int] = []
+
+    async def new_page() -> ListingTab:
+        polls_at_read.append(jwpduf_fired)
+        status = 3 if jwpduf_fired >= 9 else 2
+        return ListingTab(_listing(_ours(status)))
+
+    page.context = SimpleNamespace(new_page=new_page)  # type: ignore[attr-defined]
+    composer = MigratedComposer()
+    reads = _spy_listing_reads(composer)
+    rec = await composer.submit_and_observe(
+        page, poll_timeout_s=10.0, on_started=None, project_id=PROJ
+    )
+    assert rec.is_done
+    assert polls_at_read == [9], "read the listing while Flow was still polling"
+    assert len(reads) == 1
+    assert reads[0][1] < _mc_submit_observe.LISTING_READ_BUDGET_S, "settled only at the deadline"
+
+
+#: Strong references to background tasks the #1518 tests start: asyncio keeps only weak ones.
+_BACKGROUND: set[asyncio.Task[Any]] = set()
+
+
+def _keep(task: asyncio.Task[Any]) -> None:
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
+
+
+async def test_unguarded_request_check_verdict_during_terminal_wait_is_raised_1518() -> None:
+    """#1518: on_request stays registered while _finish_submitted waits for terminal status;
+    an unguarded request_check verdict recorded during that wait must be raised on settle."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    def check(rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="late wrong clip") if "late-wrong" in body else None
+
+    async def on_started(_started: Any) -> None:
+        listeners = page.listeners("request")
+        assert len(listeners) == 1
+        late_req = FakeRequest(_batch_url("fZytfe"), "f.req=late-wrong-clip")
+        for listener in listeners:
+            await _maybe_await(listener(late_req))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    from gflow_cli.errors import is_retryable
+
+    with pytest.raises(WireFormatError, match="late wrong clip") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert (ei.value.charged, ei.value.resolved_next_action(), is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+    # The clip that finished stays recoverable from the error, in the field and the text.
+    assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
+    assert MEDIA in ei.value.detail and "data download" in ei.value.detail
+    # `video chain` wraps str(exc), so the message must carry the clip id too.
+    assert MEDIA in str(ei.value)
+
+
+async def test_unguarded_observed_body_problem_during_terminal_wait_is_raised_1518() -> None:
+    """#1518: an unguarded submit body problem seen during _finish_submitted is also raised."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "a crane"
+    page.scripted_responses = [
+        (_batch_url("eb1hJf"), _frame("eb1hJf", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        late_req = FakeRequest(_batch_url("eb1hJf"), _i2v_body(media_id="wrong-media-id"))
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(late_req))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            expect_media_id=MEDIA_UP,
+        )
+    assert ei.value.charged == "maybe"
+
+
+async def test_guarded_abort_during_terminal_wait_keeps_completed_clip_1518() -> None:
+    """#1518 + #1320: when the route guard aborts a stray request during _finish_submitted,
+    the settled billed clip returns without falsely raising the pre-guard shadow."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray duplicate") if "stray-dup" in body else None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        stray_req = FakeRequest(_batch_url("fZytfe"), "f.req=stray-dup")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(stray_req))
+        route = FakeRoute()
+        await page.routes[-1][1](route, stray_req)
+        page.route_outcomes.append(route.outcome)
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=on_started,
+        project_id=PROJ,
+        submit_rpcs=("fZytfe",),
+        request_check=check,
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert page.route_outcomes == ["fallback", "abort"]
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_unguarded_image_problem_during_grid_recovery_is_raised_1518() -> None:
+    """#1518 sibling: an unguarded image request observed while _recover_images polls the
+    grid must be raised instead of silently returning recovered tiles."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _LateImageSubmitPage(FakePage):
+        async def evaluate(self, expression: str, argument: Any = None) -> Any:
+            if "flow-image-tile" in expression and len(self.dom.grid_reads) == 1:
+                late_req = FakeRequest(_batch_url("ogiZ0b"), "")
+                for listener in self.listeners("request"):
+                    await _maybe_await(listener(late_req))
+            return await super().evaluate(expression, argument)
+
+    page = _LateImageSubmitPage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert ei.value.charged == "maybe"
+    # The recovered image is named; `gflow data download` refuses images, so no hint.
+    assert getattr(ei.value, "completed_media_ids", None) == [NEW_TILE]
+    assert NEW_TILE in ei.value.detail and "data download" not in ei.value.detail
+
+
+async def test_guarded_abort_does_not_suppress_earlier_unguarded_verdict_1518() -> None:
+    """#1518 review: aborting request B must only remove B's shadow, never A's unguarded verdict."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        if "unguarded-a" in body:
+            return WireFormatError(detail="unguarded request A")
+        if "guarded-b" in body:
+            return WireFormatError(detail="guarded request B")
+        return None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        req_a = FakeRequest(_batch_url("fZytfe"), "f.req=unguarded-a")
+        req_b = FakeRequest(_batch_url("fZytfe"), "f.req=guarded-b")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(req_a))
+            await _maybe_await(listener(req_b))
+        route_b = FakeRoute()
+        await page.routes[-1][1](route_b, req_b)
+        page.route_outcomes.append(route_b.outcome)
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    with pytest.raises(WireFormatError, match="unguarded request A") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, ei.value.resolved_next_action(), is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+async def test_unguarded_verdict_after_earlier_guarded_abort_is_still_raised_1518() -> None:
+    """#1518 review: an earlier route_error must not mute a later unguarded request C."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        if "guarded-b" in body:
+            return WireFormatError(detail="guarded request B")
+        if "unguarded-c" in body:
+            return WireFormatError(detail="unguarded request C")
+        return None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        req_b = FakeRequest(_batch_url("fZytfe"), "f.req=guarded-b")
+        req_c = FakeRequest(_batch_url("fZytfe"), "f.req=unguarded-c")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(req_b))
+        route_b = FakeRoute()
+        await page.routes[-1][1](route_b, req_b)
+        page.route_outcomes.append(route_b.outcome)
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(req_c))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    with pytest.raises(WireFormatError, match="unguarded request C") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert ei.value.charged == "maybe"
+
+
+async def test_in_flight_guard_abort_completing_after_terminal_status_keeps_clip_1518() -> None:
+    """#1518 review: if _finish_submitted returns while guard's route.abort() is still pending,
+    the check waits for the in-flight abort rather than raising the listener's pre-guard shadow."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray duplicate") if "stray-dup" in body else None
+
+    class _SlowAbortRoute(FakeRoute):
+        def __init__(self, release: asyncio.Event) -> None:
+            super().__init__()
+            self.release = release
+            self.abort_entered = asyncio.Event()
+
+        async def abort(self) -> None:
+            self.abort_entered.set()
+            await self.release.wait()
+            self.outcome = "abort"
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+    release_abort = asyncio.Event()
+    slow_route = _SlowAbortRoute(release_abort)
+    guard_task: asyncio.Task[Any] | None = None
+
+    async def on_started(_started: Any) -> None:
+        nonlocal guard_task
+        stray_req = FakeRequest(_batch_url("fZytfe"), "f.req=stray-dup")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(stray_req))
+        guard_task = asyncio.create_task(page.routes[-1][1](slow_route, stray_req))
+        await slow_route.abort_entered.wait()
+        # Terminal status lands BEFORE slow_route.abort() resumes and sets route_error.
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+        async def finish_abort() -> None:
+            await asyncio.sleep(0.02)
+            release_abort.set()
+
+        _keep(asyncio.create_task(finish_abort()))
+
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=on_started,
+        project_id=PROJ,
+        submit_rpcs=("fZytfe",),
+        request_check=check,
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert guard_task is not None
+    await guard_task
+    assert slow_route.outcome == "abort"
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_image_guarded_abort_does_not_suppress_earlier_unguarded_problem_1518() -> None:
+    """#1518 review (image sibling): a guarded abort of B must not hide unguarded problem A."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _MixedImagePage(RoutingPage):
+        injected = False
+
+        def _fire_submit(self) -> None:
+            FakePage._fire_submit(self)
+
+        async def evaluate(self, expression: str, argument: Any = None) -> Any:
+            if (
+                not self.injected
+                and "flow-image-tile" in expression
+                and len(self.dom.grid_reads) == 1
+            ):
+                self.injected = True
+                req_a = FakeRequest(_batch_url("ogiZ0b"), "")
+                req_b = FakeRequest(_batch_url("ogiZ0b"), "")
+                for listener in self.listeners("request"):
+                    await _maybe_await(listener(req_a))
+                    await _maybe_await(listener(req_b))
+                route_b = FakeRoute()
+                await self.routes[-1][1](route_b, req_b)
+                self.route_outcomes.append(route_b.outcome)
+            return await super().evaluate(expression, argument)
+
+    page = _MixedImagePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+        )
+    assert page.route_outcomes == ["abort"]
+    assert ei.value.charged == "maybe"
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_image_in_flight_guard_abort_during_recovery_keeps_images_1518() -> None:
+    """#1518 review (image sibling): pending guard abort clears its verdict before return."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _SlowImageAbortRoute(FakeRoute):
+        def __init__(self, release: asyncio.Event) -> None:
+            super().__init__()
+            self.release = release
+            self.abort_entered = asyncio.Event()
+
+        async def abort(self) -> None:
+            self.abort_entered.set()
+            await self.release.wait()
+            self.outcome = "abort"
+
+    release_abort = asyncio.Event()
+    slow_route = _SlowImageAbortRoute(release_abort)
+    guard_task: asyncio.Task[Any] | None = None
+
+    class _SlowGuardImagePage(RoutingPage):
+        injected = False
+
+        def _fire_submit(self) -> None:
+            FakePage._fire_submit(self)
+
+        async def evaluate(self, expression: str, argument: Any = None) -> Any:
+            nonlocal guard_task
+            if (
+                not self.injected
+                and "flow-image-tile" in expression
+                and len(self.dom.grid_reads) == 1
+            ):
+                self.injected = True
+                req = FakeRequest(_batch_url("ogiZ0b"), "")
+                for listener in self.listeners("request"):
+                    await _maybe_await(listener(req))
+                guard_task = asyncio.create_task(self.routes[-1][1](slow_route, req))
+                await slow_route.abort_entered.wait()
+
+                async def finish_abort() -> None:
+                    await asyncio.sleep(0.02)
+                    release_abort.set()
+
+                _keep(asyncio.create_task(finish_abort()))
+            return await super().evaluate(expression, argument)
+
+    page = _SlowGuardImagePage()
+    page.dom.prompt = "a blue cup"
+    page.dom.grid_reads = [[_tile(OLD_TILE)], [_tile(OLD_TILE), _tile(NEW_TILE)]]
+    page.scripted_responses = [(_batch_url("ogiZ0b"), LOST_BODY)]
+
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup"), reference_ids=("m-1",)
+    )
+    assert [i.media_name for i in images] == [NEW_TILE]
+    assert guard_task is not None
+    await guard_task
+    assert slow_route.outcome == "abort"
+
+
+async def test_guard_that_starts_after_the_terminal_status_still_keeps_the_clip_1518() -> None:
+    """#1518 review: Playwright starts the route guard a few loop turns after the request
+    event, so the terminal status can land first. The settle waits for the guard's
+    judgment instead of raising the listener's pre-guard verdict."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray duplicate") if "stray-dup" in body else None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+    route = FakeRoute()
+
+    async def on_started(_started: Any) -> None:
+        stray_req = FakeRequest(_batch_url("fZytfe"), "f.req=stray-dup")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(stray_req))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+        async def late_guard() -> None:
+            await asyncio.sleep(0.05)  # the guard has not started when the run settles
+            await page.routes[-1][1](route, stray_req)
+
+        _keep(asyncio.create_task(late_guard()))
+
+    rec = await MigratedComposer().submit_and_observe(
+        page,
+        poll_timeout_s=2.0,
+        on_started=on_started,
+        project_id=PROJ,
+        submit_rpcs=("fZytfe",),
+        request_check=check,
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert route.outcome == "abort"
+
+
+async def test_flagged_request_no_guard_judges_is_raised_after_the_wait_1518(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flagged request the guard never judges (one the route did not intercept) is
+    raised once GUARD_JUDGE_WAIT_S runs out, as possibly billed, naming the finished clip."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "GUARD_JUDGE_WAIT_S", 0.1)
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="unrouted stray") if "unrouted" in body else None
+
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(FakeRequest(_batch_url("fZytfe"), "f.req=unrouted")))
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    started_at = time.monotonic()
+    with pytest.raises(WireFormatError, match="unrouted stray") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert time.monotonic() - started_at < 1.5
+    assert ei.value.charged == "maybe"
+    assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
+
+
+async def test_unguarded_verdict_outranks_a_non_timeout_failure_of_the_wait_1518() -> None:
+    """Not only a timeout: whatever ends the terminal wait, a stray submit that left during
+    it is what the user must see, because it may be billed."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="late bad clip") if "late-bad" in body else None
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(FakeRequest(_batch_url("fZytfe"), "f.req=late-bad")))
+        raise RuntimeError("the wait failed for another reason")
+
+    with pytest.raises(WireFormatError, match="late bad clip"):
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+
+
+async def test_a_stray_abort_after_the_submit_was_accepted_is_not_reported_unbilled_1518() -> None:
+    """The run's own submit was accepted (Flow is making and billing it) when the guard
+    aborts a stray second submit. That abort must not be reported as "nothing billed,
+    safe to retry": a retry would pay for the clip twice."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray second submit") if "stray" in body else None
+
+    class _StrayAfterAcceptPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(_batch_url("fZytfe"), "f.req=clean-submit")
+            stray = FakeRequest(_batch_url("fZytfe"), "f.req=stray")
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+                for u, text in self.scripted_responses:
+                    self._fire_response(FakeResponse(u, text))
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _StrayAfterAcceptPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    with pytest.raises(WireFormatError, match="stray second submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, ei.value.next_action, is_retryable(ei.value)) == (
+        "maybe",
+        "reconcile",
+        False,
+    )
+
+
+async def test_a_stray_abort_before_the_reply_arrives_is_not_reported_unbilled_1518() -> None:
+    """Flow bills once the clean submit leaves the browser, not when its reply is read: a
+    stray aborted before that reply lands must not be reported as safe to retry either."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="stray second submit") if "stray" in body else None
+
+    class _ReplyLaterPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(_batch_url("fZytfe"), "f.req=clean-submit")
+            stray = FakeRequest(_batch_url("fZytfe"), "f.req=stray")
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+                await asyncio.sleep(0.2)  # the clean submit's reply lands after the check
+                for u, text in self.scripted_responses:
+                    self._fire_response(FakeResponse(u, text))
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _ReplyLaterPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    with pytest.raises(WireFormatError, match="stray second submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, is_retryable(ei.value)) == ("maybe", False)
+
+
+async def test_a_body_guard_stray_after_the_submit_left_never_says_safe_to_rerun_1518() -> None:
+    """The body guard builds its refusal with the "billed nothing, safe to re-run" hint; once
+    the run's own submit has left, that hint is replaced, not just the charged fields."""
+    from gflow_cli.api.transports import _mc_submit_observe as mso
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    class _BodyStrayPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(_batch_url("eb1hJf"), _i2v_body())
+            stray = FakeRequest(_batch_url("eb1hJf"), _i2v_body(media_id="wrong-media-id"))
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _BodyStrayPage()
+    page.dom.prompt = "a crane"
+    page.scripted_request = ("eb1hJf", _i2v_body())
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_and_observe(
+            page, poll_timeout_s=2.0, on_started=None, project_id=PROJ, expect_media_id=MEDIA_UP
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert ei.value.charged == "maybe"
+    assert ei.value.remediation_hint == mso.STRAY_AFTER_SUBMIT
+    assert "Safe to re-run" not in (ei.value.remediation_hint or "")
+
+
+async def test_a_poll_passing_the_guard_does_not_count_as_the_submit_leaving_1518() -> None:
+    """Status polls go through the same guard. Only a submit rpc marks the run's submit as
+    gone, so a refusal of the run's first submit stays unbilled and retryable."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from gflow_cli.errors import is_retryable
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="wrong submit") if "wrong" in body else None
+
+    class _PollThenRefusedPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            poll = FakeRequest(_batch_url("jwpduf"), "f.req=poll")
+            own = FakeRequest(_batch_url("fZytfe"), "f.req=wrong")
+
+            async def go() -> None:
+                for request in (poll, own):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = FakeRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _PollThenRefusedPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=wrong")
+
+    with pytest.raises(WireFormatError, match="wrong submit") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=2.0,
+            on_started=None,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert page.route_outcomes == ["fallback", "abort"]
+    assert (ei.value.charged, is_retryable(ei.value)) == ("no", True)
+
+
+@pytest.mark.usefixtures("_fast_recovery")
+async def test_an_image_stray_after_the_image_submit_left_is_not_unbilled_1518() -> None:
+    """The image guard marks the run's submit as gone when it lets it through: a stray
+    aborted after that is possibly billed, never "safe to re-run"."""
+    from gflow_cli.api.transports import _mc_submit_observe as mso
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+    from tests.api.transports.test_migrated_images import REFERENCE, submit_body
+
+    class _ContinuingRoute(FakeRoute):
+        async def continue_(self) -> None:
+            self.outcome = "continue"
+
+    class _ImageStrayPage(RoutingPage):
+        def _fire_submit(self) -> None:
+            clean = FakeRequest(
+                _batch_url("ogiZ0b"), submit_body(media=(REFERENCE,), model="NARWHAL")
+            )
+            stray = FakeRequest(_batch_url("ogiZ0b"), "")
+
+            async def go() -> None:
+                for request in (clean, stray):
+                    for handler in list(self._handlers["request"]):
+                        await _maybe_await(handler(request))
+                    route = _ContinuingRoute()
+                    await self.routes[-1][1](route, request)
+                    self.route_outcomes.append(route.outcome)
+
+            _keep(asyncio.get_event_loop().create_task(go()))
+
+    page = _ImageStrayPage()
+    page.dom.prompt = "a blue cup"
+
+    with pytest.raises(WireFormatError) as ei:
+        await MigratedComposer().submit_images_and_observe(
+            page, GenerateImageRequest(prompt="a blue cup"), reference_ids=(REFERENCE,)
+        )
+    assert page.route_outcomes == ["continue", "abort"]
+    assert (ei.value.charged, ei.value.remediation_hint) == ("maybe", mso.STRAY_AFTER_SUBMIT)
+
+
+async def test_a_clean_run_settles_without_waiting_for_the_guard_1518(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With nothing flagged, the settle never waits: a healthy run pays nothing."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "GUARD_JUDGE_WAIT_S", 5.0)
+    page = RoutingPage()
+    page.dom.prompt = "keep going"
+    page.scripted_request = ("fZytfe", "f.req=clean-submit")
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    async def on_started(_started: Any) -> None:
+        page._fire_response(
+            FakeResponse(_batch_url("as29s"), _frame("as29s", _record(3, VIDEO_URL)))
+        )
+
+    started_at = time.monotonic()
+    rec = await MigratedComposer().submit_and_observe(
+        page, poll_timeout_s=2.0, on_started=on_started, project_id=PROJ, submit_rpcs=("fZytfe",)
+    )
+    assert rec.is_done and rec.media_id == MEDIA
+    assert time.monotonic() - started_at < 1.0
+
+
+async def test_unguarded_verdict_during_terminal_timeout_is_raised_1518() -> None:
+    """#1518 review: an unguarded verdict seen before terminal timeout wins over timeout."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    page = FakePage()
+    page.dom.prompt = "keep going"
+    page.scripted_responses = [
+        (_batch_url("fZytfe"), _frame("fZytfe", [None, 881, [[MEDIA]], [[_record(6)]]])),
+    ]
+
+    def check(_rpcid: str, body: str) -> WireFormatError | None:
+        return WireFormatError(detail="late bad clip") if "late-bad" in body else None
+
+    async def on_started(_started: Any) -> None:
+        late_req = FakeRequest(_batch_url("fZytfe"), "f.req=late-bad")
+        for listener in page.listeners("request"):
+            await _maybe_await(listener(late_req))
+
+    with pytest.raises(WireFormatError, match="late bad clip") as ei:
+        await MigratedComposer().submit_and_observe(
+            page,
+            poll_timeout_s=0.05,
+            on_started=on_started,
+            project_id=PROJ,
+            submit_rpcs=("fZytfe",),
+            request_check=check,
+        )
+    assert ei.value.charged == "maybe"
+    # The run's own clip, which Flow may still finish and bill, stays named.
+    assert getattr(ei.value, "completed_media_ids", None) == [MEDIA]
+
+
+async def test_image_result_arriving_during_refusal_wait_is_returned_1518(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1518 review: if the image reply lands while _raise_if_refused awaits, return it."""
+    from gflow_cli.api.transports.migrated_composer import MigratedComposer
+
+    monkeypatch.setattr(_mc_submit_observe, "IMAGE_REPLY_BUDGET_S", 0.01)
+    orig_check = _mc_submit_observe._raise_if_refused
+    page = FakePage()
+    page.dom.prompt = "a blue cup"
+
+    async def late_reply_during_check(route_error: Any, verdicts: Any, submit_left: Any) -> None:
+        page._fire_response(FakeResponse(_batch_url("ogiZ0b"), _image_frame()))
+        await asyncio.sleep(0)
+        await orig_check(route_error, verdicts, submit_left)
+
+    monkeypatch.setattr(_mc_submit_observe, "_raise_if_refused", late_reply_during_check)
+    images = await MigratedComposer().submit_images_and_observe(
+        page, GenerateImageRequest(prompt="a blue cup")
+    )
+    assert len(images) == 1

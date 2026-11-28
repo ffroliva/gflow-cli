@@ -21,7 +21,7 @@ Living list of behaviour that's broken, surprising, or limited by design — alo
 - **Cause:** Flow's own model catalog lists these three families as leaving on 2026-12-05. gflow shows the date (`gflow models` column `retires on`, `retires_on` in `--json` and `gflow_list_models`) and warns on every run that selects one (`model.retiring` on stderr; a `warnings` entry over MCP). It never refuses on the date, which carries no time zone and may move: once Flow's menu stops offering a model, the run stops before submit, charged nothing; on flow.google.com's composer (exit 11) the message also names the date and the models Flow does offer. The agent composer (exit 11) and the labs picker (exit 18) refuse without the date.
 - **Limits:** with no `--model` on t2v or r2v, Flow uses its own current menu default, which gflow cannot read yet, so no warning is printed even if that default is leaving (i2v defaults to `veo-lite`, which stays). Whether Flow removes a retired model from the menu or leaves it disabled is unobserved until the date; the exit-11 path assumes removal.
 - **Workaround:** use `veo-lite` or `omni-1.2` (`omni-1.2-flash`). The short aliases `omni` and `flash` keep selecting Omni 1.1 until the date passes, so a script's model and price do not change underneath it; repointing them to Omni 1.2 is #1379.
-- **Evidence:** the dates are read from Flow's `HTrJv` catalog, recorded in `tests/fixtures/flow_htrjv_model_families.json` (re-record with `scripts/dev/record_htrjv_fixture.py`); `tests/api/test_model_catalog.py` fails when a refreshed capture moves a date.
+- **Evidence:** the dates are read from Flow's `HTrJv` catalog, recorded in `tests/fixtures/flow_htrjv_model_families.json` (re-record with `scripts/dev/record_htrjv_fixture.py`); `tests/api/test_model_catalog.py` fails when a refreshed capture moves a date or adds or drops a model, and `gflow doctor` (check `models.catalog_drift`) reports the same differences against Flow's live catalog (#1550).
 
 ### On Windows, `gflow update` from a pip install at 0.99.0 or older can leave gflow unusable
 
@@ -72,12 +72,14 @@ in use (`ProfileLockedError`, exit 11) as before. Linux is unmeasured.
 
 **Remedy / opt-out:** set `GFLOW_CLI_WIRE_READS=0` to always read in the browser
 ([CONFIGURATION](docs/CONFIGURATION.md#gflow_cli_wire_reads)). If Flow ever answers signed out
-or HTTP 401, that process stops trying the direct read for that profile until a `--refresh`
-renewal that Flow authenticated, or a `gflow_auth_status` probe in that MCP server that Flow
-accepts (`gflow doctor` runs in its own process, so it cannot lift another process's mark).
-If it answers HTTP 429 or 503, that profile is left alone for the throttle window
-(`Retry-After`, capped at 60 s) and nothing retries in the browser: `credits user` exits 4 or
-6, and `credits list` records the error for that profile and keeps the other balances.
+or HTTP 401, that process stops trying the direct read for that profile for 5 minutes (300 s),
+or until a `--refresh` renewal that Flow authenticated (including `labs_stale` renewals for
+`flow.google.com` targets), or a `gflow_auth_status` probe that clears or gets a Flow answer
+(`gflow doctor` runs in its own process, so it cannot lift another process's mark;
+pre-response `health()` failures preserve an active mark). If it answers HTTP 429 or 503, that
+profile is left alone for the throttle window (`Retry-After`, capped at 60 s) and nothing
+retries in the browser: `credits user` exits 4 or 6, and `credits list` records the error for
+that profile and keeps the other balances.
 
 ---
 
@@ -1173,6 +1175,16 @@ profile reproducibly 403s on `batchGenerateImages` even after a fresh
 `gflow auth login --browser chrome`; the same code path on profile `ffroliva`
 (re-authenticated the same day) succeeded end-to-end across one t2i + a 4-image
 batch — so it is not a global incompatibility but a per-profile WAF state.
+
+**What gflow does about it (v0.108.0, #1371):** a refused submit is not billed, and
+gflow retries it **once**, from a new headless browser process. In the
+[direct video and headless mint spike](docs/superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md),
+a page Flow had refused stayed refused for about 20 minutes, while fresh pages in new
+browser processes were accepted in both headless and headed mode: page freshness, not
+visibility, was the variable. Any refused page is discarded, so the next mint uses a new
+one. A second refusal is final, not charged, and its remediation names
+`--browser-visibility headed` and the 30–60 minute cooldown in
+[ACCOUNT_SAFETY § When Google does push back](docs/ACCOUNT_SAFETY.md#when-google-does-push-back).
 
 **Likely contributing factors:**
 - Repeated automated runs on the same profile within a short window

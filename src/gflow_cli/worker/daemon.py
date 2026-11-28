@@ -12,11 +12,18 @@ from typing import Any, cast
 import structlog
 
 from gflow_cli import telemetry
-from gflow_cli._cli_helpers import slugify_project_name
+from gflow_cli._cli_helpers import (
+    client_visibility,
+    image_route,
+    slugify_project_name,
+    video_client_visibility,
+    video_route,
+)
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.transports import migrated_extend
 from gflow_cli.api.transports._common import migrated_route
 from gflow_cli.api.video import EditVideoRequest, GenerateVideoRequest, VideoResult, VideoStarted
@@ -62,6 +69,22 @@ def _apply_configured_video_cap(
     configured = getattr(settings, "max_credits", None)
     effective = resolve_max_credits(request.max_credits, configured)
     return replace(request, max_credits=effective) if effective != request.max_credits else request
+
+
+def with_browser_visibility(settings: Any, visibility: VisibilitySetting | None) -> Any:
+    """``settings`` with one job's ``browser_visibility`` (an MCP parameter) applied.
+
+    The client, its launch visibility and the retry loop's relaunch all read this one
+    object, as ``--browser-visibility`` makes them read the one setting on the CLI.
+    """
+    if visibility is None:
+        return settings
+    return settings.model_copy(
+        update={
+            "browser_visibility": visibility.value,
+            "headless": visibility is VisibilitySetting.HEADLESS,
+        }
+    )
 
 
 def _error_payload_for(exc: Exception) -> dict[str, Any]:
@@ -291,9 +314,8 @@ class FlowWorker:
         # observer fires classifies as a safe failure (queue.classify_interrupted).
         save_checkpoint("claimed", may_have_spent=False)
 
-        settings = get_settings()
+        settings = with_browser_visibility(get_settings(), codec.browser_visibility(task.payload))
         profile_dir = settings.profile_subdir(task.profile_name)
-        headless = task.payload.get("headless", settings.headless)
         transport = task.payload.get("transport", settings.transport)
         out_dir = (
             Path(task.payload["out_dir"]) if "out_dir" in task.payload else settings.output_dir
@@ -329,7 +351,9 @@ class FlowWorker:
                 try:
                     async with FlowApiClient(
                         profile_dir=profile_dir,
-                        headless=headless,
+                        visibility=client_visibility(
+                            settings, (image_route(req, transport=transport),)
+                        ),
                         transport=transport,
                         out_dir=out_dir,
                         # Reuse the cached settings: a bare Settings() in the client
@@ -485,10 +509,13 @@ class FlowWorker:
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
-                req = (
+                # The configured cap is resolved once, before the route: a capped job
+                # never launches headless (SCENARIO.md rows 11, 33).
+                req = _apply_configured_video_cap(
                     cast("GenerateVideoRequest", task.decoded.request)
                     if task.decoded is not None
-                    else self._build_video_request(task.payload)
+                    else self._build_video_request(task.payload),
+                    settings,
                 )
                 project_id = task.payload.get("project_id")
 
@@ -498,10 +525,13 @@ class FlowWorker:
                 # Non-optional alias for the closure below (`recorder` is
                 # declared Optional at method scope for the #341 failure funnel).
                 video_recorder = recorder
+                visibility = await video_client_visibility(
+                    settings, profile_dir, (video_route(req, transport=transport),)
+                )
                 try:
                     async with FlowApiClient(
                         profile_dir=profile_dir,
-                        headless=headless,
+                        visibility=visibility,
                         transport=transport,
                         out_dir=out_dir,
                         settings=settings,  # same rationale as the image path above
@@ -515,16 +545,13 @@ class FlowWorker:
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 
-                        req = _apply_configured_video_cap(
-                            await resolve_and_apply(
-                                client,
-                                req,
-                                path="video",
-                                project_id=project_id,
-                                tool_specs=tuple(task.payload.get("tool_specs", ())),
-                                quiet=True,
-                            ),
-                            settings,
+                        req = await resolve_and_apply(
+                            client,
+                            req,
+                            path="video",
+                            project_id=project_id,
+                            tool_specs=tuple(task.payload.get("tool_specs", ())),
+                            quiet=True,
                         )
 
                         def on_started(started: VideoStarted) -> None:
@@ -598,7 +625,6 @@ class FlowWorker:
                     task=task,
                     recorder=recorder,
                     profile_dir=profile_dir,
-                    headless=headless,
                     transport=transport,
                     out_dir=out_dir,
                     settings=settings,
@@ -729,7 +755,11 @@ class FlowWorker:
 
         def observe_checkpoint(cp: GenerationCheckpoint) -> None:
             # Any emitted phase is at/after submit_attempted (C1 emits it right
-            # before the credit gesture), so may_have_spent is always True here.
+            # before the credit gesture), so may_have_spent is always True here,
+            # EXCEPT submit_refused which resets the checkpoint to claimed (not charged).
+            if cp.phase == "submit_refused":
+                save_checkpoint("claimed", may_have_spent=False)
+                return
             if cp.phase == "submit_attempted":
                 # #1198 submit gate: a `gflow cancel` / `tasks/cancel` that landed while
                 # this job was claimed stops it here, before anything is sent to Flow.
@@ -782,7 +812,6 @@ class FlowWorker:
         task: QueueTask,
         recorder: OperationRecorder,
         profile_dir: Path,
-        headless: bool,
         transport: str,
         out_dir: Path,
         settings: Any,
@@ -823,7 +852,6 @@ class FlowWorker:
 
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
             transport=transport,
             out_dir=out_dir,
             settings=settings,
@@ -893,7 +921,6 @@ class FlowWorker:
         task: QueueTask,
         recorder: OperationRecorder,
         profile_dir: Path,
-        headless: bool,
         transport: str,
         out_dir: Path,
         settings: Any,
@@ -947,7 +974,6 @@ class FlowWorker:
         project_id = task.payload.get("project_id")
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
             transport=transport,
             out_dir=out_dir,
             settings=settings,

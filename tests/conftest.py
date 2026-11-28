@@ -211,6 +211,19 @@ def _isolate_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 
 @pytest.fixture(autouse=True)
+def _display_available(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests fake the browser, so a headed launch must not depend on the host's display.
+
+    Without this, a CI runner (Linux, no DISPLAY) fails every test that builds a real
+    ``FlowApiClient`` under ``auto`` with exit 28, while Windows and macOS never run the check.
+    Tests of the check itself patch ``_on_linux`` back to ``True`` and clear DISPLAY.
+    """
+    if any(request.node.get_closest_marker(m) for m in ("e2e", "live")):
+        return
+    monkeypatch.setattr("gflow_cli.api.client._on_linux", lambda: False)
+
+
+@pytest.fixture(autouse=True)
 def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point every proxy at a closed local port so no unit test, or child it spawns, goes online.
 
@@ -232,6 +245,21 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
     # #1229: the credits read tries the profile's cookie jar and flow.google.com first. Off
     # here, so a credits test reaches the page fake it installs; the wire tests turn it on.
     monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "0")
+
+
+@pytest.fixture(autouse=True)
+def _reset_winsec_caches() -> Iterator[None]:
+    """Keep process-wide SID and file-ACL caches from leaking fake responses between tests."""
+    from gflow_cli import winsec
+
+    clear_sid = getattr(winsec._current_user_sid, "cache_clear", None)
+    if clear_sid is not None:
+        clear_sid()
+    winsec._file_acl_cache.clear()
+    yield
+    if clear_sid is not None:
+        clear_sid()
+    winsec._file_acl_cache.clear()
 
 
 @pytest.fixture
@@ -271,5 +299,6 @@ def fresh_wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     flow_wire.reset_state()
     monkeypatch.setattr(flow_wire, "getproxies", dict)
+    monkeypatch.setattr(flow_wire, "_native_os_proxies", dict)
     yield
     flow_wire.reset_state()

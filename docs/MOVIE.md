@@ -69,6 +69,14 @@ aspect = "9:16"
 duration = 6
 ```
 
+> **Unknown keys fail at parse time (exit 11).** Every fixed-schema table in
+> `movie.toml` (top-level keys, `[movie]`, `[assemble]`, `[style]`,
+> `[style.variants.<name>]`, `[instructions]`, `[[instructions.card]]`, `[[characters]]`,
+> `[[scenes]]`, `[scenes.instructions]`, `[[scenes.instructions.card]]`, and
+> `[[scenes.characters_detail]]`) rejects unknown fields with a `ConfigurationError`
+> listing the allowed field names, so typos or unsupported flags like `initial_frame` /
+> `count` fail before anything runs or spends credits ([#1520](https://github.com/ffroliva/gflow-cli/issues/1520)).
+
 > **Scene `duration` values depend on the model** (issue #634). Veo 3.1 models
 > support `4`, `6`, and `8`; `omni-flash` also supports `10`; an explicit `omni-1.2-flash` takes every
 > integer from `3` to `15`. Whether your account
@@ -304,10 +312,11 @@ For each scene, `gflow movie` merges global manifest cards with scene overrides 
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--profile <name>` | default profile | Chrome profile to drive (must be a `chrome`-strategy profile). |
-| `--out-dir <dir>` | manifest `output_dir` | Override the output directory. |
+| `--out-dir <dir>` | manifest `output_dir`, else `<output root>/videos/<YYYY-MM-DD>/` | Override the output directory. |
 | `--dry-run` | off | Print the pending video operation plan; make **no** API calls. |
 | `--fail-fast` / `--continue-on-error` | continue | Stop on the first scene failure, or attempt the rest (default). |
 | `--stitch` | off | After generating, hard-concat all clips into one preview mp4 (ffmpeg, no transitions). |
+| `--browser-visibility [auto\|headless\|headed]` | `GFLOW_CLI_BROWSER_VISIBILITY` (`auto`) | Browser window policy for this run, as on the other billed video commands ([BROWSER_MODES](BROWSER_MODES.md)). |
 
 ## Credits
 

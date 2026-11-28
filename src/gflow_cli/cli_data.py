@@ -959,7 +959,7 @@ class _ThreadSafeListingClient:
             from gflow_cli.api.client import FlowApiClient
 
             profile_dir = _make_provider_dir(self._profile_name)
-            client = FlowApiClient(profile_dir=profile_dir, headless=get_settings().headless)
+            client = FlowApiClient(profile_dir=profile_dir)
             await client.__aenter__()
             self._client = client
         return self._client

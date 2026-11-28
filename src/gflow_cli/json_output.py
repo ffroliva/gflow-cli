@@ -186,6 +186,8 @@ def image_result(
         "count": len(items),
         "images": items,
     }
+    if images:
+        payload.update(_path_fields(images[0]))  # one submit: every image shares its path
     if ref_count is not None:
         payload["ref_count"] = ref_count
     if requested is not None:
@@ -194,6 +196,11 @@ def image_result(
         if warnings := images_missing_warning(requested, len(items)):
             payload["warnings"] = warnings
     return payload
+
+
+def _path_fields(result: GeneratedImage | VideoResult) -> dict[str, Any]:
+    """Which path produced a result: ``route`` (direct/ui), ``visibility``, ``retried``."""
+    return {"route": result.route, "visibility": result.visibility, "retried": result.retried}
 
 
 def _clip_payload(
@@ -212,6 +219,7 @@ def _clip_payload(
         "failure_reasons": list(st.failure_reasons),
         "error_message": st.error_message,
         "request": request_block,
+        **_path_fields(result),
     }
     if result.quoted_credits is not None:
         payload["quoted_credits"] = result.quoted_credits
@@ -237,14 +245,17 @@ def video_result(
     rather than faked. ``status`` is "ok"/"fail" mirroring ``succeeded``;
     ``generation_status`` is the raw ``MEDIA_GENERATION_STATUS_*`` wire value.
     """
+    # A bare t2v names no model; the direct path reports the request it resolved and sent.
+    sent = result.sent_request or request
     return _clip_payload(
         command,
         result,
         {
-            "model": request.model.value if request.model is not None else None,
+            "model": sent.model.value if sent.model is not None else None,
             "mode": request.mode.value,
             "aspect": request.aspect.value,
-            "duration": request.duration,
+            "duration": sent.duration,
+            "resolution": sent.resolution,
             "count": request.count,
             "seed": request.seed,
         },

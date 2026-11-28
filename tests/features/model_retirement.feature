@@ -30,3 +30,8 @@ Feature: models Flow lists as leaving are flagged before they go (#1375)
     Given the recorded HTrJv catalog
     Then every gflow video model maps to a family key present in it
     And each family's retirement date equals gflow's retires_on
+    And the catalog shows no drift from gflow's model mapping
+
+  Scenario: a family Flow adds is reported as drift (#1550)
+    Given the recorded HTrJv catalog with a new family "veo_4"
+    Then the catalog drift names "added family veo_4"

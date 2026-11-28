@@ -1,6 +1,6 @@
 [project]
 name = "gflow-cli"
-version = "0.107.0"
+version = "0.108.0"
 description = "MCP server and CLI for Google Flow: generate Veo 3.1 and Omni video and Nano Banana and Imagen images from Claude, Cursor, Codex or the terminal."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -48,6 +48,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
+    "Natural Language :: Chinese (Simplified)",
     "Natural Language :: English",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
@@ -154,11 +155,11 @@ chain = [
 ]
 tts = ["edge-tts>=7.3.1"]
 # Patchright engine extra — opt-in, drop-in patched Playwright (Chromium) that
-# avoids the Runtime.enable CDP leak on the headed path. Selected via
+# avoids the Runtime.enable CDP leak. Selected via
 # GFLOW_CLI_BROWSER_ENGINE=patchright. Ships a PATCHED Chromium driver that
 # handles live Google session cookies/Bearer/SAPISID, so it is EXACT-pinned and
 # treated as a security-review-required bump (NOT a dependabot auto-merge) —
-# see SECURITY.md. Not a headless unlock.
+# see SECURITY.md. It does not hide the headless browser (`HeadlessChrome`).
 patchright = [
     "patchright==1.64.4",
 ]

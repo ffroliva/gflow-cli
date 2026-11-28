@@ -15,6 +15,7 @@ identifiers + phase — never prompts, headers, cookies, or signed URLs.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -184,7 +185,8 @@ async def test_none_observer_is_zero_behaviour_change(tmp_path: Path) -> None:
     )
 
     assert events == ["gesture"]
-    assert result == [_IMAGE]
+    # The same image; the surface only stamps how it ran (a UI launch, headed under auto).
+    assert result == [dataclasses.replace(_IMAGE, visibility="headed", retried=False)]
 
 
 # --- Task C5: cancellation + crash recovery persist truthful outcomes ---------

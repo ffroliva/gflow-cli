@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, create_autospec
 
 import pytest
 
@@ -104,6 +104,48 @@ async def test_upscale_happy_path(tmp_path: Path, monkeypatch) -> None:
     assert (
         mock_client.upsample_image.call_args.kwargs["target_resolution"] == TargetResolution.RES_2K
     )
+
+
+@pytest.mark.asyncio
+async def test_image_upscale_reports_a_route_on_a_spec_bound_client(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An image upscale never sets ``upscale_route``; the reply must still name a route.
+
+    The client is bound to the real ``FlowApiClient`` spec, so an attribute the class only
+    annotates (``upscale_route`` has no default) raises instead of being invented by the mock.
+    """
+    from gflow_cli.api.client import FlowApiClient
+    from gflow_cli.api.generation_route import Route
+    from gflow_cli.api.submit_policy import BrowserVisibility
+
+    out_file = tmp_path / "upscaled.png"
+    out_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    monkeypatch.setattr(
+        "gflow_cli.mcp.tools.lookup_project_in_catalog", lambda m, p: _VALID_PROJECT_ID
+    )
+    client = create_autospec(FlowApiClient, instance=True)
+    client.upsample_image.return_value = out_file
+    client.visibility = BrowserVisibility.HEADED
+
+    class FakeClientContext:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    monkeypatch.setattr("gflow_cli.mcp.tools.FlowApiClient", FakeClientContext)
+
+    res = await gflow_upscale_image(
+        media_id=_VALID_MEDIA_ID, scale="2k", project=_VALID_PROJECT_ID, out_dir=str(tmp_path)
+    )
+
+    assert res["status"] == "ok"  # it raised AttributeError after writing the file
+    assert res["route"] == Route.UI.value
 
 
 @pytest.mark.asyncio

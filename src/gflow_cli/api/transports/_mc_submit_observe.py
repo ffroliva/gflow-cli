@@ -10,11 +10,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 import structlog
-from playwright.async_api import Error as PlaywrightError
 
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.transports._mc_common import (
@@ -69,7 +69,7 @@ from gflow_cli.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from playwright.async_api import Locator, Page
 
@@ -78,6 +78,103 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+#: At most this many ``Zzl0ze`` reads recover one run whose status replies are lost
+#: (#1484), the last read at the poll deadline included; each opens a second tab.
+LISTING_REREADS_MAX = 3
+#: Minimum spacing between those reads while status replies keep getting lost.
+LISTING_REREAD_INTERVAL_S = 30.0
+
+
+#: How long a settled run waits for the route guard to judge a request the listener flagged.
+GUARD_JUDGE_WAIT_S = 5.0
+
+
+class _VerdictTracker:
+    """Pairs listener verdicts with route-guard judgments by request (#1518).
+
+    The request event fires before the route guard (#1320), so a listener verdict is only
+    the backstop for a request the guard let through or never saw. The guard records its
+    judgment before it awaits ``abort()``; on settle, each flagged request is given up to
+    :data:`GUARD_JUDGE_WAIT_S` to be judged. One aborted is dropped (it never left the
+    browser); one let through, or never judged, is raised. Requests are compared by
+    identity, so aborting request B never hides request A's verdict.
+    """
+
+    def __init__(self, *, guarded: bool) -> None:
+        self._guarded = guarded
+        self._verdicts: list[tuple[Any, GFlowError]] = []
+        self._judged: dict[Any, bool] = {}  # request -> aborted
+        self._changed = asyncio.Event()
+
+    def record(self, request: Any, verdict: GFlowError) -> None:
+        self._verdicts.append((request, verdict))
+
+    def judged(self, request: Any, *, aborted: bool) -> None:
+        self._judged[request] = aborted
+        self._changed.set()
+
+    def _awaiting_guard(self) -> bool:
+        return self._guarded and any(req not in self._judged for req, _ in self._verdicts)
+
+    async def raise_unguarded(
+        self, *, completed_media_ids: Sequence[str] = (), recover_hint: str = ""
+    ) -> None:
+        """Raise the first verdict whose request left unguarded, naming any finished media."""
+        deadline = time.monotonic() + GUARD_JUDGE_WAIT_S
+        while self._awaiting_guard() and (remaining := deadline - time.monotonic()) > 0:
+            self._changed.clear()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._changed.wait(), remaining)
+        for request, verdict in self._verdicts:
+            if not self._judged.get(request, False):
+                _note_finished(verdict, completed_media_ids, recover_hint)
+                raise verdict
+
+
+#: How a finished clip is downloaded after a raised verdict (video only: images refuse it).
+CLIP_RECOVER_HINT = "recover with `gflow data download <media-id>`"
+
+
+def _note_finished(verdict: GFlowError, media_ids: Sequence[str], recover_hint: str) -> None:
+    """Keep media that may be billed recoverable from the raised verdict."""
+    verdict.charged, verdict.next_action = "maybe", "reconcile"
+    if media_ids:
+        setattr(verdict, "completed_media_ids", list(media_ids))  # noqa: B010
+        hint = f" ({recover_hint})" if recover_hint else ""
+        verdict.detail = f"{verdict.detail}; media that may be billed: {', '.join(media_ids)}{hint}"
+        # The message is built once in __init__; callers such as `video chain` copy str(exc).
+        verdict.args = (f"{verdict.title}: {verdict.detail}",)
+
+
+async def _raise_if_refused(
+    route_error: asyncio.Future[Any],
+    verdicts: _VerdictTracker,
+    submit_left: asyncio.Event,
+) -> None:
+    """Raise a route-guard refusal first, else any unguarded observer verdict.
+
+    A refusal says nothing was billed and a retry is safe, which holds only while no
+    submit of this run has left the browser (``submit_left``, set by the route guard when
+    it lets one through). Once one has, the refused request was a stray: Flow may be
+    billing the one that left, whether or not its reply has been read, so a retry could
+    pay twice.
+    """
+    if not route_error.done():
+        await verdicts.raise_unguarded()
+    if route_error.done():
+        refusal: GFlowError = route_error.result()
+        if submit_left.is_set():
+            refusal.charged, refusal.next_action, refusal.retryable = "maybe", "reconcile", False
+            refusal.remediation_hint = STRAY_AFTER_SUBMIT
+        raise refusal
+
+
+#: The hint for a refusal once a submit of the run has left: never "safe to re-run".
+STRAY_AFTER_SUBMIT = (
+    "A stray request was blocked, but a submit of this run had already left the browser "
+    "and Flow may be billing it. Check the project in Flow before re-running."
+)
+
 
 async def _aborted_by_check(
     route: Any,
@@ -85,6 +182,8 @@ async def _aborted_by_check(
     rpcid: str | None,
     body: str,
     route_error: asyncio.Future[GFlowError],
+    *,
+    on_aborted: Callable[[], None] | None = None,
 ) -> bool:
     """Abort a request ``request_check`` refuses, in the browser, and record it unsent.
 
@@ -94,6 +193,8 @@ async def _aborted_by_check(
     verdict = request_check(rpcid, body) if request_check and rpcid else None
     if verdict is None:
         return False
+    if on_aborted is not None:
+        on_aborted()  # before the await: a settling run must not see it as unjudged
     await route.abort()
     log.warning("migrated.request_refused_before_send", rpc=rpcid)
     if not route_error.done():
@@ -117,32 +218,32 @@ def _aborted_before_send(problem: str, rpcid: str) -> WireFormatError:
 
 def _image_request_listener(
     route_error: asyncio.Future[WireFormatError],
+    verdicts: _VerdictTracker,
     *,
     guarded: bool,
     problem_of: Callable[[Any], str | None],
-) -> tuple[Callable[[Any], None], list[WireFormatError]]:
-    """The image submit's request listener, and the problems it saw on a guarded run.
+) -> Callable[[Any], None]:
+    """The image submit's request listener, feeding ``verdicts`` (#1518).
 
     A guarded run's verdict belongs to the route guard, which the request event precedes:
     setting ``route_error`` here would end the wait and unroute the guard before it
     aborts, letting the submit out (#1320). So on a guarded run the listener only records
-    the problem, the backstop for a submit no guard saw, raised once the run settles."""
-    unguarded: list[WireFormatError] = []
+    the problem in ``verdicts``, the backstop for a submit no guard saw, raised once the
+    run settles."""
 
     def on_request(raw_request: Any) -> None:
         url = str(getattr(raw_request, "url", ""))
-        if url_rpcid(url) != IMAGE_SUBMIT_RPC or route_error.done():
+        if url_rpcid(url) != IMAGE_SUBMIT_RPC:
             return
         problem = problem_of(raw_request)
         if problem is None:
             return
         sent = WireFormatError(detail=problem, route=f"batchexecute:{IMAGE_SUBMIT_RPC}")
-        if guarded:
-            unguarded.append(sent)
-        else:
+        verdicts.record(raw_request, sent)
+        if not guarded and not route_error.done():
             route_error.set_result(sent)
 
-    return on_request, unguarded
+    return on_request
 
 
 def ogiz0b_reply_images(text: str, request: GenerateImageRequest) -> list[GeneratedImage]:
@@ -260,9 +361,8 @@ class SubmitObserveMixin(MentionMixin):
         loop = asyncio.get_running_loop()
         submitted: asyncio.Future[GenerationRecord] = loop.create_future()
         route_error: asyncio.Future[GFlowError] = loop.create_future()
-        unguarded_verdicts: list[GFlowError] = []
-        # Body problems the observer saw; raised only if the route guard did not stop them.
-        observed: list[GFlowError] = []
+        verdicts = _VerdictTracker(guarded=True)  # the batchexecute guard below sees every submit
+        submit_left = asyncio.Event()  # a submit of this run passed the guard: Flow may bill it
         # (request, rpcid) of each submit sent, to place a reply that names no rpcid.
         submit_requests: list[tuple[Any, str]] = []
         submit_key: dict[str, str] = {}
@@ -274,7 +374,7 @@ class SubmitObserveMixin(MentionMixin):
 
         def on_request(request: Any) -> None:
             url = str(getattr(request, "url", ""))
-            if "batchexecute" not in url or route_error.done():
+            if "batchexecute" not in url:
                 return
             # The URL `rpcids` param is the normal carrier and is tried first. The
             # body fallback exists because the interpolation submit has been reported
@@ -295,7 +395,7 @@ class SubmitObserveMixin(MentionMixin):
                     # The guard below judges first and aborts; ending the wait here would
                     # unroute it before it runs (#1320). Kept as the backstop for a request
                     # no guard saw, raised once the run settles.
-                    unguarded_verdicts.append(verdict)
+                    verdicts.record(request, verdict)
                     return
             if rpcid in submit_rpcs:
                 submit_requests.append((request, rpcid))
@@ -316,7 +416,8 @@ class SubmitObserveMixin(MentionMixin):
                 # aborts the same request unsent and names it so. A problem only the
                 # observer saw means the route missed it and Flow got the request.
                 if problem is not None:
-                    observed.append(WireFormatError(detail=problem, route=f"batchexecute:{rpcid}"))
+                    err = WireFormatError(detail=problem, route=f"batchexecute:{rpcid}")
+                    verdicts.record(request, err)
                 return
             # An unwatched rpcid is RECORDED (`seen_submit_rpcs`, above) but never
             # adopted as our submit. Adopting by body content was tried and removed:
@@ -337,15 +438,11 @@ class SubmitObserveMixin(MentionMixin):
         terminal: asyncio.Future[GenerationRecord] = loop.create_future()
         done_no_url: asyncio.Future[GenerationRecord] = loop.create_future()
         workflow: dict[str, str] = {}
+        status_watch = _StatusWatch(terminal, done_no_url, workflow)
         # The submit rpc whose reply body was lost, while a status poll may still name it.
         lost: dict[str, str] = {}
 
-        def _settle(rec: GenerationRecord) -> None:
-            if rec.is_failed or (rec.is_done and rec.video_url):
-                if not terminal.done():
-                    terminal.set_result(rec)
-            elif rec.is_done and not done_no_url.done():
-                done_no_url.set_result(rec)
+        _settle = status_watch.settle
 
         def _adopt(rid: str, payload: Any) -> None:
             carrying = generation_records_carrying(rid, payload, adopt_ids)
@@ -375,7 +472,10 @@ class SubmitObserveMixin(MentionMixin):
                 status=rec.status,
             )
             submitted.set_result(rec)
-            _settle(rec)
+            if rid == LISTING_RPC and (rec.is_done or rec.is_failed):
+                status_watch.settle_from_listing(rec)  # no signed URL follows a listing
+            else:
+                _settle(rec)
 
         def _note_poll(rid: str, payload: Any) -> None:
             assert by_prompt is not None  # noqa: S101 - set in the same branch as `lost`
@@ -424,6 +524,7 @@ class SubmitObserveMixin(MentionMixin):
                     if rpcid in submit_rpcs
                     else next((r for q, r in submit_requests if q is sent), None)
                 )
+                status_watch.note_unreadable(rpcid)
                 if sub is None or submitted.done():
                     return
                 if adopt_prompt is not None and project_id and "key" in submit_key:
@@ -480,12 +581,7 @@ class SubmitObserveMixin(MentionMixin):
                     else:
                         _adopt(rid, payload)
                 elif rid in STATUS_RPCS and workflow:
-                    try:
-                        rec = generation_record(rid, payload, workflow_id=workflow["id"])
-                    except WireFormatError:
-                        continue
-                    log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
-                    _settle(rec)
+                    status_watch.note_frame(rid, payload)
 
         page.on("response", on_response)
 
@@ -496,7 +592,14 @@ class SubmitObserveMixin(MentionMixin):
             try:
                 body = request_body(request)
                 rpcid = url_rpcid(str(getattr(request, "url", ""))) or body_rpcid(body)
-                if await _aborted_by_check(route, request_check, rpcid, body, route_error):
+                if await _aborted_by_check(
+                    route,
+                    request_check,
+                    rpcid,
+                    body,
+                    route_error,
+                    on_aborted=lambda: verdicts.judged(request, aborted=True),
+                ):
                     return
                 problem = (
                     _submit_body_problem(
@@ -515,6 +618,10 @@ class SubmitObserveMixin(MentionMixin):
                     if rpcid is not None and rpcid in submit_rpcs
                     else None
                 )
+            # Judged before the await, so a run settling meanwhile reads the right verdict.
+            verdicts.judged(request, aborted=problem is not None)
+            if problem is None and rpcid in submit_rpcs:
+                submit_left.set()
             if problem is None:
                 # fallback, not continue_: an outer guard (extend) must still see it.
                 await route.fallback()
@@ -587,14 +694,9 @@ class SubmitObserveMixin(MentionMixin):
                     timeout=max(0.0, deadline - time.monotonic()),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-            if route_error.done():
-                # The request is inspected before its reply lands, so a wrong body is
-                # named as such and not as whatever the reply then says.
-                raise route_error.result()
-            if unguarded_verdicts:  # it left the browser unguarded: Flow may have billed it
-                raise unguarded_verdicts[0]
-            if observed:
-                raise observed[0]  # the route did not stop it: sent, and Flow bills it
+            # The request is inspected before its reply lands, so a wrong body is
+            # named as such and not as whatever the reply then says (#1320).
+            await _raise_if_refused(route_error, verdicts, submit_left)
             if not submitted.done() and lost:
                 where = MIGRATED_PROJECT_URL.format(project_id=project_id) if project_id else "Flow"
                 raise _outcome_unknown(
@@ -608,19 +710,30 @@ class SubmitObserveMixin(MentionMixin):
                     f"migrated host: no {'/'.join(submit_rpcs)} reply within "
                     f"{budget:.0f}s of clicking submit (rpcs seen: {seen})"
                 )
-            first = submitted.result()
-            started = VideoStarted(
-                media_id=first.media_id,
-                project_id=project_id or first.project_id,
-                flow_operation_id=first.workflow_id,
-                workflow_id=first.workflow_id,
-            )
-            if on_started is not None:
-                maybe = on_started(started)
-                if asyncio.iscoroutine(maybe):
-                    await maybe
-            final = await self._await_terminal(
-                terminal, done_no_url, deadline=deadline, workflow_id=first.workflow_id
+            try:
+                final = await _finish_submitted(
+                    self,
+                    page,
+                    first=submitted.result(),
+                    project_id=project_id,
+                    on_started=on_started,
+                    status_watch=status_watch,
+                    deadline=deadline,
+                )
+            except Exception:
+                # A stray submit that left during the wait outranks how the wait ended;
+                # it keeps naming the run's own clip, which Flow may still finish and bill.
+                await verdicts.raise_unguarded(
+                    completed_media_ids=[submitted.result().media_id],
+                    recover_hint=CLIP_RECOVER_HINT,
+                )
+                raise
+            # Listeners stay armed through the terminal wait; raise any unguarded verdict
+            # recorded there so a late bad submit is not silently dropped (#1518), naming
+            # the clip that finished so it can still be downloaded.
+            await verdicts.raise_unguarded(
+                completed_media_ids=[final.media_id] if final.is_done else [],
+                recover_hint=CLIP_RECOVER_HINT,
             )
             log.info(
                 "migrated.result",
@@ -807,8 +920,11 @@ class SubmitObserveMixin(MentionMixin):
         baseline = None if grid is None else {*grid, *reference_ids, *entity_ids}
 
         guarded = bool(reference_ids or entity_ids)
-        on_request, unguarded_problem = _image_request_listener(
+        verdicts = _VerdictTracker(guarded=guarded)
+        submit_left = asyncio.Event()  # the image submit passed the guard: Flow may bill it
+        on_request = _image_request_listener(
             route_error,
+            verdicts,
             guarded=guarded,
             problem_of=lambda raw: _image_body_problem(
                 request_body(raw), reference_ids, request.model, entity_ids
@@ -845,9 +961,19 @@ class SubmitObserveMixin(MentionMixin):
         def is_image_submit(url: str) -> bool:
             return url_rpcid(url) == IMAGE_SUBMIT_RPC
 
+        def _judge_image(raw_request: Any, *, aborted: bool) -> None:
+            verdicts.judged(raw_request, aborted=aborted)
+            if not aborted:
+                submit_left.set()
+
         async def guard(route: Any, raw_request: Any) -> None:
             problem = await _guard_image_submit(
-                route, raw_request, reference_ids, request.model, entity_ids
+                route,
+                raw_request,
+                reference_ids,
+                request.model,
+                entity_ids,
+                on_judged=lambda aborted: _judge_image(raw_request, aborted=aborted),
             )
             found = _image_body_references(request_body(raw_request))
             log.info(
@@ -859,9 +985,7 @@ class SubmitObserveMixin(MentionMixin):
                 body_media=None if found is None else len(found[0]),
                 body_characters=None if found is None else len(found[1]),
             )
-            if problem is None:
-                return
-            if not route_error.done():
+            if problem is not None and not route_error.done():
                 route_error.set_result(_aborted_before_send(problem, IMAGE_SUBMIT_RPC))
 
         page.on("request", on_request)
@@ -873,18 +997,23 @@ class SubmitObserveMixin(MentionMixin):
                 page, submit, disabled="migrated host: image submit stayed disabled (host=migrated)"
             )
             await self._click(page, submit, named=SUBMIT_BUTTON, timeout=5000)
-            done, _ = await asyncio.wait(
+            await asyncio.wait(
                 {result, route_error, body_lost},
                 timeout=IMAGE_REPLY_BUDGET_S,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if route_error.done():
-                raise route_error.result()
-            if unguarded_problem:  # it left the browser: Flow may have billed it
-                raise unguarded_problem[0]
+            await _raise_if_refused(route_error, verdicts, submit_left)
             if body_lost.done():
-                return await _recover_images(page, request, baseline)
-            if result not in done:
+                try:
+                    images = await _recover_images(page, request, baseline)
+                except Exception:
+                    await verdicts.raise_unguarded()
+                    raise
+                await verdicts.raise_unguarded(
+                    completed_media_ids=[i.media_name for i in images if i.media_name]
+                )
+                return images
+            if not result.done():
                 raise _outcome_unknown(
                     f"migrated host: no {IMAGE_SUBMIT_RPC} image result within "
                     f"{IMAGE_REPLY_BUDGET_S:.0f}s of clicking submit"
@@ -933,6 +1062,170 @@ class SubmitObserveMixin(MentionMixin):
             return done_no_url.result()
 
 
+def _without_listing_url(rec: GenerationRecord) -> GenerationRecord:
+    """The listing's URL is an unsigned lh3 rendition that answers 302 (#948); without it
+    the download takes the clip route, which fetches a signed one."""
+    return replace(rec, video_url=None)  # NOSONAR(S5886) - replace() keeps the type
+
+
+@dataclass
+class _StatusWatch:
+    """Tracks post-submit ``jwpduf``/``as29s`` health and recovers from ``Zzl0ze`` (#1484)."""
+
+    terminal: asyncio.Future[GenerationRecord]
+    done_no_url: asyncio.Future[GenerationRecord]
+    workflow: dict[str, str]
+    #: Set once a status body is lost; stays set, since a later readable frame can be a
+    #: stale running one while the terminal poll that matters was the one lost.
+    status_lost: asyncio.Event = field(default_factory=asyncio.Event)
+    seen: asyncio.Event = field(default_factory=asyncio.Event)
+
+    @property
+    def settled(self) -> bool:
+        return self.terminal.done() or self.done_no_url.done()
+
+    def settle(self, rec: GenerationRecord) -> None:
+        if rec.is_failed or (rec.is_done and rec.video_url):
+            if not self.terminal.done():
+                self.terminal.set_result(rec)
+        elif rec.is_done and not self.done_no_url.done():
+            self.done_no_url.set_result(rec)
+
+    def note_unreadable(self, rpcid: str | None) -> None:
+        if rpcid in STATUS_RPCS and self.workflow and not self.settled:
+            self.status_lost.set()
+            self.seen.set()  # an evicted poll is still Flow polling, not silence
+
+    def settle_from_listing(self, rec: GenerationRecord) -> None:
+        """Settle on a terminal listing record; no signed URL can follow it."""
+        if not self.terminal.done():
+            self.terminal.set_result(_without_listing_url(rec))
+
+    def note_frame(self, rid: str, payload: Any) -> None:
+        try:
+            rec = generation_record(rid, payload, workflow_id=self.workflow["id"])
+        except WireFormatError:
+            return
+        self.seen.set()
+        log.info("migrated.status", rpc=rid, status=rec.status, bytes=rec.size_bytes)
+        self.settle(rec)
+
+    async def went_quiet(self, window_s: float, deadline: float) -> bool:
+        """Wait until no status poll, readable or not, arrives for ``window_s``; ``False`` if the
+        run settles or the deadline passes first. Flow polls every ~5 s while it works."""
+        while not self.settled and time.monotonic() < deadline:
+            self.seen.clear()
+            await self.wait_until(self.seen, min(time.monotonic() + window_s, deadline))
+            if not self.seen.is_set():
+                return not self.settled and time.monotonic() < deadline
+        return False
+
+    async def wait_until(self, event: asyncio.Event, until: float) -> None:
+        """Wait for ``event``, the run settling, or the monotonic time ``until``."""
+        left_s = until - time.monotonic()
+        if self.settled or left_s <= 0:
+            return
+        task = asyncio.create_task(event.wait())
+        try:
+            await asyncio.wait(
+                {self.terminal, self.done_no_url, task},
+                timeout=left_s,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            task.cancel()
+
+
+@dataclass
+class _ListingRecovery:
+    """Settles a run from ``Zzl0ze`` when its status replies are lost, at a bounded rate."""
+
+    composer: SubmitObserveMixin
+    page: Page
+    project_id: str | None
+    workflow_id: str
+    status_watch: _StatusWatch
+    reads: int = 0
+    last_read: float = float("-inf")
+
+    @property
+    def can_read(self) -> bool:
+        return bool(self.project_id) and self.reads < LISTING_REREADS_MAX
+
+    async def read_if_due(self, deadline: float) -> None:
+        """Read once the interval since the last read is up, unless a poll comes first;
+        the last read is kept for the poll deadline."""
+        if self.reads >= LISTING_REREADS_MAX - 1:
+            return
+        # Flow sends no poll after the terminal one, so a loss inside the interval waits
+        # it out rather than leaving the finished clip to the deadline read.
+        due_in = LISTING_REREAD_INTERVAL_S - (time.monotonic() - self.last_read)
+        watch = self.status_watch
+        await watch.wait_until(watch.seen, min(time.monotonic() + due_in, deadline))
+        if not watch.seen.is_set():
+            await self.read(min(LISTING_READ_BUDGET_S, deadline - time.monotonic()))
+
+    async def read(self, budget_s: float) -> None:
+        """Read ``Zzl0ze`` once and settle the run if the listing reports it terminal."""
+        if not self.can_read or self.status_watch.settled or budget_s <= 0:
+            return
+        self.reads += 1
+        self.last_read = time.monotonic()
+        assert self.project_id is not None  # noqa: S101 - checked by can_read
+        listing = await self.composer._read_listing(self.page, self.project_id, budget_s=budget_s)
+        if listing is None or self.status_watch.settled:
+            return
+        try:
+            rec = generation_record(LISTING_RPC, listing, workflow_id=self.workflow_id)
+        except WireFormatError:
+            return
+        if rec.is_done or rec.is_failed:
+            log.info("migrated.status", rpc=LISTING_RPC, status=rec.status, bytes=rec.size_bytes)
+            self.status_watch.settle_from_listing(rec)
+
+
+async def _finish_submitted(
+    composer: SubmitObserveMixin,
+    page: Page,
+    *,
+    first: GenerationRecord,
+    project_id: str | None,
+    on_started: VideoStartedCallback | None,
+    status_watch: _StatusWatch,
+    deadline: float,
+) -> GenerationRecord:
+    """Fire ``on_started``, then wait for a terminal poll or recover from ``Zzl0ze`` (#1484)."""
+    resolved_project_id = project_id or first.project_id
+    started = VideoStarted(
+        media_id=first.media_id,
+        project_id=resolved_project_id,
+        flow_operation_id=first.workflow_id,
+        workflow_id=first.workflow_id,
+    )
+    if on_started is not None:
+        maybe = on_started(started)
+        if asyncio.iscoroutine(maybe):
+            await maybe
+    listing = _ListingRecovery(composer, page, resolved_project_id, first.workflow_id, status_watch)
+    while not status_watch.settled and time.monotonic() < deadline:
+        await status_watch.wait_until(status_watch.status_lost, deadline)
+        # Once a status body is lost, polls going quiet is the sign the lost one was the
+        # terminal poll: Flow sends none after it.
+        if status_watch.status_lost.is_set() and await status_watch.went_quiet(
+            RESULT_URL_GRACE_S, deadline
+        ):
+            await listing.read_if_due(deadline)
+    # A last look past the poll deadline (up to LISTING_READ_BUDGET_S more): the clip is
+    # billed, and the listing is the only record left once its polls stopped arriving.
+    await listing.read(LISTING_READ_BUDGET_S)
+    return await composer._await_terminal(
+        status_watch.terminal,
+        status_watch.done_no_url,
+        deadline=deadline,
+        workflow_id=first.workflow_id,
+    )
+
+
 async def read_project_listing(page: Page, project_id: str, *, budget_s: float) -> Any | None:
     """The project's ``Zzl0ze`` payload, read in a second tab; ``None`` if none came.
 
@@ -953,6 +1246,11 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
             if rid == LISTING_RPC and not got.done():
                 got.set_result(payload)
 
+    from gflow_cli.api._engine import retryable_engine_errors  # noqa: PLC0415 - as _common
+
+    if budget_s <= 0:  # goto(timeout=0) would wait without limit
+        return None
+    engine_errors = retryable_engine_errors()  # patchright's Error is a separate class
     end = time.monotonic() + budget_s
     tab: Page | None = None
     try:
@@ -964,14 +1262,14 @@ async def read_project_listing(page: Page, project_id: str, *, budget_s: float) 
             timeout=budget_s * 1000,
         )
         return await asyncio.wait_for(got, max(0.0, end - time.monotonic()))
-    # Playwright's TimeoutError is not the builtin one. Any failure here leaves the
+    # Engine TimeoutErrors are not the builtin one. Any failure here leaves the
     # caller's exit 9, which names the project; this runs after Flow has billed.
-    except (TimeoutError, PlaywrightError) as exc:
+    except (TimeoutError, *engine_errors) as exc:
         log.warning(
             "migrated.video_listing_unanswered", budget_s=budget_s, error=type(exc).__name__
         )
         return None
     finally:
         if tab is not None:
-            with contextlib.suppress(PlaywrightError):
+            with contextlib.suppress(*engine_errors):
                 await tab.close()

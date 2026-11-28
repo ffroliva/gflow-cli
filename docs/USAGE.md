@@ -337,9 +337,13 @@ gflow video captions FILE [--srt FILE.srt] [--out-file FILE.mp4] [--language COD
 `FILE` is a local video path or catalog video UUID. `transcribe` defaults to `<name>.srt`;
 `captions` defaults to `<name>-captions.mp4`. When `--srt` is omitted, captions transcribes
 first and also writes `<name>.srt`. Pass an authored SRT with `--srt` for fully offline
-burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. It
-chooses a system font with broad glyph coverage; CJK coverage depends on fonts installed
-on the machine. By default, captions sit near the bottom (`--position bottom --margin 28`)
+burn-in. Caption rendering uses PyAV and Pillow and preserves the source audio stream. For
+each cue it picks the first installed system font that draws every character of the cue.
+For Chinese, Japanese and Korean the candidates are Microsoft YaHei, Yu Gothic, Malgun
+Gothic and SimHei on Windows, tried in that order (Korean lands on Malgun Gothic, the one
+with Hangul), Noto Sans CJK on Linux, and Arial Unicode on macOS.
+When no installed font draws every character (an emoji beside Chinese text, say), it uses
+the one that draws the most. CJK text still needs one of those fonts on the machine. By default, captions sit near the bottom (`--position bottom --margin 28`)
 with auto-sized text and a translucent dark pill (`~0.7` opacity); long cues that
 previously overflowed the fixed 25% band now render in full without clipping. Use
 `--position top|middle`, `--margin PX` (distance in pixels from the anchored top/bottom
@@ -394,6 +398,11 @@ Options:
                             catalog when omitted; pass it explicitly for videos
                             gflow didn't record (e.g. generated in the web UI).
   --out PATH                Output directory (see "Output paths" below).
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md).
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -550,6 +559,12 @@ Options:
                             medium, or high; when omitted, Flow's existing
                             setting is left untouched). Single-prompt only.
                             Single-prompt only; batch uses GFLOW_CLI_UI_MODE.
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md). Also on `image generate`
+                            and `image batch`.
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -674,6 +689,11 @@ Options:
   --reference-entity ID     Flow CHARACTER entity id to reference (repeatable;
                             must live in --project). Counts toward the ref cap.
   --reference-entity-name N Display name paired with --reference-entity.
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md).
   --profile NAME            Profile name (overrides default).
 ```
 
@@ -798,7 +818,7 @@ See [REFERENCE_STRATEGIES.md](REFERENCE_STRATEGIES.md) for the full decision gui
 
 ## `gflow image batch`
 
-Generate multiple images from a single manifest file. The format is dispatched by file extension (`.json` or `.tsv`).
+Generate multiple images from a single manifest file. The format is dispatched by file extension (`.json` or `.tsv`). `--browser-visibility auto|headless|headed` overrides `GFLOW_CLI_BROWSER_VISIBILITY`; a batch drives Flow's UI, so `auto` runs it headed ([BROWSER_MODES.md](BROWSER_MODES.md)).
 
 ### TSV manifest
 
@@ -932,7 +952,7 @@ Generate a video from a text prompt only. On Flow's agent-only composer (#799), 
 through the agent driver (one 9:16 or 16:9 clip); see [`GFLOW_CLI_AGENT_CONFIRM`](CONFIGURATION.md#gflow_cli_agent_confirm). On Flow's 2026-11-20 build an account with no Agent switch is still reported as selector drift (exit 23) before submit: none has been observed there ([#1387](https://github.com/ffroliva/gflow-cli/issues/1387)).
 
 ```text
-gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]
+gflow video t2v PROMPT [--model] [--duration] [--resolution] [--count] [--aspect] [--ui-mode] [--browser-visibility] [--profile] [-t/--tool] [--project] [--out-dir] [--out-file]
 
 Options:
   --resolution [360p|720p]
@@ -950,6 +970,12 @@ Options:
                         pre-submit and abort with exit 28 ($0 spent) if it is
                         unreachable; agentic is rejected (exit 2) — not yet
                         supported for video. Also on `video i2v`.
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md). Also on `video i2v`,
+                            `video r2v`, `video generate` and `video extend`.
 ```
 
 > **Two Flow frontends (#639).** Under the default `GFLOW_CLI_FLOW_HOST=auto`, `t2v` with
@@ -1029,6 +1055,9 @@ Options:
                              Omit for Flow's default.
   --project ID               Generate in this EXISTING Flow project instead of a
                              scratch project (see "Sharing one project across calls").
+  --browser-visibility [auto|headless|headed]
+                             Browser window policy for this command; overrides
+                             GFLOW_CLI_BROWSER_VISIBILITY (docs/BROWSER_MODES.md).
   --out-file PATH            Explicit destination file path for the mp4 (parents
                              auto-created; overrides --out-dir).
 ```
@@ -1071,6 +1100,9 @@ Options:
                             Omit for Flow's default.
   --project ID              Generate in this EXISTING Flow project instead of a scratch
                             project (see "Sharing one project across calls").
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY (docs/BROWSER_MODES.md).
 ```
 
 ```bash
@@ -1295,7 +1327,9 @@ reach for it before spending anything.
 > credit quote in the extend settings popover after the references are attached and the
 > slider is set, waits for the label to re-price, and refuses a missing, unconfirmed or
 > over-limit quote (exit 45, nothing billed). The settings popover is opened only when
-> `--duration` or `--max-credits` needs it. When Flow shows the Extend menu item disabled,
+> `--duration` or `--max-credits` needs it. `--browser-visibility auto|headless|headed`
+> overrides `GFLOW_CLI_BROWSER_VISIBILITY`; extend drives Flow's UI, so `auto` runs it headed
+> ([BROWSER_MODES.md](BROWSER_MODES.md)). When Flow shows the Extend menu item disabled,
 > gflow does not click it and exits 35, or 37 when Flow also shows its insufficient-credits
 > warning; nothing is submitted ([#1334](https://github.com/ffroliva/gflow-cli/issues/1334)).
 > The result is downloaded to `--out-file` (default: `videos/<date>/<source>_extend.mp4` in
@@ -1443,6 +1477,11 @@ Options:
   --seed-offset INTEGER     Extract the seed frame this many ms before EOF
                             (fade-to-black guard).            [default: 0]
   --aspect [9:16|16:9]      Uniform aspect for every link.    [default: 9:16]
+  --browser-visibility [auto|headless|headed]
+                            Browser window policy for this command; overrides
+                            GFLOW_CLI_BROWSER_VISIBILITY. auto (default) runs a
+                            measured shape headless and the rest headed
+                            (docs/BROWSER_MODES.md).
   --profile NAME            Profile name (overrides default).
   --out-file FILE           Write link i's clip to FILE's stem plus _i
                             (clip.mp4 -> clip_1.mp4, clip_2.mp4).
@@ -2174,9 +2213,10 @@ environment. Doctor **diagnoses, never heals**: nothing is migrated, repaired,
 or written — not even pending schema migrations. All database access is
 strictly read-only (SQLite may create transient `-wal`/`-shm` sidecar files
 during the read-only open; the database itself is never modified), so it is
-safe to run against a live catalog at any time. One check uses the network:
-`auth.wire_read` sends one GET and one POST to flow.google.com for the default
-profile, and sends nothing when `GFLOW_CLI_WIRE_READS=0`.
+safe to run against a live catalog at any time. Two checks use the network,
+both for the default profile: `auth.wire_read` sends one GET and one POST to
+flow.google.com, and `models.catalog_drift` at most one more GET and one more
+POST. Neither sends anything when `GFLOW_CLI_WIRE_READS=0` or a proxy is configured.
 
 ```text
 gflow doctor [--json]
@@ -2186,7 +2226,7 @@ Options:
                         (experimental; shape may change).
 ```
 
-Twelve checks run on every invocation:
+Thirteen checks run on every invocation:
 
 | Check id | Detects | Suggested remediation |
 |---|---|---|
@@ -2197,11 +2237,12 @@ Twelve checks run on every invocation:
 | `db.wal_state` | Stale `-wal`/`-shm` sidecars next to a non-WAL database; `PRAGMA quick_check` anomalies | Close other gflow processes and re-run; restore from backup on quick_check failures |
 | `operations.stuck_started` | Operations in `started` for over 24h with no completion | `gflow data errors prune` |
 | `queue.stuck_processing` | Queue tasks claimed as `processing` for over 24h | `gflow data prune --dry-run` |
-| `env.deprecated_vars` | Deprecated env vars still set (`GFLOW_CLI_PREFER_CLASSIC`, `GFLOW_CLI_FORCE_AGENT_UI`, `GEMINI_API_KEY`), or `GFLOW_CLI_DB_PATH` disagreeing with the resolved settings path | Unset the variable / switch to its successor |
+| `env.deprecated_vars` | Deprecated env vars still set (`GFLOW_CLI_PREFER_CLASSIC`, `GFLOW_CLI_FORCE_AGENT_UI`, `GEMINI_API_KEY`, `GFLOW_CLI_HEADLESS` — its successor is `GFLOW_CLI_BROWSER_VISIBILITY`, and `false` now maps to `auto`), or `GFLOW_CLI_DB_PATH` disagreeing with the resolved settings path | Unset the variable / switch to its successor |
 | `env.browsers_missing` | Playwright Chromium is not installed | `playwright install chromium` |
 | `auth.files_present` | No auth profiles, or profiles without saved cookies | `gflow auth login` |
 | `env.browser_proxy` | Reports whether `GFLOW_CLI_BROWSER_PROXY` is set (`scheme://host:port`, never credentials); informational, never changes the exit code | Use the same proxy for `HTTPS_PROXY` and for signing in ([CONFIGURATION](CONFIGURATION.md#gflow_cli_browser_proxy)) |
-| `auth.wire_read` | Whether the default profile's direct (browser-free) credits read works: `status=accepted build=<Flow build>` passes; any other status (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_profile`, …) is info only and never changes the exit code, because credits then read through the browser. The one network check: one GET and one POST to flow.google.com, nothing with `GFLOW_CLI_WIRE_READS=0` | The finding's own hint (e.g. close Chrome on the profile, or `gflow auth login`) ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)) |
+| `auth.wire_read` | Whether the default profile's direct (browser-free) credits read works: `status=accepted build=<Flow build>` passes; any other status (`signed_out_shell`, `store_unreadable`, `disabled`, `proxy_configured`, `throttled`, `no_profile`, …) is info only and never changes the exit code, because credits then read through the browser. One of the two network checks: one GET and one POST to flow.google.com, nothing with `GFLOW_CLI_WIRE_READS=0` | The finding's own hint (e.g. close Chrome on the profile, or `gflow auth login`) ([CONFIGURATION](CONFIGURATION.md#gflow_cli_wire_reads)) |
+| `models.catalog_drift` | Whether Flow's model catalog (`HTrJv`, read directly with no browser, zero credits) still matches gflow's model list ([#1550](https://github.com/ffroliva/gflow-cli/issues/1550)): a mapped family Flow no longer lists before the retirement date gflow carries for it, an image model key Flow dropped, or a changed retirement date on a mapped video family is a `warn` naming each difference (exit `33`), as is a reply with no model families; a family, image key or retirement date Flow added that gflow does not carry, a retiring family gone on or after its date, or a change to a family gflow ignores (upscalers, text-to-speech) is `info` only (the finding still names it) unless a warning is also present; `N families, all mapped` passes. When the catalog cannot be read (direct reads off, a proxy, no profile, a signed-out or throttled session, a reply that cannot be decoded, or an unexpected read error) the check is `info` and starts with `skipped` | `gflow update --check`: a newer gflow may know the new models |
 
 **Severity model.** Every check reports `pass`, `info`, `warn`, or `fail`.
 `info` is worth knowing but not a defect — it never flips the overall status
@@ -2513,7 +2554,11 @@ use. When set:
 - `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
-  `duration`, `count`, `seed`).
+  `duration`, `resolution`, `count`, `seed`). `model`, `duration` and `resolution` report the
+  request that was sent to Flow (`VideoResult.sent_request`) when the direct path resolved
+  one: a bare `video t2v` names no model, and `model` then carries the account's selected
+  model, with `duration` and `resolution` as sent. Otherwise they echo the parsed request,
+  and `resolution` is `null` when none was set.
 - `image generate` / `video generate` emit the payload of the verb they resolved to, plus a
   top-level `"mode"` (`t2i`, `i2i`, `t2v`, `i2v` or `r2v`), on success and on failure.
 - On failure, the command still emits a JSON payload — an RFC 9457
@@ -2547,8 +2592,12 @@ For MCP over HTTP, see `gflow serve` and [MCP.md](MCP.md).
 Sequential JSON-described batch image generation. New in v0.5.0a1.
 
 ```text
-gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--resume] [--continue-on-error|--fail-fast]
+gflow run --config FILE [--output-dir DIR] [--profile NAME] [--project ID] [--resume] [--continue-on-error|--fail-fast] [--browser-visibility auto|headless|headed]
 ```
+
+`--browser-visibility` overrides `GFLOW_CLI_BROWSER_VISIBILITY` for the run: under `auto`, a run
+whose rows are all measured shapes runs headless, and a run with any row that needs Flow's UI
+launches headed for the whole run ([BROWSER_MODES](BROWSER_MODES.md)).
 
 The config is a JSON file with a top-level `prompts` array; each entry
 produces 1–4 images through one `FlowApiClient` session (one Playwright
@@ -2565,7 +2614,6 @@ catalog has not seen yet is recorded without one, as with `t2i --project`).
 ```json
 {
   "profile": "<your-profile>",
-  "transport": "ui_automation",
   "output_dir": "out/example-batch",
   "prompts": [
     {
@@ -2593,8 +2641,8 @@ catalog has not seen yet is recorded without one, as with `t2i --project`).
 | `prompts[].output_filename` | no | `prompt_<index>` | Filename stem; saved as `<stem>_<image-index>.png`. |
 | `prompts[].ref` | no | — | `"batch:N"` (generate from row N's image) or a local image file. See [Referencing an earlier row](#referencing-an-earlier-row) and [Referencing a local file](#referencing-a-local-file). |
 | `profile` | no | active profile | CLI `--profile` overrides. |
-| `transport` | no | `ui_automation` | Experimental strategies need `GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`. |
-| `output_dir` | no | `out/<UTC-timestamp>/` | CLI `--output-dir` overrides. |
+| `transport` | no | unset (`GFLOW_CLI_TRANSPORT`, default `direct_http`) | `ui_automation` sends every row through Flow's UI. Experimental strategies need `GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`. |
+| `output_dir` | no | `<output root>/images/<YYYY-MM-DD>/` | CLI `--output-dir` overrides. The output root is `GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`). |
 | `project` | no | new `gflow-cli run` project | Existing Flow project id (letters, digits, hyphens) to generate every row into. CLI `--project` overrides. |
 
 ### Error semantics
@@ -2703,7 +2751,7 @@ Refer to the complete [Movie Manifests Guide](MOVIE.md) for detailed syntax, cha
 ### Parameters
 
 * `MANIFEST`: Path to your `movie.toml` manifest file (required positional argument).
-* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Defaults to `out/` or `GFLOW_CLI_OUTPUT_DIR`.
+* `--out-dir DIR`: Output directory for generated video clips and the handoff file. Without it, the manifest's `output_dir` applies when set (the generated template sets `./out/my-movie`); otherwise the default is `<output root>/videos/<YYYY-MM-DD>/`, where the output root is `GFLOW_CLI_OUTPUT_DIR` (default: `gflow-cli` in your platform's Downloads folder, typically `~/Downloads/gflow-cli`).
 * `--profile NAME`: Specify Google Flow profile to use.
 * `--continue-on-error`: Skip failed scenes and continue generating subsequent scenes (default).
 * `--fail-fast`: Terminate immediately on the first failed scene generation.
@@ -2824,12 +2872,12 @@ The table below is the default (legacy) set. `GFLOW_CLI_EXIT_CODES=2` opts in to
 | `7`  | `WireFormatError`     | Unexpected response shape — Flow API changed. **Also a refused video submit** (flow.google.com, [#1178](https://github.com/ffroliva/gflow-cli/issues/1178)): the submit was not the run asked for (a dropped frame, another asset) and gflow aborted it before it was sent — the hint then says *billed nothing*; without that hint it was already sent and may be billed, so check the project before re-running. **Also `RpcResponseUnavailableError`** (flow.google.com): Chrome lost the reply body of a project create, rename or upload ([#1009](https://github.com/ffroliva/gflow-cli/issues/1009)), or a project create or rename got no reply within 120 s ([#1037](https://github.com/ffroliva/gflow-cli/issues/1037)), and gflow could not confirm the outcome by reading the project back | File a bug (do NOT include captured tokens or signed URLs). **For `RpcResponseUnavailableError` the write may have saved:** open the project and check its title or the uploaded file before re-running, or you may get a duplicate (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
 | `8`  | `AuthMissingError`    | Required auth credential is absent from profile   | `gflow auth login --profile <name>`                        |
 | `9`  | `TransportTimeoutError` | Browser/API operation exceeded its timeout (incl. an i2v frame UUID not found in the media picker, #287; or a wedged submission stage — the error names the stage and your Playwright version) | Retry; raise the relevant timeout. **If the detail says `clicking submit`, `not terminal`, `unreadable` or `was lost`, or `--json` shows `retryable: false`, the submit already went out ([#1010](https://github.com/ffroliva/gflow-cli/issues/1010)): check the project in Flow before re-running, because a re-run bills again.** A lost **image** reply is recovered from the project grid since v0.89.1 ([#1075](https://github.com/ffroliva/gflow-cli/issues/1075)), so exit 9 there means the grid did not show exactly the requested images. A lost **video** reply is followed to the clip when the run uploaded a file (`--ref`, `--initial-frame`, `--end-frame`; [#1112](https://github.com/ffroliva/gflow-cli/issues/1112)), so exit 9 with `unreadable` there means no clip, or more than one, carried the upload. A one-clip t2v run is followed by its exact prompt and model ([#1141](https://github.com/ffroliva/gflow-cli/issues/1141)), so `was lost` there means the project listing could not name exactly one clip; t2v with `--count` above 1 and character-only r2v still exit 9. For a frame-UUID miss verify the UUID belongs to the `--project` passed; for a `stage_stalled` abort check your Playwright is in range (see [KNOWN_ISSUES](../KNOWN_ISSUES.md)) |
-| `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry                            |
+| `10` | `WafRejectionError`   | Flow security layer rejected the request          | Change prompt/request and retry; a second `PUBLIC_ERROR_UNUSUAL_ACTIVITY` refusal on a direct submit is final (`next_action: none`): wait out the cooldown in [ACCOUNT_SAFETY.md](ACCOUNT_SAFETY.md) |
 | `11` | `ConfigurationError`  | Local configuration or browser mode is invalid, including a malformed row in a `gflow run` config, an `image batch` manifest, a `movie` manifest or a `video chain` manifest (#935: `image batch` reported these as exit 2 before); a `--project` id Flow answers with its `/404?reason=project` page, meaning not found or not accessible to this account ([#974](https://github.com/ffroliva/gflow-cli/issues/974), [#1053](https://github.com/ffroliva/gflow-cli/issues/1053)); an output folder gflow cannot write to (`--out`, `GFLOW_CLI_OUTPUT_DIR`, `GFLOW_CLI_STORAGE_URI`), after a generation that succeeded: the asset is still in the Flow project ([#1091](https://github.com/ffroliva/gflow-cli/issues/1091); a generated video clip keeps exit 6); a cloud `GFLOW_CLI_STORAGE_URI` combined with `video t2v`/`i2v`/`r2v --out-file`, `video chain` or `movie run --stitch`, refused before billing ([#1008](https://github.com/ffroliva/gflow-cli/issues/1008)) — on the migrated `flow.google.com` host also a request the host cannot take as given (no `--project`, a model its menu does not offer, a `--duration` its settings pane renders no control for); includes `ProfileLockedError` (same-profile lease contention: another `gflow`/daemon/MCP call already owns this profile; also a Chrome window you opened yourself holding the profile, [#984](https://github.com/ffroliva/gflow-cli/issues/984) — close it or use another `--profile`), `ProfileAccessError` (Windows Chrome cannot write the profile directory; raised at the generation client's launch), and `ProfileEngineDowngradeError` (the profile was last written by a newer Chromium major than the bundled engine about to open it — see [AUTHENTICATION § Chromium downgrade guard](AUTHENTICATION.md#chromium-downgrade-guard)) | Fix the option/env var shown in the error; for lease contention wait, use a different `--profile`, or set `GFLOW_CLI_LEASE_WAIT_SECONDS=N` to wait bounded; for profile access denial grant write access to the complete profile directory or use a writable profile; upgrade gflow-cli/Playwright or re-run `gflow auth login` for a downgrade refusal |
 | `12` | `AuthLoginTimeoutError` | Browser sign-in was not completed in time       | Re-run login or raise `GFLOW_CLI_AUTH_LOGIN_TIMEOUT`       |
 | `13` | `SecurityError`       | Unsafe local profile or secret handling blocked   | Follow the error's safety guidance                         |
 | `14` | `AuthBrowserRejectedError` | Sign-in rejected the browser for `navigator.webdriver` | Re-run `gflow auth login`; with Chrome installed the `chrome` strategy retries automatically |
-| `15` | `BrowserSessionClosedError` | The automation browser window was closed mid-operation | Re-run; keep the browser window open until the command finishes |
+| `15` | `BrowserSessionClosedError`, `RelaunchFailed` | The automation browser window was closed mid-operation; or (`RelaunchFailed`, `charged: "no"`) the browser could not be restarted for the refusal retry or a UI fallback | Re-run; keep the browser window open until the command finishes. Exit 15 is shared: read `type` / `charged` to tell the two apart |
 | `16` | `DataStoreError`      | Local database cannot be opened, a migration failed, or the DB schema is newer than the installed gflow-cli | See below                                  |
 | `17` | `ModelModeIncompatibilityError` | The chosen video model can't do the requested mode — today that is `omni-flash` or `omni-1.2-flash` for `chain` (issues #125, #626) | Use a Veo 3.1 model (`veo-lite` / `veo-fast` / `veo-quality` / `veo-lite-lp`) for `chain`. Single-clip `i2v` with omni-flash, `--end-frame` included, is accepted |
 | `18` | `VideoModelSelectionError` | gflow could not select the requested video model in Flow's editor for an `i2v` run (model-picker option not found) | Usually transient — retry; if it persists, Flow's model-picker UI changed (report referencing #125) |
@@ -2931,13 +2979,18 @@ import asyncio
 from pathlib import Path
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest, Model, Aspect
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.config import get_settings
 
 async def main() -> None:
     settings = get_settings()
     profile_dir = settings.profile_subdir("default")
-    async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
-        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.IMAGE4)
+    # A measured shape (here nano2 text-to-image) needs only a headless browser to mint
+    # the reCAPTCHA token; omit `visibility` for a shape that drives Flow's UI (headed).
+    async with FlowApiClient(
+        profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS
+    ) as client:
+        req = GenerateImageRequest(prompt="a peaceful lake at dawn", model=Model.NARWHAL)
         # project_id is optional — omit it and a new project is created automatically.
         image = await client.generate_image(req=req)
         saved = await client.download_image(image, Path("lake.png"))
@@ -2945,6 +2998,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+Omitted, `visibility` follows `GFLOW_CLI_BROWSER_VISIBILITY` for a Flow UI shape (headed under `auto`). The per-command list is [BROWSER_MODES](BROWSER_MODES.md).
 
 `project_id` defaults to `None`. When omitted, `generate_image()` (and `generate_images_batch()`) call `create_project()` internally. Pass an explicit `project_id` when you want multiple generations to land in the same Flow project.
 

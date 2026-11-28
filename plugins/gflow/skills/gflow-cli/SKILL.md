@@ -2,14 +2,14 @@
 name: gflow-cli
 version: "1.2"
 skillopt_epoch: 0
-description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Flow commands drive the real Flow web UI through headed Chrome; audio narration uses an external TTS provider and needs no Flow account.
+description: Use when the user wants to drive Google Flow (Veo image-to-video, Veo text-to-video, Imagen / Nano Banana image generation) or create local speech narration from the terminal. The CLI is `gflow` (or `flow`); install with `uv tool install gflow-cli` or run ad-hoc with `uvx --from gflow-cli gflow ...`. Flow commands run in real Chrome; for measured request shapes it starts headless only to mint the reCAPTCHA token and sends the request over direct HTTP, and the other surfaces drive the Flow web UI headed; audio narration uses an external TTS provider and needs no Flow account.
 optimization_notes: |
   Known weak spots for the SkillOpt training loop (targets for epoch 1+):
   - Wrong subcommand: agents emit 'gflow video create' instead of 'gflow video t2v', 'gflow video i2v' or 'gflow video generate'
   - Output flag confusion: '--out-file' takes a FILE path (single asset); '-o/--output' selects output format (json|table|id); '--out' (image) / '--out-dir' (video) take a DIRECTORY
   - Prerequisite gap: Playwright Chromium install step skipped on fresh machines
   - Profile parallelism anti-pattern: two generations launched on the same profile in parallel (crashes Chromium)
-  - reCAPTCHA direction inverted: agents suggest GFLOW_CLI_HEADLESS=true to fix detection; correct fix is =false
+  - Browser setting confusion: agents toggle the deprecated GFLOW_CLI_HEADLESS to fix a refusal; the setting is GFLOW_CLI_BROWSER_VISIBILITY (default auto: headless mint), and a refused submit is already retried once from a fresh headless browser
   - UUID reuse: agents call 'gflow image upload' again for an already-uploaded UUID instead of passing it directly to --ref
   - Model alias confusion: '--model imagen' / '--model quality' instead of '--model image4' / '--model nano2'
   - Auth recovery: agents suggest 'gflow auth refresh' / 'gflow auth reset' which do not exist; an expired session is renewed with 'gflow auth renew' (headless, no sign-in), and a revoked one needs 'gflow auth login'
@@ -17,7 +17,7 @@ optimization_notes: |
 
 # gflow-cli skill
 
-`gflow-cli` is a Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) — Veo (T2V/I2V) and Imagen / Nano Banana — from the terminal by automating the real Flow web UI in a headed Chrome session (Playwright), not by bypassing it. Source: <https://github.com/ffroliva/gflow-cli>. Canonical command reference: [`docs/USAGE.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md).
+`gflow-cli` is a Python CLI that drives [Google Flow](https://labs.google/fx/tools/flow) — Veo (T2V/I2V) and Imagen / Nano Banana — from the terminal, built for automation: agents generate on the user's own Flow account predictably and spend its credits along an accountable path. For measured request shapes it starts Chrome headless only to mint the reCAPTCHA token and sends the request over direct HTTP; the remaining surfaces drive Flow's web UI in a headed Chrome session (Playwright). Per-command list: [`docs/BROWSER_MODES.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/BROWSER_MODES.md). Source: <https://github.com/ffroliva/gflow-cli>. Canonical command reference: [`docs/USAGE.md`](https://github.com/ffroliva/gflow-cli/blob/main/docs/USAGE.md).
 
 ## When to invoke this skill
 
@@ -324,7 +324,7 @@ The `gflow-cli` supports a 3-layer pipeline for persistent generation context (A
 |---|---|---|
 | `No session for profile 'default'` | First run, no auth | `gflow auth login` |
 | `403 Forbidden` from upload / generate | Account doesn't have Flow access | Verify in [labs.google/fx/tools/flow](https://labs.google/fx/tools/flow) |
-| reCAPTCHA refuses to mint a token (headless detected) | Google bot-detection | Set `GFLOW_CLI_HEADLESS=false` and re-run; a headed window passes detection. With `--json`, a mint failure has `type` `…/errors/recaptcha-mint` and exits 1; re-run only when `retryable` is true |
+| reCAPTCHA refuses to mint a token, or Flow refuses the submit (`PUBLIC_ERROR_UNUSUAL_ACTIVITY`) | Google bot-detection scored the page | A refused submit is not billed and is retried once from a new headless browser; if the retry is refused too, stop, wait out the 30–60 minute cooldown in `docs/ACCOUNT_SAFETY.md`, then retry (optionally with `--browser-visibility headed`). With `--json`, a mint failure has `type` `…/errors/recaptcha-mint` and exits 1; re-run only when `retryable` is true |
 | `Playwright Executable doesn't exist` | Chromium not downloaded | `uvx --from gflow-cli playwright install chromium` |
 | Generations all fail with the same UUID | Stale Flow session | `gflow auth login` again to refresh cookies |
 | Quota exceeded | Burned through monthly credits | Wait for reset, or upgrade subscription |
@@ -354,7 +354,7 @@ Documented errors agents commonly make — negative examples for the SkillOpt tr
 | `gflow auth refresh` (doesn't exist), or `gflow auth login` as the first move on an expired session | `gflow auth renew` renews an expired session headlessly with no sign-in; `gflow auth login` only when renew reports the session could not be renewed (revoked) |
 | `playwright install` or `playwright install --all` | `uvx --from gflow-cli playwright install chromium` (Chromium only, ~150 MB) |
 | Running two generations on the same `--profile` in parallel | Use different `--profile` names — Chromium refuses two persistent contexts on the same dir |
-| `GFLOW_CLI_HEADLESS=true` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS=false` — headless mode *causes* bot-detection, not prevents it |
+| Toggling `GFLOW_CLI_HEADLESS` to fix reCAPTCHA failures | `GFLOW_CLI_HEADLESS` is a deprecated alias (`gflow doctor` flags it); use `GFLOW_CLI_BROWSER_VISIBILITY=auto\|headless\|headed`. The headless mint is the measured default, not the cause of a refusal |
 | Calling `gflow image upload` again for an already-uploaded UUID | Pass the UUID directly to `--ref UUID` (i2i) or `--initial-frame/--end-frame UUID` (i2v, with `--project`) — no re-upload needed |
 | `--model imagen` / `--model quality` / `--model high` | `--model image4` (Imagen 4, no longer in Flow's menu), `--model nano-pro` (Nano Banana Pro), `--model nano2` (Nano Banana 2.1; `nano2.1` also works). `gflow models` lists each model's Flow name; `gflow models show <alias>` prints one model's limits |
 | Python: `client = FlowApiClient(...)` then method calls | Must use `async with FlowApiClient(...) as client:` — it's an async context manager |

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -36,7 +36,10 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    browser_visibility_option,
+    client_visibility,
     default_project,
+    image_route,
     out_file_option,
     output_format_option,
     run_with_handlers,
@@ -50,6 +53,7 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.image import (
     IMAGES_MISSING_HINT,
     AgentInstruction,
@@ -64,6 +68,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
+from gflow_cli.cli_image_params import I2I_PROJECT_TITLE, I2IParams, i2i_request
 from gflow_cli.config import UiMode, get_settings, parse_jitter_range
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import (
@@ -133,7 +138,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     from gflow_cli.api.dto import GeneratedImage
-    from gflow_cli.tools.invocation import AppliedTool
 
 _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
@@ -143,7 +147,6 @@ _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
 _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
-_I2I_PROJECT_TITLE = "gflow-cli i2i"
 
 # `_FLOW_ID_RE` / `_validate_project_id` (Flow project/character-entity id
 # allowlist for --project / --reference-entity) live in gflow_cli._cli_helpers
@@ -432,21 +435,19 @@ def image() -> None:
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (ui_automation). Set "
+        "or built-in default (direct_http; ui_automation is the kill switch). Set "
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable "
-        "direct_http/evaluate_fetch/bearer/sapisidhash."
+        "evaluate_fetch/bearer/sapisidhash."
     ),
 )
 def upload(path: Path, profile: str | None, transport: str | None) -> None:
     """Upload PATH and print the asset UUID."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_upload(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            headless=settings.headless,
             image_path=path,
             transport=transport,
         ),
@@ -458,7 +459,6 @@ async def _run_upload(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     image_path: Path,
     transport: str | None = None,
 ) -> None:
@@ -467,7 +467,6 @@ async def _run_upload(
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
             transport=transport,
             out_dir=settings.output_dir,
         ) as client:
@@ -586,11 +585,9 @@ def upscale(
         raise click.BadParameter(str(exc)) from exc
 
     provider_dir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_upscale(
             profile_dir=provider_dir,
-            headless=settings.headless,
             media_id=media_id,
             project_id=resolved_project,
             resolution=resolution,
@@ -659,7 +656,6 @@ def resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_n
 async def _run_upscale(
     *,
     profile_dir: Path,
-    headless: bool,
     media_id: str,
     project_id: str,
     resolution: TargetResolution,
@@ -672,7 +668,6 @@ async def _run_upscale(
     out_path = output_root / "images" / date.today().isoformat() / f"{media_id}_{scale_label}.png"
     async with FlowApiClient(
         profile_dir=profile_dir,
-        headless=headless,
         transport=transport,
         out_dir=output_root,
     ) as client:
@@ -750,6 +745,7 @@ _ui_mode_option = click.option(
         "--reference-entity; use --ref for a one-off image). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompts", nargs=-1, required=False)
 @click.option(
     "--prompts-file",
@@ -817,9 +813,9 @@ _ui_mode_option = click.option(
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (ui_automation). Set "
+        "or built-in default (direct_http; ui_automation is the kill switch). Set "
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable "
-        "direct_http/evaluate_fetch/bearer/sapisidhash."
+        "evaluate_fetch/bearer/sapisidhash."
     ),
 )
 @_project_and_entity_options(single_prompt=True)
@@ -886,20 +882,16 @@ def t2i(  # NOSONAR
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 req=GenerateImageRequest(
                     prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
+                    count=count,
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
                     original_prompt=None,
                     tool=None,
-                    instructions=(
-                        tuple(AgentInstruction(text=i) for i in instructions)
-                        if instructions
-                        else None
-                    ),
+                    instructions=tuple(AgentInstruction(text=i) for i in instructions) or None,
                     ui_mode=UiMode(ui_mode) if ui_mode else None,
                     thinking_level=ThinkingLevel.from_cli(thinking_level),
                 ),
@@ -1047,7 +1039,6 @@ def _execute_t2i_batch(
         outcomes = asyncio.run(
             run_image_batch(
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 transport=transport,
                 prompts=batch_prompts,
                 output_dir=output_dir,
@@ -1288,7 +1279,6 @@ async def _run_t2i(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     req: GenerateImageRequest,
     count: int,
     out: Path | None,
@@ -1310,7 +1300,7 @@ async def _run_t2i(
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
+            visibility=client_visibility(settings, (image_route(req, transport=transport),)),
             transport=transport,
             out_dir=out if out is not None else output_root,
         ) as client:
@@ -1451,6 +1441,7 @@ _BATCH_TITLE = "gflow-cli image batch"
         "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n"
     ),
 )
+@browser_visibility_option()
 @click.argument(
     "manifest",
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
@@ -1567,7 +1558,6 @@ def batch(
         outcomes = asyncio.run(
             run_manifest_image_batch(
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 transport=transport,
                 prompts=prompts,
                 output_dir=output_dir,
@@ -1597,29 +1587,6 @@ def batch(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _I2IParams:
-    """Bundles image-generation options for :func:`_run_i2i`.
-
-    Separating these from the profile/transport/output fields keeps the
-    function signature below Sonar's 13-parameter limit (S107) while preserving
-    every CLI option.
-    """
-
-    prompt: str
-    classified_refs: list[ImageRef | Path]
-    aspect: Aspect
-    model: Model
-    reference_entities: tuple[str, ...]
-    reference_entity_names: tuple[str, ...]
-    # Tool provenance (set when a --tool rewrote the prompt; recorded only).
-    original_prompt: str | None = None
-    tool: AppliedTool | None = None
-    instructions: tuple[AgentInstruction, ...] | None = None
-    ui_mode: UiMode | None = None
-    thinking_level: ThinkingLevel | None = None
-
-
 @spends_credits(True)
 @image.command(
     "i2i",
@@ -1639,6 +1606,7 @@ class _I2IParams:
         "--reference-entity; --ref is for one-off images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--ref",
@@ -1693,9 +1661,9 @@ class _I2IParams:
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (ui_automation). Set "
+        "or built-in default (direct_http; ui_automation is the kill switch). Set "
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable "
-        "direct_http/evaluate_fetch/bearer/sapisidhash."
+        "evaluate_fetch/bearer/sapisidhash."
     ),
 )
 @_project_and_entity_options(single_prompt=False)
@@ -1757,7 +1725,7 @@ def i2i(  # NOSONAR
     project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    i2i_params = _I2IParams(
+    i2i_params = I2IParams(
         prompt=prompt,
         classified_refs=classified_refs,
         aspect=Aspect.from_cli(aspect),
@@ -1777,7 +1745,6 @@ def i2i(  # NOSONAR
         lambda: _run_i2i(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            headless=settings.headless,
             params=i2i_params,
             count=count,
             out=out,
@@ -1796,12 +1763,25 @@ def i2i(  # NOSONAR
     )
 
 
+def _planned_i2i_route(
+    params: I2IParams, profile_name: str, project_id: str | None, transport: str | None
+) -> Route:
+    """The route an i2i request takes, decided before launch on the request the client sends.
+
+    A new project holds none of the references, so a run without ``--project`` routes UI.
+    """
+    if project_id is None:
+        return Route.UI
+    refs = [r for r in params.classified_refs if isinstance(r, ImageRef)]
+    uuid_refs = _enrich_uuid_refs(refs, profile_name, project_id=project_id)
+    return image_route(i2i_request(params, uuid_refs), transport=transport)
+
+
 async def _run_i2i(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
-    params: _I2IParams,
+    params: I2IParams,
     count: int,
     out: Path | None,
     output_root: Path,
@@ -1823,7 +1803,10 @@ async def _run_i2i(
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
+            visibility=client_visibility(
+                settings,
+                (_planned_i2i_route(params, profile_name, project_id, transport),),
+            ),
             transport=transport,
             out_dir=out if out is not None else output_root,
         ) as client:
@@ -1849,21 +1832,7 @@ async def _run_i2i(
                 profile_name,
                 project_id=project.project_id,
             )
-            local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
-            req = GenerateImageRequest(
-                prompt=params.prompt,
-                aspect=params.aspect,
-                model=params.model,
-                refs=tuple(uuid_refs_initial),
-                ref_paths=local_ref_paths,
-                reference_entities=params.reference_entities,
-                reference_entity_names=params.reference_entity_names,
-                original_prompt=params.original_prompt,
-                tool=params.tool,
-                instructions=params.instructions,
-                ui_mode=params.ui_mode,
-                thinking_level=params.thinking_level,
-            )
+            req = i2i_request(params, uuid_refs_initial)
 
             # Resolve @-mentions (entities → reference_entities, media → refs) and
             # expand --tool specs (shared helper).
@@ -1980,7 +1949,7 @@ async def _run_i2i(
 
 def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
-    table = Table(title=_I2I_PROJECT_TITLE)
+    table = Table(title=I2I_PROJECT_TITLE)
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")

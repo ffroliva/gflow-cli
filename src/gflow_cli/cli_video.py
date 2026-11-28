@@ -21,6 +21,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    browser_visibility_option,
     default_project,
     no_max_credits_option,
     out_file_option,
@@ -32,6 +33,9 @@ from gflow_cli._cli_helpers import (
     spends_credits,
     tool_option,
     upscale_out_dir_option,
+    upscale_visibility,
+    video_client_visibility,
+    video_route,
 )
 from gflow_cli.api import video_extend
 from gflow_cli.api.client import FlowApiClient
@@ -318,7 +322,10 @@ async def _generate_and_report(
     recorder = OperationRecorder.open(settings)
     started_media_ids: list[str] = []
     try:
-        async with FlowApiClient(profile_dir=profile_dir, out_dir=out_dir) as client:
+        visibility = await video_client_visibility(settings, profile_dir, (video_route(request),))
+        async with FlowApiClient(
+            profile_dir=profile_dir, out_dir=out_dir, visibility=visibility
+        ) as client:
             if project_id is None and project_name is not None:
                 p_info = await client.create_project(title=project_name)
                 project_id = p_info.project_id
@@ -478,7 +485,7 @@ class _I2VParams:
 
     Separating these from the profile/output/count fields keeps the function
     signature below Sonar's 13-parameter limit (S107) while preserving every
-    CLI option. Mirrors `cli_image.py`'s `_I2IParams`.
+    CLI option. Mirrors `cli_image_params.py`'s `I2IParams`.
     """
 
     # Exactly one of image/image_ref_id (and end_frame/end_frame_ref_id) per
@@ -1093,7 +1100,20 @@ async def _run_chain(
     partial = False
     results: list[Any] = []
     try:
-        async with FlowApiClient(profile_dir=profile_dir, out_dir=resolved_out_dir) as client:
+        # A chain with any UI clip launches headed for the whole run (SCENARIO.md row 34).
+        planned = chain_mod.planned_link_requests(
+            links=remaining_links,
+            model=resolved_model,
+            aspect=aspect_enum,
+            start_index=skipped,
+            max_credits=effective_max_credits,
+        )
+        visibility = await video_client_visibility(
+            settings, profile_dir, list(map(video_route, planned))
+        )
+        async with FlowApiClient(
+            profile_dir=profile_dir, out_dir=resolved_out_dir, visibility=visibility
+        ) as client:
             results, partial, _ = await _execute_chain_links(
                 chain_mod=chain_mod,
                 client=client,
@@ -1229,6 +1249,7 @@ def assemble(
         "--reference-entity. See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--aspect",
@@ -1407,6 +1428,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
         "Positional ordering: when --initial-frame is passed, only PROMPT is required."
     ),
 )
+@browser_visibility_option()
 @click.argument("image", required=False, default=None)
 @click.argument("prompt", required=False, default=None)
 @click.option(
@@ -1601,6 +1623,7 @@ def i2v(  # NOSONAR
         "ingredient images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--ref",
@@ -1778,6 +1801,7 @@ def r2v(
         "  gflow video chain story.jsonl --resume-from <chain-id>\n"
     ),
 )
+@browser_visibility_option()
 @click.argument("manifest")
 @click.option(
     "--model",
@@ -2356,6 +2380,7 @@ async def _extend_session(  # noqa: PLR0913
         "Flow grows the source clip in place under its own media id."
     ),
 )
+@browser_visibility_option()
 @click.argument("source")
 @click.argument("prompts", nargs=-1, required=True)
 @click.option(
@@ -2551,6 +2576,7 @@ def extend(  # noqa: PLR0913
         "  gflow video upscale <mediaId> --scale 1080p --out ~/Downloads\n"
     ),
 )
+@browser_visibility_option()
 @click.argument("media_id")
 @click.option(
     "--scale",
@@ -2595,11 +2621,9 @@ def upscale(
         media_id=media_id, explicit=project_id, profile_name=profile_name
     )
     provider_dir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_video_upscale(
             profile_dir=provider_dir,
-            headless=settings.headless,
             media_id=media_id,
             project_id=resolved_project,
             scale=scale.lower(),
@@ -2612,7 +2636,6 @@ def upscale(
 async def _run_video_upscale(
     *,
     profile_dir: Path,
-    headless: bool,
     media_id: str,
     project_id: str,
     scale: str,
@@ -2629,7 +2652,7 @@ async def _run_video_upscale(
 
     async with FlowApiClient(
         profile_dir=profile_dir,
-        headless=headless,
+        visibility=upscale_visibility(profile_dir, media_id, scale),
         out_dir=output_root,
     ) as client:
         console.print(f"Upscaling video [bold]{media_id}[/bold] to {scale}...")

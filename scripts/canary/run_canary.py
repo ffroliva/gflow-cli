@@ -24,7 +24,9 @@ Every comment also carries an ``RPC-DRIFT`` section (#1218, ``rpc_drift.py``): w
 catalogued batchexecute ids are still in the JavaScript Flow serves, checked with no cookies
 and no browser. It has its own five outcomes (OK / ID-GONE / MODULES-CHANGED /
 PARSE-CHANGED / INCONCLUSIVE), and like everything here it gates nothing: it never changes
-the run's state or title.
+the run's state or title. A ``MODEL-DRIFT`` section follows (#1550): ``gflow doctor``'s
+``models.catalog_drift`` check for the canary's profile, which compares Flow's model catalog
+with gflow's model list. It gates nothing either.
 
 Scope: ``-m e2e_auth`` only ($0, no reCAPTCHA). Generation tiers are refused outright
 (see ``_MANUAL_ONLY_MARKERS``) — a promise in a docstring is not enforcement.
@@ -386,6 +388,26 @@ def rpc_drift_section(write: bool = False) -> str:
         )
 
 
+def model_drift_section(profile: str) -> str:
+    """The MODEL-DRIFT report (#1550): doctor's model-catalog check, read with ``profile``.
+
+    The finding's severity and summary only (family keys, display names, dates: Flow's public
+    model list, never account data). Imported late for the same reason as ``rpc_drift``.
+    Never raises.
+    """
+    try:
+        from gflow_cli.config import get_settings  # noqa: PLC0415
+        from gflow_cli.services import doctor  # noqa: PLC0415
+
+        [finding] = doctor.check_model_catalog(get_settings(), profile)
+        return f"#### MODEL-DRIFT {finding.severity.upper()}\n\n{finding.summary}"
+    except Exception as exc:  # noqa: BLE001 - class name only: messages can carry URLs
+        return (
+            "#### MODEL-DRIFT INCONCLUSIVE\n\nThe check itself failed. Says nothing about Flow."
+            f"\n\n**Reason:** {type(exc).__name__}"
+        )
+
+
 def publish(issue: int, state: str, body: str, stamp: str, dry_run: bool) -> None:
     title = f"[{state}] gflow nightly canary — {stamp}"
     if dry_run:
@@ -555,7 +577,8 @@ def main() -> int:
     publish(
         args.issue,
         result.state,
-        f"{report}\n\n{rpc_drift_section(write=not args.dry_run)}",
+        f"{report}\n\n{rpc_drift_section(write=not args.dry_run)}"
+        f"\n\n{model_drift_section(args.profile)}",
         stamp,
         args.dry_run,
     )

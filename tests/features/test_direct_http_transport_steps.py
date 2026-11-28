@@ -57,7 +57,7 @@ def step_profile_served_flow(
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        "gflow_cli.api.transports.direct_http._images.build_ogiz0b_body",
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
 

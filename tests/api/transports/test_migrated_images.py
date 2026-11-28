@@ -20,6 +20,7 @@ from gflow_cli.api.image import (
     ImageRef,
     Model,
 )
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.errors import (
     EXIT_CODE_MAP,
     FlowHostMigratedError,
@@ -249,6 +250,7 @@ async def test_client_skips_legacy_mint_when_the_page_owns_image_submission(
     transport = _PageOwnedImageTransport()
     client = FlowApiClient.__new__(FlowApiClient)
     client.transport = transport  # type: ignore[assignment]
+    client.visibility = BrowserVisibility.HEADED
     mint = AsyncMock(side_effect=AssertionError("legacy mint must not run"))
     monkeypatch.setattr(client, "_mint_recaptcha_token", mint)
 
@@ -270,6 +272,7 @@ async def test_client_keeps_legacy_mint_for_other_image_transports(
     transport = _HttpImageTransport()
     client = FlowApiClient.__new__(FlowApiClient)
     client.transport = transport  # type: ignore[assignment]
+    client.visibility = BrowserVisibility.HEADED
     mint = AsyncMock(return_value="minted")
     monkeypatch.setattr(client, "_mint_recaptcha_token", mint)
 

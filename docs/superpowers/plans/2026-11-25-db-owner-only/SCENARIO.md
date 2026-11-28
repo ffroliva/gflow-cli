@@ -35,15 +35,15 @@ fix is there. Read-only opens create nothing and change nothing.
 | 11 | D5 | Two processes open a missing database at once | Medium | The second sees an existing file and continues | Review probe |
 | 14 | D5 | Two threads create the database at once | High | The second waits until the first has closed the new file | Unit (both) |
 | 12 | D12 | A non-owner opens a shared database repeatedly | Low | One warning per file it cannot tighten, on each open | Not tested |
-| 13 | D6 | Windows `-wal` and `-shm` files in a readable directory | Medium | Inherit the directory's ACL; documented limit | Not tested |
+| 13 | D6 | Windows `-wal` and `-shm` files in a readable directory (fresh open, reopen, crash leftovers, symlinked DB) | High | Restricted to the current user on `DataStore.open` and re-hardened across SQLite sidecar recreations | Unit (Windows) |
 
 ## Must-cover before merge (Critical + High)
 
-Rows 1 to 9 and 14 are covered by `tests/data/test_store.py`. So is row 10, except for a
+Rows 1 to 9, 13 and 14 are covered by `tests/data/test_store.py`. So is row 10, except for a
 real elevated run.
 
 ## Deferred (Medium + Low)
 
-Rows 11 (checked by a probe, no test), 12 and 13; on Windows, a file that another process
-puts in place of the database after this process has restricted it; and explicit grants that survive on an existing Windows database file.
-Issue #1437 stays open for the Windows sidecars.
+Rows 11 (checked by a probe, no test) and 12; explicit grants that survive on an existing
+Windows database or sidecar file; and the brief window between SQLite creating `-wal`/`-shm`
+and `DataStore.open` stripping inherited directory ACEs.

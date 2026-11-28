@@ -35,7 +35,7 @@ gflow --version
 ```
 
 ```
-gflow, version 0.41.0
+gflow, version X.Y.Z
 ```
 
 ---
@@ -64,7 +64,7 @@ On first run, the profile is created as `default` then auto-renamed to your emai
 
 ### Your first image
 
-Generate a text-to-image with the `--tool creative-director` flag, which expands your prompt with Google's 5-component formula before any credits are spent.
+Generate a text-to-image with the `--tool creative-director` flag, which expands your prompt with Google's 5-component formula before any credits are spent. Prompt tools call an LLM, so set `GFLOW_CLI_LLM_API_KEY` first ([configuration](CONFIGURATION.md#gflow_cli_llm_api_key)).
 
 ```bash
 gflow image t2i \
@@ -75,10 +75,10 @@ gflow image t2i \
 ```
 Flow project created: project/abc123
 Generating images…
-✓ out/images/2026-07-20/8f3a1b2c_1.png
+✓ ~/Downloads/gflow-cli/images/2026-07-20/8f3a1b2c_1.png
 ```
 
-Files are saved to the output directory automatically — by default `./out/images/`. Route outputs to S3, MinIO, or GCS with [external storage](EXTERNAL_STORAGE.md).
+Files are saved to the output directory automatically — by default `~/Downloads/gflow-cli/images/`. Route outputs to S3, MinIO, or GCS with [external storage](EXTERNAL_STORAGE.md).
 
 ### Turn it into a video
 
@@ -86,17 +86,17 @@ Turn that still into an 8-second Veo clip. This step costs 1 Veo credit.
 
 ```bash
 gflow video i2v \
-  out/images/2026-07-20/8f3a1b2c_1.png \
+  ~/Downloads/gflow-cli/images/2026-07-20/8f3a1b2c_1.png \
   "slow cinematic push-in" \
   --aspect 9:16
 ```
 
 ```
 Generating video… (~60-90s)
-✓ out/videos/2026-07-20/9e4d7f2a.mp4
+✓ ~/Downloads/gflow-cli/videos/2026-07-20/9e4d7f2a.mp4
 ```
 
-Video outputs land in `./out/videos/`.
+Video outputs land in `~/Downloads/gflow-cli/videos/`.
 
 ---
 
@@ -157,7 +157,7 @@ Another process holds this profile directory.
 
 ## Let your assistant drive it
 
-Everything above, an agent can do for you. Start the MCP server and point Claude, Cursor, or Copilot at it.
+Everything above, an agent can do for you. Start the MCP server and point Claude Code, Cursor, Codex, or VS Code at it.
 
 ```bash
 gflow mcp run

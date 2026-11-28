@@ -38,7 +38,6 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
-from gflow_cli.config import get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -86,14 +85,14 @@ def _common_options(func: Callable[..., Any]) -> Callable[..., Any]:
     )(func)
 
 
-def _prepare(profile: str | None) -> tuple[Path, bool]:
-    """Resolve the active profile to its provider dir + headless flag.
+def _prepare(profile: str | None) -> Path:
+    """Resolve the active profile to its provider dir.
 
     Mirrors the profile/auth bootstrap every ``cli_image`` command runs before
     opening a client. Exits 2 (via the shared helpers) when no session exists.
     """
     provider_dir = _make_provider_dir(_resolve_profile(profile))
-    return provider_dir, get_settings().headless
+    return provider_dir
 
 
 def _fail(message: str) -> NoReturn:
@@ -263,11 +262,10 @@ def add(
     transport: str | None,
 ) -> None:
     """Add an instruction card TITLE to the project's brief."""
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_add(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             title=title,
@@ -282,7 +280,6 @@ def add(
 async def _run_add(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     project_id: str,
     title: str,
@@ -290,9 +287,7 @@ async def _run_add(
     refs: tuple[str, ...],
     disabled: bool,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir, transport=transport) as client:
         brief = await client.get_agent_info(project_id)
         image_ids, char_ids = await classify_refs(client, project_id, refs)
         card = build_card(
@@ -333,11 +328,10 @@ def list_cards(
     output_format: str = "table",
 ) -> None:
     """List the instruction cards on the project's brief."""
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_list(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             as_json=as_json,
@@ -352,15 +346,12 @@ def list_cards(
 async def _run_list(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     project_id: str,
     as_json: bool,
     output_format: str = "table",
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir, transport=transport) as client:
         brief = await client.get_agent_info(project_id)
     if output_format == OutputFormat.ID.value:
         for c in brief.cards:
@@ -450,11 +441,10 @@ def enable(
 ) -> None:
     """Enable the card selected by TITLE or --id."""
     _require_one_selector(title, card_id)
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_set_enabled(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             title=title,
@@ -482,11 +472,10 @@ def disable(
 ) -> None:
     """Disable the card selected by TITLE or --id."""
     _require_one_selector(title, card_id)
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_set_enabled(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             title=title,
@@ -500,16 +489,13 @@ def disable(
 async def _run_set_enabled(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     project_id: str,
     title: str | None,
     card_id: str | None,
     enabled: bool,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir, transport=transport) as client:
         brief = await client.get_agent_info(project_id)
         card = _select(brief, title=title, card_id=card_id)
         # Replace the target in place (preserving its id) and PATCH the FULL set;
@@ -543,11 +529,10 @@ def rm(
 ) -> None:
     """Remove the card selected by TITLE or --id."""
     _require_one_selector(title, card_id)
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_rm(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             title=title,
@@ -560,15 +545,12 @@ def rm(
 async def _run_rm(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     project_id: str,
     title: str | None,
     card_id: str | None,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir, transport=transport) as client:
         brief = await client.get_agent_info(project_id)
         card = _select(brief, title=title, card_id=card_id)
         # Drop the target; send the remaining set (possibly empty -> clears it).
@@ -610,11 +592,10 @@ def apply(
 ) -> None:
     """Full-sync the project's brief from FILE (TOML or JSON)."""
     entries = _load_apply_file(file)
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_apply(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             entries=entries,
@@ -663,14 +644,11 @@ def _load_apply_file(path: Path) -> list[dict[str, Any]]:
 async def _run_apply(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     project_id: str,
     entries: list[dict[str, Any]],
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir, transport=transport) as client:
         cards = await _cards_from_entries(client, project_id, entries)
         # Full replace: the file is the declarative source of truth for the brief.
         await client.patch_agent_info(project_id, enabled=True, cards=cards)
@@ -731,11 +709,10 @@ def toggle_mode(
     if enable_mode is None:
         msg = "Provide --on or --off."
         raise click.UsageError(msg)
-    provider_dir, headless = _prepare(profile)
+    provider_dir = _prepare(profile)
     run_with_handlers(
         lambda: _run_toggle_mode(
             profile_dir=provider_dir,
-            headless=headless,
             transport=transport,
             project_id=project_id,
             enable_mode=enable_mode,
@@ -747,14 +724,11 @@ def toggle_mode(
 async def _run_toggle_mode(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     project_id: str,
     enable_mode: bool,
 ) -> None:
-    async with FlowApiClient(
-        profile_dir=profile_dir, headless=headless, transport=transport
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir, transport=transport) as client:
         # Master switch only — cards are left untouched (no cards= mask sent).
         await client.patch_agent_info(project_id, enabled=enable_mode)
     state = "on" if enable_mode else "off"

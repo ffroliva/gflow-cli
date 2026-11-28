@@ -1,7 +1,8 @@
 """``gflow doctor`` — read-only diagnostics over the catalog, DB, env, and auth (#542).
 
-One check (``auth.wire_read``, #1229) sends one GET and one POST to
-flow.google.com for the default profile, unless the direct read is disabled.
+Two checks reach flow.google.com for the default profile, unless the direct read
+is disabled: ``auth.wire_read`` (#1229, one GET and one POST) and
+``models.catalog_drift`` (#1550, at most one more GET and POST reading Flow's model catalog).
 
 Rendering only: every finding string arrives pre-redacted from
 :mod:`gflow_cli.services.doctor` (UUIDs not display names, safe paths,
@@ -36,6 +37,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("db", ("db.",)),
     ("operations & queue", ("operations.", "queue.")),
     ("env & auth", ("env.", "auth.")),
+    ("models", ("models.",)),
 )
 
 # Brew-style caveat: shown before the first warning, ASCII only.
@@ -75,8 +77,9 @@ def doctor(ctx: click.Context, as_json: bool, output_format: str = "table") -> N
     """Run read-only health checks over the catalog, database, and environment.
 
     Diagnoses, never heals: nothing is migrated, repaired, or written. Unless
-    disabled (GFLOW_CLI_WIRE_READS=0), it also sends one GET and one POST to
-    flow.google.com to check the default profile's direct credits read.
+    disabled (GFLOW_CLI_WIRE_READS=0), it also sends one GET and two POSTs to
+    flow.google.com with the default profile: one checks the direct credits
+    read, the other compares Flow's model catalog with gflow's model list.
     Exit code 0 when clean, 33 when any warn/fail finding is reported.
     """
     report = run_all(_db_path(), get_settings())

@@ -62,7 +62,8 @@ gflow-output/
 *.png
 *.jpg
 *.jpeg
-!docs/**/*.png         # docs images are OK
+# docs images are OK
+!docs/**/*.png
 !tests/fixtures/**/*.png
 !test_assets/fixtures/**/*.jpg
 !test_assets/fixtures/**/*.jpeg

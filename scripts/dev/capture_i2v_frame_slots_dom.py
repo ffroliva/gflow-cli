@@ -43,6 +43,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 # PR #70's original anchor — kept inline for forensic comparison. It was removed
 # from production code by #63 because it matched zero elements (the `swap_horiz`
@@ -60,7 +61,7 @@ async def capture(profile_name: str, out_dir: Path) -> int:
     print(f"GFLOW_CLI_LOCALE: {locale}")
     print(f"Out dir: {out_dir}")
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         transport = client.transport
         if transport is None:
             sys.exit("FlowApiClient.transport is None — transport wiring broken")

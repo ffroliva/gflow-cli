@@ -8,10 +8,10 @@ from gflow_cli.api.transports import make_transport, transport_choices
 from gflow_cli.errors import ConfigurationError
 
 
-def test_default_transport_is_ui_automation(monkeypatch):
+def test_default_transport_is_direct_http(monkeypatch):
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
     t = make_transport()
-    assert t.name == "ui_automation"
+    assert t.name == "direct_http"
 
 
 def test_explicit_arg_wins_over_env(monkeypatch):
@@ -38,9 +38,9 @@ def test_unknown_strategy_raises_configuration_error_listing_options(monkeypatch
     assert "sapisidhash" in msg
 
 
-def test_transport_choices_default_only_lists_ui_automation(monkeypatch):
+def test_transport_choices_default_lists_the_production_transports(monkeypatch):
     monkeypatch.delenv("GFLOW_CLI_EXPERIMENTAL_TRANSPORTS", raising=False)
-    assert transport_choices() == ["ui_automation"]
+    assert transport_choices() == ["ui_automation", "direct_http"]
 
 
 def test_transport_choices_with_experimental_env_lists_all(monkeypatch):
@@ -79,7 +79,7 @@ def test_resolve_transport_name_precedence(monkeypatch):
     from gflow_cli.api.transports import resolve_transport_name
 
     monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
-    assert resolve_transport_name() == "ui_automation"
+    assert resolve_transport_name() == "direct_http"
     assert resolve_transport_name("bearer") == "bearer"
     monkeypatch.setenv("GFLOW_CLI_TRANSPORT", "sapisidhash")
     assert resolve_transport_name() == "sapisidhash"
@@ -94,7 +94,7 @@ def test_direct_http_registration() -> None:
     )
     from gflow_cli.api.transports.direct_http import DirectHttpTransport
 
-    assert "direct_http" in EXPERIMENTAL_TRANSPORTS
+    assert "direct_http" not in EXPERIMENTAL_TRANSPORTS
     assert "direct_http" not in STANDALONE_ONLY_TRANSPORTS
     t = make_transport("direct_http")
     assert isinstance(t, DirectHttpTransport)

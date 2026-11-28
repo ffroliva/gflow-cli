@@ -81,6 +81,7 @@ from gflow_cli import auth as auth_mod  # noqa: E402
 from gflow_cli.api import routes  # noqa: E402
 from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 logger = structlog.get_logger("character_create_spike")
 
@@ -273,7 +274,7 @@ async def _read_back(
 
 async def _run(*, profile_dir: Path, headless: bool, project_id: str) -> int:
     t0 = time.monotonic()
-    async with FlowApiClient(profile_dir=profile_dir, headless=headless) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS if headless else BrowserVisibility.HEADED) as client:
         entity_id = await _create_entity(client, project_id)
         workflow_id, media_id = await _generate_face(client, project_id)
         await _set_primary_image(
