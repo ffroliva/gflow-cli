@@ -1109,7 +1109,7 @@ async def _run_chain(
             max_credits=effective_max_credits,
         )
         visibility = await video_client_visibility(
-            settings, profile_dir, [video_route(req) for req in planned]
+            settings, profile_dir, list(map(video_route, planned))
         )
         async with FlowApiClient(
             profile_dir=profile_dir, out_dir=resolved_out_dir, visibility=visibility

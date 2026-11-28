@@ -684,7 +684,7 @@ async def _run_movie(
 
     try:
         # A run with any UI scene launches headed for the whole run (SCENARIO.md row 34).
-        routes = [_planned_scene_route(manifest, scene, max_credits) for scene in manifest.scenes]
+        routes = _planned_routes(manifest, max_credits)
         visibility = await video_client_visibility(settings, profile_dir, routes)
         async with FlowApiClient(
             profile_dir=profile_dir, out_dir=out_dir, visibility=visibility
@@ -965,6 +965,11 @@ def _scene_request(
         reference_entity_names=reference_entity_names,
         max_credits=max_credits,
     )
+
+
+def _planned_routes(manifest: MovieManifest, max_credits: int | None) -> list[Route]:
+    """The route of every scene, in order, decided before launch."""
+    return [_planned_scene_route(manifest, scene, max_credits) for scene in manifest.scenes]
 
 
 def _planned_scene_route(manifest: MovieManifest, scene: Scene, max_credits: int | None) -> Route:

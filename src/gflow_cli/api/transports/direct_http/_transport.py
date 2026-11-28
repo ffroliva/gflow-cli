@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from playwright.async_api import Page
 
     from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.api.generation_route import VideoWireTarget
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import GenerateVideoRequest, VideoResult, VideoStartedCallback
 
@@ -252,20 +253,11 @@ class DirectHttpTransport(UiAutomationTransport):
             msg = "DirectHttpTransport.setup() must be called before generate_video()"
             raise RuntimeError(msg)
         page, profile_dir = self._page, self._profile_dir
-        reason = self._why_not_direct_upload()
-        if not reason and not _routes_direct(request):
-            reason = "unsupported_shape"
-        elif not reason and project_id is None:
-            reason = "no_project"
+        reason = self._why_not_direct_video(request, project_id)
         if reason or project_id is None or profile_dir is None:
             raise not_sent(reason or "no_profile_dir")
         source = self._source_for(page)
-        async with self._generate_lock:  # the page lock, as the mint holds it
-            await _arm_page(source.page, project_id)
-            if is_bare_t2v(request):
-                request, target = await selected_target(source.page, request)
-            else:
-                target = video_target(request)
+        request, target = await self._armed_target(source.page, project_id, request)
         if target is None:  # unreachable: _routes_direct keyed it
             raise not_sent("unsupported_shape")
         await refuse_empty_balance(profile_dir)
@@ -384,6 +376,26 @@ class DirectHttpTransport(UiAutomationTransport):
         if _proxy_configured():
             return "proxy_configured"
         return None
+
+    def _why_not_direct_video(
+        self, request: GenerateVideoRequest, project_id: str | None
+    ) -> str | None:
+        reason = self._why_not_direct_upload()
+        if reason:
+            return reason
+        if not _routes_direct(request):
+            return "unsupported_shape"
+        return "no_project" if project_id is None else None
+
+    async def _armed_target(
+        self, page: Page, project_id: str, request: GenerateVideoRequest
+    ) -> tuple[GenerateVideoRequest, VideoWireTarget | None]:
+        """Arm the page, then key the request: a bare t2v from the account's selection."""
+        async with self._generate_lock:  # the page lock, as the mint holds it
+            await _arm_page(page, project_id)
+            if is_bare_t2v(request):
+                return await selected_target(page, request)
+            return request, video_target(request)
 
     def _why_not_direct(self, request: GenerateImageRequest, project_id: str | None) -> str | None:
         # generation_route's predicate is pure, so the GFLOW_CLI_UI_MODE setting is read here.

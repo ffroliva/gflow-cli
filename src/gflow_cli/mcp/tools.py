@@ -43,7 +43,6 @@ from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.generation_route import plan_visibility
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
-from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
 from gflow_cli.auth import verification
 from gflow_cli.cli_data import collect_usage_stats
@@ -66,6 +65,7 @@ from gflow_cli.mcp.generation_params import upscale_route_for as _upscale_route
 from gflow_cli.mcp.generation_params import (
     validate_image_ui_and_thinking as _validate_image_ui_and_thinking,
 )
+from gflow_cli.mcp.generation_params import visibility_setting as _visibility_setting
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -1997,9 +1997,7 @@ async def _run_upscale_tool(
             f"(profile {profile!r}). Pass project parameter explicitly.",
         )
 
-    settings = with_browser_visibility(
-        get_settings(), VisibilitySetting(browser_visibility) if browser_visibility else None
-    )
+    settings = with_browser_visibility(get_settings(), _visibility_setting(browser_visibility))
     profile_dir = settings.profile_subdir(profile)
     try:
         output_root = (

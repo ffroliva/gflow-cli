@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api._flow_retry import DirectImages, RetryHost
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.base import FlowTransportStrategy
     from gflow_cli.api.transports.direct_http import DirectHttpTransport
     from gflow_cli.api.video import (
         EditVideoRequest,
@@ -114,6 +115,46 @@ def _dc_replace(obj: _DataclassT, /, **changes: Any) -> _DataclassT:
 # failure is not meaningfully delayed on its way to the user.
 _MIGRATION_RECHECK_BUDGET_S = 1.5
 _MIGRATION_RECHECK_POLL_S = 0.25
+
+
+def _note_submit_attempted(
+    on_checkpoint: GenerationCheckpointObserver | None, *, through_retry: bool
+) -> None:
+    """Write ``submit_attempted``, unless the retry loop will write it itself."""
+    if on_checkpoint is not None and not through_retry:
+        # The retry loop writes it itself, before each send and before the UI fallback.
+        on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+
+
+async def _submit_images(
+    surface: GenerationSurface,
+    *,
+    project_id: str,
+    request: GenerateImageRequest,
+    on_checkpoint: GenerationCheckpointObserver | None,
+    name_resolver: Callable[[str], str | None] | None,
+) -> list[GeneratedImage]:
+    """Send the image request: through the refusal retry loop when the transport can."""
+    # A class-level lookup: a mock transport answers every instance attribute.
+    if hasattr(type(surface.transport), "generate_images_ui"):
+        return await surface._images_through_retry(  # pyright: ignore[reportPrivateUsage]
+            project_id=project_id,
+            request=request,
+            on_checkpoint=on_checkpoint,
+            name_resolver=name_resolver,
+        )
+    if on_checkpoint is not None:
+        on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+    # Kwarg passed only when set: keeps duck-typed fakes/transports that
+    # predate #546 working, while the Protocol documents the seam.
+    resolver_kw: dict[str, Any] = {} if name_resolver is None else {"name_resolver": name_resolver}
+    # _drive_images_generation refused a missing transport before the mint.
+    images = await cast("FlowTransportStrategy", surface.transport).generate_images(
+        project_id=project_id,
+        request=request,
+        **resolver_kw,
+    )
+    return [surface._observed(i, retried=False) for i in images]  # pyright: ignore[reportPrivateUsage]
 
 
 def _relay_remote_started(
@@ -562,34 +603,19 @@ class GenerationSurface(WorkspaceSurface):
         else:
             token = await self._mint_recaptcha_token(recaptcha_action)
             req_with_token = _dc_replace(req, recaptcha_token=token)
-        # Kwarg passed only when set: keeps duck-typed fakes/transports that
-        # predate #546 working, while the Protocol documents the seam.
-        resolver_kw: dict[str, Any] = (
-            {} if name_resolver is None else {"name_resolver": name_resolver}
-        )
         # Sent once on every transport. #1010: a page-owned call IS the billed click, and
         # an error after it does not mean nothing was made (one retry left 2 images).
         # #1275: an HTTP transport sends a single-use token, so a resend is refused or
         # spends the image quota twice. The one exception is a direct submit Flow refused
         # as not billed: the retry loop sends it once more from a fresh browser.
         try:
-            # A class-level lookup: a mock transport answers every instance attribute.
-            if hasattr(type(self.transport), "generate_images_ui"):
-                images = await self._images_through_retry(
-                    project_id=project_id,
-                    request=req_with_token,
-                    on_checkpoint=on_checkpoint,
-                    name_resolver=name_resolver,
-                )
-            else:
-                if on_checkpoint is not None:
-                    on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
-                images = await self.transport.generate_images(
-                    project_id=project_id,
-                    request=req_with_token,
-                    **resolver_kw,
-                )
-                images = [self._observed(i, retried=False) for i in images]
+            images = await _submit_images(
+                self,
+                project_id=project_id,
+                request=req_with_token,
+                on_checkpoint=on_checkpoint,
+                name_resolver=name_resolver,
+            )
         except (NetworkError, TransportTimeoutError, *retryable_engine_errors()) as exc:
             if page_owned:
                 raise
@@ -854,9 +880,7 @@ class GenerationSurface(WorkspaceSurface):
 
         # A class-level lookup, as for images: a mock transport answers every attribute.
         through_retry = hasattr(type(self.transport), "generate_video_ui")
-        if on_checkpoint is not None and not through_retry:
-            # The retry loop writes it itself, before each send and before the UI fallback.
-            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+        _note_submit_attempted(on_checkpoint, through_retry=through_retry)
         wrapped_on_started = _relay_remote_started(on_started, on_checkpoint)
 
         try:

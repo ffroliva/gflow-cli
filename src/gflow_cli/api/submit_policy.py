@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from gflow_cli.api.transports.batchexecute import (
     UNUSUAL_ACTIVITY_REASON,
+    RpcError,
     find_record,
     image_records,
     parse_frames,
@@ -181,44 +182,16 @@ def classify_reply(
         return Indeterminate(rpcid=rpcid, cause="timeout after send", status=None)
 
     raw_body = body or ""
-    errors = rpc_errors(raw_body)
-    matching_errors = [err for err in errors if err.rpcid == rpcid]
-
-    for err in matching_errors:
-        safety = next((r for r in err.reasons if r in CONTENT_SAFETY_REASONS), None)
-        if safety is not None:
-            raise ContentPolicyError(
-                detail=f"Flow refused the submit: {safety} (gRPC {err.code})",
-                route=f"batchexecute:{rpcid}",
-            )
+    matching_errors = [err for err in rpc_errors(raw_body) if err.rpcid == rpcid]
+    _raise_content_refusal(rpcid, matching_errors)
 
     if status != 200:
         return Indeterminate(rpcid=rpcid, cause=f"HTTP {status}", status=status)
 
-    if len(matching_errors) == 1:
-        err = matching_errors[0]
-        if any(r == UNUSUAL_ACTIVITY_REASON for r in err.reasons):
-            if _has_generation_record(raw_body):
-                return Indeterminate(
-                    rpcid=rpcid,
-                    cause="refusal error frame accompanied by generation record",
-                    status=status,
-                )
-            return RefusedNotBilled(rpcid=rpcid, reason=UNUSUAL_ACTIVITY_REASON)
-
     if matching_errors:
-        err = matching_errors[0]
-        return Indeterminate(
-            rpcid=rpcid,
-            cause=f"rpc error: {err.reasons or [err.code]}",
-            status=status,
-            reasons=tuple(r for e in matching_errors for r in e.reasons),
-            code=err.code,
-        )
+        return _classify_rpc_errors(rpcid, raw_body, matching_errors)
 
-    frames = parse_frames(raw_body)
-    matching_frames = [f for f in frames if f[0] == rpcid and f[1] is not None]
-    if not matching_frames:
+    if not _has_rpc_frame(raw_body, rpcid):
         return Indeterminate(
             rpcid=rpcid,
             cause="unparseable reply or missing rpc frame",
@@ -226,6 +199,42 @@ def classify_reply(
         )
 
     return Accepted(body=raw_body)
+
+
+def _has_rpc_frame(body: str, rpcid: str) -> bool:
+    """Whether the body carries a parsed, non-null payload frame for ``rpcid``."""
+    return any(f[0] == rpcid and f[1] is not None for f in parse_frames(body))
+
+
+def _raise_content_refusal(rpcid: str, errors: list[RpcError]) -> None:
+    """Raise ``ContentPolicyError`` for the first named content safety reason, if any."""
+    for err in errors:
+        safety = next((r for r in err.reasons if r in CONTENT_SAFETY_REASONS), None)
+        if safety is not None:
+            raise ContentPolicyError(
+                detail=f"Flow refused the submit: {safety} (gRPC {err.code})",
+                route=f"batchexecute:{rpcid}",
+            )
+
+
+def _classify_rpc_errors(rpcid: str, raw_body: str, errors: list[RpcError]) -> SubmitOutcome:
+    """An HTTP 200 reply carrying error frames for ``rpcid``: refused only when unambiguous."""
+    err = errors[0]
+    if len(errors) == 1 and UNUSUAL_ACTIVITY_REASON in err.reasons:
+        if _has_generation_record(raw_body):
+            return Indeterminate(
+                rpcid=rpcid,
+                cause="refusal error frame accompanied by generation record",
+                status=200,
+            )
+        return RefusedNotBilled(rpcid=rpcid, reason=UNUSUAL_ACTIVITY_REASON)
+    return Indeterminate(
+        rpcid=rpcid,
+        cause=f"rpc error: {err.reasons or [err.code]}",
+        status=200,
+        reasons=tuple(r for e in errors for r in e.reasons),
+        code=err.code,
+    )
 
 
 def next_step(

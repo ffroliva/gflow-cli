@@ -439,3 +439,44 @@ def test_submit_policy_types_and_signatures() -> None:
     # launch_visibility and next_step take VisibilitySetting only (not | str)
     assert get_type_hints(launch_visibility)["setting"] is VisibilitySetting
     assert get_type_hints(next_step)["setting"] is VisibilitySetting
+
+
+def test_rpc_error_indeterminate_reports_the_first_matching_frame() -> None:
+    """The cause and code come from the first error frame for the rpc; reasons from all."""
+    unusual = [
+        "wrb.fr",
+        "ogiZ0b",
+        None,
+        None,
+        None,
+        [
+            7,
+            None,
+            [["type.googleapis.com/google.rpc.ErrorInfo", ["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]],
+        ],
+        "generic",
+    ]
+    bare_5 = ["wrb.fr", "ogiZ0b", None, None, None, [5], "generic"]
+
+    first_reasoned = classify_reply("ogiZ0b", 200, f")]}}'\n{json.dumps([unusual, bare_5])}\n")
+    assert isinstance(first_reasoned, Indeterminate)
+    assert first_reasoned.cause == "rpc error: ('PUBLIC_ERROR_UNUSUAL_ACTIVITY',)"
+    assert first_reasoned.code == 7
+    assert first_reasoned.reasons == ("PUBLIC_ERROR_UNUSUAL_ACTIVITY",)
+
+    first_bare = classify_reply("ogiZ0b", 200, f")]}}'\n{json.dumps([bare_5, unusual])}\n")
+    assert isinstance(first_bare, Indeterminate)
+    assert first_bare.cause == "rpc error: [5]"
+    assert first_bare.code == 5
+
+
+def test_refusal_with_a_generation_record_is_indeterminate_at_http_200() -> None:
+    """The ambiguous refusal keeps the reply's status, so a reconcile reads it as sent."""
+    outcome = classify_reply(
+        "ogiZ0b",
+        200,
+        _envelope_with_error_and_record("ogiZ0b", "PUBLIC_ERROR_UNUSUAL_ACTIVITY"),
+    )
+    assert isinstance(outcome, Indeterminate)
+    assert outcome.status == 200
+    assert outcome.cause == "refusal error frame accompanied by generation record"

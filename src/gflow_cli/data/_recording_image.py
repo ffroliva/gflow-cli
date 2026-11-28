@@ -42,6 +42,7 @@ from gflow_cli.data._recorder_core import (
     _file_sha256,
     _new_id,
     _now_utc_iso,
+    _with_run_path,
 )
 
 
@@ -159,10 +160,7 @@ class ImageRecordingMixin(RecorderCore):
         # persists the browser-searchable caption in plaintext.
         if image.display_name and self.prompt_mode == "store":
             metadata["display_name"] = image.display_name
-        if image.transport is not None:
-            metadata["transport"] = image.transport
-        if image.visibility is not None:  # the path the run took, when the client saw it
-            metadata.update(route=image.route, visibility=image.visibility, retried=image.retried)
+        metadata = _with_run_path(metadata, image)
         repo.upsert_asset(
             AssetRecord(
                 id=asset_id,

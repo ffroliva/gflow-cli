@@ -536,3 +536,35 @@ async def test_an_accepted_upload_frame_without_a_media_id_is_reconciled(
     assert isinstance(ended.value.error, WireFormatError)
     assert ended.value.error.retryable is False
     assert ended.value.error.resolved_next_action() == "reconcile"
+
+
+@pytest.mark.asyncio
+async def test_a_token_source_that_ends_the_attempt_keeps_its_outcome(tmp_path: Path) -> None:
+    """A source that already decided the outcome (a signed-out shell) is not re-labelled
+    as a mint failure."""
+    signed_out = DirectAttemptEnded(NotSent("signed_out_shell", auth=True))
+    source = MagicMock()
+    source.mint = AsyncMock(side_effect=signed_out)
+    attempt = SubmitAttempt(_SPEC, tmp_path, source)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        async with attempt:
+            await attempt.mint()
+    assert ended.value is signed_out
+
+
+@pytest.mark.asyncio
+async def test_a_typed_error_after_send_is_logged_as_indeterminate(tmp_path: Path) -> None:
+    """The past-send failure leaves a ``direct.indeterminate`` line naming the rpc."""
+    from structlog.testing import capture_logs
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_ogiz0b_reply())
+
+    attempt = SubmitAttempt(_SPEC, tmp_path, FakeTokenSource())
+    with capture_logs() as logs:
+        async with _client(httpx.MockTransport(handler)) as client:
+            with pytest.raises(DirectAttemptEnded):
+                async with attempt:
+                    await attempt.send(client, _request())
+                    raise WafRejectionError(detail="blocked", route="batchexecute:ogiZ0b")
+    assert [e["rpcid"] for e in logs if e["event"] == "direct.indeterminate"] == ["ogiZ0b"]

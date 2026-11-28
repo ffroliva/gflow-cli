@@ -62,6 +62,11 @@ def browser_visibility(value: str | None) -> str | dict[str, Any] | None:
     return norm
 
 
+def visibility_setting(value: str | None) -> VisibilitySetting | None:
+    """A validated ``browser_visibility`` as the setting, ``None`` when unset or empty."""
+    return VisibilitySetting(value) if value else None
+
+
 def path_fields(asset: AssetLookup | None) -> dict[str, Any]:
     """Which path produced a result, as the CLI's ``--json`` reports it (Task 17)."""
     if asset is None:

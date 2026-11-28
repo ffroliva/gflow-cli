@@ -546,3 +546,51 @@ async def test_relaunch_refuses_caller_owned_transport(
             assert client._lease is lease
             assert client._unusable is False
             injected.quiesce.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_relaunch_of_an_unusable_client_is_refused_without_launching(
+    tmp_path: Path, mock_pw: tuple[MagicMock, MagicMock]
+) -> None:
+    """After a failed relaunch the client is unusable: a second relaunch never launches."""
+    pw, _ = mock_pw
+    with _launch_patches(pw):
+        client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
+        async with client:
+            pw.chromium.launch_persistent_context = AsyncMock(side_effect=RuntimeError("crash"))
+            with pytest.raises(RelaunchFailed):
+                await client.relaunch(BrowserVisibility.HEADLESS)
+            launches = pw.chromium.launch_persistent_context.await_count
+
+            with pytest.raises(RelaunchFailed, match="unusable"):
+                await client.relaunch(BrowserVisibility.HEADLESS)
+            assert pw.chromium.launch_persistent_context.await_count == launches
+
+
+@pytest.mark.asyncio
+async def test_relaunch_needs_an_entered_client(tmp_path: Path) -> None:
+    """With no lease held there is no browser to relaunch."""
+    client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
+    with pytest.raises(RuntimeError, match="lease"):
+        await client.relaunch(BrowserVisibility.HEADLESS)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_transport_teardown_does_not_stop_the_relaunch(
+    tmp_path: Path, mock_pw: tuple[MagicMock, MagicMock]
+) -> None:
+    """The old transport's teardown error is logged; the new browser still comes up."""
+    from structlog.testing import capture_logs
+
+    pw, _ = mock_pw
+    _, ctx2 = _two_contexts(pw)
+    transport = MagicMock()
+    transport.setup = AsyncMock()
+    transport.teardown = AsyncMock(side_effect=RuntimeError("teardown boom"))
+    with _launch_patches(pw, transport=transport):
+        client = FlowApiClient(profile_dir=tmp_path, visibility=BrowserVisibility.HEADLESS)
+        async with client:
+            with capture_logs() as logs:
+                await client.relaunch(BrowserVisibility.HEADLESS)
+            assert client._context is ctx2
+            assert any(e["event"] == "transport_teardown_error" for e in logs)
