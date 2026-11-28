@@ -105,7 +105,7 @@ class SubmitAttempt:
         if isinstance(exc, GFlowError):
             # A typed failure keeps its type; past the send it is never a retry.
             exc.retryable = False
-            log.warning("direct.attempt_indeterminate", rpcid=outcome.rpcid, cause=outcome.cause)
+            log.warning("direct.indeterminate", rpcid=outcome.rpcid, cause=outcome.cause)
             raise DirectAttemptEnded(outcome, error=exc) from exc
         raise self._ended(outcome) from exc
 
@@ -160,7 +160,7 @@ class SubmitAttempt:
 
     def _ended(self, outcome: Indeterminate) -> DirectAttemptEnded:
         rpcid, _, noun, hint = self.spec
-        log.warning("direct.attempt_indeterminate", rpcid=rpcid, cause=outcome.cause)
+        log.warning("direct.indeterminate", rpcid=rpcid, cause=outcome.cause)
         return DirectAttemptEnded(
             outcome,
             error=NetworkError(

@@ -548,6 +548,15 @@ class VideoRecordingMixin(RecorderCore):
             project_id = result.project_id or None
             workflow_id = result.workflow_id or None
             metadata = {}
+        if result.transport is not None:
+            metadata = {**metadata, "transport": result.transport}
+        if result.visibility is not None:  # the path the run took, when the client saw it
+            metadata = {
+                **metadata,
+                "route": result.route,
+                "visibility": result.visibility,
+                "retried": result.retried,
+            }
 
         if request is not None:
             _, aspect, duration, seed = _video_req_fields(request)

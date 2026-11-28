@@ -6,6 +6,7 @@ End-to-end live tests against the real Flow API live in
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -523,7 +524,8 @@ async def test_client_delegates_image_gen_to_transport(
                 aspect=Aspect.PORTRAIT,
             ),
         )
-    assert result is sentinel
+    # The client stamps the launch visibility; everything else is the transport's image.
+    assert result == dataclasses.replace(sentinel, visibility="headed")
 
 
 # ---------------------------------------------------------------------------
@@ -666,6 +668,48 @@ async def test_generate_video_delegates_to_transport(
         )
 
     assert result.status.media_id == "media-1"
+
+
+@pytest.mark.asyncio
+async def test_ui_automation_result_reports_launch_visibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A result that skips the retry loop still says the visibility it launched at."""
+    monkeypatch.delenv("GFLOW_CLI_TRANSPORT", raising=False)
+    _patch_playwright(monkeypatch)
+    image = GeneratedImage(
+        media_name="m",
+        workflow_id="w",
+        seed=1,
+        prompt="x",
+        model_name_type="NARWHAL",
+        aspect_ratio="IMAGE_ASPECT_RATIO_PORTRAIT",
+        fife_url="https://flow-content.google/image/m",
+        dimensions=(1, 1),
+    )
+
+    class _UiTransport(_VideoCapableFakeTransport):
+        async def generate_images(  # type: ignore[override]
+            self, *, project_id: str | None, request: object
+        ) -> list[object]:
+            return [image]
+
+    from gflow_cli.api.video import GenerateVideoRequest, Mode
+
+    settings = Settings(browser_visibility="auto")
+    async with FlowApiClient(
+        profile_dir=tmp_path, transport=_UiTransport(), settings=settings
+    ) as c:
+        c._mint_recaptcha_token = AsyncMock(return_value="tok")  # type: ignore[method-assign]
+        img = await c.generate_image(
+            project_id="p", req=GenerateImageRequest(prompt="x", aspect=Aspect.PORTRAIT)
+        )
+        vid = await c.generate_video(
+            req=GenerateVideoRequest(prompt="x", mode=Mode.T2V), project_id="p", out_dir=tmp_path
+        )
+
+    for result in (img, vid):
+        assert (result.route, result.visibility, result.retried) == ("ui", "headed", False)
 
 
 @pytest.mark.asyncio

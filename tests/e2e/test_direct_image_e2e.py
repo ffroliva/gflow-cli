@@ -499,7 +499,7 @@ def test_four_images_in_flight_from_one_armed_page(
 
     ``gflow run`` drives its rows one after another, so the four attempts are started
     in-process on one ``FlowApiClient``: its direct transport admits four at once, and
-    every mint uses the one armed page (no ``direct.page_rearmed`` for the run).
+    every mint uses the one armed page (no ``mint.rearmed`` for the run).
     """
     from structlog.testing import capture_logs
 
@@ -536,5 +536,5 @@ def test_four_images_in_flight_from_one_armed_page(
     assert all(p.read_bytes().startswith(_JPEG_OR_PNG) for p in written), written
     events = [e["event"] for e in logs]
     assert events.count("direct.image_post") == 4, events
-    assert "direct.page_rearmed" not in events  # one page armed for the whole run
+    assert "mint.rearmed" not in events  # one page armed for the whole run
     assert "direct.fallback_to_ui" not in events

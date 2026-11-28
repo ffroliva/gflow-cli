@@ -650,6 +650,15 @@ class VideoResult:
     quoted_credits: int | None = None
     #: ``"direct_http"`` when the clip was submitted over direct HTTP; ``None`` on the UI path.
     transport: str | None = None
+    #: ``"headless"`` / ``"headed"``: the browser the clip's run used; ``None`` when unknown.
+    visibility: str | None = None
+    #: True when Flow refused the first direct submit and the retry produced this clip.
+    retried: bool = False
+
+    @property
+    def route(self) -> str:
+        """``"direct"`` when the clip was submitted over direct HTTP, else ``"ui"``."""
+        return "direct" if self.transport == "direct_http" else "ui"
 
 
 # Callback type: invoked by the transport the moment a media_id becomes known,

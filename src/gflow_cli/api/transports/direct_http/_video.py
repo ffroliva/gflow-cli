@@ -217,12 +217,15 @@ async def _poll(
 ) -> GenerationRecord:
     """``jwpduf`` until the record is done or failed; a stub (no media id) is neither."""
     deadline = time.monotonic() + timeout_s
+    polls = 0
     while True:
         text = await read("jwpduf", [None, None, [[workflow_id]]])
+        polls += 1
         record = existing_record(text, "jwpduf", workflow_id) or failed_record(
             text, "jwpduf", workflow_id
         )
         if record is not None and (record.is_done or record.is_failed):
+            log.info("direct.video_poll", polls=polls, done=record.is_done)
             return record
         if time.monotonic() >= deadline:
             raise TransportTimeoutError(

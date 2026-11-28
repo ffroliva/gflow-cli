@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -36,6 +36,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    browser_visibility_option,
     client_visibility,
     default_project,
     image_route,
@@ -67,6 +68,7 @@ from gflow_cli.api.image import (
 from gflow_cli.api.image_upscale import TargetResolution, UpsampleImageRequest
 from gflow_cli.api.transports import transport_choices
 from gflow_cli.api.video import is_media_uuid
+from gflow_cli.cli_image_params import I2I_PROJECT_TITLE, I2IParams, i2i_request
 from gflow_cli.config import UiMode, get_settings, parse_jitter_range
 from gflow_cli.data.models import AssetKind, OperationKind
 from gflow_cli.data.recorder import (
@@ -136,7 +138,6 @@ if TYPE_CHECKING:
     from typing import Any
 
     from gflow_cli.api.dto import GeneratedImage
-    from gflow_cli.tools.invocation import AppliedTool
 
 _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
@@ -146,7 +147,6 @@ _CmdFn = TypeVar("_CmdFn", bound="Callable[..., object]")
 
 _CREATING_PROJECT_MSG = "  Creating project..."
 _T2I_PROJECT_TITLE = "gflow-cli t2i"
-_I2I_PROJECT_TITLE = "gflow-cli i2i"
 
 # `_FLOW_ID_RE` / `_validate_project_id` (Flow project/character-entity id
 # allowlist for --project / --reference-entity) live in gflow_cli._cli_helpers
@@ -745,6 +745,7 @@ _ui_mode_option = click.option(
         "--reference-entity; use --ref for a one-off image). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompts", nargs=-1, required=False)
 @click.option(
     "--prompts-file",
@@ -1440,6 +1441,7 @@ _BATCH_TITLE = "gflow-cli image batch"
         "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n"
     ),
 )
+@browser_visibility_option()
 @click.argument(
     "manifest",
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
@@ -1585,29 +1587,6 @@ def batch(
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _I2IParams:
-    """Bundles image-generation options for :func:`_run_i2i`.
-
-    Separating these from the profile/transport/output fields keeps the
-    function signature below Sonar's 13-parameter limit (S107) while preserving
-    every CLI option.
-    """
-
-    prompt: str
-    classified_refs: list[ImageRef | Path]
-    aspect: Aspect
-    model: Model
-    reference_entities: tuple[str, ...]
-    reference_entity_names: tuple[str, ...]
-    # Tool provenance (set when a --tool rewrote the prompt; recorded only).
-    original_prompt: str | None = None
-    tool: AppliedTool | None = None
-    instructions: tuple[AgentInstruction, ...] | None = None
-    ui_mode: UiMode | None = None
-    thinking_level: ThinkingLevel | None = None
-
-
 @spends_credits(True)
 @image.command(
     "i2i",
@@ -1627,6 +1606,7 @@ class _I2IParams:
         "--reference-entity; --ref is for one-off images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--ref",
@@ -1745,7 +1725,7 @@ def i2i(  # NOSONAR
     project_id = default_project(project_id, project_name, profile_name)
     provider_dir = _make_provider_dir(profile_name)
     settings = get_settings()
-    i2i_params = _I2IParams(
+    i2i_params = I2IParams(
         prompt=prompt,
         classified_refs=classified_refs,
         aspect=Aspect.from_cli(aspect),
@@ -1783,25 +1763,8 @@ def i2i(  # NOSONAR
     )
 
 
-def _i2i_request(params: _I2IParams, uuid_refs: list[ImageRef]) -> GenerateImageRequest:
-    return GenerateImageRequest(
-        prompt=params.prompt,
-        aspect=params.aspect,
-        model=params.model,
-        refs=tuple(uuid_refs),
-        ref_paths=tuple(r for r in params.classified_refs if isinstance(r, Path)),
-        reference_entities=params.reference_entities,
-        reference_entity_names=params.reference_entity_names,
-        original_prompt=params.original_prompt,
-        tool=params.tool,
-        instructions=params.instructions,
-        ui_mode=params.ui_mode,
-        thinking_level=params.thinking_level,
-    )
-
-
 def _planned_i2i_route(
-    params: _I2IParams, profile_name: str, project_id: str | None, transport: str | None
+    params: I2IParams, profile_name: str, project_id: str | None, transport: str | None
 ) -> Route:
     """The route an i2i request takes, decided before launch on the request the client sends.
 
@@ -1811,14 +1774,14 @@ def _planned_i2i_route(
         return Route.UI
     refs = [r for r in params.classified_refs if isinstance(r, ImageRef)]
     uuid_refs = _enrich_uuid_refs(refs, profile_name, project_id=project_id)
-    return image_route(_i2i_request(params, uuid_refs), transport=transport)
+    return image_route(i2i_request(params, uuid_refs), transport=transport)
 
 
 async def _run_i2i(
     *,
     profile_name: str,
     profile_dir: Path,
-    params: _I2IParams,
+    params: I2IParams,
     count: int,
     out: Path | None,
     output_root: Path,
@@ -1869,7 +1832,7 @@ async def _run_i2i(
                 profile_name,
                 project_id=project.project_id,
             )
-            req = _i2i_request(params, uuid_refs_initial)
+            req = i2i_request(params, uuid_refs_initial)
 
             # Resolve @-mentions (entities → reference_entities, media → refs) and
             # expand --tool specs (shared helper).
@@ -1986,7 +1949,7 @@ async def _run_i2i(
 
 def _print_i2i_summary(images: list[GeneratedImage], saved_paths: list[Path]) -> None:
     """Render a Rich table of generated images and where they landed."""
-    table = Table(title=_I2I_PROJECT_TITLE)
+    table = Table(title=I2I_PROJECT_TITLE)
     table.add_column("media_name", overflow="fold")
     table.add_column("seed", justify="right")
     table.add_column("dimensions")

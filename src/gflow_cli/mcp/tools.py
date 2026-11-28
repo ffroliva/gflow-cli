@@ -37,11 +37,13 @@ from pydantic import Field, ValidationError
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
-from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project, upscale_visibility
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project
 from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.generation_route import plan_visibility
 from gflow_cli.api.image import AgentInstruction
 from gflow_cli.api.image_upscale import TargetResolution
+from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.video import VIDEO_DURATION_CHOICES, is_media_uuid
 from gflow_cli.auth import verification
 from gflow_cli.cli_data import collect_usage_stats
@@ -55,6 +57,15 @@ from gflow_cli.data.store import DataStore
 from gflow_cli.errors import GFlowError, exit_code_for, is_retryable, outcome_members
 from gflow_cli.mcp.auth_status_errors import auth_status_error
 from gflow_cli.mcp.envelope_status import outcome_of
+from gflow_cli.mcp.generation_params import BrowserVisibilityParam
+from gflow_cli.mcp.generation_params import bad_param as _bad_param
+from gflow_cli.mcp.generation_params import browser_visibility as _browser_visibility
+from gflow_cli.mcp.generation_params import build_video_payload as _build_video_payload
+from gflow_cli.mcp.generation_params import path_fields as _path_fields
+from gflow_cli.mcp.generation_params import upscale_route_for as _upscale_route
+from gflow_cli.mcp.generation_params import (
+    validate_image_ui_and_thinking as _validate_image_ui_and_thinking,
+)
 from gflow_cli.mcp.out_file import OutFileParam
 from gflow_cli.mcp.rate_limit import _TokenBucket  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.mcp.server import server
@@ -71,7 +82,7 @@ from gflow_cli.services.media_recovery import download_media
 from gflow_cli.storage import refuse_cloud_storage_for_local_file
 from gflow_cli.tools.invocation import ToolInvocation
 from gflow_cli.worker import codec
-from gflow_cli.worker.daemon import FlowWorker, run_counted
+from gflow_cli.worker.daemon import FlowWorker, run_counted, with_browser_visibility
 from gflow_cli.worker.queue import QueueRepository, QueueTask, mark_interrupted
 
 log = structlog.get_logger()
@@ -501,10 +512,11 @@ def _settle_unfinished(task_id: str, db_path: Path, reason: str) -> None:
 
 def _completed_outputs(
     store: DataStore, profile: str, task: QueueTask
-) -> tuple[str | None, str | None, int | None, list[str]]:
-    """Project id, workflow id, seed and every local file of a completed task (#1469)."""
+) -> tuple[str | None, str | None, int | None, list[str], dict[str, Any]]:
+    """Project id, workflow id, seed, every local file and the path fields of a completed
+    task (#1469)."""
     if not task.flow_media_id:
-        return None, None, None, []
+        return None, None, None, [], _path_fields(None)
     repo = DataRepository(store)
     cp = task.checkpoint if isinstance(task.checkpoint, dict) else {}
     catalog_op_id = cp.get("catalog_operation_id")
@@ -525,10 +537,10 @@ def _completed_outputs(
         )
     )
     if asset is None:
-        return None, None, None, files
+        return None, None, None, files, _path_fields(None)
     # The catalogued seed (#1013): Flow's own on the classic image paths, the
     # requested one for video, a 0 placeholder on the agentic/agent-only arms.
-    return asset.flow_project_id, asset.flow_workflow_id, asset.seed, files
+    return asset.flow_project_id, asset.flow_workflow_id, asset.seed, files, _path_fields(asset)
 
 
 def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
@@ -577,7 +589,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
                 failed["task_status"] = completed_task.status
             return failed | codec.task_warnings(completed_task)
 
-        flow_project_id, flow_workflow_id, seed, file_paths = _completed_outputs(
+        flow_project_id, flow_workflow_id, seed, file_paths, path_fields = _completed_outputs(
             store, profile, completed_task
         )
 
@@ -597,6 +609,7 @@ def task_payload(profile: str, task_id: str, db_path: Path) -> dict[str, Any]:
         "flow_workflow_id": flow_workflow_id,
         "seed": seed,
         "files": file_paths,
+        **path_fields,
     } | codec.task_warnings(completed_task)
 
 
@@ -608,6 +621,11 @@ async def _run_generation_task(
     wait: bool = True,
 ) -> dict[str, Any]:
     """Enqueue a generation task and either return handle immediately or wait for completion."""
+    visibility = _browser_visibility(payload.pop("browser_visibility", None))
+    if isinstance(visibility, dict):
+        return visibility
+    if visibility is not None:
+        payload["browser_visibility"] = visibility
     if not wait:
         handle = _enqueue_generation_task(
             profile=profile,
@@ -685,25 +703,6 @@ async def _run_generation_task(
             "task_id": task_id,
             "error": _masked_unexpected_dict(exc),
         }
-
-
-_BAD_PARAM_TYPE = "https://gflow-cli.dev/errors/bad-parameter"
-
-# UUID (Flow media id) vs on-disk path discriminator for image references.
-
-
-def _bad_param(title: str, detail: str) -> dict[str, Any]:
-    """Build the standard RFC 9457 bad-parameter (400) error envelope."""
-    return {
-        "status": "error",
-        "error": {
-            "type": _BAD_PARAM_TYPE,
-            "title": title,
-            "status": 400,
-            "detail": detail,
-            **outcome_members("no", "fix_input"),
-        },
-    }
 
 
 def _confine_to_output_dir(value: str) -> Path:
@@ -1020,40 +1019,6 @@ def _build_video_media_inputs(
 # ---------------------------------------------------------------------------
 
 
-def _validate_image_ui_and_thinking(
-    ui_mode: str | None, thinking_level: str | None
-) -> tuple[str | None, str | None, dict[str, Any] | None]:
-    norm_ui = None
-    if ui_mode is not None:
-        norm_ui = ui_mode.lower()
-        if norm_ui not in {m.value for m in UiMode}:
-            return (
-                None,
-                None,
-                _bad_param(
-                    "Invalid ui_mode",
-                    f"Expected one of {[m.value for m in UiMode]}, got {norm_ui!r}.",
-                ),
-            )
-    norm_think = None
-    if thinking_level is not None:
-        from gflow_cli.api.image import ThinkingLevel
-
-        try:
-            resolved = ThinkingLevel.from_cli(thinking_level)
-        except ValueError:
-            return (
-                None,
-                None,
-                _bad_param(
-                    "Invalid thinking_level",
-                    f"Expected one of {[t.value for t in ThinkingLevel]}, got {thinking_level!r}.",
-                ),
-            )
-        norm_think = resolved.value if resolved is not None else None
-    return norm_ui, norm_think, None
-
-
 @server.tool(
     name="gflow_generate_image",
     description=(
@@ -1077,6 +1042,9 @@ def _validate_image_ui_and_thinking(
         "clear it. On an agent-only "
         "composer (#799) only text-to-image runs, so reference_images and character "
         "references fail there too. "
+        "Measured shapes are sent over direct HTTP with a headless browser that only mints "
+        "the reCAPTCHA token; other shapes open a visible browser (browser_visibility "
+        "overrides). The result names route, visibility and retried. "
         "Returns local file paths to the generated images; fewer than count adds images_missing "
         "to warnings."
     ),
@@ -1099,6 +1067,7 @@ async def gflow_generate_image(
     thinking_level: str | None = None,
     out_file: OutFileParam = None,
     wait: _WaitParam = True,
+    browser_visibility: BrowserVisibilityParam = None,
 ) -> dict[str, Any]:
     """Generate an image via Google Flow's Imagen.
 
@@ -1143,9 +1112,11 @@ async def gflow_generate_image(
             (only in agentic mode).
         ui_mode: Required Flow UI arm — 'classic' (hard aspect controls),
             'agentic' (chat surface; forced automatically when instructions are
-            given), or 'auto' (bind whatever renders, the default). If the arm
-            can't be reached, generation aborts before submitting (no credits).
-            Overrides GFLOW_CLI_UI_MODE.
+            given), or 'auto' (bind whatever renders, the default). On the UI
+            path, if the arm can't be reached, generation aborts before
+            submitting (no credits); 'agentic' always takes the UI path, while
+            'classic' and 'auto' may run on the direct path, which has no editor
+            to verify. Overrides GFLOW_CLI_UI_MODE.
         thinking_level: Optional image thinking level in Flow's settings pane —
             'low', 'medium', or 'high' (mirrors CLI ``--thinking-level``; omit
             to leave Flow's current setting untouched).
@@ -1153,9 +1124,15 @@ async def gflow_generate_image(
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
+        browser_visibility: Browser window policy for this job (mirrors the CLI
+            ``--browser-visibility``; overrides ``GFLOW_CLI_BROWSER_VISIBILITY``): 'auto',
+            'headless' or 'headed', case-insensitive; any other value is a 400.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
+        'route' ('direct' or 'ui'), 'visibility' ('headless'/'headed', null when the run
+        did not report it) and 'retried' (a not-charged refusal was retried once) say
+        which path produced 'flow_media_id', as the CLI's ``--json`` does.
         'seed' is the catalogued seed of 'flow_media_id': the seed Flow chose on the
         classic image paths; 0 on the agentic / agent-only arms, which observe none;
         null when none was recorded. It cannot be requested.
@@ -1207,6 +1184,7 @@ async def gflow_generate_image(
         "model": model,
         "aspect": aspect,
         "count": count,
+        "browser_visibility": browser_visibility,
     }
     if instructions:
         payload["instructions"] = list(instructions)
@@ -1263,47 +1241,6 @@ async def gflow_generate_image(
     return result
 
 
-def _build_video_payload(
-    prompt: str,
-    mode: str,
-    aspect: str,
-    count: int,
-    model: str | None,
-    duration: int | None,
-    resolution: str | None,
-    tool_specs: Any,
-    project: str | None,
-    project_name: str | None,
-    output: str | None = None,
-    ui_mode: str | None = None,
-    reference_entities: list[str] | None = None,
-    reference_entity_names: list[str] | None = None,
-    max_credits: int | None = None,
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"prompt": prompt, "mode": mode, "aspect": aspect, "count": count}
-    names = list(reference_entity_names) if reference_entity_names else None
-    payload.update(
-        {
-            key: value
-            for key, value in (
-                ("ui_mode", ui_mode),
-                ("model", model),
-                ("duration", duration),
-                ("resolution", resolution),
-                ("project_id", project),
-                ("project_name", project_name),
-                ("output_file", output),
-                ("max_credits", max_credits),
-                ("tool_specs", list(tool_specs) if tool_specs else None),
-                ("reference_entities", list(reference_entities) if reference_entities else None),
-                ("reference_entity_names", names),
-            )
-            if value is not None
-        }
-    )
-    return payload
-
-
 @server.tool(
     name="gflow_generate_video",
     description=(
@@ -1320,9 +1257,16 @@ def _build_video_payload(
         "Reference a SAVED character via @Name; pass one-off "
         "ingredient images via reference_images. See docs/REFERENCE_STRATEGIES.md. "
         "max_credits uses Flow's quote as a hard cap and refuses missing or over-limit quotes. "
-        "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit and aborts "
-        "before spending credits if unreachable; 'agentic' is not supported for video. "
+        "Optional ui_mode ('classic'/'auto') verifies the classic editor pre-submit on the UI "
+        "path and aborts before spending credits if unreachable (the direct path has no "
+        "editor); 'agentic' is not supported for video. "
         "out_file, if given, must resolve inside the configured output directory. "
+        "Text-to-video and start-frame image-to-video at measured model keys go over direct "
+        "HTTP with a headless browser that only mints the reCAPTCHA token; a refusal Flow "
+        "did not charge is retried once from a new headless browser, and a second one is "
+        "final (retryable false, next_action none). Other shapes, and any capped video, open "
+        "a visible browser; browser_visibility overrides. The result names route, visibility "
+        "and retried. "
         "Returns the local file path; a model Flow is retiring adds model_retiring to warnings."
     ),
 )
@@ -1348,6 +1292,7 @@ async def gflow_generate_video(  # NOSONAR
     ui_mode: str | None = None,
     out_file: OutFileParam = None,
     wait: _WaitParam = True,
+    browser_visibility: BrowserVisibilityParam = None,
 ) -> dict[str, Any]:
     """Generate a video via Google Flow's Veo.
 
@@ -1360,8 +1305,9 @@ async def gflow_generate_video(  # NOSONAR
         aspect: Aspect ratio — '9:16' or '16:9'.
         initial_frame: Path to start frame image (required for i2v). On an
             account Google has moved to flow.google.com a **local file** is the
-            only form served there — uploaded through the editor, then bound from
-            the Frames picker under a **run-unique** name (``hero.png`` is listed
+            only form served there — on the direct path uploaded over HTTP; on the UI
+            path uploaded through the editor, then bound from the Frames picker under a
+            **run-unique** name (``hero.png`` is listed
             as ``hero-<8 hex>.png``), so a re-run of the same file cannot bind an
             earlier upload (#792); a Flow media UUID returns the
             exit-36-equivalent envelope.
@@ -1429,7 +1375,8 @@ async def gflow_generate_video(  # NOSONAR
             (#799) only 't2v' is ported; 'i2v' and 'r2v' return that envelope too.
         ui_mode: Required Flow UI arm (mirrors the CLI ``--ui-mode`` on
             ``video t2v``/``i2v``; applies to every mode of this tool,
-            including 'r2v'). Labs video only has a classic driver:
+            including 'r2v'; the direct path has no editor to verify). Labs video only
+            has a classic driver:
             'classic'/'auto' verify the classic editor pre-submit (best-effort
             DOM probe) and abort before spending credits if it is unreachable;
             'agentic' is not yet supported for video and is rejected (400). An
@@ -1440,10 +1387,15 @@ async def gflow_generate_video(  # NOSONAR
             is taken relative to it; an escape or a directory is refused (400 Invalid Output).
         wait: Block until the generation finishes (default) or run it in the background;
             agents read it from the tool schema (#481).
+        browser_visibility: Browser window policy for this job (mirrors the CLI
+            ``--browser-visibility``; overrides ``GFLOW_CLI_BROWSER_VISIBILITY``): 'auto',
+            'headless' or 'headed', case-insensitive; any other value is a 400.
         **kwargs: Additional optional keyword arguments such as ``project_name``.
 
     Returns:
         Dict with 'status', 'files' (list of local file paths), and metadata.
+        'route', 'visibility' and 'retried' say which path produced the clip, as the
+        CLI's ``--json`` does; a capped video (max_credits) always takes the 'ui' route.
         'seed' is the catalogued seed of 'flow_media_id' — for video, one a CLI
         ``--seed`` recorded (this tool takes none), never one observed from Flow; null
         when none was recorded.
@@ -1570,6 +1522,7 @@ async def gflow_generate_video(  # NOSONAR
         max_credits=max_credits,
     )
     payload.update(media)
+    payload["browser_visibility"] = browser_visibility
 
     # task_type matches the mode ("t2v", "i2v", "r2v")
     result = await _run_generation_task(
@@ -1949,7 +1902,11 @@ async def gflow_upscale_image(
         "4k requires Flow Ultra); a scale the clip's menu does not list returns "
         "UpscaleUnavailableError (exit 22) naming the scales it does list. "
         "Measured: 1080p export spent 0 credits (2026-10-07); 4k Ultra export spends credits "
-        "(measured 50 credits on Omni 1.2 Flash, 2026-11-23)."
+        "(measured 50 credits on Omni 1.2 Flash, 2026-11-23). "
+        "A 1080p upscale of a catalogued measured source goes over direct HTTP with a "
+        "headless browser that only mints the reCAPTCHA token; every other upscale drives "
+        "the clip's download menu in a visible browser (browser_visibility overrides). The "
+        "result names route and visibility."
     ),
 )
 @_guarded
@@ -1959,6 +1916,7 @@ async def gflow_upscale_video(
     project: str | None = None,
     out_dir: str | None = None,
     profile: str = _DEFAULT_PROFILE,
+    browser_visibility: BrowserVisibilityParam = None,
 ) -> dict[str, Any]:
     """Upscale or export a platform-generated video to 4k, 1080p, 720p, or 270p.
 
@@ -1972,10 +1930,17 @@ async def gflow_upscale_video(
         project: Project UUID that owns the media. Resolved from local catalog when omitted.
         out_dir: Output directory, inside the configured output dir (the default).
         profile: Profile name (overrides default).
+        browser_visibility: Browser window policy for this job (mirrors the CLI
+            ``--browser-visibility``; overrides ``GFLOW_CLI_BROWSER_VISIBILITY``): 'auto',
+            'headless' or 'headed', case-insensitive; any other value is a 400.
 
     Returns:
-        Dict with status, media_id, project_id, scale, path, and size bytes.
+        Dict with status, media_id, project_id, scale, path, size bytes, 'route' and
+        'visibility'.
     """
+    visibility = _browser_visibility(browser_visibility)
+    if isinstance(visibility, dict):
+        return visibility
     resolved = _resolve_and_validate_profile(profile)
     if isinstance(resolved, dict):
         return resolved
@@ -1995,6 +1960,7 @@ async def gflow_upscale_video(
         out_dir=out_dir,
         scale_label=scale_label,
         ext="gif" if scale_label == "270p" else "mp4",
+        browser_visibility=visibility,
         upscale=lambda client, project_id, out_path: client.upsample_video(
             media_id=media_id,
             project_id=project_id,
@@ -2014,6 +1980,7 @@ async def _run_upscale_tool(
     scale_label: str,
     ext: str,
     upscale: Callable[[FlowApiClient, str, Path], Awaitable[Any]],
+    browser_visibility: str | None = None,
 ) -> dict[str, Any]:
     """Shared tail of the upscale tools: validate ids, resolve the project, run, report."""
     if not is_media_uuid(media_id):
@@ -2030,7 +1997,9 @@ async def _run_upscale_tool(
             f"(profile {profile!r}). Pass project parameter explicitly.",
         )
 
-    settings = get_settings()
+    settings = with_browser_visibility(
+        get_settings(), VisibilitySetting(browser_visibility) if browser_visibility else None
+    )
     profile_dir = settings.profile_subdir(profile)
     try:
         output_root = (
@@ -2045,12 +2014,15 @@ async def _run_upscale_tool(
     )
 
     log.info(f"mcp.tool.upscale_{kind}", media_id=media_id, scale=scale_label, profile=profile)
+    route = _upscale_route(settings, profile_dir, media_id, scale_label, kind)
+    visibility = plan_visibility(settings.browser_visibility, (route,))
     async with (
         _profile_lock(profile),
         FlowApiClient(
             profile_dir=profile_dir,
-            visibility=upscale_visibility(profile_dir, media_id, scale_label, kind),
+            visibility=visibility,
             out_dir=output_root,
+            settings=settings,
         ) as client,
     ):
         target = await upscale(client, resolved_project, out_path)
@@ -2068,6 +2040,8 @@ async def _run_upscale_tool(
         "scale": scale_label,
         "path": str(target),
         "bytes": file_bytes,
+        "route": route.value,
+        "visibility": client.visibility.value,
     }
 
 
