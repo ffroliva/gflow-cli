@@ -425,6 +425,7 @@ async def read_credits(profile_dir: Path, *, settings: Settings | None = None) -
             # Only the numeric status: a real rate-limit code shows up here before we act on it.
             log.info("credits.wire_rpc_error", codes=codes)
         raise WireReadUnavailable(WireFallbackReason.UNPARSEABLE) from None
+    _signed_out.pop(profile_dir, None)
     _accepted_seq[profile_dir] = _accepted_seq.get(profile_dir, 0) + 1
     log.info("credits.wire_read", ms=round(elapsed * 1000))
     return info

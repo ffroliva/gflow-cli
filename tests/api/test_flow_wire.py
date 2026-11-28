@@ -1279,3 +1279,46 @@ async def test_overlapping_failed_health_probe_does_not_undo_newer_recovery(
     release_probe_c.set()
     assert (await probe_c)["status"] == "store_unreadable"
     assert flow_wire._active_signed_out(profile) is not None  # pyright: ignore[reportPrivateUsage]
+
+    # Reverse interleaving: failed probe restores BEFORE in-flight accepted POST returns.
+    post_waiting = asyncio.Event()
+    release_post = asyncio.Event()
+    fail_cookie = asyncio.Event()
+    cookie_started = asyncio.Event()
+    call_idx = 0
+
+    async def staggered_cookies(_p: Path) -> list[tuple[str, str]]:
+        nonlocal call_idx
+        call_idx += 1
+        if call_idx == 1:
+            cookie_started.set()
+            await fail_cookie.wait()
+            raise CookieStoreUnreadable("locked")
+        return list(_FAKE_COOKIES)
+
+    real_send = flow_wire._send  # pyright: ignore[reportPrivateUsage]
+
+    async def paused_send(client: httpx.AsyncClient, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            post_waiting.set()
+            await release_post.wait()
+        return await real_send(client, request)
+
+    monkeypatch.setattr(flow_wire, "_read_cookies", staggered_cookies)
+    monkeypatch.setattr(flow_wire, "_send", paused_send)
+    probe_d = asyncio.create_task(flow_wire.health(profile))
+    await cookie_started.wait()
+    probe_e = asyncio.create_task(flow_wire.health(profile))
+    await post_waiting.wait()
+
+    # Probe D fails cookie read and restores _signed_out while probe E's POST is in flight.
+    fail_cookie.set()
+    assert (await probe_d)["status"] == "store_unreadable"
+    assert flow_wire._active_signed_out(profile) is not None  # pyright: ignore[reportPrivateUsage]
+
+    # Probe E's accepted POST finishes and must clear the restored mark.
+    release_post.set()
+    assert (await probe_e)["status"] == "accepted"
+    assert profile not in flow_wire._signed_out  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(flow_wire, "_send", real_send)
+    assert (await flow_wire.read_credits(profile)).credits == 42
