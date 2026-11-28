@@ -442,6 +442,22 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         except Exception as exc:  # noqa: BLE001 — seeding must never break the launch
             logger.warning("client.context_cookie_seed_error", error=type(exc).__name__)
 
+    async def _acquire_lease(self) -> None:
+        """Take the profile lease, unless this client already holds it."""
+        if self._lease is None:
+            try:
+                # aacquire so a #478 opt-in wait polls with asyncio.sleep instead
+                # of blocking the event loop (daemon tasks share it).
+                self._lease = await ProfileLease(self.profile_dir).aacquire()
+            except ProfileLockedError as exc:
+                # Metadata-only incident BEFORE any Chrome exists (S07); the
+                # partial-setup guard's _close_browser_resources finalizes it.
+                if self._recorder is not None:
+                    ref = await self._recorder.capture_metadata_only(exc, phase="profile_lease")
+                    if ref is not None and exc.incident_ref is None:
+                        exc.incident_ref = ref
+                raise
+
     async def _enter_setup(self) -> None:
         """Body of __aenter__ after the Playwright driver starts.
 
@@ -459,19 +475,7 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
         # takes and releases its own lease first — acquiring earlier would make
         # this a same-process double-acquire. Contention raises ProfileLockedError
         # (exit 11) here, before any Chrome process starts.
-        if self._lease is None:
-            try:
-                # aacquire so a #478 opt-in wait polls with asyncio.sleep instead
-                # of blocking the event loop (daemon tasks share it).
-                self._lease = await ProfileLease(self.profile_dir).aacquire()
-            except ProfileLockedError as exc:
-                # Metadata-only incident BEFORE any Chrome exists (S07); the
-                # partial-setup guard's _close_browser_resources finalizes it.
-                if self._recorder is not None:
-                    ref = await self._recorder.capture_metadata_only(exc, phase="profile_lease")
-                    if ref is not None and exc.incident_ref is None:
-                        exc.incident_ref = ref
-                raise
+        await self._acquire_lease()
         # Guard AFTER the lease (#478 review): during an opt-in lease wait the
         # holder rewrites 'Last Version' exactly as it releases, so a
         # pre-wait check would validate a stale value (TOCTOU). A raise here

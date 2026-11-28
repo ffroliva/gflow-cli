@@ -60,6 +60,7 @@ from gflow_cli.data._recorder_core import (
     _file_sha256,
     _new_id,
     _now_utc_iso,
+    _with_run_path,
 )
 
 
@@ -548,15 +549,7 @@ class VideoRecordingMixin(RecorderCore):
             project_id = result.project_id or None
             workflow_id = result.workflow_id or None
             metadata = {}
-        if result.transport is not None:
-            metadata = {**metadata, "transport": result.transport}
-        if result.visibility is not None:  # the path the run took, when the client saw it
-            metadata = {
-                **metadata,
-                "route": result.route,
-                "visibility": result.visibility,
-                "retried": result.retried,
-            }
+        metadata = _with_run_path(metadata, result)
 
         if request is not None:
             _, aspect, duration, seed = _video_req_fields(request)

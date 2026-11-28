@@ -36,23 +36,23 @@ more and were split without a change in behaviour:
 
 The highest remaining new functions: `run_with_retry` 9.0, `next_step` 7.0.
 
-## Changed functions above their `develop` complexity
+## Changed functions against their `develop` complexity
 
-Pre-existing functions whose cyclomatic complexity rose on this branch (CRAP at the branch's
-coverage). Task 1 did not record a per-function coverage baseline, so the comparison is by
-complexity against `develop`. These are reported, not split: each lives in a module outside
-this transport, and each grew by one or two branches.
+Pre-existing functions whose cyclomatic complexity rose on this branch. The branches this branch
+added were moved into small private helpers without a change in behaviour, error handling, log
+events or call shapes, so each function now sits at or below its `develop` value
+(`radon cc -s`).
 
-| Function | CC on `develop` | CC now | CRAP now |
-|---|---|---|---|
-| `GenerationSurface._drive_images_generation` | 16 | 18 | 18.0 |
-| `cli_movie._run_movie` | 14 | 15 | 16.3 |
-| `cli_video._run_chain` | 12 | 13 | 13.0 |
-| `VideoRecordingMixin._build_completed_video_asset` | 11 | 13 | 13.0 |
-| `GenerationSurface.generate_video` | 9 | 11 | 11.1 |
-| `ImageRecordingMixin._persist_generated_image` | 10 | 11 | 11.0 |
-| `mcp.tools._run_upscale_tool` | 9 | 10 | 10.0 |
-| `FlowApiClient._enter_setup` | 9 | 10 | 10.0 |
+| Function | CC on `develop` | CC before the split | CC now | Extracted into |
+|---|---|---|---|---|
+| `GenerationSurface._drive_images_generation` | 16 | 18 | 14 | `_flow_generation._submit_images` (5) |
+| `cli_movie._run_movie` | 14 | 15 | 14 | `cli_movie._planned_routes` (2) |
+| `cli_video._run_chain` | 12 | 13 | 12 | none: the route list is `list(map(video_route, planned))` |
+| `VideoRecordingMixin._build_completed_video_asset` | 11 | 13 | 11 | `_recorder_core._with_run_path` (3) |
+| `GenerationSurface.generate_video` | 9 | 11 | 9 | `_flow_generation._note_submit_attempted` (3) |
+| `ImageRecordingMixin._persist_generated_image` | 10 | 11 | 9 | `_recorder_core._with_run_path` (shared) |
+| `mcp.tools._run_upscale_tool` | 9 | 10 | 9 | `generation_params.visibility_setting` (2) |
+| `FlowApiClient._enter_setup` | 9 | 10 | 5 | `FlowApiClient._acquire_lease` (6) |
 
 ## Mutation testing
 
