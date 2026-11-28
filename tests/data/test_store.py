@@ -345,7 +345,7 @@ def test_a_recreated_db_is_restricted_again(
 
     def run(args: list[str], **kwargs: Any) -> Any:
         if "/inheritance:r" in args:
-            hardened.append(args[1])
+            hardened.append(os.path.normcase(args[1]))
         return real(args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -356,43 +356,268 @@ def test_a_recreated_db_is_restricted_again(
         with DataStore.open(db):
             pass
         db.unlink()
-    assert len(hardened) == 2
+    assert hardened.count(os.path.normcase(str(db))) == 2
+    assert hardened.count(os.path.normcase(f"{db}-wal")) == 4
+    assert hardened.count(os.path.normcase(f"{db}-shm")) == 4
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def _win_icacls_exe() -> str:
+    return os.path.join(os.environ["SystemRoot"], "System32", "icacls.exe")
+
+
+def _win_acl(path: Path) -> list[str]:
+    done = subprocess.run([_win_icacls_exe(), str(path)], check=True, capture_output=True)  # noqa: S603
+    text = done.stdout.decode("ascii", errors="replace").replace(str(path), "")
+    return [line.strip() for line in text.splitlines() if ":(" in line]
+
+
+def _win_current_user() -> str:
+    whoami = os.path.join(os.environ["SystemRoot"], "System32", "whoami.exe")
+    me = subprocess.run([whoami], check=True, capture_output=True).stdout  # noqa: S603
+    return me.decode("ascii", errors="replace").strip().lower()
+
+
+def _grant_everyone_read(path: Path) -> None:
+    subprocess.run(  # noqa: S603
+        [_win_icacls_exe(), str(path), "/grant", "*S-1-1-0:(OI)(CI)R"],
+        check=True,
+        capture_output=True,
+    )
+
+
+def _assert_single_user_acl(path: Path, user: str) -> None:
+    entries = _win_acl(path)
+    assert len(entries) == 1
+    assert entries[0].lower() == f"{user}:(f)"
+
+
+def _has_inherited_aces(path: Path) -> bool:
+    entries = _win_acl(path)
+    return len(entries) > 1 and any("(i)" in entry.lower() for entry in entries)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
 def test_open_restricts_the_db_but_not_its_neighbours(tmp_path: Path) -> None:
-    icacls = os.path.join(os.environ["SystemRoot"], "System32", "icacls.exe")
-
-    def acl(path: Path) -> list[str]:
-        done = subprocess.run([icacls, str(path)], check=True, capture_output=True)  # noqa: S603
-        text = done.stdout.decode("ascii", errors="replace").replace(str(path), "")
-        return [line.strip() for line in text.splitlines() if ":(" in line]
-
-    subprocess.run(  # noqa: S603
-        [icacls, str(tmp_path), "/grant", "*S-1-1-0:(OI)(CI)R"], check=True, capture_output=True
-    )
+    _grant_everyone_read(tmp_path)
     neighbour = tmp_path / "sub" / "report.txt"
     neighbour.parent.mkdir()
     neighbour.touch()
-    before = [acl(tmp_path), acl(neighbour)]
+    before = [_win_acl(tmp_path), _win_acl(neighbour)]
     db = tmp_path / "gflow.db"
     db.touch()  # an existing database
     with DataStore.open(db):
         pass
-    assert [acl(tmp_path), acl(neighbour)] == before
-    assert len(acl(db)) == 1
-    whoami = os.path.join(os.environ["SystemRoot"], "System32", "whoami.exe")
-    me = subprocess.run([whoami], check=True, capture_output=True).stdout  # noqa: S603
-    user = me.decode("ascii", errors="replace").strip().lower()
-    assert acl(db)[0].lower() == f"{user}:(f)"
+    assert [_win_acl(tmp_path), _win_acl(neighbour)] == before
+    user = _win_current_user()
+    _assert_single_user_acl(db, user)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["gflow.db", "sub"]
     with DataStore.open(tmp_path / "new" / "gflow.db"):
         pass
     (tmp_path / "plain").mkdir()
-    assert acl(tmp_path / "new") == acl(tmp_path / "plain")
+    assert _win_acl(tmp_path / "new") == _win_acl(tmp_path / "plain")
     with pytest.raises(DataStoreError):
         DataStore.open(tmp_path / "plain")
-    assert acl(tmp_path / "plain") == acl(tmp_path / "new")
+    assert _win_acl(tmp_path / "plain") == _win_acl(tmp_path / "new")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_restricts_windows_wal_and_shm_on_open_and_reopen(tmp_path: Path) -> None:
+    """Live -wal and -shm sidecars are owner-only on fresh open and across clean reopens (#1437)."""
+    _grant_everyone_read(tmp_path)
+    neighbour = tmp_path / "sub" / "report.txt"
+    neighbour.parent.mkdir()
+    neighbour.touch()
+    before = [_win_acl(tmp_path), _win_acl(neighbour)]
+    user = _win_current_user()
+    db = tmp_path / "gflow.db"
+    wal = db.with_name("gflow.db-wal")
+    shm = db.with_name("gflow.db-shm")
+
+    with DataStore.open(db) as live:
+        assert wal.exists() and shm.exists()
+        _assert_single_user_acl(db, user)
+        _assert_single_user_acl(wal, user)
+        _assert_single_user_acl(shm, user)
+        live.conn.execute(
+            "INSERT INTO profiles(name, first_seen_at) VALUES ('p1', '2026-01-01T00:00:00Z')"
+        )
+        live.conn.commit()
+        live.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+        _assert_single_user_acl(wal, user)
+        _assert_single_user_acl(shm, user)
+
+    assert not wal.exists() and not shm.exists()
+
+    with DataStore.open(db) as reopened:
+        assert wal.exists() and shm.exists()
+        _assert_single_user_acl(wal, user)
+        _assert_single_user_acl(shm, user)
+        rows = reopened.conn.execute("SELECT name FROM profiles").fetchall()
+        assert [r["name"] for r in rows] == ["p1"]
+
+    assert [_win_acl(tmp_path), _win_acl(neighbour)] == before
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_tightens_existing_loose_windows_wal_and_shm(tmp_path: Path) -> None:
+    """Crash-leftover -wal/-shm files with Everyone read access are tightened (#1437)."""
+    _grant_everyone_read(tmp_path)
+    user = _win_current_user()
+    db = tmp_path / "gflow.db"
+    wal = db.with_name("gflow.db-wal")
+    shm = db.with_name("gflow.db-shm")
+
+    with DataStore.open(db):
+        pass
+    wal.touch()
+    shm.touch()
+    assert _has_inherited_aces(wal)
+    assert _has_inherited_aces(shm)
+
+    with DataStore.open(db) as reopened:
+        _assert_single_user_acl(db, user)
+        _assert_single_user_acl(wal, user)
+        _assert_single_user_acl(shm, user)
+        reopened.conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_skips_same_identity_and_rehardens_externally_replaced_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repeated open hits ACL cache; an externally replaced DB gets a fresh ACL."""
+    db = tmp_path / "gflow.db"
+    real_run = subprocess.run
+    hardened: list[str] = []
+
+    def tracking_run(args: list[str], **kwargs: Any) -> Any:
+        if "/inheritance:r" in args:
+            hardened.append(args[1])
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", tracking_run)
+
+    with DataStore.open(db):
+        count_after_first = len(hardened)
+        assert count_after_first == 3
+        with DataStore.open(db):
+            assert len(hardened) == count_after_first
+
+    hardened.clear()
+    db.unlink()
+    db.write_bytes(b"")  # External process creates a new file without calling any cache-reset API.
+    with DataStore.open(db):
+        pass
+    assert any(os.path.normcase(p) == os.path.normcase(str(db)) for p in hardened)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_runs_whoami_at_most_once_across_reopens(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reopening a closed store re-hardens recreated sidecars but spawns whoami.exe once."""
+    db = tmp_path / "gflow.db"
+    real_run = subprocess.run
+    whoami_calls = 0
+    icacls_calls = 0
+
+    def counting_run(args: list[str], **kwargs: Any) -> Any:
+        nonlocal whoami_calls, icacls_calls
+        exe = os.path.basename(args[0]).lower()
+        if exe == "whoami.exe":
+            whoami_calls += 1
+        elif exe == "icacls.exe":
+            icacls_calls += 1
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting_run)
+
+    for _ in range(3):
+        with DataStore.open(db):
+            pass
+
+    assert whoami_calls == 1
+    assert icacls_calls > 3
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_never_hardens_windows_non_db_or_symlink_targets(tmp_path: Path) -> None:
+    """Directory paths, sibling -wal files, and symlinked sidecars keep their original ACLs."""
+    _grant_everyone_read(tmp_path)
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    sibling_wal = tmp_path / "folder-wal"
+    sibling_wal.touch()
+    before_folder = _win_acl(folder)
+    before_sibling = _win_acl(sibling_wal)
+
+    with pytest.raises(DataStoreError):
+        DataStore.open(folder)
+    assert _win_acl(folder) == before_folder
+    assert _win_acl(sibling_wal) == before_sibling
+
+    other = tmp_path / "other.txt"
+    other.touch()
+    before_other = _win_acl(other)
+    sym_shm = tmp_path / "gflow.db-shm"
+    try:
+        sym_shm.symlink_to(other)
+    except OSError as exc:
+        pytest.skip(f"Windows symlink creation unavailable: {exc}")
+
+    with suppress(DataStoreError), DataStore.open(tmp_path / "gflow.db"):
+        pass
+    assert _win_acl(other) == before_other
+
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    target = real_dir / "target.db"
+    target_wal = real_dir / "target.db-wal"
+    target_shm = real_dir / "target.db-shm"
+    target_wal.touch()
+    target_shm.touch()
+    link = tmp_path / "linked.db"
+    link.symlink_to(target)
+    user = _win_current_user()
+    with DataStore.open(link):
+        _assert_single_user_acl(target, user)
+        _assert_single_user_acl(target_wal, user)
+        _assert_single_user_acl(target_shm, user)
+        _assert_single_user_acl(tmp_path / "linked.db-wal", user)
+        _assert_single_user_acl(tmp_path / "linked.db-shm", user)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
+def test_open_hardens_sidecars_even_when_db_acl_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An icacls failure on gflow.db (including cached failure) never skips -wal/-shm hardening."""
+    _grant_everyone_read(tmp_path)
+    user = _win_current_user()
+    db = tmp_path / "gflow.db"
+    wal = db.with_name("gflow.db-wal")
+    shm = db.with_name("gflow.db-shm")
+    real_run = subprocess.run
+
+    def fail_db_only(args: list[str], **kwargs: Any) -> Any:
+        if "/inheritance:r" in args and os.path.normcase(args[1]) == os.path.normcase(str(db)):
+            raise subprocess.CalledProcessError(5, args, stderr=b"Access is denied.")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", fail_db_only)
+
+    with capture_logs() as logs1, DataStore.open(db):
+        assert _has_inherited_aces(db)
+        _assert_single_user_acl(wal, user)
+        _assert_single_user_acl(shm, user)
+    assert [entry["event"] for entry in logs1] == ["file_acl_failed"]
+
+    # Second open: db hits the cached failure in stage 1; stage 2 still secures new sidecars.
+    with capture_logs() as logs2, DataStore.open(db):
+        _assert_single_user_acl(wal, user)
+        _assert_single_user_acl(shm, user)
+    assert logs2 == []
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows DACLs")
@@ -403,10 +628,10 @@ def test_open_survives_a_failed_acl(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(winsec, "_current_user_sid", refuse)
     with capture_logs() as logs, DataStore.open(tmp_path / "gflow.db"):
         pass
-    assert [entry["event"] for entry in logs] == ["file_acl_failed"]
+    assert logs and all(entry["event"] == "file_acl_failed" for entry in logs)
 
 
-def test_harden_file_once_does_not_retry_a_failure(
+def test_harden_files_once_does_not_retry_a_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[int] = []
@@ -415,11 +640,43 @@ def test_harden_file_once_does_not_retry_a_failure(
         calls.append(1)
         raise OSError
 
+    once = tmp_path / "once.db"
+    once.touch()
+    second = tmp_path / "second.db"
+    second.touch()
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert winsec.harden_files_once((str(once),)) is False
+    assert calls == []
+
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(winsec, "_current_user_sid", fail)
-    for _ in range(3):
-        assert winsec.harden_file_once(str(tmp_path / "once.db")) is False
+    results = [winsec.harden_files_once((str(once),)) for _ in range(3)]
+    assert results == [False, False, False]
     assert calls == [1]
+
+    assert winsec.harden_files_once((str(second),)) is False
+    assert calls == [1, 1]
+
+
+def test_harden_files_once_dedups_by_identity_not_case_only_spelling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case-only distinct paths stay separate when file identities differ; same identity dedups."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(winsec, "_current_user_sid", lambda: "S-1-5-21-1-2-3-1001")
+
+    identities = {
+        str(tmp_path / "Catalog.db-wal"): (1, 101, 1000),
+        str(tmp_path / "catalog.db-wal"): (1, 202, 1000),
+        str(tmp_path / "Alias.db-wal"): (1, 101, 1000),
+    }
+    applied: list[str] = []
+    monkeypatch.setattr(winsec, "_regular_file_identity", identities.get)
+    monkeypatch.setattr(winsec, "_apply_file_acl", lambda p, sid: applied.append(p) or True)
+
+    assert winsec.harden_files_once(tuple(identities)) is True
+    assert applied == [str(tmp_path / "Catalog.db-wal"), str(tmp_path / "catalog.db-wal")]
 
 
 def _clear_tracebacks(exc: BaseException) -> None:
