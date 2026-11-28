@@ -319,6 +319,11 @@ are masked**: the client sees only the exception class name
 names, or token material and never leaves the server; the full message and
 traceback go to the server-side structured log (`mcp.tool.unexpected_error`).
 
+**The `params` echo of `gflow_generate_video` is the request as the caller made it.** Its
+`model`, `duration` and `resolution` are the arguments passed, `null` when omitted. They are
+not the values the direct path resolved and sent; the CLI `--json` payload reports those
+(`resolution` and the sent request, see [USAGE](USAGE.md)).
+
 **A failed generation task can still name its media.** When Flow generated the media and
 only the download failed (a video whose transfer dropped, #895; an image whose local write
 failed, #1035), the `status: "failed"` reply of `gflow_generate_image` /
