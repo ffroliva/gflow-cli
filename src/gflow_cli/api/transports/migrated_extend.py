@@ -39,13 +39,21 @@ from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from gflow_cli.api._flow_workspace import validate_image_file, validate_video_file
-from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote
+from gflow_cli.api.credit_cap import enforce_credit_cap
 from gflow_cli.api.dto import GenerationCheckpoint
 from gflow_cli.api.transports._common import raise_if_known_landing
 from gflow_cli.api.transports._mc_common import (
     _CARET_TO_END_JS,  # pyright: ignore[reportPrivateUsage]
     MENTION_CHIP,
     SubmitWatch,
+)
+from gflow_cli.api.transports._mc_settings_pane import (
+    CREDIT_QUOTE_LABEL,
+    DURATION_SLIDER,
+    SLIDER_INPUT,
+    press_slider,
+    read_credit_label,
+    slider_scale,
 )
 from gflow_cli.api.transports._mc_upload_video import upload_video
 from gflow_cli.api.transports.batchexecute import find_record, parse_frames
@@ -107,7 +115,7 @@ EXTEND_PROMPT = "flow-edit-video-prompt-box .ProseMirror"
 EXTEND_SUBMIT = "flow-edit-video-prompt-box flow-generate-icon-button button"
 EXTEND_SETTINGS_TRIGGER = "flow-edit-video-prompt-box button.settings-trigger-button"
 EXTEND_SETTINGS_PANE = ".cdk-overlay-pane flow-prompt-box-settings"
-EXTEND_CREDIT_QUOTE = "flow-credit-cost-label.settings-credit-cost"
+EXTEND_CREDIT_QUOTE = CREDIT_QUOTE_LABEL
 EXTEND_MENTION_CHIP = f"flow-edit-video-prompt-box {MENTION_CHIP}"
 
 #: The editor load's own ``Zzl0ze`` answered within the first seconds on every spike run.
@@ -797,8 +805,8 @@ async def _set_extend_duration_slider(pane: Any, duration: int) -> bool:
 
     Returns whether the value moved (the quote label then has to catch up).
     """
-    component = pane.locator("flow-duration-slider")
-    slider = component.locator('input[type="range"]')
+    component = pane.locator(DURATION_SLIDER)
+    slider = component.locator(SLIDER_INPUT)
     try:
         await slider.first.wait_for(state="visible", timeout=4000)
     except PlaywrightError as exc:
@@ -808,11 +816,9 @@ async def _set_extend_duration_slider(pane: Any, duration: int) -> bool:
                 "(host=migrated)"
             ),
         ) from exc
-    if await slider.count() != 1:
-        raise UiSelectorDriftError(detail="migrated host: extend duration slider ambiguous")
-    min_raw = await slider.get_attribute("min")
-    max_raw = await slider.get_attribute("max")
-    step_raw = await slider.get_attribute("step")
+    min_raw, max_raw, step_raw = await slider_scale(
+        slider, ambiguous="migrated host: extend duration slider ambiguous"
+    )
     if (
         step_raw != "1"
         or not (min_raw and min_raw.isdigit())
@@ -834,10 +840,7 @@ async def _set_extend_duration_slider(pane: Any, duration: int) -> bool:
         )
     if await slider.input_value() == str(duration):
         return False
-    await slider.press("Home")
-    for _ in range(duration - min_val):
-        await slider.press("ArrowRight")
-    await asyncio.sleep(0.2)
+    await press_slider(slider, duration - min_val)
     actual_val = await slider.input_value()
     label = await component.inner_text()
     if actual_val != str(duration) or not re.search(rf"(?<!\d){duration}(?!\d)", label):
@@ -851,15 +854,7 @@ async def _set_extend_duration_slider(pane: Any, duration: int) -> bool:
 
 
 async def _read_extend_credit_quote(pane: Any) -> int | None:
-    for selector in (EXTEND_CREDIT_QUOTE, "flow-credit-cost-label"):
-        try:
-            label = await pane.locator(selector).last.inner_text(timeout=2000)
-        except PlaywrightError:
-            continue
-        parsed = parse_credit_quote(label)
-        if parsed is not None:
-            return parsed
-    return None
+    return await read_credit_label(pane, EXTEND_CREDIT_QUOTE, "flow-credit-cost-label", last=True)
 
 
 async def _settled_quote(
@@ -890,7 +885,7 @@ async def _settled_quote(
 
 
 async def _slider_shows(pane: Any, duration: int | None) -> bool:
-    slider = pane.locator("flow-duration-slider").locator('input[type="range"]')
+    slider = pane.locator(DURATION_SLIDER).locator(SLIDER_INPUT)
     try:
         return await slider.input_value() == str(duration)
     except PlaywrightError:

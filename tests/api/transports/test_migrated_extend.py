@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from gflow_cli.api.credit_cap import parse_credit_quote
 from gflow_cli.api.transports import migrated_extend as mx
 from gflow_cli.api.transports.batchexecute import GenerationRecord
 from gflow_cli.api.video import VideoStarted
@@ -1205,7 +1206,7 @@ async def test_a_quote_for_a_length_the_slider_no_longer_shows_is_exit_45(
         monkeypatch.setattr(
             mx,
             "_read_extend_credit_quote",
-            lambda _p: _coro(mx.parse_credit_quote(next(reads, "18 credits") or "")),
+            lambda _p: _coro(parse_credit_quote(next(reads, "18 credits") or "")),
         )
     with pytest.raises(CreditCapExceededError) as caught:
         await _extend_with_pane(pane, duration=6, max_credits=100)

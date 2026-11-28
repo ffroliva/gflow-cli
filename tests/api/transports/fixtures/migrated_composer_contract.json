@@ -29,7 +29,7 @@
     "_select_image_model": "function (self, page: 'Page', pane: 'Any', model: 'ImageModel') -> 'None' sha=6f21ac923d0f5560",
     "_select_image_thinking_level": "function (self, page: 'Page', pane: 'Any', thinking_level: 'ThinkingLevel') -> 'None' sha=edf13347feaab03d",
     "_select_model": "function (self, page: 'Page', pane: 'Any', model: 'VideoModel') -> 'None' sha=8ff1ba1c0a568ac4",
-    "_select_omni12_duration": "function (self, page: 'Page', pane: 'Any', seconds: 'int') -> 'None' sha=f1e2819ee341f2fa",
+    "_select_omni12_duration": "function (self, page: 'Page', pane: 'Any', seconds: 'int') -> 'None' sha=71607bdb74f9700b",
     "_ui_failure_detail": "function (self, page: 'Page', *, phase: 'str', selector: 'str', detail: 'str', error: 'BaseException | str') -> 'str' sha=56793bc6adb262a8",
     "_upload_via_toolbar": "function (self, page: 'Page', project_id: 'str', image_path: 'Path') -> 'tuple[str, str]' sha=b2ecd4d0b540d541",
     "_verify_submit_target": "function (self, page: 'Page', submit: 'Locator') -> 'None' sha=ce537cacf502d76b",
