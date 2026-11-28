@@ -95,12 +95,7 @@ MEASURED_VIDEO_KEYS: dict[
 
 #: The composer's ``videoModelFamilyId`` (``localStorage['flow-prompt-box-settings']``, spike
 #: 2026-11-27-selected-video-model) per model. A family not listed keys nothing: the UI path.
-VIDEO_FAMILY_MODELS: dict[str, VideoModel] = {
-    "macaron_cookie": VideoModel.OMNI_1_2_FLASH,
-    "veo_3_1_lite": VideoModel.VEO_3_1_LITE,
-    "veo_3_1_fast": VideoModel.VEO_3_1_FAST,
-    "veo_3_1_quality": VideoModel.VEO_3_1_QUALITY,
-}
+VIDEO_FAMILY_MODELS: dict[str, VideoModel] = {"macaron_cookie": VideoModel.OMNI_1_2_FLASH}
 #: The composer's ``videoResolution`` enum, as measured (4 is 360p); any other value is unmapped.
 VIDEO_RESOLUTION_ENUMS: dict[int, str] = {4: "360p"}
 
@@ -259,7 +254,8 @@ def selected_video_request(
 
     ``selection`` is the composer's saved picker state (``flow-prompt-box-settings``). A
     duration or resolution the request sets explicitly wins, as it does in Flow's UI. An
-    unmapped family or resolution enum resolves to ``None``; whether the result is measured is
+    unmapped family or resolution enum, or a combination the request rejects (a duration the
+    model does not allow), resolves to ``None``; whether the result is measured is
     :func:`video_target`'s decision, the single lookup.
     """
     family = selection.get("videoModelFamilyId")
@@ -273,7 +269,10 @@ def selected_video_request(
     duration = request.duration
     if duration is None:
         duration = _int_field(selection, "videoDuration")
-    return replace(request, model=model, duration=duration, resolution=resolution)
+    try:
+        return replace(request, model=model, duration=duration, resolution=resolution)
+    except ValueError:
+        return None
 
 
 def choose_video_route(
@@ -293,6 +292,9 @@ def choose_video_route(
     if isinstance(request, (ExtendVideoRequest, EditVideoRequest)):
         return Route.UI
     if _has_credit_cap(effective_max_credits, request.max_credits):
+        return Route.UI
+    # A mention can resolve to a reference after launch, which the direct frame cannot carry.
+    if "@" in request.prompt:
         return Route.UI
     # A bare t2v plans direct (headless): the transport reads the selection on the armed page
     # and ends NotSent when it is unread or unmeasured, so an unmeasured selection costs at

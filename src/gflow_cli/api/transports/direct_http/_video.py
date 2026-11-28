@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING
 import httpx
 import structlog
 
-from gflow_cli.api.generation_route import selected_video_request, video_target
+from gflow_cli.api.generation_route import (
+    VIDEO_FAMILY_MODELS,
+    selected_video_request,
+    video_target,
+)
 from gflow_cli.api.submit_policy import not_sent
 from gflow_cli.api.transports._common import recoverable_clip_hint
 from gflow_cli.api.transports._ui_common import _is_allowed_download_host
@@ -81,7 +85,7 @@ async def run_direct_video(
     profile_dir: Path,
     project_id: str,
     request: GenerateVideoRequest,
-    target: VideoWireTarget | None,
+    target: VideoWireTarget,
     start: StartFrame | None,
     save: ClipSaver,
     download: bool,
@@ -93,8 +97,8 @@ async def run_direct_video(
 ) -> VideoResult:
     """One direct video: mint, send once, poll, read, download; all inside one attempt.
 
-    ``target`` is ``None`` for a bare t2v only: it is keyed after the mint from the account's
-    selection on the armed page (:func:`_selected_target`), before anything is sent.
+    ``request`` is the resolved request (a bare t2v's carries the account's selection, read
+    before the mint by :func:`selected_target`) and ``target`` its measured key.
     """
     started = time.perf_counter()
     spec = _T2V if start is None else _I2V
@@ -102,8 +106,6 @@ async def run_direct_video(
     async with _client(http_transport) as client, attempt:
         shell = await _shell(client, page, profile_dir)
         token = await attempt.mint()
-        if target is None:
-            request, target = await _selected_target(page, request)
         body = _submit_body(request, target, start, project_id, token, shell.at)
         log.info("direct.frame_built", rpcid=spec[0], wire_key=target.wire_key)
         source = f"/project/{project_id}"
@@ -135,19 +137,19 @@ async def run_direct_video(
         flow_operation_id=record.workflow_id,
         workflow_id=record.workflow_id,
         transport="direct_http",
-        model=None if request.model is None else request.model.value,
+        sent_request=request,
     )
 
 
-async def _selected_target(
+async def selected_target(
     page: Page, request: GenerateVideoRequest
 ) -> tuple[GenerateVideoRequest, VideoWireTarget]:
     """A bare t2v's request and key, from the account's selection; ``NotSent`` otherwise.
 
-    Read after the mint: ``page`` (the transport's page, armed by its first mint) is then on
-    flow.google.com, and ``localStorage`` is shared by every page of the context, a re-armed
-    one included. An unread selection, an unmapped one or an unmeasured tuple sends nothing:
-    the retry loop runs the UI path, which applies the selection itself.
+    Read before the balance read and the mint, on ``page`` once armed (on flow.google.com);
+    ``localStorage`` is shared by every page of the context, a re-armed one included. An
+    unread selection, an unmapped or rejected one or an unmeasured tuple sends nothing: the
+    retry loop runs the UI path, which applies the selection itself.
     """
     selection = await _prompt_box_settings(page)
     resolved = None if selection is None else selected_video_request(request, selection)
@@ -156,7 +158,8 @@ async def _selected_target(
         log.info(
             "direct.t2v_key_unresolved",
             selection_read=selection is not None,
-            family=None if selection is None else selection.get("videoModelFamilyId"),
+            mapped=selection is not None
+            and selection.get("videoModelFamilyId") in VIDEO_FAMILY_MODELS,
         )
         raise not_sent("t2v_key_unresolved")
     log.info(

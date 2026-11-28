@@ -126,6 +126,29 @@ class TestVideoResult:
         assert payload["request"]["mode"] == "i2v"
         assert payload["request"]["duration"] == 8
 
+    def test_json_reports_resolved_duration_resolution(self) -> None:
+        """A bare t2v reports the model, duration and resolution of the request that ran."""
+        bare = GenerateVideoRequest(prompt="boat", aspect=Aspect.PORTRAIT)
+        sent = GenerateVideoRequest(
+            prompt="boat",
+            aspect=Aspect.PORTRAIT,
+            model=VideoModel.OMNI_1_2_FLASH,
+            duration=4,
+            resolution="360p",
+        )
+        result = VideoResult(
+            status=VideoStatus(media_id="m-3", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+            local_path=None,
+            sent_request=sent,
+        )
+        payload = json_output.video_result(command="video t2v", request=bare, result=result)
+        request = payload["request"]
+        assert (request["model"], request["duration"], request["resolution"]) == (
+            "omni_1_2_flash",
+            4,
+            "360p",
+        )
+
     def test_failure_shape(self) -> None:
         result = VideoResult(
             status=VideoStatus(

@@ -735,15 +735,10 @@ def video_route(request: GenerateVideoRequest, *, transport: str | None = None) 
 
     The request carries its effective cap (callers resolve ``GFLOW_CLI_MAX_CREDITS`` and
     ``--no-max-credits`` into it), so a capped video routes to the UI, where the quote is
-    read, and an explicitly uncapped one routes on its shape. An ``@`` mention can resolve to
-    a reference after launch, so it routes to the UI too.
+    read, and an explicitly uncapped one routes on its shape.
     """
     settings = get_settings()
-    if (
-        not _direct_transport(transport)
-        or "@" in request.prompt
-        or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC
-    ):
+    if not _direct_transport(transport) or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
         return Route.UI
     return choose_video_route(
         request,

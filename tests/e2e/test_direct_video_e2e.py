@@ -138,3 +138,44 @@ def test_default_i2v_goes_direct_headless(e2e_env: RedactedEnv, tmp_path: Path) 
     )
     _assert_direct_clip(proc, out, (720, 1280))
     assert before - _balance(e2e_env) == _I2V_COST
+
+
+def test_bare_t2v_veo_selection_falls_back_ui(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+    """Row 9: a selection that is not a measured shape (a Veo model, say) sends nothing direct.
+
+    The selection is read before any balance read or mint, so ``t2v_key_unresolved`` is
+    logged with no ``direct.minted`` before it, then the UI path runs and the clip lands.
+    Needs the profile's composer on a model other than Omni 1.2 Flash, named in
+    ``GFLOW_CLI_E2E_SELECTED_VIDEO_MODEL`` (e.g. ``veo_3_1_lite``).
+    """
+    selected = os.environ.get(_SELECTED_MODEL_ENV, "")
+    if not selected or selected == "omni_1_2_flash":
+        pytest.skip(
+            f"set {_SELECTED_MODEL_ENV} to the profile's selected model after selecting one "
+            "other than Omni 1.2 Flash (e.g. veo_3_1_lite) in its Flow composer"
+        )
+    out = tmp_path / "bare-t2v-ui.mp4"
+    proc = subprocess.run(
+        [sys.executable, "-m", "gflow_cli", "video", "t2v", "a paper boat drifting on a pond"]
+        + ["--aspect", "9:16", "--out-file", str(out), "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=e2e_env
+        | {
+            "GFLOW_CLI_TRANSPORT": "direct_http",
+            "GFLOW_CLI_BROWSER_VISIBILITY": "auto",
+            "GFLOW_CLI_LOG_FORMAT": "json",
+            "GFLOW_CLI_LOG_LEVEL": "INFO",
+        },
+    )
+    assert proc.returncode == 0, f"exit {proc.returncode}; stderr tail: {proc.stderr[-800:]!r}"
+    events = [
+        json.loads(line).get("event") for line in proc.stderr.splitlines() if line.startswith("{")
+    ]
+    assert "direct.t2v_key_unresolved" in events
+    unresolved_at = events.index("direct.t2v_key_unresolved")
+    assert "direct.minted" not in events[:unresolved_at]
+    assert "direct.fallback_to_ui" in events[unresolved_at:]
+    assert json.loads(proc.stdout).get("route") == "ui"
+    assert out.read_bytes()[4:8] == b"ftyp", f"{out} is not an mp4"

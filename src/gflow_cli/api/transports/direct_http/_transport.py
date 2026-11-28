@@ -18,16 +18,21 @@ from gflow_cli.api.generation_route import (
     Route,
     choose_video_route,
     direct_can_serve,
+    is_bare_t2v,
     video_target,
 )
 from gflow_cli.api.image import ImageRef
 from gflow_cli.api.submit_policy import DirectAttemptEnded, RefusedNotBilled, not_sent
 from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
-from gflow_cli.api.transports.direct_http._mint import PageTokenSource, ProjectTokens
+from gflow_cli.api.transports.direct_http._mint import PageTokenSource, ProjectTokens, _arm_page
 from gflow_cli.api.transports.direct_http._session import _proxy_configured
 from gflow_cli.api.transports.direct_http._upscale import UpscaleSource, run_direct_upscale
-from gflow_cli.api.transports.direct_http._video import StartFrame, run_direct_video
+from gflow_cli.api.transports.direct_http._video import (
+    StartFrame,
+    run_direct_video,
+    selected_target,
+)
 from gflow_cli.api.transports.frame_builder import centred_crop
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.api.video import Mode
@@ -232,8 +237,9 @@ class DirectHttpTransport(UiAutomationTransport):
     ) -> VideoResult:
         """Generate one clip over direct HTTP when its key tuple is measured.
 
-        A bare t2v (no model) is keyed from the account's selection, read on the armed page
-        after the mint; an unread or unmeasured selection ends ``NotSent("t2v_key_unresolved")``.
+        The page is armed first; a bare t2v (no model) is then keyed from the account's
+        selection, read on it before the balance read and before any mint; an unread or
+        unmeasured selection ends ``NotSent("t2v_key_unresolved")``.
 
         As :meth:`generate_images`: every other outcome raises ``DirectAttemptEnded`` for
         the retry loop, which runs :meth:`generate_video_ui` on a fresh page when nothing
@@ -253,14 +259,21 @@ class DirectHttpTransport(UiAutomationTransport):
             reason = "no_project"
         if reason or project_id is None or profile_dir is None:
             raise not_sent(reason or "no_profile_dir")
-        # None only for a bare t2v: keyed after the mint from the account's selection.
-        target = video_target(request)
+        source = self._source_for(page)
+        async with self._generate_lock:  # the page lock, as the mint holds it
+            await _arm_page(source.page, project_id)
+            if is_bare_t2v(request):
+                request, target = await selected_target(source.page, request)
+            else:
+                target = video_target(request)
+        if target is None:  # unreachable: _routes_direct keyed it
+            raise not_sent("unsupported_shape")
         await refuse_empty_balance(profile_dir)
-        tokens = self._source_for(page).for_project(project_id)
+        tokens = source.for_project(project_id)
         start: StartFrame | None = None
-        if target is not None and request.mode is Mode.I2V:
+        if request.mode is Mode.I2V:
             start = await self._start_frame(project_id, request, target.aspect_slot, frame_uploads)
-        wire_target, start_frame = target, start
+        resolved, wire_target, start_frame = request, target, start
         return await self._run_direct(
             tokens,
             lambda: run_direct_video(
@@ -268,7 +281,7 @@ class DirectHttpTransport(UiAutomationTransport):
                 page=page,
                 profile_dir=profile_dir,
                 project_id=project_id,
-                request=request,
+                request=resolved,
                 target=wire_target,
                 start=start_frame,
                 save=partial(self._save_clip, out_dir=out_dir),

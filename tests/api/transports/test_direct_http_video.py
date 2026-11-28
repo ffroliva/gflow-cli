@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import struct
 import zlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -733,7 +734,8 @@ async def test_bare_t2v_sends_the_key_of_the_account_selection(
     assert "macaron_cookie_t2v_4s_360p" in sent
     assert flow.count("YhhmEf") == 1
     assert result.status.succeeded
-    assert result.model == VideoModel.OMNI_1_2_FLASH.value
+    assert result.sent_request is not None
+    assert result.sent_request.model is VideoModel.OMNI_1_2_FLASH
 
 
 @pytest.mark.asyncio
@@ -745,7 +747,7 @@ async def test_bare_t2v_sends_the_key_of_the_account_selection(
         "{not json",
         json.dumps(["not", "an", "object"]),
         _selection("abra"),  # a family with no mapped model
-        _selection("veo_3_1_lite"),  # mapped, but its t2v tuple is unmeasured
+        _selection("veo_3_1_lite"),  # a Veo family: no measured t2v key, so unmapped
     ],
 )
 async def test_selection_read_failure_falls_back_to_ui_not_sent(
@@ -782,3 +784,101 @@ async def test_selection_read_failure_falls_back_to_ui_not_sent(
     ui.assert_awaited_once()
     assert ui.await_args.kwargs["request"] == _BARE_T2V  # the UI path gets the bare request
     assert result.status.succeeded
+
+
+# --- Task 29 council FIX ----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mention_prompt_explicit_omni_ends_not_sent(tmp_path: Path) -> None:
+    """A mention resolves to a reference after launch: never direct, even at a measured key."""
+    flow = _happy()
+    request = replace(_OMNI_T2V, prompt="@Ada folds a paper boat")
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await _transport(tmp_path, flow).generate_video(
+            request=request, project_id=_PROJECT, out_dir=tmp_path
+        )
+    assert ended.value.outcome == NotSent("unsupported_shape")
+    assert flow.count("YhhmEf") == 0
+
+
+def _ordered(
+    transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch, selection: str
+) -> list[str]:
+    """Record the navigation, the selection read, the balance read and the mint, in order."""
+    order: list[str] = []
+    page: Any = transport._page
+    page.url = "about:blank"  # not armed yet
+
+    async def goto(url: str, **_: Any) -> None:
+        order.append("navigate")
+        page.url = url
+
+    async def evaluate(*_: Any) -> str:
+        order.append(f"selection@{page.url}")
+        return selection
+
+    async def credits(*_: Any) -> CreditsInfo:
+        order.append("balance")
+        return CreditsInfo(100)
+
+    async def mint(*_: Any) -> str:
+        order.append("mint")
+        return "mock_token"
+
+    page.goto = AsyncMock(side_effect=goto)
+    page.evaluate = AsyncMock(side_effect=evaluate)
+    monkeypatch.setattr(flow_wire, "read_credits", credits)
+    monkeypatch.setattr("gflow_cli.api.recaptcha.TokenMinter.mint", mint)
+    return order
+
+
+_ARMED = f"selection@https://flow.google.com/project/{_PROJECT}"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_selection_never_mints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unmapped selection ends NotSent with no balance read and no mint."""
+    from structlog.testing import capture_logs
+
+    flow = _happy()
+    transport = _transport(tmp_path, flow)
+    order = _ordered(transport, monkeypatch, _selection("veo_3_1_lite"))
+    with capture_logs() as logs, pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_video(request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path)
+    assert ended.value.outcome == NotSent("t2v_key_unresolved")
+    assert order == ["navigate", _ARMED]
+    assert flow.events == []
+    unresolved = next(e for e in logs if e["event"] == "direct.t2v_key_unresolved")
+    assert unresolved["mapped"] is False
+    assert "veo_3_1_lite" not in repr(logs)  # the raw family id is never logged
+
+
+@pytest.mark.asyncio
+async def test_selection_read_on_armed_page_before_balance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The page is armed, then the selection read, then the balance, then the one mint."""
+    flow = _happy()
+    transport = _transport(tmp_path, flow)
+    order = _ordered(transport, monkeypatch, _selection("macaron_cookie"))
+    result = await transport.generate_video(
+        request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path
+    )
+    assert order[:4] == ["navigate", _ARMED, "balance", "mint"]
+    assert order.count("navigate") == 1
+    assert result.status.succeeded
+
+
+@pytest.mark.asyncio
+async def test_selection_invalid_duration_ends_not_sent(tmp_path: Path) -> None:
+    """A selection duration the model does not allow (a tampered value) is the UI path."""
+    flow = _happy()
+    transport = _transport(tmp_path, flow)
+    _with_selection(transport, _selection("macaron_cookie", duration=99))
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_video(request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path)
+    assert ended.value.outcome == NotSent("t2v_key_unresolved")
+    assert flow.events == []

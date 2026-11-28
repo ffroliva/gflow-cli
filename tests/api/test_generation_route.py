@@ -1043,14 +1043,25 @@ def test_uncaptured_video_tuples_are_not_direct(request_: GenerateVideoRequest) 
 _OMNI_SELECTION = {"videoModelFamilyId": "macaron_cookie", "videoDuration": 4, "videoResolution": 4}
 
 
-def test_family_ids_map_to_video_models() -> None:
-    """The composer's ``videoModelFamilyId`` values (spike 2026-11-27) and nothing else."""
-    assert VIDEO_FAMILY_MODELS == {
-        "macaron_cookie": VideoModel.OMNI_1_2_FLASH,
-        "veo_3_1_lite": VideoModel.VEO_3_1_LITE,
-        "veo_3_1_fast": VideoModel.VEO_3_1_FAST,
-        "veo_3_1_quality": VideoModel.VEO_3_1_QUALITY,
-    }
+def test_only_the_measured_family_is_mapped() -> None:
+    """Only Omni 1.2 Flash has a measured t2v key; a Veo family keys nothing (the UI path)."""
+    assert VIDEO_FAMILY_MODELS == {"macaron_cookie": VideoModel.OMNI_1_2_FLASH}
+
+
+@pytest.mark.parametrize("model", [None, VideoModel.OMNI_1_2_FLASH])
+def test_mention_prompt_routes_ui_bare_and_explicit(model: VideoModel | None) -> None:
+    """A mention resolves to a reference after launch, which the direct path cannot send."""
+    request = GenerateVideoRequest(
+        prompt="@Ada folds a paper boat",
+        model=model,
+        duration=4,
+        resolution="360p",
+        aspect=VideoAspect.PORTRAIT,
+    )
+    route = choose_video_route(
+        request, flow_host="flow.google.com", proxy_configured=False, effective_max_credits=None
+    )
+    assert route is Route.UI
 
 
 @pytest.mark.parametrize(
@@ -1076,8 +1087,6 @@ def test_selection_maps_to_measured_key_routes_direct(aspect: VideoAspect, slot:
 @pytest.mark.parametrize(
     "selection",
     [
-        # Veo 3.1 Lite t2v: mapped, but no app frame was measured for it
-        {"videoModelFamilyId": "veo_3_1_lite", "videoDuration": 4, "videoResolution": 4},
         # Omni at a duration the allowlist does not carry
         {"videoModelFamilyId": "macaron_cookie", "videoDuration": 8, "videoResolution": 4},
         # a malformed duration is no duration, which no Omni key carries
@@ -1095,6 +1104,7 @@ def test_unmeasured_selection_routes_ui(selection: dict[str, object]) -> None:
     "selection",
     [
         {"videoModelFamilyId": "abra", "videoDuration": 4, "videoResolution": 4},
+        {"videoModelFamilyId": "veo_3_1_lite", "videoDuration": 4, "videoResolution": 4},
         {"videoModelFamilyId": "macaron_cookie", "videoDuration": 4, "videoResolution": 3},
         {"videoModelFamilyId": "macaron_cookie", "videoDuration": 4},
         {"videoDuration": 4, "videoResolution": 4},

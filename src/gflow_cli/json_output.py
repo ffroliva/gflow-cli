@@ -245,15 +245,17 @@ def video_result(
     rather than faked. ``status`` is "ok"/"fail" mirroring ``succeeded``;
     ``generation_status`` is the raw ``MEDIA_GENERATION_STATUS_*`` wire value.
     """
+    # A bare t2v names no model; the direct path reports the request it resolved and sent.
+    sent = result.sent_request or request
     return _clip_payload(
         command,
         result,
         {
-            # A bare t2v names no model; the direct path reports the selection it sent.
-            "model": request.model.value if request.model is not None else result.model,
+            "model": sent.model.value if sent.model is not None else None,
             "mode": request.mode.value,
             "aspect": request.aspect.value,
-            "duration": request.duration,
+            "duration": sent.duration,
+            "resolution": sent.resolution,
             "count": request.count,
             "seed": request.seed,
         },
