@@ -16,13 +16,13 @@ import structlog
 
 from gflow_cli.api.generation_route import IMAGE_WIRE_MODELS
 from gflow_cli.api.image import ImageRef, Model
+from gflow_cli.api.submit_policy import not_sent
 from gflow_cli.api.transports._mc_common import _first_uuid
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.direct_http._gateway import (
     SubmitAttempt,
     _client,
     _post_request,
-    not_sent,
 )
 from gflow_cli.api.transports.direct_http._mint import _mint
 from gflow_cli.api.transports.direct_http._session import _session_headers, _shell

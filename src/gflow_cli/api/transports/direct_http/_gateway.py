@@ -19,10 +19,12 @@ import structlog
 from gflow_cli.api import flow_wire
 from gflow_cli.api.submit_policy import (
     Accepted,
+    DirectAttemptEnded,
     Indeterminate,
     NotSent,
     RefusedNotBilled,
     classify_reply,
+    not_sent,
 )
 from gflow_cli.api.transports._mc_common import _submit_refusal
 from gflow_cli.errors import ContentPolicyError, GFlowError, NetworkError
@@ -45,26 +47,6 @@ WRITE_RPCIDS = frozenset({"ogiZ0b", "maseQ", "YhhmEf", "eb1hJf", "p0UkFb"})
 READ_RPCIDS = frozenset({"jwpduf", "as29s"})
 # Raised while the connection opens, before any byte of the request is written.
 _CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
-
-EndedOutcome = NotSent | RefusedNotBilled | Indeterminate
-
-
-class DirectAttemptEnded(Exception):  # noqa: N818 - a signal for the caller, not a fault
-    """A direct attempt that did not end ``Accepted``.
-
-    ``error`` is the user-facing error for an outcome past the send (the reconcile error, or
-    the typed refusal); a ``NotSent`` outcome carries none, since nothing reached Flow.
-    """
-
-    def __init__(self, outcome: EndedOutcome, *, error: GFlowError | None = None) -> None:
-        super().__init__(type(outcome).__name__)
-        self.outcome = outcome
-        self.error = error
-
-
-def not_sent(reason: str, *, auth: bool = False) -> DirectAttemptEnded:
-    """A failure before the billed write was sent: nothing reached Flow."""
-    return DirectAttemptEnded(NotSent(reason, auth=auth))
 
 
 def _first_line(exc: BaseException) -> str:
@@ -103,9 +85,15 @@ class SubmitAttempt:
             return  # Flow named a content refusal; it is final and is not resent either
         if isinstance(exc, DirectAttemptEnded) and not isinstance(exc.outcome, NotSent):
             return
-        raise self._ended(
-            Indeterminate(rpcid=self.spec[0], cause=f"{type(exc).__name__} ({_first_line(exc)})")
-        ) from exc
+        outcome = Indeterminate(
+            rpcid=self.spec[0], cause=f"{type(exc).__name__} ({_first_line(exc)})"
+        )
+        if isinstance(exc, GFlowError):
+            # A typed failure keeps its type; past the send it is never a retry.
+            exc.retryable = False
+            log.warning("direct.attempt_indeterminate", rpcid=outcome.rpcid, cause=outcome.cause)
+            raise DirectAttemptEnded(outcome, error=exc) from exc
+        raise self._ended(outcome) from exc
 
     async def mint(self) -> str:
         """The reCAPTCHA token for this write's action, from the injected source."""

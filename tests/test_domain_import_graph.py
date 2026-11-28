@@ -37,6 +37,20 @@ def test_domain_modules_import_no_playwright_patchright_or_httpx(module_name: st
     )
 
 
+def test_submit_policy_import_does_not_load_ui_transport() -> None:
+    """The attempt-ended signal lives in the domain, so importing it loads no transport."""
+    code = (
+        "import gflow_cli.api.submit_policy as p, sys; "
+        "assert p.DirectAttemptEnded and p.EndedOutcome and p.not_sent; "
+        "forbidden = {'gflow_cli.api.transports.ui_automation', "
+        "'gflow_cli.api.transports.direct_http'}; "
+        "loaded = forbidden & sys.modules.keys(); "
+        "assert not loaded, f'Transport modules loaded: {loaded}'"
+    )
+    res = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+
+
 @pytest.mark.parametrize(
     "name",
     [

@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING
 
 from gflow_cli.api._engine import mint_evaluate_kwargs
 from gflow_cli.api.recaptcha import TokenMinter
+from gflow_cli.api.submit_policy import not_sent
 from gflow_cli.api.transports._common import flow_host_kind
-from gflow_cli.api.transports.direct_http._gateway import _ORIGIN, not_sent
+from gflow_cli.api.transports.direct_http._gateway import _ORIGIN
 from gflow_cli.errors import RecaptchaError
 
 if TYPE_CHECKING:

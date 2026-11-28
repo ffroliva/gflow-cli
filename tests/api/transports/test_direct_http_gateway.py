@@ -17,13 +17,17 @@ import pytest
 from gflow_cli.api import flow_wire
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.submit_policy import Indeterminate, NotSent, RefusedNotBilled
+from gflow_cli.api.submit_policy import (
+    DirectAttemptEnded,
+    Indeterminate,
+    NotSent,
+    RefusedNotBilled,
+)
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http import DirectHttpTransport, _session_headers, _shell
 from gflow_cli.api.transports.direct_http._gateway import (
     READ_RPCIDS,
     WRITE_RPCIDS,
-    DirectAttemptEnded,
     SubmitAttempt,
     _client,
     _post_request,
@@ -440,8 +444,69 @@ async def test_a_shell_redirect_is_not_sent_without_a_refetch(tmp_path: Path) ->
     async with _client(httpx.MockTransport(handler)) as client:
         with pytest.raises(DirectAttemptEnded) as ended:
             await _shell(client, _page(), tmp_path)
-    assert ended.value.outcome == NotSent("redirect")
+    assert ended.value.outcome == NotSent("redirect", auth=True)
     assert gets == 1
+
+
+@pytest.mark.asyncio
+async def test_signed_out_shell_is_not_sent_auth(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>no tokens</html>")
+
+    async with _client(httpx.MockTransport(handler)) as client:
+        with pytest.raises(DirectAttemptEnded) as ended:
+            await _shell(client, _page(), tmp_path)
+    assert ended.value.outcome == NotSent("signed_out_shell", auth=True)
+
+
+@pytest.mark.asyncio
+async def test_401_then_signed_out_shell_is_auth(tmp_path: Path) -> None:
+    gets = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal gets
+        gets += 1
+        return httpx.Response(401) if gets == 1 else httpx.Response(200, text="<html></html>")
+
+    async with _client(httpx.MockTransport(handler)) as client:
+        with pytest.raises(DirectAttemptEnded) as ended:
+            await _shell(client, _page(), tmp_path)
+    assert ended.value.outcome == NotSent("signed_out_shell", auth=True)
+    assert gets == 2
+
+
+@pytest.mark.asyncio
+async def test_typed_error_after_send_keeps_type_and_is_not_retryable(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_ogiz0b_reply())
+
+    typed = WafRejectionError(detail="blocked", route="batchexecute:ogiZ0b", retryable=True)
+    attempt = SubmitAttempt(_SPEC, tmp_path, FakeTokenSource())
+    async with _client(httpx.MockTransport(handler)) as client:
+        with pytest.raises(DirectAttemptEnded) as ended:
+            async with attempt:
+                await attempt.send(client, _request())
+                raise typed
+    assert isinstance(ended.value.outcome, Indeterminate)
+    assert ended.value.error is typed
+    assert typed.retryable is False
+    assert typed.resolved_next_action() == "reconcile"
+
+
+@pytest.mark.asyncio
+async def test_untyped_error_after_send_is_reconcile_network_error(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=_ogiz0b_reply())
+
+    attempt = SubmitAttempt(_SPEC, tmp_path, FakeTokenSource())
+    async with _client(httpx.MockTransport(handler)) as client:
+        with pytest.raises(DirectAttemptEnded) as ended:
+            async with attempt:
+                await attempt.send(client, _request())
+                raise KeyError("media")
+    assert isinstance(ended.value.outcome, Indeterminate)
+    assert type(ended.value.error) is NetworkError
+    assert ended.value.error.next_action == "reconcile"
 
 
 @pytest.mark.asyncio
@@ -459,7 +524,9 @@ async def test_an_accepted_upload_frame_without_a_media_id_is_reconciled(
     image = tmp_path / "face.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
     transport = _transport(tmp_path, handler)
-    with pytest.raises(NetworkError) as caught:
+    with pytest.raises(WireFormatError) as caught:
         await transport.upload_reference(project_id="proj-123", path=image)
-    assert caught.value.next_action == "reconcile"
-    assert "WireFormatError" in caught.value.detail
+    assert caught.value.retryable is False
+    assert caught.value.resolved_next_action() == "reconcile"
+    assert isinstance(caught.value.__cause__, DirectAttemptEnded)
+    assert isinstance(caught.value.__cause__.outcome, Indeterminate)

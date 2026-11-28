@@ -12,8 +12,7 @@ import structlog
 
 from gflow_cli.api.generation_route import direct_can_serve
 from gflow_cli.api.image import ImageRef
-from gflow_cli.api.submit_policy import NotSent
-from gflow_cli.api.transports.direct_http._gateway import DirectAttemptEnded
+from gflow_cli.api.submit_policy import DirectAttemptEnded, NotSent
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
 from gflow_cli.api.transports.direct_http._session import _proxy_configured
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport

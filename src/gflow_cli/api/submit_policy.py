@@ -18,7 +18,12 @@ from gflow_cli.api.transports.batchexecute import (
     parse_frames,
     rpc_errors,
 )
-from gflow_cli.errors import CONTENT_SAFETY_REASONS, ContentPolicyError, WireFormatError
+from gflow_cli.errors import (
+    CONTENT_SAFETY_REASONS,
+    ContentPolicyError,
+    GFlowError,
+    WireFormatError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -78,6 +83,25 @@ class Indeterminate:
 
 
 SubmitOutcome = NotSent | Accepted | RefusedNotBilled | Indeterminate
+EndedOutcome = NotSent | RefusedNotBilled | Indeterminate
+
+
+class DirectAttemptEnded(Exception):  # noqa: N818 - a signal for the caller, not a fault
+    """A direct attempt that did not end ``Accepted``.
+
+    ``error`` is the user-facing error for an outcome past the send (the reconcile error, or
+    the typed refusal); a ``NotSent`` outcome carries none, since nothing reached Flow.
+    """
+
+    def __init__(self, outcome: EndedOutcome, *, error: GFlowError | None = None) -> None:
+        super().__init__(type(outcome).__name__)
+        self.outcome = outcome
+        self.error = error
+
+
+def not_sent(reason: str, *, auth: bool = False) -> DirectAttemptEnded:
+    """A failure before the billed write was sent: nothing reached Flow."""
+    return DirectAttemptEnded(NotSent(reason, auth=auth))
 
 
 @dataclass(frozen=True)

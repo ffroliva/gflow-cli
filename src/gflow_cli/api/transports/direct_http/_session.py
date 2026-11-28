@@ -9,12 +9,20 @@ from typing import TYPE_CHECKING
 import httpx
 
 from gflow_cli.api import flow_wire
-from gflow_cli.api.transports.direct_http._gateway import not_sent
+from gflow_cli.api.submit_policy import not_sent
 from gflow_cli.auth.cookies import sent_to_flow_host
 from gflow_cli.config import get_settings
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
+
+_AUTH_REASONS = frozenset(
+    {
+        flow_wire.WireFallbackReason.HTTP_401,
+        flow_wire.WireFallbackReason.SIGNED_OUT_SHELL,
+        flow_wire.WireFallbackReason.REDIRECT,
+    }
+)
 
 
 def _proxy_configured() -> bool:
@@ -51,8 +59,8 @@ async def _shell(client: httpx.AsyncClient, page: Page, profile_dir: Path) -> fl
     """Read path: ``at`` / ``f.sid`` / ``bl`` from flow_wire's shell GET.
 
     Called before the mint, never after a send. A 401 drops the cached ``at`` and the
-    signed-out mark and fetches once more with freshly read cookies; a second 401 is a
-    signed-out session.
+    signed-out mark and fetches once more with freshly read cookies; a second 401, a
+    shell with no ``at`` or a redirect (to sign-in) is a signed-out session.
     """
     for refetch in (False, True):
         headers = await _session_headers(page, profile_dir)
@@ -60,10 +68,8 @@ async def _shell(client: httpx.AsyncClient, page: Page, profile_dir: Path) -> fl
             return await flow_wire.shell_tokens(client, profile_dir, headers)
         except flow_wire.WireReadUnavailable as exc:
             reason = exc.reason
-            if reason is not flow_wire.WireFallbackReason.HTTP_401:
-                raise not_sent(reason.value) from exc
-            if refetch:
-                raise not_sent(reason.value, auth=True) from exc
+            if reason is not flow_wire.WireFallbackReason.HTTP_401 or refetch:
+                raise not_sent(reason.value, auth=reason in _AUTH_REASONS) from exc
             flow_wire.session_recovered(profile_dir)
         except Exception as exc:
             raise not_sent(f"shell_tokens:{type(exc).__name__}") from exc
