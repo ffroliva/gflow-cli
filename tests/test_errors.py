@@ -655,6 +655,9 @@ def test_problem_details_without_ref_has_no_incident_key() -> None:
 
 def test_all_domain_errors_provide_remediation_hint() -> None:
     """Assert to_problem_details() returns remediation_hint for all domain error classes."""
+    # Load every module that defines a GFlowError subclass, so discovery does not depend on
+    # which other tests ran in this worker first.
+    import gflow_cli.api.client  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from gflow_cli.errors import CreditCapExceededError, GFlowError
 
     def get_subclasses(c: type[GFlowError]) -> set[type[GFlowError]]:
