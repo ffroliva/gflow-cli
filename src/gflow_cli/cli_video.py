@@ -485,7 +485,7 @@ class _I2VParams:
 
     Separating these from the profile/output/count fields keeps the function
     signature below Sonar's 13-parameter limit (S107) while preserving every
-    CLI option. Mirrors `cli_image.py`'s `_I2IParams`.
+    CLI option. Mirrors `cli_image_params.py`'s `I2IParams`.
     """
 
     # Exactly one of image/image_ref_id (and end_frame/end_frame_ref_id) per
