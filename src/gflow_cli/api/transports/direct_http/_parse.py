@@ -9,7 +9,7 @@ id (spike 2026-11-27, "Parser and poll findings").
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 from gflow_cli.api.transports.batchexecute import (
@@ -19,6 +19,12 @@ from gflow_cli.api.transports.batchexecute import (
     _flow_error,
     parse_frames,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+#: ``jwpduf``'s status for an id with no record yet; a stub carries no Flow error either.
+_STUB_STATUS = 4
 
 
 def find_exact_record(node: object, record_id: str) -> list[Any] | None:
@@ -35,14 +41,31 @@ def find_exact_record(node: object, record_id: str) -> list[Any] | None:
     return None
 
 
+def _exact_records(text: str, rpcid: str, record_id: str) -> Iterator[list[Any]]:
+    for frame_rpcid, payload in parse_frames(text):
+        rec = find_exact_record(payload, record_id) if frame_rpcid == rpcid else None
+        if rec is not None:
+            yield rec
+
+
 def existing_record(text: str, rpcid: str, record_id: str) -> GenerationRecord | None:
     """The record for ``record_id`` in ``rpcid``'s frames, or ``None`` when absent or a stub."""
-    for frame_rpcid, payload in parse_frames(text):
-        if frame_rpcid != rpcid:
-            continue
-        rec = find_exact_record(payload, record_id)
-        if rec is not None and isinstance(rec[2], str) and rec[2]:
+    for rec in _exact_records(text, rpcid, record_id):
+        if isinstance(rec[2], str) and rec[2]:
             return _decode(rec)
+    return None
+
+
+def failed_record(text: str, rpcid: str, record_id: str) -> GenerationRecord | None:
+    """A failed record for ``record_id`` even with no media id; ``None`` for a stub.
+
+    A stub is status ``4`` with no Flow error; any other failed status, or a record that
+    carries Flow's error, is final, so a poll ends on it instead of running to its timeout.
+    """
+    for rec in _exact_records(text, rpcid, record_id):
+        record = _decode(rec)
+        if record.is_failed and (record.error_code is not None or record.status != _STUB_STATUS):
+            return record
     return None
 
 
@@ -79,7 +102,7 @@ def _decode(rec: list[Any]) -> GenerationRecord:
     return GenerationRecord(
         workflow_id=cast("str", rec[0]),
         project_id=rec[1] if isinstance(rec[1], str) else "",
-        media_id=cast("str", rec[2]),
+        media_id=rec[2] if isinstance(rec[2], str) else "",
         status=status if isinstance(status, int) else None,
         size_bytes=size if isinstance(size, int) else None,
         error_code=error_code,

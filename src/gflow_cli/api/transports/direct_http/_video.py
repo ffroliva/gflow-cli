@@ -26,7 +26,11 @@ from gflow_cli.api.transports.direct_http._gateway import (
     _client,
     _post_request,
 )
-from gflow_cli.api.transports.direct_http._parse import existing_record, original_video_url
+from gflow_cli.api.transports.direct_http._parse import (
+    existing_record,
+    failed_record,
+    original_video_url,
+)
 from gflow_cli.api.transports.direct_http._session import _session_headers, _shell
 from gflow_cli.api.transports.frame_builder import build_i2v_body, build_rpc_body, build_t2v_body
 from gflow_cli.api.transports.migrated_recover import _verify
@@ -202,8 +206,9 @@ async def _poll(
     """``jwpduf`` until the record is done or failed; a stub (no media id) is neither."""
     deadline = time.monotonic() + timeout_s
     while True:
-        record = existing_record(
-            await read("jwpduf", [None, None, [[workflow_id]]]), "jwpduf", workflow_id
+        text = await read("jwpduf", [None, None, [[workflow_id]]])
+        record = existing_record(text, "jwpduf", workflow_id) or failed_record(
+            text, "jwpduf", workflow_id
         )
         if record is not None and (record.is_done or record.is_failed):
             return record

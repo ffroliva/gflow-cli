@@ -47,6 +47,7 @@ __all__ = [
     "choose_video_route",
     "direct_can_serve",
     "plan_visibility",
+    "video_target",
 ]
 
 
@@ -81,12 +82,6 @@ MEASURED_VIDEO_KEYS: dict[
     ),
     (VideoModel.OMNI_1_2_FLASH, Mode.T2V, 4, "360p", VideoAspect.PORTRAIT): VideoWireTarget(
         "macaron_cookie_t2v_4s_360p", 1
-    ),
-    (VideoModel.OMNI_1_2_FLASH, Mode.I2V, 4, "360p", VideoAspect.LANDSCAPE): VideoWireTarget(
-        "macaron_cookie_i2v_4s_360p", 2
-    ),
-    (VideoModel.VEO_3_1_LITE, Mode.T2V, None, None, VideoAspect.LANDSCAPE): VideoWireTarget(
-        "veo_3_1_t2v_lite", 2
     ),
     (VideoModel.VEO_3_1_LITE, Mode.I2V, None, None, VideoAspect.PORTRAIT): VideoWireTarget(
         "veo_3_1_i2v_lite", 1
@@ -184,26 +179,6 @@ def _has_video_references(request: GenerateVideoRequest) -> bool:
     )
 
 
-def _is_video_request_supported(
-    request: GenerateVideoRequest,
-    effective_max_credits: int | None,
-) -> bool:
-    if _has_credit_cap(effective_max_credits, request.max_credits):
-        return False
-    if request.count != 1 or _has_video_references(request):
-        return False
-    return True
-
-
-def _has_start_frame(request: GenerateVideoRequest) -> bool:
-    return bool(
-        request.start_image
-        or request.start_image_ref_name
-        or request.start_image_ref_id
-        or request.start_image_ref_display_name
-    )
-
-
 def _has_end_frame(request: GenerateVideoRequest) -> bool:
     return bool(
         request.end_image
@@ -215,7 +190,8 @@ def _has_end_frame(request: GenerateVideoRequest) -> bool:
 
 def _resolve_video_model(request: GenerateVideoRequest) -> VideoModel | None:
     if request.mode == Mode.I2V:
-        if not _has_start_frame(request) or _has_end_frame(request):
+        # A local start frame only: an in-project one carries no bytes for the crop box.
+        if request.start_image is None or _has_end_frame(request):
             return None
         return request.model if request.model is not None else I2V_DEFAULT_MODEL
     if request.mode == Mode.T2V:
@@ -223,12 +199,21 @@ def _resolve_video_model(request: GenerateVideoRequest) -> VideoModel | None:
     return None
 
 
-def _is_video_tuple_measured(
-    model: VideoModel,
-    request: GenerateVideoRequest,
-) -> bool:
-    key_tuple = (model, request.mode, request.duration, request.resolution, request.aspect)
-    return key_tuple in MEASURED_VIDEO_KEYS
+def video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
+    """The measured wire key and aspect slot for ``request``'s shape, or ``None`` (the UI path).
+
+    Shape only: one clip, no references, not the agentic UI, an i2v start frame that is a
+    local file, and an exact measured tuple. The host, the proxy and the credit cap are the
+    caller's (:func:`choose_video_route`).
+    """
+    if request.count != 1 or _has_video_references(request) or request.ui_mode is UiMode.AGENTIC:
+        return None
+    model = _resolve_video_model(request)
+    if model is None:
+        return None
+    return MEASURED_VIDEO_KEYS.get(
+        (model, request.mode, request.duration, request.resolution, request.aspect)
+    )
 
 
 def choose_video_route(
@@ -247,17 +232,9 @@ def choose_video_route(
         return Route.UI
     if isinstance(request, (ExtendVideoRequest, EditVideoRequest)):
         return Route.UI
-    if not _is_video_request_supported(request, effective_max_credits):
+    if _has_credit_cap(effective_max_credits, request.max_credits):
         return Route.UI
-
-    model = _resolve_video_model(request)
-    if model is None:
-        return Route.UI
-
-    if _is_video_tuple_measured(model, request):
-        return Route.DIRECT
-
-    return Route.UI
+    return Route.DIRECT if video_target(request) is not None else Route.UI
 
 
 def _read_catalog_field(row: object, *names: str) -> str | None:

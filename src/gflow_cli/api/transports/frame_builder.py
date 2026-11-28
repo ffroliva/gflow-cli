@@ -205,7 +205,8 @@ def centred_crop(width: int, height: int, *, aspect_slot: int) -> list[float | i
     else:
         f = source / target
         box = [(1 - f) / 2, 0.0, (1 + f) / 2, 1.0]
-    return [None if v == 0 else (1 if v == 1 else round(v, 6)) for v in box]
+    rounded = [round(v, 6) for v in box]  # round first: 0.0000001 is sent as null, not 0.0
+    return [None if v == 0 else (1 if v == 1 else v) for v in rounded]
 
 
 def _prompt_document(

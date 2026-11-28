@@ -20,6 +20,7 @@ from gflow_cli.api import flow_wire
 from gflow_cli.api._flow_retry import run_with_retry
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import CreditsInfo
+from gflow_cli.api.generation_route import Route, choose_video_route, video_target
 from gflow_cli.api.submit_policy import (
     BrowserVisibility,
     DirectAttemptEnded,
@@ -37,9 +38,11 @@ from gflow_cli.api.transports.frame_builder import (
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
 from gflow_cli.errors import (
     InsufficientCreditsError,
+    MediaDownloadError,
     NetworkError,
     TransportTimeoutError,
     WireFormatError,
+    legacy_exit_code_for,
 )
 from tests.api.test_flow_retry import FakeHost
 from tests.api.transports.test_direct_http import _maseq_reply
@@ -119,6 +122,7 @@ class Flow:
         self.events: list[str] = []
         self.bodies: dict[str, list[list[Any]]] = {}
         self.download_headers: list[httpx.Headers] = []
+        self.download = lambda: httpx.Response(200, content=_MP4)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.host == "flow.google.com":
@@ -126,7 +130,7 @@ class Flow:
         if request.method == "GET":
             self.events.append(f"GET {request.url.host}")
             self.download_headers.append(request.headers)
-            return httpx.Response(200, content=_MP4)
+            return self.download()
         rpcid = request.url.params["rpcids"]
         self.events.append(rpcid)
         self.bodies.setdefault(rpcid, []).append(_f_req(request.content))
@@ -440,7 +444,7 @@ async def test_i2v_retry_reuses_uploaded_media_id(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "request_",
     [
-        # t2v Veo 3.1 Lite was measured at 16:9 only
+        # t2v Veo 3.1 Lite: no app frame was captured, at any aspect
         GenerateVideoRequest(prompt="x", model=VideoModel.VEO_3_1_LITE, aspect=Aspect.PORTRAIT),
         # an end frame (nprQif) is unmeasured
         GenerateVideoRequest(
@@ -490,3 +494,152 @@ async def test_a_failed_balance_read_skips_the_check(
     )
     assert result.status.succeeded
     assert flow.count("YhhmEf") == 1
+
+
+# --- council fixes ---------------------------------------------------------------------
+
+
+def _jpeg(tmp_path: Path, orientation: int, width: int = 1200, height: int = 630) -> Path:
+    """A JPEG header: an APP1/Exif segment carrying ``orientation``, then SOF0."""
+    ifd = struct.pack(">HHHIHH", 1, 0x0112, 3, 1, orientation, 0) + struct.pack(">I", 0)
+    exif = b"Exif\x00\x00" + b"MM\x00\x2a" + struct.pack(">I", 8) + ifd
+    app1 = b"\xff\xe1" + struct.pack(">H", len(exif) + 2) + exif
+    sof = b"\xff\xc0" + struct.pack(">HBHHB", 17, 8, height, width, 3) + b"\x01\x11\x00" * 3
+    path = tmp_path / f"start-{orientation}.jpg"
+    path.write_bytes(b"\xff\xd8" + app1 + sof + b"\x00" * 32 + b"\xff\xd9")
+    return path
+
+
+def _as29s_sized(size: int) -> str:
+    return _frame("as29s", [[_record(3, size=size, url=_VIDEO_URL)]])
+
+
+@pytest.mark.asyncio
+async def test_in_project_start_frame_routes_to_ui_without_a_direct_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An in-project start frame has no local bytes: the route is UI, decided before launch."""
+    balance = AsyncMock(return_value=CreditsInfo(100))
+    monkeypatch.setattr(flow_wire, "read_credits", balance)
+    request = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image_ref_id=_UPLOADED)
+    assert video_target(request) is None
+    route = choose_video_route(
+        request, flow_host="flow.google.com", proxy_configured=False, effective_max_credits=None
+    )
+    assert route is Route.UI
+    flow = _happy()
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await _transport(tmp_path, flow).generate_video(
+            request=request, project_id=_PROJECT, out_dir=tmp_path
+        )
+    assert ended.value.outcome == NotSent("unsupported_shape")
+    assert flow.events == []
+    balance.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_exif_orientation_6_falls_back_before_upload(tmp_path: Path) -> None:
+    """A rotated start frame (EXIF 5-8) would get a crop box for the unrotated pixels."""
+    rotated = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=_jpeg(tmp_path, 6))
+    flow = _happy()
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await _transport(tmp_path, flow).generate_video(
+            request=rotated, project_id=_PROJECT, out_dir=tmp_path
+        )
+    assert ended.value.outcome == NotSent("start_frame_exif_rotated")
+    assert flow.events == []
+
+    upright = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=_jpeg(tmp_path, 3))
+    flow = _happy()
+    result = await _transport(tmp_path, flow).generate_video(
+        request=upright, project_id=_PROJECT, out_dir=tmp_path
+    )
+    assert result.status.succeeded
+    assert flow.count("maseQ") == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_record_without_media_id_ends_poll(tmp_path: Path) -> None:
+    """A failed record with no media id is final: the poll ends, it does not spin."""
+    failed = _record(5, media=None)
+    failed[5][8] = [5, [3, "Flow could not generate this video"]]
+    flow = _happy(jwpduf=[_frame("jwpduf", [[failed]]), _done()])
+    result = await _transport(tmp_path, flow).generate_video(
+        request=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path, poll_timeout_s=60.0
+    )
+    assert flow.count("jwpduf") == 1
+    assert not result.status.succeeded
+    assert "could not generate" in (result.status.error_message or "")
+    assert flow.count("as29s") == 0
+
+
+async def _download_failure(tmp_path: Path, flow: Flow) -> DirectAttemptEnded:
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await _transport(tmp_path, flow).generate_video(
+            request=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path
+        )
+    assert isinstance(ended.value.outcome, Indeterminate)
+    assert flow.count("YhhmEf") == 1
+    assert not list(tmp_path.glob("*.mp4"))
+    return ended.value
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_http_error(tmp_path: Path) -> None:
+    flow = _happy()
+    flow.download = lambda: httpx.Response(403, text="denied")
+    ended = await _download_failure(tmp_path, flow)
+    assert isinstance(ended.error, MediaDownloadError)
+    assert ended.error.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_redirect(tmp_path: Path) -> None:
+    flow = _happy()
+    flow.download = lambda: httpx.Response(302, headers={"location": "https://evil.example/x"})
+    ended = await _download_failure(tmp_path, flow)
+    assert isinstance(ended.error, MediaDownloadError)
+    assert flow.events.count("GET flow-content.google") == 1
+    assert "GET evil.example" not in flow.events
+
+
+@pytest.mark.asyncio
+async def test_download_rejects_size_mismatch(tmp_path: Path) -> None:
+    flow = _happy(as29s=[_as29s_sized(len(_MP4) + 1)])
+    ended = await _download_failure(tmp_path, flow)
+    assert isinstance(ended.error, WireFormatError)
+    assert "refusing to save" in ended.error.detail
+
+
+@pytest.mark.asyncio
+async def test_video_retries_only_exact_unusual_activity(tmp_path: Path) -> None:
+    """A reason that only starts with UNUSUAL_ACTIVITY is not a refusal: no relaunch."""
+    near_miss = _error_frame("YhhmEf", UNUSUAL_ACTIVITY_REASON + "_V2")
+    flow = _happy(YhhmEf=[near_miss, _submitted()])
+    client, _ = _client(tmp_path, flow)
+    with pytest.raises(NetworkError) as caught:
+        await client.generate_video(req=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path)
+    assert flow.count("YhhmEf") == 1
+    assert not any(e.startswith("relaunch") for e in flow.events)
+    assert caught.value.resolved_next_action() == "reconcile"
+
+
+@pytest.mark.asyncio
+async def test_i2v_zero_balance_exits_37_before_upload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(flow_wire, "read_credits", AsyncMock(return_value=CreditsInfo(0)))
+    flow = _happy()
+    client, _ = _client(tmp_path, flow)
+    request = GenerateVideoRequest(prompt="x", mode=Mode.I2V, start_image=_png(tmp_path))
+    with pytest.raises(InsufficientCreditsError) as caught:
+        await client.generate_video(req=request, project_id=_PROJECT, out_dir=tmp_path)
+    assert legacy_exit_code_for(caught.value) == 37
+    assert caught.value.charged == "no"
+    assert flow.events == []
+
+
+def test_crop_rounding_to_zero_sends_null() -> None:
+    """A fraction that rounds to 0 is sent as null, one that rounds to 1 as the integer 1."""
+    box = centred_crop(16_000_001, 9_000_000, aspect_slot=2)
+    assert json.dumps(box) == "[null, null, 1, 1]"

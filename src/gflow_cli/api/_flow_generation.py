@@ -10,7 +10,7 @@ import asyncio
 import time
 from dataclasses import replace as _dataclass_replace
 from datetime import date
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from urllib.parse import urlsplit, urlunsplit
 
 import structlog
@@ -61,6 +61,7 @@ if TYPE_CHECKING:
 
     from gflow_cli.api._flow_retry import DirectImages, RetryHost
     from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.transports.direct_http import DirectHttpTransport
     from gflow_cli.api.video import (
         EditVideoRequest,
         GenerateVideoRequest,
@@ -68,35 +69,6 @@ if TYPE_CHECKING:
         VideoStarted,
         VideoStartedCallback,
     )
-
-    class _DirectVideos(Protocol):
-        """A transport whose video path can end ``NotSent`` and fall back to its UI path."""
-
-        async def generate_video(
-            self,
-            *,
-            request: GenerateVideoRequest,
-            project_id: str | None = None,
-            out_dir: Path | None = None,
-            poll_timeout_s: float = 600.0,
-            download: bool = True,
-            on_started: VideoStartedCallback | None = None,
-            name_resolver: Callable[[str], str | None] | None = None,
-            on_before_submit: Callable[[], None] | None = None,
-            frame_uploads: dict[Path, str] | None = None,
-        ) -> VideoResult: ...
-
-        async def generate_video_ui(
-            self,
-            *,
-            request: GenerateVideoRequest,
-            project_id: str | None = None,
-            out_dir: Path | None = None,
-            poll_timeout_s: float = 600.0,
-            download: bool = True,
-            on_started: VideoStartedCallback | None = None,
-            name_resolver: Callable[[str], str | None] | None = None,
-        ) -> VideoResult: ...
 
 
 from gflow_cli.api._flow_retry import run_with_retry
@@ -933,8 +905,8 @@ class GenerationSurface(WorkspaceSurface):
         """
         frame_uploads: dict[Path, str] = {}
 
-        def transport() -> _DirectVideos:
-            return cast("_DirectVideos", self.transport)  # re-read: a relaunch replaces it
+        def transport() -> DirectHttpTransport:
+            return cast("DirectHttpTransport", self.transport)  # re-read: a relaunch replaces it
 
         return await run_with_retry(
             cast("RetryHost", self),
@@ -947,7 +919,6 @@ class GenerationSurface(WorkspaceSurface):
                 on_started=on_started,
                 on_before_submit=before,
                 frame_uploads=frame_uploads,
-                **resolver_kw,
             ),
             ui=lambda: transport().generate_video_ui(
                 request=request,

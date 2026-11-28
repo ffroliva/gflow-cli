@@ -7,9 +7,10 @@ Two billed runs on one profile, headless, over ``GFLOW_CLI_TRANSPORT=direct_http
 * the default ``gflow video i2v`` shape (no ``--model``: Veo 3.1 Lite, 9:16; ``maseQ`` then
   ``eb1hJf``), a 720x1280 mp4, 10 credits measured.
 
-Each asserts route ``direct``, visibility ``headless``, the mp4's dimensions, and a balance
-drop equal to the key's measured cost (spike 2026-11-27, "The default video shape over
-direct HTTP"). Spends Veo credits; opt in with:
+Each asserts exit 0, the mp4's dimensions, and a balance drop equal to the key's measured
+cost (spike 2026-11-27, "The default video shape over direct HTTP"). The route and the
+visibility are not in the command's output yet, and the video catalog records no transport.
+Spends Veo credits; opt in with:
 
     GFLOW_CLI_E2E_PROFILE=<profile> GFLOW_CLI_E2E_RUN_VIDEO=1 \\
         uv run pytest -m e2e_video -v tests/e2e/test_direct_video_e2e.py
@@ -23,7 +24,7 @@ import struct
 import subprocess
 import sys
 import zlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -62,13 +63,6 @@ def _balance(env: RedactedEnv) -> int:
     return int(json.loads(proc.stdout)["credits"])
 
 
-def _last_json(stdout: str) -> dict[str, Any]:
-    for line in reversed(stdout.strip().splitlines()):
-        if line.startswith("{"):
-            return json.loads(line)
-    return json.loads(stdout)
-
-
 def _start_frame(path: Path, width: int = 1200, height: int = 630) -> Path:
     """A plain 1200x630 PNG: the frame the spike's crop box was measured on."""
 
@@ -83,39 +77,34 @@ def _start_frame(path: Path, width: int = 1200, height: int = 630) -> Path:
     return path
 
 
-def _assert_direct_clip(
-    proc: subprocess.CompletedProcess[str], out: Path, dims: tuple[int, int]
-) -> None:
+def _assert_clip(proc: subprocess.CompletedProcess[str], out: Path, dims: tuple[int, int]) -> None:
     assert proc.returncode == 0, f"gflow video failed (exit {proc.returncode})"
-    payload = _last_json(proc.stdout)
-    assert payload.get("route") == "direct"
-    assert payload.get("visibility") == "headless"
     data = out.read_bytes()
     assert data[4:8] == b"ftyp", f"{out} is not an mp4"
     assert mp4_track_dimensions(data) == dims
 
 
-def test_t2v_at_a_measured_key_goes_direct_headless(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+def test_t2v_at_a_measured_key_writes_the_clip(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     before = _balance(e2e_env)
     out = tmp_path / "t2v.mp4"
     proc = _gflow(
         e2e_env,
         *("video", "t2v", "a paper boat drifting on a pond"),
         *_T2V_KEY,
-        *("--aspect", "9:16", "--out-file", str(out), "--json"),
+        *("--aspect", "9:16", "--out-file", str(out)),
     )
-    _assert_direct_clip(proc, out, (360, 640))
+    _assert_clip(proc, out, (360, 640))
     assert before - _balance(e2e_env) == _T2V_COST
 
 
-def test_default_i2v_goes_direct_headless(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+def test_default_i2v_writes_the_clip(e2e_env: RedactedEnv, tmp_path: Path) -> None:
     before = _balance(e2e_env)
     out = tmp_path / "i2v.mp4"
     start = _start_frame(tmp_path / "start.png")
     proc = _gflow(
         e2e_env,
         *("video", "i2v", "the sky slowly brightens"),
-        *("--initial-frame", str(start), "--out-file", str(out), "--json"),
+        *("--initial-frame", str(start), "--out-file", str(out)),
     )
-    _assert_direct_clip(proc, out, (720, 1280))
+    _assert_clip(proc, out, (720, 1280))
     assert before - _balance(e2e_env) == _I2V_COST

@@ -16,11 +16,11 @@ import structlog
 from gflow_cli.api import flow_wire
 from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.generation_route import (
-    MEASURED_VIDEO_KEYS,
     Route,
     VideoWireTarget,
     choose_video_route,
     direct_can_serve,
+    video_target,
 )
 from gflow_cli.api.image import ImageRef
 from gflow_cli.api.submit_policy import DirectAttemptEnded, RefusedNotBilled, not_sent
@@ -31,10 +31,10 @@ from gflow_cli.api.transports.direct_http._session import _proxy_configured
 from gflow_cli.api.transports.direct_http._video import StartFrame, run_direct_video
 from gflow_cli.api.transports.frame_builder import centred_crop
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
-from gflow_cli.api.video import I2V_DEFAULT_MODEL, Mode
+from gflow_cli.api.video import Mode
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import InsufficientCreditsError
-from gflow_cli.paths import image_dimensions
+from gflow_cli.paths import image_dimensions, jpeg_exif_orientation
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -51,7 +51,7 @@ def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     """The measured wire key and aspect slot for ``request``, or ``None`` (the UI path).
 
     ``choose_video_route`` decides; a credit cap (the request's or the configured one)
-    routes to the UI, where Flow's quote is read. An i2v with no model is Veo 3.1 Lite.
+    routes to the UI, where Flow's quote is read; :func:`video_target` reads the shape.
     """
     settings = get_settings()
     route = choose_video_route(
@@ -62,11 +62,7 @@ def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     )
     if route is not Route.DIRECT or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
         return None
-    model = request.model
-    if model is None and request.mode is Mode.I2V:
-        model = I2V_DEFAULT_MODEL
-    key = (model, request.mode, request.duration, request.resolution, request.aspect)
-    return MEASURED_VIDEO_KEYS.get(key)
+    return video_target(request)
 
 
 async def _refuse_empty_balance(profile_dir: Path) -> None:
@@ -223,7 +219,9 @@ class DirectHttpTransport(UiAutomationTransport):
         """The inherited UI upload, for the retry loop's fallback when nothing was sent."""
         return await super().upload_reference(project_id=project_id, path=path)
 
-    async def generate_video(
+    # No name_resolver: the client sends this transport through the retry loop, which passes
+    # resolver kwargs to generate_video_ui only; the direct frame has no mention to resolve.
+    async def generate_video(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         *,
         request: GenerateVideoRequest,
@@ -232,7 +230,6 @@ class DirectHttpTransport(UiAutomationTransport):
         poll_timeout_s: float = 600.0,
         download: bool = True,
         on_started: VideoStartedCallback | None = None,
-        name_resolver: Callable[[str], str | None] | None = None,
         on_before_submit: Callable[[], None] | None = None,
         frame_uploads: dict[Path, str] | None = None,
     ) -> VideoResult:
@@ -245,7 +242,6 @@ class DirectHttpTransport(UiAutomationTransport):
         retry after a refusal reuses the stored upload. A zero balance, read without the
         browser, ends the request before any send (exit 37); an unreadable one is skipped.
         """
-        del name_resolver  # the direct frame carries no mention text to resolve
         if not self._setup_done or self._page is None:
             msg = "DirectHttpTransport.setup() must be called before generate_video()"
             raise RuntimeError(msg)
@@ -315,9 +311,12 @@ class DirectHttpTransport(UiAutomationTransport):
     ) -> StartFrame:
         """The start frame's media id (uploaded once per run) and its centred crop box."""
         path = request.start_image
-        if path is None:  # an in-project reference carries no bytes for the crop box
+        if path is None:  # pragma: no cover - video_target routes an in-project frame to the UI
             raise not_sent("start_frame_not_local")
-        size = image_dimensions(await asyncio.to_thread(path.read_bytes))
+        data = await asyncio.to_thread(path.read_bytes)
+        if jpeg_exif_orientation(data) >= 5:  # a quarter turn: the stored box is not the shown one
+            raise not_sent("start_frame_exif_rotated")
+        size = image_dimensions(data)
         if size is None:
             raise not_sent("start_frame_dimensions")
         uploads = {} if frame_uploads is None else frame_uploads
