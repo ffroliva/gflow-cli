@@ -178,6 +178,7 @@ def _step_generation_runs(world: dict[str, Any]) -> None:
         NotSent,
         RefusedNotBilled,
     )
+    from gflow_cli.errors import NetworkError
 
     answers = list(world.get("submit_responses", ["ACCEPTED"]))
 
@@ -189,7 +190,15 @@ def _step_generation_runs(world: dict[str, Any]) -> None:
         if answer == "UNUSUAL_ACTIVITY":
             raise DirectAttemptEnded(RefusedNotBilled("ogiZ0b", "UNUSUAL_ACTIVITY"))
         if answer == "TIMEOUT_AFTER_SEND":
-            raise DirectAttemptEnded(Indeterminate("ogiZ0b", "timeout after send"))
+            # As the gateway does: an outcome past the send carries its reconcile error.
+            raise DirectAttemptEnded(
+                Indeterminate("ogiZ0b", "timeout after send"),
+                error=NetworkError(
+                    detail="timeout after send on an image submit; not resent",
+                    route="batchexecute:ogiZ0b",
+                    next_action="reconcile",
+                ),
+            )
         return "image"
 
     async def ui() -> str:
