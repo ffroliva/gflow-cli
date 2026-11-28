@@ -152,9 +152,10 @@ class TestEnvOverrides:
         assert s_true.browser_visibility == "headless"
         assert s_true.headless is True
 
+        # false was the old .env.template default, so it keeps the auto default (#1371).
         monkeypatch.setenv("GFLOW_CLI_HEADLESS", "false")
         s_false = Settings()
-        assert s_false.browser_visibility == "headed"
+        assert s_false.browser_visibility == "auto"
         assert s_false.headless is False
 
     def test_explicit_visibility_wins_over_alias(

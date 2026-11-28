@@ -449,7 +449,7 @@ def test_doctor_flags_gflow_cli_headless(
     text = " ".join(f.summary + " " + f.remediation for f in flagged)
     assert "GFLOW_CLI_HEADLESS" in text
     assert "GFLOW_CLI_BROWSER_VISIBILITY" in text
-    assert "false pins headed" in text
+    assert "false now means auto" in text
 
 
 def test_db_path_env_settings_disagreement_flags(

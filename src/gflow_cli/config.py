@@ -578,9 +578,9 @@ class Settings(BaseSettings):
     headless: bool = Field(
         default=False,
         description=(
-            "Deprecated alias for GFLOW_CLI_BROWSER_VISIBILITY. Set true for headless "
-            "(same as GFLOW_CLI_BROWSER_VISIBILITY=headless), false for headed "
-            "(same as GFLOW_CLI_BROWSER_VISIBILITY=headed). Flagged by gflow doctor."
+            "Deprecated alias for GFLOW_CLI_BROWSER_VISIBILITY. true is headless "
+            "(same as GFLOW_CLI_BROWSER_VISIBILITY=headless); false is the auto default "
+            "(same as GFLOW_CLI_BROWSER_VISIBILITY=auto). Flagged by gflow doctor."
         ),
     )
     browser_window_position: str = Field(
@@ -671,7 +671,8 @@ class Settings(BaseSettings):
             return data
         raw = dict(cast("dict[str, object]", data))
         if "browser_visibility" not in raw and "headless" in raw:
-            raw["browser_visibility"] = "headless" if _truthy(raw["headless"]) else "headed"
+            # false was the old .env.template default, so it keeps the auto default (#1371)
+            raw["browser_visibility"] = "headless" if _truthy(raw["headless"]) else "auto"
         if "browser_visibility" in raw:
             raw["headless"] = raw["browser_visibility"] == "headless"
         return raw

@@ -112,16 +112,16 @@ def test_changelog_unreleased_notes_video_batch_removal() -> None:
 # Production-readiness hardening (task F1, design spec §9), revised for v0.108.0
 # (#1371): `GFLOW_CLI_BROWSER_VISIBILITY` defaults to `auto` (headless mint for the
 # measured direct shapes, headed for the Flow UI surfaces), and the deprecated
-# `GFLOW_CLI_HEADLESS=false` now pins `headed`. CONFIGURATION.md is the canonical
+# `GFLOW_CLI_HEADLESS=false` now means `auto`. CONFIGURATION.md is the canonical
 # reference doc and must state the default, the alias mapping and the kill switch.
-def test_current_docs_describe_auto_default_and_headed_pin() -> None:
+def test_current_docs_describe_auto_default_and_alias() -> None:
     text = (ROOT / "docs/CONFIGURATION.md").read_text(encoding="utf-8")
     section = text.split("### `GFLOW_CLI_BROWSER_VISIBILITY`", 1)[1].split("\n### ", 1)[0]
     assert "**Default:** `auto`" in section
     assert "headless" in section and "headed" in section
     assert "GFLOW_CLI_TRANSPORT=ui_automation" in section
     alias = text.split("### `GFLOW_CLI_HEADLESS`", 1)[1].split("\n### ", 1)[0]
-    assert "GFLOW_CLI_HEADLESS=false` is **`headed`**" in alias
+    assert "GFLOW_CLI_HEADLESS=false` is **`auto`**" in alias
     assert "`gflow doctor` flags it" in alias
 
 

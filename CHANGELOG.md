@@ -54,9 +54,9 @@ its wire map and measurements. gflow-cli re-derived every shape from its own cap
   `headed` shows a window for every Flow command. An explicit `headless` also runs Flow UI shapes
   headless; that is unsupported in this release (#1554).
 - **`GFLOW_CLI_HEADLESS` is deprecated** and flagged by `gflow doctor`. `true` maps to
-  `headless`; **`false` now pins `headed`**, so a `.env` that still sets
-  `GFLOW_CLI_HEADLESS=false` shows a window for every command, the direct shapes included. Remove
-  the line to get the default.
+  `headless`; **`false` maps to `auto`**, the new default, because `false` was the value earlier
+  `.env.template` files shipped: a `.env` that still sets it gets the headless direct shapes.
+  Set `GFLOW_CLI_BROWSER_VISIBILITY=headed` to show a window for every command.
 - **Kill switch:** `GFLOW_CLI_TRANSPORT=ui_automation` (environment or `.env`) sends every request
   through Flow's UI, headed, as before this release.
 - **Behaviour change:** a not-charged refusal on a direct submit is now resent once, from a new

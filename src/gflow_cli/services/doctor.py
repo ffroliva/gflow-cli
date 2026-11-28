@@ -432,7 +432,7 @@ def _check_deprecated_vars(settings: Settings) -> list[Finding]:
     for var, successor in successors.items():
         if os.environ.get(var):
             if var == "GFLOW_CLI_HEADLESS":
-                remediation = f"unset {var} and use {successor} instead (false pins headed)"
+                remediation = f"unset {var} and use {successor} instead (false now means auto)"
             elif successor:
                 remediation = f"unset {var} and use {successor} instead"
             else:

@@ -45,7 +45,7 @@ Feature: Route and refusal retry for direct generation
     When the route is chosen
     Then the UI path is chosen and launched headed
 
-  Scenario: GFLOW_CLI_HEADLESS=false pins headed
+  Scenario: GFLOW_CLI_HEADLESS=false keeps the auto default
     Given the environment variable GFLOW_CLI_HEADLESS is set to "false"
     When the route is chosen
-    Then the launch visibility is headed
+    Then the launch visibility is headless

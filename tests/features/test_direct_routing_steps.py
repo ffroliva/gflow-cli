@@ -83,9 +83,9 @@ def test_unmeasured_shape_takes_ui_path_headed() -> None:
 
 @scenario(
     "direct_routing.feature",
-    "GFLOW_CLI_HEADLESS=false pins headed",
+    "GFLOW_CLI_HEADLESS=false keeps the auto default",
 )
-def test_headless_false_pins_headed() -> None:
+def test_headless_false_keeps_the_auto_default() -> None:
     pass
 
 
@@ -384,6 +384,6 @@ def _step_ui_path_headed(world: dict[str, Any]) -> None:
     assert world["visibility"] == BrowserVisibility.HEADED
 
 
-@then("the launch visibility is headed")
-def _step_visibility_headed(world: dict[str, Any]) -> None:
-    assert world["visibility"] == BrowserVisibility.HEADED
+@then(parsers.parse("the launch visibility is {visibility}"))
+def _step_launch_visibility(world: dict[str, Any], visibility: str) -> None:
+    assert world["visibility"] == BrowserVisibility(visibility)

@@ -144,7 +144,8 @@ below (the in-flight count, the start history, the armed page) carries from one 
 
 - **Show the window:** `--browser-visibility headed` on a generation command,
   `browser_visibility="headed"` on an MCP tool, or `GFLOW_CLI_BROWSER_VISIBILITY=headed`. The
-  deprecated `GFLOW_CLI_HEADLESS=false` pins `headed` too; `gflow doctor` flags it.
+  deprecated `GFLOW_CLI_HEADLESS=false` is `auto` (the old `.env.template` value), not
+  `headed`; `gflow doctor` flags it.
 - **Kill switch:** `GFLOW_CLI_TRANSPORT=ui_automation` (in the environment or `.env`) sends
   every request through Flow's UI, headed, as before v0.108.0.
 - An explicit `--browser-visibility headless` (or `GFLOW_CLI_BROWSER_VISIBILITY` / the deprecated

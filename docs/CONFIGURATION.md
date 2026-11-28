@@ -449,10 +449,9 @@ GFLOW_CLI_BROWSER_VISIBILITY=headed gflow image t2i "watch it run"
 read only when that setting is unset; `gflow doctor` flags it.
 **Values:** `true` | `false`
 **Default:** unset, which leaves `GFLOW_CLI_BROWSER_VISIBILITY` at `auto`.
-**Mapping:** `GFLOW_CLI_HEADLESS=true` is `headless`; `GFLOW_CLI_HEADLESS=false` is **`headed`**,
-so a `.env` that still pins `false` from an earlier release shows a window for every Flow
-command, the direct shapes included. Remove the line (or set
-`GFLOW_CLI_BROWSER_VISIBILITY=auto`) to get the default.
+**Mapping:** `GFLOW_CLI_HEADLESS=true` is `headless`; `GFLOW_CLI_HEADLESS=false` is **`auto`**
+(the default), because `false` was the value earlier `.env.template` files shipped. To show a
+window for every Flow command, set `GFLOW_CLI_BROWSER_VISIBILITY=headed`.
 
 ### `GFLOW_CLI_BROWSER_WINDOW_POSITION`
 
