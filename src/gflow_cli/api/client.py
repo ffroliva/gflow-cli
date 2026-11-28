@@ -115,7 +115,7 @@ def _check_display_server(visibility: BrowserVisibility) -> None:
     """Refuse a headed launch on Linux if no display server is available."""
     if visibility == BrowserVisibility.HEADED and _on_linux():
         if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-            raise UiModeUnavailableError(
+            error = UiModeUnavailableError(
                 BrowserVisibility.HEADED,
                 remediation_hint=(
                     "A headed browser launch requires a display server on Linux, but neither "
@@ -123,6 +123,8 @@ def _check_display_server(visibility: BrowserVisibility) -> None:
                     "'xvfb-run -a gflow ...') or use --browser-visibility headless."
                 ),
             )
+            error.detail = "A headed browser cannot start: no display server (DISPLAY is unset)."
+            raise error
 
 
 def _is_profile_access_denied(exc: BaseException) -> bool:
@@ -819,9 +821,15 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
                 if isinstance(self.transport, SupportsQuiesce)
                 else contextlib.nullcontext()
             )
+            # Lock order: quiesce first, then the old transport's page lock (a mint holds that
+            # lock inside a gate slot). Holding it lets a running UI fallback finish before
+            # the teardown, and makes one queued behind it find its transport torn down.
+            page_lock = getattr(self.transport, "_generate_lock", None)
+            if not isinstance(page_lock, asyncio.Lock):
+                page_lock = contextlib.nullcontext()
             self._relaunch_gate.clear()
             try:
-                async with quiesce:
+                async with quiesce, page_lock:
                     await self._drain_and_relaunch(visibility)
             finally:
                 self._relaunch_gate.set()

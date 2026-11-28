@@ -15,7 +15,7 @@ from structlog.testing import capture_logs
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.submit_policy import MAX_IN_FLIGHT, DirectAttemptEnded
+from gflow_cli.api.submit_policy import MAX_IN_FLIGHT, DirectAttemptEnded, RefusedNotBilled
 from gflow_cli.api.transports.base import SupportsQuiesce
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http import DirectHttpTransport
@@ -284,8 +284,10 @@ async def test_refusal_discards_page_next_mint_uses_new_page(
     pool_page.context.new_page = AsyncMock(return_value=fresh)
     t = _transport(tmp_path, posts, pool_page)
 
-    with pytest.raises(WafRejectionError):
+    with pytest.raises(DirectAttemptEnded) as ended:
         await _generate(t)
+    assert ended.value.outcome == RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
+    assert isinstance(ended.value.error, WafRejectionError)
     images = await _generate(t)
 
     assert images[0].transport == "direct_http"
@@ -397,8 +399,10 @@ async def test_character_read_uses_rearmed_page(
     pool_page, fresh = _page(), _page("about:blank")
     pool_page.context.new_page = AsyncMock(return_value=fresh)
     t = _transport(tmp_path, posts, pool_page)
-    with pytest.raises(WafRejectionError):
+    with pytest.raises(DirectAttemptEnded) as ended:
         await _generate(t)  # discards the pool page; the next attempt re-arms
+    assert ended.value.outcome == RefusedNotBilled("ogiZ0b", UNUSUAL_ACTIVITY_REASON)
+    assert isinstance(ended.value.error, WafRejectionError)
     await _generate(t)  # re-arms during its mint; the read before it ran on the pool page
     request = GenerateImageRequest(
         prompt="x", reference_entities=("entity-0",), reference_entity_names=("Skipper",)

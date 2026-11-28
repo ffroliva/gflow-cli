@@ -22,6 +22,7 @@ from gflow_cli.api.dto import (
     ProjectInfo,
 )
 from gflow_cli.api.scene import ConcatInput, Scene, SceneWorkflow
+from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.video import (
     is_media_uuid,
 )
@@ -37,7 +38,9 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from gflow_cli.api._flow_retry import DirectUploads, RetryHost
     from gflow_cli.api.image import AgentInstruction, ImageRef, ProjectBrief
+from gflow_cli.api._flow_retry import run_with_retry
 from gflow_cli.api._flow_session import (
     _APPLICATION_JSON,  # pyright: ignore[reportPrivateUsage]
     FlowSession,
@@ -416,11 +419,30 @@ class WorkspaceSurface(FlowSession):
         """:meth:`upload_reference` without the REST fallback: ``None`` where the host Flow
         served has no in-place upload (labs), so the caller keeps its own path (#772)."""
         await validate_image_file(path)
+        # A class-level lookup: a mock transport answers every instance attribute.
+        if hasattr(type(self.transport), "upload_reference_ui"):
+            return await self._upload_through_retry(project_id, path)
         uploader = cast(
             "Callable[..., Awaitable[ImageRef | None]] | None",
             getattr(self.transport, "upload_reference", None),
         )
         return None if uploader is None else await uploader(project_id=project_id, path=path)
+
+    async def _upload_through_retry(self, project_id: str, path: Path) -> ImageRef | None:
+        """A direct-capable transport's upload, through the refusal retry loop (Task 13).
+
+        An upload bills nothing, so no checkpoint is written around it.
+        """
+
+        def transport() -> DirectUploads:
+            return cast("DirectUploads", self.transport)  # re-read: a relaunch replaces it
+
+        return await run_with_retry(
+            cast("RetryHost", self),
+            direct=lambda _before: transport().upload_reference(project_id=project_id, path=path),
+            ui=lambda: transport().upload_reference_ui(project_id=project_id, path=path),
+            setting=VisibilitySetting(self.settings.browser_visibility),
+        )
 
     async def archive_workflow(self, workflow_id: str, project_id: str) -> None:
         """Soft-delete (archive) a workflow — used by clear-library tooling.

@@ -154,6 +154,7 @@ class ImageGenerationMixin(CharacterGenerationMixin):
         from gflow_cli.config import get_settings  # noqa: PLC0415
 
         async with self._generate_lock:
+            self._raise_if_torn_down()
             page: Page = self._page
             await self.park_deferred_page()
             route = migrated_route(page.url, get_settings().flow_host, prefer_migrated=True)

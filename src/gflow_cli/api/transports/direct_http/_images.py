@@ -114,16 +114,17 @@ async def run_direct_images(
     page_lock: asyncio.Lock,
     armed_page: Callable[[], Page],
     http_transport: httpx.AsyncBaseTransport | None = None,
+    on_before_submit: Callable[[], None] | None = None,
 ) -> list[GeneratedImage]:
     """One direct image generation: read the session, mint, build, send once, parse.
 
     ``page`` serves the cookie reads. A character's project read navigates a page, so it
     runs on ``armed_page()`` (the page the mint uses) under ``page_lock``; the token comes
     from ``tokens``. The reply is parsed inside the attempt: a failure after the send is
-    indeterminate.
+    indeterminate. ``on_before_submit`` runs immediately before the billed POST.
     """
     started = time.perf_counter()
-    attempt = SubmitAttempt(_SUBMIT, profile_dir, tokens)
+    attempt = SubmitAttempt(_SUBMIT, profile_dir, tokens, on_before_submit=on_before_submit)
     async with _client(http_transport) as client, attempt:
         shell = await _shell(client, page, profile_dir)
         characters: tuple[tuple[str, str], ...] = ()

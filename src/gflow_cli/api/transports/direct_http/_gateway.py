@@ -71,12 +71,18 @@ class SubmitAttempt:
     """
 
     def __init__(
-        self, spec: _RpcSpec, profile_dir: Path, token_source: RecaptchaTokenSource
+        self,
+        spec: _RpcSpec,
+        profile_dir: Path,
+        token_source: RecaptchaTokenSource,
+        *,
+        on_before_submit: Callable[[], None] | None = None,
     ) -> None:
         self.spec = spec
         self.sent = False
         self._profile_dir = profile_dir
         self._token_source = token_source
+        self._on_before_submit = on_before_submit
 
     async def __aenter__(self) -> SubmitAttempt:
         return self
@@ -123,6 +129,10 @@ class SubmitAttempt:
         if rpcid not in WRITE_RPCIDS:
             msg = f"refusing to send {rpcid!r}: not a measured batchexecute write"
             raise ValueError(msg)
+        if self._on_before_submit is not None:
+            # Immediately before the billed POST; nothing is sent yet, so whatever it
+            # raises (a cancel from the submit gate) passes ``__aexit__`` unchanged.
+            self._on_before_submit()
         try:
             response = await self._open(client, request)
         except _CONNECT_ERRORS:
