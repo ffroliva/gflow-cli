@@ -16,7 +16,12 @@ import structlog
 from gflow_cli.api import flow_wire
 from gflow_cli.api.generation_route import Route, is_bare_t2v, video_target
 from gflow_cli.api.image import ImageRef
-from gflow_cli.api.submit_policy import DirectAttemptEnded, RefusedNotBilled, not_sent
+from gflow_cli.api.submit_policy import (
+    DirectAttemptEnded,
+    Indeterminate,
+    RefusedNotBilled,
+    not_sent,
+)
 from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource, ProjectTokens, _arm_page
@@ -356,7 +361,17 @@ class DirectHttpTransport(UiAutomationTransport):
             raise not_sent("start_frame_dimensions")
         uploads = {} if frame_uploads is None else frame_uploads
         if path not in uploads:
-            ref = await self.upload_reference(project_id=project_id, path=path)
+            try:
+                ref = await self.upload_reference(project_id=project_id, path=path)
+            except DirectAttemptEnded as ended:
+                # Past the maseQ send but before any video submit: an upload is never billed,
+                # so the run ends not charged rather than as a video to reconcile.
+                if isinstance(ended.outcome, Indeterminate) and ended.error is not None:
+                    ended.error.charged = "no"
+                    ended.error.next_action = "none"
+                    ended.error.retryable = False
+                    raise ended.error from ended
+                raise
             if ref is None:  # pragma: no cover - the direct upload returns a ref or raises
                 raise not_sent("start_frame_upload")
             uploads[path] = ref.name

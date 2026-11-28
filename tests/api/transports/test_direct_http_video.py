@@ -448,6 +448,28 @@ async def test_i2v_retry_reuses_uploaded_media_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_frame_upload_without_media_id_is_not_charged(tmp_path: Path) -> None:
+    """The start-frame upload runs before any video submit: a ``maseQ`` reply with no media
+    id ends the run as not charged, never as a maybe-charged video to reconcile."""
+    flow = _happy(maseQ=[_frame("maseQ", [])])
+    client, checkpoints = _client(tmp_path, flow)
+    request = GenerateVideoRequest(prompt="a paper boat", mode=Mode.I2V, start_image=_png(tmp_path))
+
+    with pytest.raises(WireFormatError) as caught:
+        await client.generate_video(
+            req=request,
+            project_id=_PROJECT,
+            out_dir=tmp_path,
+            on_checkpoint=lambda c: checkpoints.append(c.phase),
+        )
+
+    assert flow.events == ["maseQ"]
+    assert caught.value.charged == "no"
+    assert caught.value.next_action != "reconcile"
+    assert "submit_attempted" not in checkpoints
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "request_",
     [
