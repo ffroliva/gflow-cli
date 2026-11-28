@@ -15,7 +15,9 @@ from gflow_cli.errors import ConfigurationError
 # avoid pulling playwright/httpx into the import path until a strategy is
 # actually instantiated.
 
-_DEFAULT_TRANSPORT = "ui_automation"
+# direct_http sends measured shapes over HTTP with a headless token mint and runs every other
+# shape through the UI transport; GFLOW_CLI_TRANSPORT=ui_automation is the kill switch.
+_DEFAULT_TRANSPORT = "direct_http"
 
 # Strategies under active research. Hidden from CLI Choice lists unless
 # GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 is set in the environment. The factory
@@ -25,7 +27,6 @@ EXPERIMENTAL_TRANSPORTS: tuple[str, ...] = (
     "evaluate_fetch",
     "bearer",
     "sapisidhash",
-    "direct_http",
 )
 
 # Experimental transports whose ``setup()`` discards a caller-supplied ``page=``
@@ -62,7 +63,7 @@ def _registry() -> dict[str, type[FlowTransportStrategy]]:
 def transport_choices() -> list[str]:
     """Strategy keys exposed in CLI ``--transport`` Choice lists.
 
-    By default only the production-validated strategy (``ui_automation``).
+    By default only the production strategies (``ui_automation`` and ``direct_http``).
     Set ``GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1`` to expose all registered
     strategies including the experimental ones.
     """

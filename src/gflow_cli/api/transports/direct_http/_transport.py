@@ -66,7 +66,7 @@ def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     return video_target(request)
 
 
-async def _refuse_empty_balance(profile_dir: Path) -> None:
+async def refuse_empty_balance(profile_dir: Path) -> None:
     """Exit 37 before any send when Flow reports no credits; a failed read skips the check.
 
     The read is browser-free (``nzlxg``, the ``gflow credits`` read). Only an empty balance
@@ -255,7 +255,7 @@ class DirectHttpTransport(UiAutomationTransport):
             reason = "no_project"
         if reason or target is None or project_id is None or profile_dir is None:
             raise not_sent(reason or "no_profile_dir")
-        await _refuse_empty_balance(profile_dir)
+        await refuse_empty_balance(profile_dir)
         tokens = self._source_for(page).for_project(project_id)
         start: StartFrame | None = None
         if request.mode is Mode.I2V:

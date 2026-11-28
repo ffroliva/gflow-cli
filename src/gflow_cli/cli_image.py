@@ -432,9 +432,9 @@ def image() -> None:
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (ui_automation). Set "
+        "or built-in default (direct_http; ui_automation is the kill switch). Set "
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable "
-        "direct_http/evaluate_fetch/bearer/sapisidhash."
+        "evaluate_fetch/bearer/sapisidhash."
     ),
 )
 def upload(path: Path, profile: str | None, transport: str | None) -> None:
@@ -817,9 +817,9 @@ _ui_mode_option = click.option(
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (ui_automation). Set "
+        "or built-in default (direct_http; ui_automation is the kill switch). Set "
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable "
-        "direct_http/evaluate_fetch/bearer/sapisidhash."
+        "evaluate_fetch/bearer/sapisidhash."
     ),
 )
 @_project_and_entity_options(single_prompt=True)
@@ -1693,9 +1693,9 @@ class _I2IParams:
     default=None,
     help=(
         "Override transport strategy. Falls back to GFLOW_CLI_TRANSPORT env var "
-        "or built-in default (ui_automation). Set "
+        "or built-in default (direct_http; ui_automation is the kill switch). Set "
         "GFLOW_CLI_EXPERIMENTAL_TRANSPORTS=1 to enable "
-        "direct_http/evaluate_fetch/bearer/sapisidhash."
+        "evaluate_fetch/bearer/sapisidhash."
     ),
 )
 @_project_and_entity_options(single_prompt=False)
