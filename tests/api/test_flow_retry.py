@@ -954,3 +954,100 @@ async def test_ui_fallback_queued_behind_relaunch_raises_typed_not_charged(
     assert (caught.value.charged, exit_code_for(caught.value)) == ("no", 15)
     ui_locked.assert_not_awaited()
     old.park_deferred_page.assert_not_awaited()  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("answers", "retried"), [(("image",), False), ((_REFUSED, "image"), True)])
+async def test_observe_is_told_whether_a_refusal_was_retried(
+    answers: tuple[Any, ...], retried: bool
+) -> None:
+    """``observe`` receives the result and whether a refusal came before it."""
+    seen: list[tuple[str, bool]] = []
+
+    def observe(result: str, was_retried: bool) -> str:
+        seen.append((result, was_retried))
+        return result
+
+    await run_with_retry(
+        FakeHost(),
+        direct=Script(*answers).direct,
+        ui=_no_ui,
+        setting=VisibilitySetting.AUTO,
+        observe=observe,
+    )
+    assert seen == [("image", retried)]
+
+
+@pytest.mark.asyncio
+async def test_the_refusal_notice_names_a_new_headless_process() -> None:
+    """The retry is announced as a fresh process at the launch visibility."""
+    from structlog.testing import capture_logs
+
+    with capture_logs() as logs:
+        await run_with_retry(
+            FakeHost(),
+            direct=Script(_REFUSED, "image").direct,
+            ui=_no_ui,
+            setting=VisibilitySetting.AUTO,
+        )
+    (notice,) = [e for e in logs if e.get("event") == "mint.retried"]
+    assert (notice["new_process"], notice["visibility"]) == (True, "headless")
+
+
+@pytest.mark.asyncio
+async def test_a_relaunch_failure_after_one_refusal_counts_one_attempt() -> None:
+    """Only the first send reached Flow, so the final refusal names one attempt."""
+    host = FakeHost(fail=RelaunchFailed("Browser relaunch failed: boom"))
+    with pytest.raises(WafRejectionError) as caught:
+        await run_with_retry(
+            host, direct=Script(_REFUSED).direct, ui=_no_ui, setting=VisibilitySetting.AUTO
+        )
+    assert caught.value.detail == f"Flow refused 1 submit attempts: {UNUSUAL_ACTIVITY_REASON}"
+
+
+@pytest.mark.asyncio
+async def test_a_second_refusal_counts_both_attempts() -> None:
+    """Two refused sends: the final error names both, and says neither was charged."""
+    with pytest.raises(WafRejectionError) as caught:
+        await run_with_retry(
+            FakeHost(),
+            direct=Script(_REFUSED, _REFUSED).direct,
+            ui=_no_ui,
+            setting=VisibilitySetting.AUTO,
+        )
+    assert caught.value.detail == f"Flow refused 2 submit attempts: {UNUSUAL_ACTIVITY_REASON}"
+    assert (caught.value.remediation_hint or "").startswith("Both attempts were refused")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_relaunch_with_no_prior_refusal_propagates_unchanged() -> None:
+    """With no refusal to name, the relaunch failure is the very error raised, not a copy."""
+    failure = RelaunchFailed("Browser relaunch failed: boom")
+    with pytest.raises(RelaunchFailed) as caught:
+        await run_with_retry(
+            FakeHost(BrowserVisibility.HEADLESS, fail=failure),
+            direct=Script(NotSent("unsupported_shape")).direct,
+            ui=_no_ui,
+            setting=VisibilitySetting.AUTO,
+        )
+    assert caught.value is failure
+
+
+@pytest.mark.asyncio
+async def test_the_ui_fallback_is_logged_with_its_reason() -> None:
+    """Nothing was sent: the fallback leaves one ``direct.fallback_to_ui`` line and why."""
+    from structlog.testing import capture_logs
+
+    async def ui() -> str:
+        return "ui-image"
+
+    with capture_logs() as logs:
+        result = await run_with_retry(
+            FakeHost(BrowserVisibility.HEADED),
+            direct=Script(NotSent("unsupported_shape")).direct,
+            ui=ui,
+            setting=VisibilitySetting.AUTO,
+        )
+    assert result == "ui-image"
+    fallbacks = [e["reason"] for e in logs if e["event"] == "direct.fallback_to_ui"]
+    assert fallbacks == ["unsupported_shape"]

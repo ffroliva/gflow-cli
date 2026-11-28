@@ -329,29 +329,24 @@ def choose_upscale_route(
 
     An unresolvable credit cap must be passed as an explicit cap (route UI), never as "no cap".
     """
-    if flow_host == "labs.google":
+    if flow_host == "labs.google" or proxy_configured or scale != "1080p" or catalog_row is None:
         return Route.UI
-    if proxy_configured:
-        return Route.UI
-    if scale != "1080p":
-        return Route.UI
-    if catalog_row is None:
-        return Route.UI
+    return Route.DIRECT if _measured_upscale_source(catalog_row) else Route.UI
 
-    workflow_id = _read_catalog_field(catalog_row, "workflow_id", "flow_workflow_id")
-    if not workflow_id:
-        return Route.UI
 
-    aspect = _read_catalog_field(catalog_row, "aspect", "aspect_ratio")
-    model = _read_catalog_field(catalog_row, "model")
+def _measured_upscale_source(row: object) -> bool:
+    """A catalogued clip whose workflow is known and whose model, aspect and duration were
+    measured for the direct 1080p upscale."""
+    if not _read_catalog_field(row, "workflow_id", "flow_workflow_id"):
+        return False
+    aspect = _read_catalog_field(row, "aspect", "aspect_ratio")
+    model = _read_catalog_field(row, "model")
     if not aspect or not model:
-        return Route.UI
+        return False
     if (model, _ASPECT_ALIASES.get(aspect, aspect)) not in MEASURED_UPSCALE_SOURCES:
-        return Route.UI
+        return False
     # Resolution is not catalogued: a source Flow will not upscale still surfaces as exit 22.
-    if _catalog_value(catalog_row, "duration_seconds") != MEASURED_UPSCALE_DURATION_S:
-        return Route.UI
-    return Route.DIRECT
+    return _catalog_value(row, "duration_seconds") == MEASURED_UPSCALE_DURATION_S
 
 
 def plan_visibility(
