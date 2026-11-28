@@ -1,5 +1,7 @@
 # Headless Direct Transport Implementation Plan
 
+**Status:** shipped in v0.108.0 (PR #1561). Task progress was tracked in the execution ledger during the work, so the checkboxes below were not ticked; the Decision log and `METRICS.md` record the outcome.
+
 > **For agentic workers:** Run `/gflow:status --feature headless-direct-transport` to find the
 > next unchecked task. Implement one task at a time. Run `/gflow:check` before every commit.
 
