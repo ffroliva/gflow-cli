@@ -943,11 +943,11 @@ def test_each_labs_presubmit_raise_site_keeps_its_charged_no_guard(
 
 
 def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
+    from gflow_cli.api.refusal import waf_refusal_final
     from gflow_cli.errors import (
         WafRejectionError,
         exit_code_for,
         is_retryable,
-        waf_refusal_final,
     )
     from gflow_cli.mcp.tools import _gflow_error_dict
 
@@ -972,7 +972,7 @@ def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
 
 
 def test_waf_refusal_final_remediation_names_headed_and_cooldown() -> None:
-    from gflow_cli.errors import waf_refusal_final
+    from gflow_cli.api.refusal import waf_refusal_final
 
     err = waf_refusal_final(reason="UNUSUAL_ACTIVITY", attempts=2)
 
