@@ -17,6 +17,71 @@
 
 <!-- browser-modes-table -->
 
+在默认的 `GFLOW_CLI_BROWSER_VISIBILITY=auto` 下，哪些命令会打开浏览器（摘自唯一来源 [BROWSER_MODES](docs/BROWSER_MODES.md)）：
+
+**无头**（直接 HTTP；浏览器只生成 reCAPTCHA 令牌）
+
+| 命令 | v0.108.0 中的浏览器模式 | 原因 |
+|---|---|---|
+| `image t2i` | headless | 使用 `nano2` 的文生图（任意宽高比，数量 1-4），或 9:16、数量 1、无参考图的 `nano2-lite` / `nano-pro`：已测量的图片请求形态 |
+| `image generate` | headless | 解析为 `t2i` 或 `i2i`；解析后的命令适用相同规则 |
+| `image i2i` | headless | 使用 `nano2` 且恰好一张项目内参考图，或通过 `--reference-entity` 及其 `--reference-entity-name` 传入一个已保存的角色（数量 1-4） |
+| `run` | per row | 每个图片行按自身形态选择路径；带 `"ref"` 或角色的行走 UI 路径，只要有一行走 UI，整次运行都以有头模式启动 |
+| `video t2v` | headless | `--model omni-1.2-flash --duration 4 --resolution 360p`，9:16 或 16:9，数量 1：已测量的文生视频键。未指定 `--model` 时，键由账号 Flow 设置中选中的模型构成；若该选择构成已测量的键，命令走直接路径 |
+| `video i2v` | headless | **本地**起始帧，9:16，默认模型（Veo 3.1 Lite）或 `--model veo-lite`，不带 `--duration` / `--resolution`：已测量的图生视频键。EXIF 方向为四分之一圈旋转的 JPEG（竖拍的手机照片）走 UI 路径 |
+| `video generate` | headless | 解析为 `t2v` / `i2v` / `r2v`；适用解析后命令的规则 |
+| `video upscale --scale 1080p` | headless | 仅限本地媒体库中 Omni 1.2 Flash、4 秒、16:9 的片段：已测量的放大来源 |
+| `video chain` | per clip | 每个片段都是已测量形态时走直接路径；只要有一个片段走 UI，整条链都以有头模式启动 |
+| `serve` | same rules | MCP 工具和 HTTP 端点与 CLI 完全相同地为每个请求选择路径；`browser_visibility` 是 `--browser-visibility` 的单次调用对应参数 |
+| `mcp run` | same rules | 同 `serve` |
+
+**有头**（Flow 的界面）
+
+| 命令 | v0.108.0 中的浏览器模式 | 原因 |
+|---|---|---|
+| `auth login` | headed | 交互式登录；需要一次图形界面 |
+| `image batch` | headed | 常驻的 UI 批处理驱动编辑器 |
+| `image i2i --ref` | headed | 本地 `--ref` 文件通过 UI 上传 |
+| `image upload` | headed | 通过项目 UI 上传 |
+| `image upscale` | headed | 驱动图片的下载菜单 |
+| `movie run` | headed | 场景请求不携带分辨率，因此没有场景能构成已测量的键；角色和指令卡也是 UI 界面 |
+| `video r2v` | headed | 参考图生视频尚未通过直接 HTTP 测量 |
+| `video extend` | headed | 尚未通过直接 HTTP 测量 |
+| `video edit` | headed | 尚未通过直接 HTTP 测量 |
+| `video i2v --end-frame` | headed | 结束帧，或已在项目中的起始帧，不是已测量的形态 |
+| `video upscale --scale 4k` | headed | 4K、720p、270p GIF，以及本地媒体库中没有的片段的 1080p，都驱动下载菜单 |
+| `scene create` | headed | 场景在 UI 中构建 |
+| `scene show` | headed | 在 UI 中读取场景 |
+| `character create` | headed | 角色创建是 UI 界面 |
+| `character list` | headed | 在 UI 中读取项目的角色（`character show` 和 `character rm` 同样） |
+| `instructions add` | headed | Agent 模式指令卡是 UI 界面（所有 `instructions` 子命令） |
+| `media trash` | headed | 移入回收站和恢复是 UI 操作（`media restore` 同样） |
+| `project create` | headed | 在 UI 中创建项目（`project rename` 同样） |
+| `data sync` | headed | 在该配置文件的浏览器中读取项目 |
+| `video t2v --max-credits` | headed | 任何设置了积分上限的视频（`--max-credits`、`GFLOW_CLI_MAX_CREDITS`、MCP `max_credits`）都在 UI 中读取 Flow 的报价；直接视频路径没有线上报价 |
+
+**不使用浏览器**
+
+| 命令 | v0.108.0 中的浏览器模式 | 原因 |
+|---|---|---|
+| `video assemble` | none | 本地 ffmpeg 处理 |
+| `video captions` | none | 本地 ffmpeg 处理 |
+| `video transcribe` | none | 调用已配置的转写端点 |
+| `audio narrate` | none | 调用已配置的文字转语音服务 |
+| `docs` | none | 随包附带的文档 |
+| `data list` | none | 本地媒体库（除 `data sync` 外的所有 `data` 子命令） |
+| `telemetry status` | none | 本地设置和每周一次上传（所有 `telemetry` 子命令） |
+| `update` | none | 运行安装程序 |
+| `models list` | none | 静态模型目录（`models show` 同样） |
+| `capabilities` | none | 静态能力报告 |
+| `cancel` | none | 本地任务队列 |
+| `auth renew` | none or headless | 以无头方式刷新已保存的会话，无需登录 |
+| `credits user` | none or headless | 已保存的会话被接受时直接读取；否则在该配置文件的浏览器中读取（`credits list` 同样） |
+
+Flow 以异常活动为由拒绝的直接提交，会从一个新的无头浏览器**重试一次**；第二次拒绝即为最终结果，只有设置了 `--browser-visibility headed`（或 `GFLOW_CLI_BROWSER_VISIBILITY=headed`）时才会打开有头窗口。已在 Windows 上测量；macOS 和 Linux 尚未测量。路由规则以及强制走 UI 路径的条件见 [BROWSER_MODES](docs/BROWSER_MODES.md)。
+
+<!-- /browser-modes-table -->
+
 本项目是独立项目，与 Google 无关联。它使用你自己已登录的 Flow 会话，因此 Google 的条款适用于你的账号：请阅读 [DISCLAIMER](DISCLAIMER.md) 和 [ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md)。
 
 ## gflow-cli 概览
