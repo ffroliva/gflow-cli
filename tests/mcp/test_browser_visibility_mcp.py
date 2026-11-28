@@ -44,7 +44,8 @@ def wired(
     temp_db: DataStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[MagicMock]:
     """The MCP tools run through the real worker; only the browser client is faked."""
-    for var in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY"):
+    # Both spellings: Linux env names are case-sensitive, and conftest sets the lowercase ones.
+    for var in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"):
         monkeypatch.delenv(var, raising=False)
     for var in ("GFLOW_CLI_TRANSPORT", "GFLOW_CLI_BROWSER_VISIBILITY", "GFLOW_CLI_MAX_CREDITS"):
         monkeypatch.delenv(var, raising=False)
