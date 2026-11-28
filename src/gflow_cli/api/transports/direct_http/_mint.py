@@ -100,10 +100,10 @@ class PageTokenSource:
     async def mint_on(self, project_id: str, action: str) -> tuple[Page, str]:
         """A token for ``action`` and the page that minted it."""
         async with self._lock:
-            if self._discarded or needs_rearm(
-                last_mint_wall=self._last_mint_wall, now_wall=self._clock()
-            ):
-                await self._replace_page()
+            if self._discarded:
+                await self._replace_page("refused")
+            elif needs_rearm(last_mint_wall=self._last_mint_wall, now_wall=self._clock()):
+                await self._replace_page("wall_gap")
             page = self._page
             token = await _mint(page, project_id, action)
             self._last_mint_wall = self._clock()
@@ -114,7 +114,7 @@ class PageTokenSource:
         if page is self._page:
             self._discarded = True
 
-    async def _replace_page(self) -> None:
+    async def _replace_page(self, reason: str) -> None:
         old, old_owned = self._page, self._owned
         try:
             self._page = await old.context.new_page()
@@ -122,7 +122,7 @@ class PageTokenSource:
             raise not_sent(f"rearm_failed:{type(exc).__name__}") from exc
         # A fresh page has no mint yet: a failed first mint on it must not re-arm again.
         self._owned, self._discarded, self._last_mint_wall = True, False, None
-        log.info("direct.page_rearmed")
+        log.info("mint.rearmed", reason=reason)
         if old_owned:
             try:
                 await old.close()

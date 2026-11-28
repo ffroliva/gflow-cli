@@ -200,6 +200,15 @@ class GeneratedImage:
     # The transport that produced this image ("direct_http"); None = the default UI path.
     # Recorded into the asset's metadata_json and the weekly telemetry, never sent.
     transport: str | None = None
+    # The browser's visibility ("headless" / "headed") and whether a submit Flow refused
+    # was retried, as the generation surface observed them; recorded and in ``--json``.
+    visibility: str | None = None
+    retried: bool = False
+
+    @property
+    def route(self) -> str:
+        """``"direct"`` when the image came over direct HTTP, else ``"ui"``."""
+        return "direct" if self.transport == "direct_http" else "ui"
 
     @property
     def is_signed_url(self) -> bool:

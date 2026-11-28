@@ -38,6 +38,7 @@ from gflow_cli.api.transports.base import (
     VideoEditCapableTransport,
 )
 from gflow_cli.api.video import (
+    VideoResult,
     VideoStatus,
     parse_video_status,
 )
@@ -65,7 +66,6 @@ if TYPE_CHECKING:
     from gflow_cli.api.video import (
         EditVideoRequest,
         GenerateVideoRequest,
-        VideoResult,
         VideoStarted,
         VideoStartedCallback,
     )
@@ -94,6 +94,7 @@ def _today() -> date:
 _MIN_VIDEO_POLL_INTERVAL_S = 5.0
 
 _DataclassT = TypeVar("_DataclassT", bound="DataclassInstance")
+_ObservedT = TypeVar("_ObservedT")
 
 
 def _dc_replace(obj: _DataclassT, /, **changes: Any) -> _DataclassT:
@@ -658,6 +659,7 @@ class GenerationSurface(WorkspaceSurface):
             ),
             setting=VisibilitySetting(self.settings.browser_visibility),
             on_checkpoint=on_checkpoint,
+            observe=lambda images, retried: [self._observed(i, retried) for i in images],
         )
 
     async def _drive_image_generation(
@@ -886,6 +888,24 @@ class GenerationSurface(WorkspaceSurface):
         except Exception as e:
             await self._raise_with_incident(e, phase="video_generation")
 
+    def _observed(self, result: _ObservedT, retried: bool) -> _ObservedT:
+        """Stamp the path a retry-loop result took (visibility, retried) and log it.
+
+        Only results from the refusal retry loop are stamped: a transport without a direct
+        path never reaches it, so its results keep ``visibility=None``. Objects a
+        caller-owned transport returns pass unchanged.
+        """
+        if not isinstance(result, (GeneratedImage, VideoResult)):
+            return result
+        stamped = _dc_replace(result, visibility=self.visibility.value, retried=retried)
+        logger.info(
+            "generation.path",
+            route=stamped.route,
+            visibility=stamped.visibility,
+            retried=stamped.retried,
+        )
+        return cast("_ObservedT", stamped)
+
     async def _video_through_retry(
         self,
         *,
@@ -931,6 +951,7 @@ class GenerationSurface(WorkspaceSurface):
             ),
             setting=VisibilitySetting(self.settings.browser_visibility),
             on_checkpoint=on_checkpoint,
+            observe=self._observed,
         )
 
     async def edit_video(  # noqa: PLR0913

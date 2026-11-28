@@ -153,7 +153,7 @@ class ImageRecordingMixin(RecorderCore):
         width, height = image.dimensions
         # Persist the Flow-assigned display name (when present) so a generated
         # image can later be referenced by name — the picker's searchable label.
-        metadata: dict[str, str] = {"fife_url": image.fife_url}
+        metadata: dict[str, object] = {"fife_url": image.fife_url}
         # Flow captions can closely paraphrase the generation prompt. Respect
         # the same privacy boundary as prompt storage: redacted history never
         # persists the browser-searchable caption in plaintext.
@@ -161,6 +161,8 @@ class ImageRecordingMixin(RecorderCore):
             metadata["display_name"] = image.display_name
         if image.transport is not None:
             metadata["transport"] = image.transport
+        if image.visibility is not None:  # the path the run took, when the client saw it
+            metadata.update(route=image.route, visibility=image.visibility, retried=image.retried)
         repo.upsert_asset(
             AssetRecord(
                 id=asset_id,

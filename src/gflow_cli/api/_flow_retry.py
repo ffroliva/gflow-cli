@@ -108,20 +108,26 @@ async def run_with_retry(
     ui: Callable[[], Awaitable[_T]],
     setting: VisibilitySetting,
     on_checkpoint: GenerationCheckpointObserver | None = None,
+    observe: Callable[[_T, bool], _T] | None = None,
 ) -> _T:
     """Run ``direct`` and apply ``next_step`` until it is done, falls back, or stops.
 
     ``direct`` receives the ``on_before_submit`` hook (``None`` with no observer) and must
     read the client's transport when called: a relaunch replaces it. An exception the hook
-    raises (a cancel from the submit gate) propagates unchanged.
+    raises (a cancel from the submit gate) propagates unchanged. ``observe`` receives the
+    result and whether a refusal was retried before it (``--json`` and the recorder say so).
     """
 
     emit = _Checkpoints(on_checkpoint)
     hook = None if on_checkpoint is None else emit.submit_attempted
     refused: str | None = None  # the reason of a refusal already retried
+
+    def done(result: _T) -> _T:
+        return result if observe is None else observe(result, refused is not None)
+
     while True:
         try:
-            return await direct(hook)
+            return done(await direct(hook))
         except DirectAttemptEnded as exc:
             ended = exc
         step = next_step(ended.outcome, setting=setting, retried=refused is not None)
@@ -133,7 +139,7 @@ async def run_with_retry(
                 await _relaunch_for_ui(host, step.visibility, refused)
             log.info("direct.fallback_to_ui", reason=_reason(ended))
             emit.submit_attempted()
-            return await ui()
+            return done(await ui())
         else:
             if isinstance(step, Stop) and step.kind == "waf_final":
                 emit("submit_refused")
@@ -160,7 +166,10 @@ async def _relaunch_after_refusal(
     """Reset the job to not charged, tell the person, and start a fresh browser process."""
     emit("submit_refused")
     log.warning(
-        "direct.refusal_retry", detail=REFUSAL_RETRY_NOTICE, visibility=step.visibility.value
+        "mint.retried",
+        detail=REFUSAL_RETRY_NOTICE,
+        visibility=step.visibility.value,
+        new_process=True,
     )
     try:
         await host.relaunch(step.visibility)

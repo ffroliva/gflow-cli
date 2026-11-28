@@ -178,6 +178,88 @@ def _generated_image() -> GeneratedImage:
     )
 
 
+_PATH_KEYS = {"transport", "route", "visibility", "retried"}
+
+
+def test_direct_submit_recorded_like_ui_plus_route_visibility_retried(tmp_path: Path) -> None:
+    """Row 28: a direct submit writes the rows a UI submit writes, plus the path it took;
+    prompt redaction still applies."""
+    from dataclasses import replace
+
+    saved = tmp_path / "image.png"
+    saved.write_bytes(b"image-bytes")
+    req = GenerateImageRequest(prompt="prompt text", aspect=Aspect.PORTRAIT, model=Model.NARWHAL)
+    ui_image = _generated_image()
+    direct_image = replace(
+        ui_image,
+        media_name="media-direct-1",
+        transport="direct_http",
+        visibility="headless",
+        retried=True,
+    )
+    with DataStore.open(tmp_path / "gflow.db") as store:
+        recorder = OperationRecorder(DataRepository(store), prompt_mode="redacted")
+        project = ProjectInfo(project_id="flow-project-1", title="gflow-cli t2i")
+        for image in (ui_image, direct_image):
+            recorder.record_generated_images(
+                profile_name="default",
+                profile_dir=tmp_path / "profile_default",
+                project=project,
+                request=req,
+                images=[image],
+                saved_paths=[saved],
+                input_media_ids=[],
+                operation_kind="t2i",
+            )
+        ops = store.conn.execute(
+            "SELECT command, mode, status, prompt, prompt_hash, prompt_redacted, model "
+            "FROM operations ORDER BY rowid"
+        ).fetchall()
+        assert len(ops) == 2
+        assert dict(ops[0]) == dict(ops[1])
+        assert ops[1]["prompt"] is None
+        assert ops[1]["prompt_redacted"] == 1
+
+        def meta(media: str) -> dict[str, object]:
+            row = store.conn.execute(
+                "SELECT metadata_json FROM assets WHERE flow_media_id = ?", (media,)
+            ).fetchone()
+            return json.loads(row["metadata_json"])
+
+        ui_meta, direct_meta = meta(ui_image.media_name), meta("media-direct-1")
+        assert set(direct_meta) == set(ui_meta) | _PATH_KEYS
+        assert {k: direct_meta[k] for k in _PATH_KEYS} == {
+            "transport": "direct_http",
+            "route": "direct",
+            "visibility": "headless",
+            "retried": True,
+        }
+        assert "prompt text" not in json.dumps(direct_meta)
+
+        recorder.record_completed_video(
+            profile_name="default",
+            _profile_dir=tmp_path / "profile_default",
+            request=GenerateVideoRequest(prompt="video prompt", mode=Mode.T2V),
+            result=VideoResult(
+                status=VideoStatus(
+                    media_id="media-video-direct", status="MEDIA_GENERATION_STATUS_SUCCESSFUL"
+                ),
+                local_path=None,
+                project_id="flow-project-1",
+                transport="direct_http",
+                visibility="headless",
+                retried=False,
+            ),
+        )
+        video_meta = meta("media-video-direct")
+        assert {k: video_meta[k] for k in _PATH_KEYS} == {
+            "transport": "direct_http",
+            "route": "direct",
+            "visibility": "headless",
+            "retried": False,
+        }
+
+
 def test_record_generated_images_persists_original_and_expanded_prompt(tmp_path: Path) -> None:
     saved = tmp_path / "image.png"
     saved.write_bytes(b"image-bytes")
