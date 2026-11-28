@@ -39,6 +39,7 @@ import copy
 import functools
 import inspect
 import json
+import os
 import re
 import sys
 import traceback
@@ -65,7 +66,7 @@ from gflow_cli.api.generation_route import (
 from gflow_cli.api.transports.direct_http._session import (
     _proxy_configured,  # pyright: ignore[reportPrivateUsage]
 )
-from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
+from gflow_cli.config import UiMode, get_settings, reset_settings, resolve_ui_mode
 from gflow_cli.errors import (
     GFlowError,
     exit_code_for,
@@ -276,6 +277,39 @@ def output_format_option(
         return with_format
 
     return decorator
+
+
+def _apply_browser_visibility(
+    _ctx: click.Context, _param: click.Parameter, value: str | None
+) -> None:
+    """Make ``--browser-visibility`` the setting for this invocation (it beats the env)."""
+    if value is None:
+        return
+    os.environ["GFLOW_CLI_BROWSER_VISIBILITY"] = value
+    reset_settings()
+
+
+def browser_visibility_option() -> Callable[[Any], Any]:
+    """Decorator adding ``--browser-visibility [auto|headless|headed]``.
+
+    Feeds the one ``GFLOW_CLI_BROWSER_VISIBILITY`` setting that :func:`client_visibility`
+    reads, so the flag and the env var can never disagree about what runs.
+    """
+    return click.option(
+        "--browser-visibility",
+        type=click.Choice(["auto", "headless", "headed"]),
+        default=None,
+        expose_value=False,
+        callback=_apply_browser_visibility,
+        metavar="[auto|headless|headed]",
+        help=(
+            "Browser window policy; overrides GFLOW_CLI_BROWSER_VISIBILITY. 'auto' "
+            "(default) mints headless and retries a not-charged refusal once from a "
+            "fresh headless browser; shapes the direct path cannot send open a visible "
+            "browser. 'headed' always shows the window. An explicit 'headless' also "
+            "runs Flow UI shapes headless, which is unsupported."
+        ),
+    )
 
 
 def out_file_option(

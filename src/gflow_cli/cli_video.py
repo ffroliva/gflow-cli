@@ -21,6 +21,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    browser_visibility_option,
     default_project,
     no_max_credits_option,
     out_file_option,
@@ -1248,6 +1249,7 @@ def assemble(
         "--reference-entity. See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--aspect",
@@ -1426,6 +1428,7 @@ def _classify_frame(value: str | None, param_hint: str) -> tuple[str | None, str
         "Positional ordering: when --initial-frame is passed, only PROMPT is required."
     ),
 )
+@browser_visibility_option()
 @click.argument("image", required=False, default=None)
 @click.argument("prompt", required=False, default=None)
 @click.option(
@@ -1620,6 +1623,7 @@ def i2v(  # NOSONAR
         "ingredient images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--ref",
@@ -1797,6 +1801,7 @@ def r2v(
         "  gflow video chain story.jsonl --resume-from <chain-id>\n"
     ),
 )
+@browser_visibility_option()
 @click.argument("manifest")
 @click.option(
     "--model",
@@ -2375,6 +2380,7 @@ async def _extend_session(  # noqa: PLR0913
         "Flow grows the source clip in place under its own media id."
     ),
 )
+@browser_visibility_option()
 @click.argument("source")
 @click.argument("prompts", nargs=-1, required=True)
 @click.option(
@@ -2570,6 +2576,7 @@ def extend(  # noqa: PLR0913
         "  gflow video upscale <mediaId> --scale 1080p --out ~/Downloads\n"
     ),
 )
+@browser_visibility_option()
 @click.argument("media_id")
 @click.option(
     "--scale",
