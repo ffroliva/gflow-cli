@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
 __all__ = [
+    "catalog_workflow_id",
     "IMAGE_WIRE_MODELS",
     "MEASURED_UPSCALE_SOURCES",
     "MEASURED_VIDEO_KEYS",
@@ -311,6 +312,11 @@ def _read_catalog_field(row: object, *names: str) -> str | None:
     return None
 
 
+def catalog_workflow_id(row: object) -> str | None:
+    """The workflow id a catalog row records, under either key, or ``None``."""
+    return _read_catalog_field(row, "workflow_id", "flow_workflow_id")
+
+
 def choose_upscale_route(
     scale: str,
     catalog_row: object | None,
@@ -329,7 +335,7 @@ def choose_upscale_route(
 def _measured_upscale_source(row: object) -> bool:
     """A catalogued clip whose workflow is known and whose model, aspect and duration were
     measured for the direct 1080p upscale."""
-    if not _read_catalog_field(row, "workflow_id", "flow_workflow_id"):
+    if not catalog_workflow_id(row):
         return False
     aspect = _read_catalog_field(row, "aspect", "aspect_ratio")
     model = _read_catalog_field(row, "model")

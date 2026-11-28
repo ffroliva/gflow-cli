@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeGuard
 
 import structlog
 
-from gflow_cli.api.generation_route import Route
+from gflow_cli.api.generation_route import Route, catalog_workflow_id
 from gflow_cli.api.submit_policy import DirectAttemptEnded, Indeterminate
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http._gateway import SubmitAttempt, _client, _post_request
@@ -66,9 +66,10 @@ def upscale_source(
 
     :func:`upscale_route` decides from the local catalog row alone (no network read).
     """
-    if upscale_route(scale, catalog_row) is not Route.DIRECT or catalog_row is None:
+    if upscale_route(scale, catalog_row) is not Route.DIRECT:
         return None
-    return UpscaleSource(media_id, str(catalog_row["flow_workflow_id"]))
+    workflow_id = catalog_workflow_id(catalog_row)
+    return None if workflow_id is None else UpscaleSource(media_id, workflow_id)
 
 
 async def run_direct_upscale(

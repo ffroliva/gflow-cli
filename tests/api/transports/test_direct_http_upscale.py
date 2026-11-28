@@ -376,6 +376,26 @@ def test_recorded_omni_clip_routes_direct(tmp_path: Path) -> None:
     assert source == UpscaleSource(_SOURCE, _WF)
 
 
+_MEASURED_ROW = {"model": "omni_1_2_flash", "aspect": "landscape", "duration_seconds": 4.0}
+
+
+@pytest.mark.parametrize(
+    ("ids", "expected"),
+    [
+        ({"workflow_id": _WF}, UpscaleSource(_SOURCE, _WF)),  # the route's alias key only
+        ({}, None),  # no workflow id at all
+        ({"flow_workflow_id": None}, None),
+        ({"flow_workflow_id": ""}, None),
+    ],
+)
+def test_upscale_row_missing_workflow_routes_ui(
+    ids: dict[str, str | None], expected: UpscaleSource | None
+) -> None:
+    """The route accepts either workflow key; the source reads the same field, so a row
+    without a usable workflow id goes to the menu (``None``), never a ``KeyError``."""
+    assert upscale_source(_SOURCE, "1080p", _MEASURED_ROW | ids) == expected
+
+
 @pytest.mark.asyncio
 async def test_null_model_routes_menu(tmp_path: Path) -> None:
     """A catalogued clip with no recorded model is not a measured source: the menu."""
