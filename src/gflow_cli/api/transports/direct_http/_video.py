@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 
     from playwright.async_api import Page
 
+    from gflow_cli.api import flow_wire
     from gflow_cli.api.generation_route import VideoWireTarget
     from gflow_cli.api.submit_policy import RecaptchaTokenSource
     from gflow_cli.api.transports.batchexecute import GenerationRecord
@@ -101,22 +102,7 @@ async def run_direct_video(
             "direct.video_post", status=response.status_code, workflow_id=submitted.workflow_id
         )
         await _notify(on_started, submitted, project_id)
-
-        async def read(rpcid: str, payload: object) -> str:
-            # A read from READ_RPCIDS; cookies are read live, and a failure is past the send.
-            read_headers = await _session_headers(page, profile_dir)
-            body = build_rpc_body(rpcid, payload, shell.at)
-            reply = await client.send(_post_request(rpcid, source, shell, read_headers, body))
-            if reply.status_code != 200:
-                raise NetworkError(
-                    detail=f"batchexecute {rpcid} answered HTTP {reply.status_code}",
-                    status=reply.status_code,
-                    route=f"batchexecute:{rpcid}",
-                    next_action="reconcile",
-                    remediation_hint=_RECONCILE_HINT,
-                )
-            return reply.text
-
+        read = _reader(client, page, profile_dir, shell, source)
         record = await _poll(read, submitted.workflow_id, poll_timeout_s, poll_interval_s)
         local_path: Path | None = None
         if download and record.is_done:
@@ -176,6 +162,32 @@ def _submit_body(
     )
 
 
+def _reader(
+    client: httpx.AsyncClient,
+    page: Page,
+    profile_dir: Path,
+    shell: flow_wire.Tokens,
+    source: str,
+) -> Callable[[str, object], Awaitable[str]]:
+    """A read after the send: cookies are read live, and a failure is past the send."""
+
+    async def read(rpcid: str, payload: object) -> str:
+        read_headers = await _session_headers(page, profile_dir)
+        body = build_rpc_body(rpcid, payload, shell.at)
+        reply = await client.send(_post_request(rpcid, source, shell, read_headers, body))
+        if reply.status_code != 200:
+            raise NetworkError(
+                detail=f"batchexecute {rpcid} answered HTTP {reply.status_code}",
+                status=reply.status_code,
+                route=f"batchexecute:{rpcid}",
+                next_action="reconcile",
+                remediation_hint=_RECONCILE_HINT,
+            )
+        return reply.text
+
+    return read
+
+
 def _submitted(rpcid: str, text: str) -> GenerationRecord:
     payloads = [payload for frame, payload in parse_frames(text) if frame == rpcid]
     return generation_record(rpcid, payloads[0] if payloads else None)
@@ -228,6 +240,15 @@ async def _download(
     record: GenerationRecord,
     save: ClipSaver,
 ) -> Path:
+    """Fetch the record's original mp4 (:func:`_fetch_clip`) and store it."""
+    return await save(record.media_id, await _fetch_clip(client, read, record))
+
+
+async def _fetch_clip(
+    client: httpx.AsyncClient,
+    read: Callable[[str, object], Awaitable[str]],
+    record: GenerationRecord,
+) -> bytes:
     """Read the original mp4's URL with ``as29s`` and fetch it: allowlisted host, no cookies,
     no redirects, size checked against the record."""
     media_id, workflow_id = record.media_id, record.workflow_id
@@ -260,4 +281,4 @@ async def _download(
     expected = existing_record(text, "as29s", workflow_id)
     size = expected.size_bytes if expected is not None and expected.size_bytes else None
     _verify(reply.content, expected=size or record.size_bytes, media_id=media_id)
-    return await save(media_id, reply.content)
+    return reply.content

@@ -15,12 +15,14 @@ from typing import TYPE_CHECKING, cast
 import structlog
 
 from gflow_cli.api import routes, video_extend
+from gflow_cli.api._flow_retry import run_with_retry
 from gflow_cli.api.credit_cap import enforce_credit_cap
 from gflow_cli.api.image_upscale import (
     TargetResolution,
     UpsampleImageRequest,
     build_upsample_image_body,
 )
+from gflow_cli.api.submit_policy import VisibilitySetting
 from gflow_cli.api.transports._common import (
     flow_host_kind,
     migrated_route,
@@ -32,6 +34,7 @@ from gflow_cli.api.video import (
 from gflow_cli.api.video_extend import ExtendStarted
 from gflow_cli.errors import (
     ConfigurationError,
+    DataStoreError,
     FlowHostMigratedError,
     UpscaleUnavailableError,
     WafRejectionError,
@@ -43,7 +46,10 @@ from gflow_cli.storage import AnyPath, write_asset_async
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gflow_cli.api._flow_retry import RetryHost
     from gflow_cli.api.dto import GenerationCheckpointObserver
+    from gflow_cli.api.transports.direct_http import DirectHttpTransport
+    from gflow_cli.api.transports.direct_http._upscale import UpscaleSource
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
 from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api._flow_session import JsonObject, _make_instance  # pyright: ignore[reportPrivateUsage]
@@ -386,8 +392,6 @@ class MediaEditSurface(GenerationSurface):
         animated GIF. There is no labs.google route for this, so
         ``GFLOW_CLI_FLOW_HOST=labs.google`` (the kill switch) refuses it with exit 36.
         """
-        from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
-
         if self.served_route(prefer_migrated=True) != "migrated":
             raise FlowHostMigratedError(
                 detail=(
@@ -407,31 +411,78 @@ class MediaEditSurface(GenerationSurface):
             scale=scale,
         )
         try:
-            page = await self._checkout_page()
-            try:
-                video_bytes = await upscale_video_migrated(
-                    page,
-                    project_id=project_id,
-                    media_id=media_id,
-                    scale=scale,
-                )
-                ext = ".gif" if scale.strip().lower() == "270p" else ".mp4"
-                if out_path.suffix.lower() != ext:
-                    out_path = out_path.with_suffix(ext)
+            source = self._direct_upscale_source(media_id, scale)
+            if source is None:
+                video_bytes = await self._upscale_via_menu(project_id, media_id, scale)
+            else:
+                video_bytes = await self._upscale_through_retry(project_id, source, scale)
+            ext = ".gif" if scale.strip().lower() == "270p" else ".mp4"
+            if out_path.suffix.lower() != ext:
+                out_path = out_path.with_suffix(ext)
 
-                target = self._write_target(out_path)
-                await write_asset_async(target, video_bytes)
-                logger.info(
-                    "video.upscale_completed",
-                    media_id=media_id,
-                    scale=scale,
-                    bytes=len(video_bytes),
-                )
-                return target
-            finally:
-                self._checkin_page(page)
+            target = self._write_target(out_path)
+            await write_asset_async(target, video_bytes)
+            logger.info(
+                "video.upscale_completed",
+                media_id=media_id,
+                scale=scale,
+                bytes=len(video_bytes),
+            )
+            return target
         except Exception as exc:
             await self._raise_with_incident(exc, phase="video_upscale")
+
+    async def _upscale_via_menu(self, project_id: str, media_id: str, scale: str) -> bytes:
+        """The clip's download menu on a checked-out page (every scale; #1338's exit 22)."""
+        from gflow_cli.api.transports.migrated_video_upscale import upscale_video_migrated
+
+        page = await self._checkout_page()
+        try:
+            return await upscale_video_migrated(
+                page, project_id=project_id, media_id=media_id, scale=scale
+            )
+        finally:
+            self._checkin_page(page)
+
+    def _direct_upscale_source(self, media_id: str, scale: str) -> UpscaleSource | None:
+        """The catalogued source for a direct 1080p upscale, or ``None`` for the menu.
+
+        Decided from the local catalog before any page work; a transport without the direct
+        path, another scale, or an unreadable catalog goes to the menu.
+        """
+        if scale != "1080p" or not hasattr(type(self.transport), "upscale_video_direct"):
+            return None
+        from gflow_cli.api.transports.direct_http._upscale import upscale_source
+        from gflow_cli.data.queries import get_video_source
+
+        db_path = self.settings.resolved_db_path()
+        if not db_path.exists():
+            return None
+        # paths.profile_subdir names a profile's directory ``profile_<name>``.
+        profile_name = self.profile_dir.name.removeprefix("profile_")
+        try:
+            row = get_video_source(db_path=db_path, profile_name=profile_name, media_id=media_id)
+        except (DataStoreError, OSError) as exc:
+            logger.info("video.upscale_catalog_unread", cause=type(exc).__name__)
+            return None
+        return upscale_source(media_id, scale, row)
+
+    async def _upscale_through_retry(
+        self, project_id: str, source: UpscaleSource, scale: str
+    ) -> bytes:
+        """``p0UkFb`` through the refusal retry loop; its UI step is the download menu."""
+
+        def transport() -> DirectHttpTransport:
+            return cast("DirectHttpTransport", self.transport)  # re-read: a relaunch replaces it
+
+        return await run_with_retry(
+            cast("RetryHost", self),
+            direct=lambda before: transport().upscale_video_direct(
+                project_id=project_id, source=source, on_before_submit=before
+            ),
+            ui=lambda: self._upscale_via_menu(project_id, source.media_id, scale),
+            setting=VisibilitySetting(self.settings.browser_visibility),
+        )
 
     async def extend_video_migrated(  # noqa: PLR0913
         self,

@@ -211,6 +211,23 @@ _ASSET_PROMPT_SQL = """
      LIMIT 1
 """
 
+_VIDEO_SOURCE_SQL = """
+    SELECT flow_workflow_id, aspect_ratio, model
+      FROM assets
+     WHERE profile_name = :profile AND flow_media_id = :media_id AND kind = 'video'
+"""
+
+
+def get_video_source(*, db_path: Path, profile_name: str, media_id: str) -> dict[str, Any] | None:
+    """A catalogued video's ``flow_workflow_id``, ``aspect_ratio`` and ``model``, or ``None``.
+
+    The direct upscale route reads these before any browser work (``choose_upscale_route``).
+    """
+    params = {"profile": profile_name, "media_id": media_id}
+    with _safe_db(db_path) as conn:
+        row = conn.execute(_VIDEO_SOURCE_SQL, params).fetchone()
+    return None if row is None else dict(row)
+
 
 def get_asset_prompt(*, db_path: Path, media_id: str) -> str | None:
     """Recorded generation prompt for an asset, by its Flow media UUID.
