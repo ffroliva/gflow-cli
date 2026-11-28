@@ -24,6 +24,7 @@ import structlog
 from gflow_cli.api import flow_wire
 from gflow_cli.api.submit_policy import (
     MAX_IN_FLIGHT,
+    START_RATE_WINDOW_S,
     Accepted,
     DirectAttemptEnded,
     Indeterminate,
@@ -54,7 +55,6 @@ WRITE_RPCIDS = frozenset({"ogiZ0b", "maseQ", "YhhmEf", "eb1hJf", "p0UkFb"})
 READ_RPCIDS = frozenset({"jwpduf", "as29s"})
 # Raised while the connection opens, before any byte of the request is written.
 _CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
-_START_WINDOW_S = 120.0  # the start-rate warning's window (more than 8 starts in it)
 
 
 def _first_line(exc: BaseException) -> str:
@@ -210,43 +210,56 @@ class InFlightGate:
         self._idle = asyncio.Event()
         self._idle.set()
         self._in_flight = 0
+        self._quiescing = 0
         self._clock = clock
         self._starts: deque[float] = deque()
         self._warned_at: float | None = None
 
     @contextlib.asynccontextmanager
     async def slot(self) -> AsyncGenerator[None]:
-        while not self._open.is_set():  # re-checked: a quiesce may begin before we resume
+        # The slot first, then the open check: an attempt queued on a slot when a quiesce
+        # begins must not run (mint, POST) once the slot frees; it hands the slot back.
+        while True:
+            await self._slots.acquire()
+            if self._open.is_set():
+                break
+            self._slots.release()
             await self._open.wait()
         self._in_flight += 1
         self._idle.clear()
         try:
-            async with self._slots:
-                self._record_start()
-                yield
+            self._record_start()
+            yield
         finally:
+            self._slots.release()
             self._in_flight -= 1
             if self._in_flight == 0:
                 self._idle.set()
 
     @contextlib.asynccontextmanager
     async def quiesce(self) -> AsyncGenerator[None]:
+        # Counted: the gate reopens only when the last of several holders exits.
+        self._quiescing += 1
         self._open.clear()
         try:
             await self._idle.wait()
             yield
         finally:
-            self._open.set()
+            self._quiescing -= 1
+            if self._quiescing == 0:
+                self._open.set()
 
     def _record_start(self) -> None:
         now = self._clock()
         self._starts.append(now)
-        while self._starts and now - self._starts[0] > _START_WINDOW_S:
+        while self._starts and now - self._starts[0] > START_RATE_WINDOW_S:
             self._starts.popleft()
-        recent = self._warned_at is not None and now - self._warned_at <= _START_WINDOW_S
-        if not recent and starts_exceed(self._starts, now, window_s=_START_WINDOW_S):
+        recent = self._warned_at is not None and now - self._warned_at <= START_RATE_WINDOW_S
+        if not recent and starts_exceed(self._starts, now, window_s=START_RATE_WINDOW_S):
             self._warned_at = now
-            log.warning("direct.start_rate_high", count=len(self._starts), window_s=_START_WINDOW_S)
+            log.warning(
+                "direct.start_rate_high", count=len(self._starts), window_s=START_RATE_WINDOW_S
+            )
 
 
 def _client(http_transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:

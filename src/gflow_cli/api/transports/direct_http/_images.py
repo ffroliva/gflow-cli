@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import secrets
 import time
 import uuid
@@ -32,6 +31,8 @@ from gflow_cli.errors import WireFormatError
 from gflow_cli.paths import extension_from_magic
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from playwright.async_api import Page
 
     from gflow_cli.api.dto import GeneratedImage
@@ -73,8 +74,8 @@ async def _resolve_character(
 ) -> tuple[str, str]:
     """Read path: the ``(entity_id, name)`` pair the frame carries, as the project holds it.
 
-    Both forms are checked against Flow's own project reply (``read_project``, which also
-    lands the page on the project for the mint), as the UI does when it attaches one:
+    Both forms are checked against Flow's own project reply (``read_project``), as the UI
+    does when it attaches one:
     - an id (``--reference-entity``) must be one the project holds; the chip uses Flow's
       name for it. A stale or foreign id falls back before any POST.
     - a bare mention carries only the name: exactly one character must match it by the
@@ -110,14 +111,16 @@ async def run_direct_images(
     profile_dir: Path,
     project_id: str,
     request: GenerateImageRequest,
+    page_lock: asyncio.Lock,
+    armed_page: Callable[[], Page],
     http_transport: httpx.AsyncBaseTransport | None = None,
-    page_lock: asyncio.Lock | None = None,
 ) -> list[GeneratedImage]:
     """One direct image generation: read the session, mint, build, send once, parse.
 
-    ``page`` serves the reads (cookies, a character's project read, which navigates it and
-    so holds ``page_lock``); the token comes from ``tokens``. The reply is parsed inside the
-    attempt: a failure after the send is indeterminate.
+    ``page`` serves the cookie reads. A character's project read navigates a page, so it
+    runs on ``armed_page()`` (the page the mint uses) under ``page_lock``; the token comes
+    from ``tokens``. The reply is parsed inside the attempt: a failure after the send is
+    indeterminate.
     """
     started = time.perf_counter()
     attempt = SubmitAttempt(_SUBMIT, profile_dir, tokens)
@@ -125,8 +128,8 @@ async def run_direct_images(
         shell = await _shell(client, page, profile_dir)
         characters: tuple[tuple[str, str], ...] = ()
         if request.reference_entity_names:
-            async with page_lock or contextlib.nullcontext():
-                characters = (await _resolve_character(page, project_id, request),)
+            async with page_lock:  # a re-arm also holds it, so armed_page() stays open
+                characters = (await _resolve_character(armed_page(), project_id, request),)
         mint_started = time.perf_counter()
         token = await attempt.mint()
         mint_ms = int((time.perf_counter() - mint_started) * 1000)

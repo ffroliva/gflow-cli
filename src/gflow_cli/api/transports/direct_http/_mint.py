@@ -66,7 +66,10 @@ async def _mint(page: Page, project_id: str, action: str) -> str:
 
 
 class PageTokenSource:
-    """The ``RecaptchaTokenSource`` for one transport: mints on one armed page.
+    """Mints on one transport's armed page; builds the per-attempt ``ProjectTokens``.
+
+    It does not implement the ``RecaptchaTokenSource`` port itself: ``for_project`` builds the
+    ``ProjectTokens`` objects that do, one per attempt.
 
     Only the mint holds the page: ``lock`` (the transport's page lock, also held by the UI
     path) covers re-arm, navigation-if-needed and the mint, never the POST that follows.
@@ -84,6 +87,11 @@ class PageTokenSource:
         self._clock = clock
         self._last_mint_wall: float | None = None
         self._discarded = False
+
+    @property
+    def page(self) -> Page:
+        """The currently armed page; read it under ``lock``, which a re-arm also holds."""
+        return self._page
 
     def for_project(self, project_id: str) -> ProjectTokens:
         """One attempt's token source: navigates (only if needed) to ``project_id``."""
@@ -112,7 +120,8 @@ class PageTokenSource:
             self._page = await old.context.new_page()
         except Exception as exc:
             raise not_sent(f"rearm_failed:{type(exc).__name__}") from exc
-        self._owned, self._discarded = True, False
+        # A fresh page has no mint yet: a failed first mint on it must not re-arm again.
+        self._owned, self._discarded, self._last_mint_wall = True, False, None
         log.info("direct.page_rearmed")
         if old_owned:
             try:

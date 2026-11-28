@@ -59,16 +59,18 @@ class DirectHttpTransport(UiAutomationTransport):
 
     def quiesce(self) -> AbstractAsyncContextManager[None]:
         """Block new direct attempts and wait for the in-flight ones (``SupportsQuiesce``)."""
+        # Lock order: quiesce first, then ``_generate_lock`` (a mint holds the lock inside a
+        # gate slot, so taking the lock before quiescing can deadlock on that mint).
         return self._gate.quiesce()
 
     def _new_token_source(self, page: Page) -> PageTokenSource:
         # The page lock is the UI path's own: a mint never shares the page with a UI run.
         return PageTokenSource(page, lock=self._generate_lock)
 
-    def _tokens_for(self, page: Page, project_id: str) -> ProjectTokens:
+    def _source_for(self, page: Page) -> PageTokenSource:
         if self._token_source is None:  # set up without setup() (a test, a caller's page)
             self._token_source = self._new_token_source(page)
-        return self._token_source.for_project(project_id)
+        return self._token_source
 
     async def _run_direct(self, tokens: ProjectTokens, run: Callable[[], Awaitable[_T]]) -> _T:
         """One attempt inside the in-flight gate; a refusal discards the page that minted."""
@@ -96,7 +98,8 @@ class DirectHttpTransport(UiAutomationTransport):
         page, profile_dir = self._page, self._profile_dir
         reason = self._why_not_direct(request, project_id)
         if reason is None and project_id is not None and profile_dir is not None:
-            tokens = self._tokens_for(page, project_id)
+            source = self._source_for(page)
+            tokens = source.for_project(project_id)
             try:
                 images = await self._run_direct(
                     tokens,
@@ -108,6 +111,7 @@ class DirectHttpTransport(UiAutomationTransport):
                         request=request,
                         http_transport=self._http_transport,
                         page_lock=self._generate_lock,
+                        armed_page=lambda: source.page,
                     ),
                 )
             except DirectAttemptEnded as ended:
@@ -132,7 +136,7 @@ class DirectHttpTransport(UiAutomationTransport):
         page, profile_dir = self._page, self._profile_dir
         reason = self._why_not_direct_upload()
         if reason is None and profile_dir is not None:
-            tokens = self._tokens_for(page, project_id)
+            tokens = self._source_for(page).for_project(project_id)
             try:
                 return await self._run_direct(
                     tokens,

@@ -15,14 +15,14 @@ from structlog.testing import capture_logs
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.image import GenerateImageRequest
-from gflow_cli.api.submit_policy import MAX_IN_FLIGHT
+from gflow_cli.api.submit_policy import MAX_IN_FLIGHT, DirectAttemptEnded
 from gflow_cli.api.transports.base import SupportsQuiesce
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http import DirectHttpTransport
 from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource
 from gflow_cli.config import reset_settings
-from gflow_cli.errors import WafRejectionError
+from gflow_cli.errors import ContentPolicyError, WafRejectionError
 from tests.api.transports.test_migrated_images import image_payload
 
 _SHELL_HTML = '<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
@@ -304,3 +304,122 @@ async def test_one_page_serves_two_projects_without_navigation(
     await source.for_project("proj-456").mint("IMAGE_GENERATION")
     assert minted["pages"] == [page, page]
     page.goto.assert_not_awaited()
+
+
+def _content_refusal() -> str:
+    reasons = [["PUBLIC_ERROR_UNSAFE_CONTENT"]]
+    frame = [["wrb.fr", "ogiZ0b", None, None, None, [3, None, reasons], "g"]]
+    return f")]}}'\n{json.dumps(frame)}"
+
+
+@pytest.mark.asyncio
+async def test_quiesce_holds_attempts_queued_on_a_slot(tmp_path: Path) -> None:
+    posts = _Posts()
+    t = _transport(tmp_path, posts)
+    source = FakeTokenSource()
+    t._token_source = source  # type: ignore[assignment]
+    jobs = [_generate(t) for _ in range(MAX_IN_FLIGHT)]
+    await _until(lambda: posts.now == MAX_IN_FLIGHT)
+    queued = _generate(t)  # waits on a slot, past the open check
+    await asyncio.sleep(0.05)
+
+    entered, leave = asyncio.Event(), asyncio.Event()
+
+    async def drain() -> None:
+        async with t.quiesce():
+            entered.set()
+            await leave.wait()
+
+    quiescing = asyncio.create_task(drain())
+    await asyncio.sleep(0.01)
+    posts.release.set()
+    await asyncio.gather(*jobs)
+    await _until(entered.is_set)
+    await asyncio.sleep(0.05)
+    assert (len(source.actions), posts.total) == (MAX_IN_FLIGHT, MAX_IN_FLIGHT)
+    leave.set()
+    await asyncio.gather(quiescing, queued)
+    assert posts.total == MAX_IN_FLIGHT + 1
+
+
+@pytest.mark.asyncio
+async def test_nested_quiesce_keeps_gate_closed() -> None:
+    gate = InFlightGate()
+    started = asyncio.Event()
+
+    async def attempt() -> None:
+        async with gate.slot():
+            started.set()
+
+    async with gate.quiesce():
+        async with gate.quiesce():
+            pass
+        waiting = asyncio.create_task(attempt())
+        await asyncio.sleep(0.05)
+        assert not started.is_set()  # the outer holder still has the gate closed
+    await asyncio.wait_for(waiting, 1.0)
+    assert started.is_set()
+
+
+@pytest.mark.asyncio
+async def test_failed_mint_after_rearm_does_not_rearm_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    minted = _record_minter(monkeypatch)
+    pool_page, fresh = _page(), _page("about:blank")
+    pool_page.context.new_page = AsyncMock(return_value=fresh)
+    fresh.context.new_page = AsyncMock(return_value=_page("about:blank"))
+    clock = [5000.0]
+    source = PageTokenSource(pool_page, lock=asyncio.Lock(), clock=lambda: clock[0])
+    tokens = source.for_project("proj-123")
+    await tokens.mint("IMAGE_GENERATION")
+    clock[0] += 601.0
+    fresh.goto = AsyncMock(side_effect=RuntimeError("navigation failed"))
+    with pytest.raises(DirectAttemptEnded):
+        await tokens.mint("IMAGE_GENERATION")
+    fresh.goto = AsyncMock(side_effect=lambda target, **_: setattr(fresh, "url", target))
+    await tokens.mint("IMAGE_GENERATION")
+    assert minted["pages"] == [pool_page, fresh]
+    fresh.context.new_page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_character_read_uses_rearmed_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.api.transports.test_direct_http import _project_with
+
+    _record_minter(monkeypatch)
+    read = AsyncMock(return_value=_project_with("Skipper"))
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.read_project", read)
+    posts = _Posts(_refusal())
+    posts.release.set()
+    pool_page, fresh = _page(), _page("about:blank")
+    pool_page.context.new_page = AsyncMock(return_value=fresh)
+    t = _transport(tmp_path, posts, pool_page)
+    with pytest.raises(WafRejectionError):
+        await _generate(t)  # discards the pool page; the next attempt re-arms
+    await _generate(t)  # re-arms during its mint; the read before it ran on the pool page
+    request = GenerateImageRequest(
+        prompt="x", reference_entities=("entity-0",), reference_entity_names=("Skipper",)
+    )
+    await t.generate_images(project_id="proj-123", request=request)
+    assert read.await_args is not None
+    assert read.await_args.args[0] is fresh
+
+
+@pytest.mark.asyncio
+async def test_content_refusal_keeps_the_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    minted = _record_minter(monkeypatch)
+    posts = _Posts(_content_refusal())
+    posts.release.set()
+    pool_page = _page()
+    pool_page.context.new_page = AsyncMock(return_value=_page("about:blank"))
+    t = _transport(tmp_path, posts, pool_page)
+    with pytest.raises(ContentPolicyError):
+        await _generate(t)
+    await _generate(t)
+    assert minted["pages"] == [pool_page, pool_page]
+    pool_page.context.new_page.assert_not_awaited()
