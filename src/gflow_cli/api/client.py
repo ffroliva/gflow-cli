@@ -821,9 +821,15 @@ class FlowApiClient(CharacterSurface, AccountBootstrap):
                 if isinstance(self.transport, SupportsQuiesce)
                 else contextlib.nullcontext()
             )
+            # Lock order: quiesce first, then the old transport's page lock (a mint holds that
+            # lock inside a gate slot). Holding it lets a running UI fallback finish before
+            # the teardown, and makes one queued behind it find its transport torn down.
+            page_lock = getattr(self.transport, "_generate_lock", None)
+            if not isinstance(page_lock, asyncio.Lock):
+                page_lock = contextlib.nullcontext()
             self._relaunch_gate.clear()
             try:
-                async with quiesce:
+                async with quiesce, page_lock:
                     await self._drain_and_relaunch(visibility)
             finally:
                 self._relaunch_gate.set()

@@ -126,6 +126,7 @@ class DirectHttpTransport(UiAutomationTransport):
     ) -> list[GeneratedImage]:
         """The inherited UI path, for the retry loop's fallback when nothing was sent."""
         async with self._generate_lock:
+            self._raise_if_torn_down()
             await self.park_deferred_page()
             return await self._generate_images_locked(
                 request, project_id=project_id, name_resolver=name_resolver

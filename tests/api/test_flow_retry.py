@@ -33,6 +33,7 @@ from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.errors import (
     AuthExpiredError,
+    BrowserSessionClosedError,
     NetworkError,
     RateLimitError,
     TaskCancelledError,
@@ -868,3 +869,88 @@ async def test_fallback_relaunch_failure_exit_code_and_not_charged() -> None:
     assert "boom" in err.detail
     assert UNUSUAL_ACTIVITY_REASON in err.detail
     assert host.relaunches == [BrowserVisibility.HEADLESS]
+
+
+def _relaunching_client(
+    tmp_path: Path, old: DirectHttpTransport, events: list[str], hold: asyncio.Event | None = None
+) -> FlowApiClient:
+    """A client whose relaunch drains, tears ``old`` down and sets up a new transport."""
+    client = FlowApiClient(tmp_path, visibility=BrowserVisibility.HEADLESS)
+    client._lease = MagicMock()
+    client._owns_transport = True
+    client.transport = old
+
+    async def drain_and_relaunch(visibility: BrowserVisibility) -> None:
+        events.append("relaunch_start")
+        if hold is not None:
+            await hold.wait()
+        await old.teardown()
+        client.transport = DirectHttpTransport()
+        events.append("relaunch_done")
+
+    client._drain_and_relaunch = drain_and_relaunch  # type: ignore[method-assign]
+    return client
+
+
+@pytest.mark.asyncio
+async def test_relaunch_waits_for_inflight_ui_fallback(tmp_path: Path) -> None:
+    """A UI fallback already running on the old page finishes before the teardown."""
+    events: list[str] = []
+    old = _direct_transport(tmp_path, lambda _r: httpx.Response(404))
+    ui_running, finish_ui = asyncio.Event(), asyncio.Event()
+
+    async def ui_locked(*_: Any, **__: Any) -> list[str]:
+        events.append("ui_start")
+        ui_running.set()
+        await finish_ui.wait()
+        events.append("ui_done")
+        return ["ui-image"]
+
+    old._generate_images_locked = ui_locked  # type: ignore[method-assign]
+    client = _relaunching_client(tmp_path, old, events)
+
+    ui = asyncio.create_task(
+        old.generate_images_ui(project_id="p", request=GenerateImageRequest(prompt="x"))
+    )
+    await ui_running.wait()
+    relaunch = asyncio.create_task(client.relaunch(BrowserVisibility.HEADLESS))
+    await asyncio.sleep(0.05)
+    assert events == ["ui_start"]  # the relaunch waits on the old transport's lock
+
+    finish_ui.set()
+    assert await ui == ["ui-image"]
+    await relaunch
+    assert events == ["ui_start", "ui_done", "relaunch_start", "relaunch_done"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["images", "upload"])
+async def test_ui_fallback_queued_behind_relaunch_raises_typed_not_charged(
+    tmp_path: Path, kind: str
+) -> None:
+    """A UI fallback that gets the old lock after the relaunch finds its transport torn
+    down: a typed, not-charged error, and no UI step runs on the closed page."""
+    events: list[str] = []
+    old = _direct_transport(tmp_path, lambda _r: httpx.Response(404))
+    ui_locked = AsyncMock(return_value=["ui-image"])
+    old._generate_images_locked = ui_locked  # type: ignore[method-assign]
+    hold = asyncio.Event()
+    client = _relaunching_client(tmp_path, old, events, hold)
+
+    relaunch = asyncio.create_task(client.relaunch(BrowserVisibility.HEADLESS))
+    while "relaunch_start" not in events:
+        await asyncio.sleep(0)
+    if kind == "images":
+        fallback = old.generate_images_ui(project_id="p", request=GenerateImageRequest(prompt="x"))
+    else:
+        fallback = old.upload_reference_ui(project_id="p", path=_png(tmp_path))
+    ui = asyncio.create_task(fallback)
+    await asyncio.sleep(0)
+    hold.set()
+    await relaunch
+
+    with pytest.raises(BrowserSessionClosedError) as caught:
+        await ui
+    assert (caught.value.charged, exit_code_for(caught.value)) == ("no", 15)
+    ui_locked.assert_not_awaited()
+    old.park_deferred_page.assert_not_awaited()  # type: ignore[attr-defined]
