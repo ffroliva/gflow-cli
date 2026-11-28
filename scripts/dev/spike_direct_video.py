@@ -105,6 +105,8 @@ from gflow_cli.api.transports.batchexecute import (  # noqa: E402
     parse_frames,
     rpc_errors,
 )
+from gflow_cli.api.transports.direct_http._mint import PageTokenSource  # noqa: E402
+from gflow_cli.api.transports.direct_http._mint import _mint as mint_token  # noqa: E402
 from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel  # noqa: E402
 
 from _spike_common import (  # noqa: E402, isort: skip
@@ -133,6 +135,16 @@ _ACTION_HOOK = """(() => {
   }, 50);
   setTimeout(() => clearInterval(t), 600000);
 })();"""
+
+
+def _direct_kwargs(page: Any, project_id: str, *, images: bool = True) -> dict[str, Any]:
+    """The token source (and, for images, the page lock) the production calls take."""
+    lock = asyncio.Lock()
+    source = PageTokenSource(page, lock=lock)
+    kwargs: dict[str, Any] = {"tokens": source.for_project(project_id), "page": page}
+    if images:
+        kwargs |= {"page_lock": lock, "armed_page": lambda: source.page}
+    return kwargs
 
 
 def _log(tag: str, **data: Any) -> None:
@@ -191,7 +203,7 @@ class Wire:
 
     async def open(self) -> None:
         self.headers = await dh._session_headers(self.page, self.profile_dir)  # noqa: SLF001
-        self.tokens = await dh._shell(self.hx, self.profile_dir, self.headers)  # noqa: SLF001
+        self.tokens = await dh._shell(self.hx, self.page, self.profile_dir)  # noqa: SLF001
         _log(
             "session",
             cookies=self.headers["cookie"].count("="),
@@ -202,7 +214,7 @@ class Wire:
 
     async def mint(self, project_id: str, action: str) -> tuple[str, int]:
         t0 = time.perf_counter()
-        token = await dh._mint._mint(self.page, project_id, action)  # noqa: SLF001
+        token = await mint_token(self.page, project_id, action)  # noqa: SLF001
         return token, round((time.perf_counter() - t0) * 1000)
 
     async def rpc(
@@ -595,8 +607,8 @@ async def phase_images(client: Any, profile_dir: Path, project_id: str, n: int) 
         t0 = time.perf_counter()
         try:
             imgs = await dh.run_direct_images(
-                page=client._page,
-                profile_dir=profile_dir,  # noqa: SLF001
+                **_direct_kwargs(client._page, project_id),  # noqa: SLF001
+                profile_dir=profile_dir,
                 project_id=project_id,
                 request=req,
             )
@@ -709,7 +721,7 @@ async def run_concurrency(client: Any, profile_dir: Path, project_id: str, n: in
         t0 = time.perf_counter()
         try:
             imgs = await dh.run_direct_images(
-                page=client._page,  # noqa: SLF001
+                **_direct_kwargs(client._page, project_id),  # noqa: SLF001
                 profile_dir=profile_dir,
                 project_id=project_id,
                 request=req,
@@ -985,7 +997,10 @@ async def main() -> None:
                 if mode == "i2v" and not start and template is None:
                     t0 = time.perf_counter()
                     ref = await dh.run_direct_upload(
-                        page=page, profile_dir=profile_dir, project_id=project_id, path=_START
+                        **_direct_kwargs(page, project_id, images=False),
+                        profile_dir=profile_dir,
+                        project_id=project_id,
+                        path=_START,
                     )
                     start = ref.name
                     b = _START.read_bytes()

@@ -661,7 +661,7 @@ class Settings(BaseSettings):
     @classmethod
     def _resolve_browser_visibility_alias(cls, data: object) -> object:
         if isinstance(data, dict):
-            raw = cast("dict[str, object]", data)
+            raw = dict(cast("dict[str, object]", data))
             if "browser_visibility" not in raw:
                 if "headless" in raw:
                     val = raw["headless"]

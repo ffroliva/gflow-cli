@@ -2519,7 +2519,11 @@ use. When set:
 - `video t2v/i2v/r2v` emits the `VideoResult` (`status`, `command`, `media_id`,
   `generation_status`, `succeeded`, `local_path`, `failure_reasons`,
   `error_message`) plus the request echo (`model`, `mode`, `aspect`,
-  `duration`, `count`, `seed`).
+  `duration`, `resolution`, `count`, `seed`). `model`, `duration` and `resolution` report the
+  request that was sent to Flow (`VideoResult.sent_request`) when the direct path resolved
+  one: a bare `video t2v` names no model, and `model` then carries the account's selected
+  model, with `duration` and `resolution` as sent. Otherwise they echo the parsed request,
+  and `resolution` is `null` when none was set.
 - `image generate` / `video generate` emit the payload of the verb they resolved to, plus a
   top-level `"mode"` (`t2i`, `i2i`, `t2v`, `i2v` or `r2v`), on success and on failure.
 - On failure, the command still emits a JSON payload — an RFC 9457
