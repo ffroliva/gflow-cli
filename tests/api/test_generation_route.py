@@ -45,7 +45,8 @@ from gflow_cli.config import UiMode
 class FakeCatalogRow:
     flow_workflow_id: str | None = "wf-123"
     aspect_ratio: str | None = "16:9"
-    model: str | None = "macaron_cookie_t2v_4s_360p"
+    model: str | None = "omni_1_2_flash"
+    duration_seconds: float | None = 4.0
     workflow_id: str | None = None
     aspect: str | None = None
 
@@ -647,7 +648,7 @@ def test_upscale_source_not_in_catalog_routes_ui() -> None:
     assert (
         choose_upscale_route(
             "1080p",
-            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            FakeCatalogRow(model="omni_1_2_flash"),
             flow_host="",
             proxy_configured=False,
         )
@@ -656,18 +657,26 @@ def test_upscale_source_not_in_catalog_routes_ui() -> None:
     assert (
         choose_upscale_route(
             "1080p",
-            FakeCatalogRow(model="macaron_cookie_i2v_4s_360p"),
+            FakeCatalogRow(aspect_ratio="landscape"),
             flow_host="",
             proxy_configured=False,
         )
         == Route.DIRECT
     )
+    # A wire key, 9:16, or a source that is not 4 s was never measured -> UI
+    for row in (
+        FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+        FakeCatalogRow(aspect_ratio="portrait"),
+        FakeCatalogRow(duration_seconds=8.0),
+        FakeCatalogRow(duration_seconds=None),
+    ):
+        assert choose_upscale_route("1080p", row, flow_host="", proxy_configured=False) == Route.UI
 
     # Non-1080p scales -> UI
     assert (
         choose_upscale_route(
             "4K",
-            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            FakeCatalogRow(model="omni_1_2_flash"),
             flow_host="",
             proxy_configured=False,
         )
@@ -676,7 +685,7 @@ def test_upscale_source_not_in_catalog_routes_ui() -> None:
     assert (
         choose_upscale_route(
             "720p",
-            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            FakeCatalogRow(model="omni_1_2_flash"),
             flow_host="",
             proxy_configured=False,
         )
@@ -685,7 +694,7 @@ def test_upscale_source_not_in_catalog_routes_ui() -> None:
     assert (
         choose_upscale_route(
             "GIF",
-            FakeCatalogRow(model="macaron_cookie_t2v_4s_360p"),
+            FakeCatalogRow(model="omni_1_2_flash"),
             flow_host="",
             proxy_configured=False,
         )
@@ -763,7 +772,7 @@ def test_auto_ui_route_launches_headed() -> None:
     )
 
     # 4K / 720p / GIF upscale
-    valid_row = FakeCatalogRow(model="macaron_cookie_t2v_4s_360p")
+    valid_row = FakeCatalogRow(model="omni_1_2_flash")
     assert (
         plan_visibility(
             VisibilitySetting.AUTO,

@@ -18,6 +18,7 @@ import structlog
 
 from gflow_cli.api.generation_route import Route, choose_upscale_route
 from gflow_cli.api.submit_policy import DirectAttemptEnded, Indeterminate
+from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http._gateway import SubmitAttempt, _client, _post_request
 from gflow_cli.api.transports.direct_http._session import (
     _proxy_configured,
@@ -47,18 +48,19 @@ _RECONCILE_HINT = (
     "(a 1080p upscale spends no credits)."
 )
 _P0UKFB = ("p0UkFb", "VIDEO_GENERATION", "upscale submit", _RECONCILE_HINT)
+_INVALID_ARGUMENT = 3
 _UPSAMPLER_1080P = "veo_3_1_upsampler_1080p"
-#: The catalog's spellings of 16:9, the only aspect a direct upscale was measured on.
-_LANDSCAPE = frozenset({"landscape", "16:9"})
+#: The ``_upsampled`` poll's budget, in seconds.
+_POLL_TIMEOUT_S = 600.0
+#: The wire's 16:9 slot, the only aspect a direct upscale was measured on.
 _LANDSCAPE_SLOT = 2
 
 
 class UpscaleSource(NamedTuple):
-    """A catalogued clip the ``p0UkFb`` item names: media id, workflow id, aspect slot."""
+    """A catalogued clip the ``p0UkFb`` item names: its media id and workflow id."""
 
     media_id: str
     workflow_id: str
-    aspect_slot: int
 
 
 def upscale_source(
@@ -66,8 +68,7 @@ def upscale_source(
 ) -> UpscaleSource | None:
     """The source for a direct upscale, or ``None`` for the menu path.
 
-    ``choose_upscale_route`` decides from the local catalog row alone (no network read);
-    a 9:16 source also goes to the menu, as only 16:9 was measured.
+    ``choose_upscale_route`` decides from the local catalog row alone (no network read).
     """
     settings = get_settings()
     route = choose_upscale_route(
@@ -78,9 +79,7 @@ def upscale_source(
     )
     if route is not Route.DIRECT or catalog_row is None:
         return None
-    if catalog_row.get("aspect_ratio") not in _LANDSCAPE:
-        return None
-    return UpscaleSource(media_id, str(catalog_row["flow_workflow_id"]), _LANDSCAPE_SLOT)
+    return UpscaleSource(media_id, str(catalog_row["flow_workflow_id"]))
 
 
 async def run_direct_upscale(
@@ -90,7 +89,6 @@ async def run_direct_upscale(
     profile_dir: Path,
     project_id: str,
     source: UpscaleSource,
-    poll_timeout_s: float,
     poll_interval_s: float,
     http_transport: httpx.AsyncBaseTransport | None = None,
     on_before_submit: Callable[[], None] | None = None,
@@ -108,11 +106,12 @@ async def run_direct_upscale(
             await attempt.send(client, _post_request("p0UkFb", edit_path, shell, headers, body))
         except DirectAttemptEnded as ended:
             if _flow_refused(ended.outcome):
-                raise _unavailable(source.media_id, ended.outcome.cause) from ended
+                why = f"{', '.join(ended.outcome.reasons)}, gRPC {ended.outcome.code}"
+                raise _unavailable(source.media_id, why) from ended
             raise
         read = _reader(client, page, profile_dir, shell, f"/project/{project_id}")
         record = await _poll(
-            read, f"{source.workflow_id}_upsampled", poll_timeout_s, poll_interval_s
+            read, f"{source.workflow_id}_upsampled", _POLL_TIMEOUT_S, poll_interval_s
         )
         if not record.is_done:
             raise _unavailable(source.media_id, record.failure_message)
@@ -131,7 +130,7 @@ def _payload(source: UpscaleSource, project_id: str, token: str) -> list[object]
     """``[[item], ctx, [batch]]``; the item's 32 slots as the spike captured them."""
     item: list[object] = [None] * 32
     item[0] = [None, source.workflow_id]
-    item[2] = source.aspect_slot
+    item[2] = _LANDSCAPE_SLOT
     item[4] = [None, source.media_id, None, None, str(uuid.uuid4()).upper()]
     item[6] = 2
     item[31] = _UPSAMPLER_1080P
@@ -141,12 +140,14 @@ def _payload(source: UpscaleSource, project_id: str, token: str) -> list[object]
 
 
 def _flow_refused(outcome: SubmitOutcome) -> TypeGuard[Indeterminate]:
-    """HTTP 200 with Flow's error frame for ``p0UkFb`` that is not ``UNUSUAL_ACTIVITY``
-    (``classify_reply`` names it ``rpc error``): Flow answered, and refused this item."""
+    """HTTP 200 with Flow's error frame for ``p0UkFb`` naming reasons: Flow answered and
+    refused this item. Not gRPC 3 (INVALID_ARGUMENT, our request) nor ``UNUSUAL_ACTIVITY``."""
     return (
         isinstance(outcome, Indeterminate)
         and outcome.status == 200
-        and outcome.cause.startswith("rpc error")
+        and bool(outcome.reasons)
+        and outcome.code != _INVALID_ARGUMENT
+        and UNUSUAL_ACTIVITY_REASON not in outcome.reasons
     )
 
 

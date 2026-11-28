@@ -308,7 +308,6 @@ class DirectHttpTransport(UiAutomationTransport):
         *,
         project_id: str,
         source: UpscaleSource,
-        poll_timeout_s: float = 600.0,
         on_before_submit: Callable[[], None] | None = None,
     ) -> bytes:
         """Upscale a catalogued clip to 1080p with one direct ``p0UkFb`` POST; its mp4 bytes.
@@ -333,7 +332,6 @@ class DirectHttpTransport(UiAutomationTransport):
                 profile_dir=profile_dir,
                 project_id=project_id,
                 source=source,
-                poll_timeout_s=poll_timeout_s,
                 poll_interval_s=self._poll_interval_s,
                 http_transport=self._http_transport,
                 on_before_submit=on_before_submit,

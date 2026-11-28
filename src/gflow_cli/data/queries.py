@@ -212,14 +212,14 @@ _ASSET_PROMPT_SQL = """
 """
 
 _VIDEO_SOURCE_SQL = """
-    SELECT flow_workflow_id, aspect_ratio, model
+    SELECT flow_workflow_id, aspect_ratio, model, duration_seconds
       FROM assets
      WHERE profile_name = :profile AND flow_media_id = :media_id AND kind = 'video'
 """
 
 
 def get_video_source(*, db_path: Path, profile_name: str, media_id: str) -> dict[str, Any] | None:
-    """A catalogued video's ``flow_workflow_id``, ``aspect_ratio`` and ``model``, or ``None``.
+    """A catalogued video's workflow id, aspect, model and duration, or ``None``.
 
     The direct upscale route reads these before any browser work (``choose_upscale_route``).
     """

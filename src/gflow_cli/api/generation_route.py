@@ -88,10 +88,12 @@ MEASURED_VIDEO_KEYS: dict[
     ),
 }
 
-#: Source clip model keys measured for direct 1080p upscale on flow.google.com.
-MEASURED_UPSCALE_SOURCES: frozenset[str] = frozenset(
-    {"macaron_cookie_t2v_4s_360p", "macaron_cookie_i2v_4s_360p"}
-)
+#: Source clips measured for direct 1080p upscale on flow.google.com, as the catalog records
+#: them: (CLI model value, aspect), and only a 4 s source.
+MEASURED_UPSCALE_SOURCES: frozenset[tuple[str, str]] = frozenset({("omni_1_2_flash", "landscape")})
+MEASURED_UPSCALE_DURATION_S = 4
+#: The catalog's other spelling of 16:9.
+_ASPECT_ALIASES = {"16:9": "landscape"}
 
 
 def direct_can_serve(request: GenerateImageRequest) -> bool:
@@ -237,16 +239,15 @@ def choose_video_route(
     return Route.DIRECT if video_target(request) is not None else Route.UI
 
 
-def _read_catalog_field(row: object, *names: str) -> str | None:
+def _catalog_value(row: object, name: str) -> object:
     if isinstance(row, dict):
-        row_dict = cast("dict[str, object]", row)
-        for name in names:
-            val = row_dict.get(name)
-            if isinstance(val, str) and val:
-                return val
-        return None
+        return cast("dict[str, object]", row).get(name)
+    return getattr(row, name, None)
+
+
+def _read_catalog_field(row: object, *names: str) -> str | None:
     for name in names:
-        val = getattr(row, name, None)
+        val = _catalog_value(row, name)
         if isinstance(val, str) and val:
             return val
     return None
@@ -277,13 +278,14 @@ def choose_upscale_route(
         return Route.UI
 
     aspect = _read_catalog_field(catalog_row, "aspect", "aspect_ratio")
-    if not aspect:
-        return Route.UI
-
     model = _read_catalog_field(catalog_row, "model")
-    if not model or model not in MEASURED_UPSCALE_SOURCES:
+    if not aspect or not model:
         return Route.UI
-
+    if (model, _ASPECT_ALIASES.get(aspect, aspect)) not in MEASURED_UPSCALE_SOURCES:
+        return Route.UI
+    # Resolution is not catalogued: a source Flow will not upscale still surfaces as exit 22.
+    if _catalog_value(catalog_row, "duration_seconds") != MEASURED_UPSCALE_DURATION_S:
+        return Route.UI
     return Route.DIRECT
 
 

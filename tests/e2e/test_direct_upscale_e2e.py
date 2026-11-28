@@ -1,8 +1,9 @@
 """Live E2E for the direct 1080p upscale (headless direct transport, Task 15).
 
 One profile, headless, over ``GFLOW_CLI_TRANSPORT=direct_http``. The source clip is a
-billed t2v at the measured upscale source (Omni 1.2 Flash, 4 s, 360p, 16:9:
-``macaron_cookie_t2v_4s_360p``), recorded in this test's own catalog; then
+billed t2v at the measured upscale source (Omni 1.2 Flash, 4 s, 360p, 16:9), recorded in
+this test's own catalog as ``omni_1_2_flash`` / ``landscape`` / 4 s, the row
+``choose_upscale_route`` allowlists; then
 ``gflow video upscale --scale 1080p`` on it. Asserts the route was direct (the transport's
 ``direct.upscale`` log event), a 1920x1080 mp4, and a balance the upscale left unchanged
 (a 1080p upscale measured 0 credits; spike 2026-11-27, "Direct video works end to end").
@@ -63,13 +64,15 @@ def _balance(env: RedactedEnv) -> int:
 
 
 def _catalogued_clip(env: RedactedEnv) -> tuple[str, str]:
-    """The source clip's media id and project, from this test's catalog."""
+    """The source clip's media id and project, from this test's catalog, recorded as the
+    measured upscale source (so a recorder change fails here, not as a menu fallback)."""
     with sqlite3.connect(env["GFLOW_CLI_DB_PATH"]) as conn:
         row = conn.execute(
-            "SELECT flow_media_id, flow_project_id FROM assets WHERE kind = 'video' "
-            "ORDER BY created_at DESC LIMIT 1"
+            "SELECT flow_media_id, flow_project_id, model, aspect_ratio, duration_seconds "
+            "FROM assets WHERE kind = 'video' ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
     assert row is not None, "the source clip was not recorded in the catalog"
+    assert tuple(row[2:]) == ("omni_1_2_flash", "landscape", 4.0)
     return str(row[0]), str(row[1])
 
 
