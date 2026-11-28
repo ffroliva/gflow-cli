@@ -251,6 +251,8 @@ async def test_upscale_video_takes_browser_visibility_and_reports_the_path(
     seen: dict[str, Any] = {}
 
     class _Client:
+        upscale_route = None  # the menu ran without recording a direct attempt
+
         def __init__(self, **kwargs: Any) -> None:
             seen.update(kwargs)
             self.visibility = kwargs["visibility"]
@@ -279,3 +281,47 @@ async def test_upscale_video_takes_browser_visibility_and_reports_the_path(
     assert seen["settings"].browser_visibility == "headless"
     assert res["route"] == "ui"  # only a catalogued 1080p source goes direct
     assert res["visibility"] == "headless"
+
+
+async def test_upscale_video_reports_the_route_taken_not_the_planned_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planned direct upscale that ended NotSent ran the download menu: the reply says
+    ``ui``, as the image and video replies report the route their result took."""
+    from gflow_cli.api.generation_route import Route
+    from gflow_cli.config import reset_settings
+    from gflow_cli.mcp.tools import gflow_upscale_video
+
+    monkeypatch.setenv("GFLOW_CLI_OUTPUT_DIR", str(tmp_path))
+    reset_settings()
+    out_file = tmp_path / "up.mp4"
+    out_file.write_bytes(b"\x00" * 16)
+
+    class _Client:
+        upscale_route: Route | None = None
+
+        def __init__(self, **kwargs: Any) -> None:
+            self.visibility = kwargs["visibility"]
+
+        async def upsample_video(self, **_: Any) -> Path:
+            self.upscale_route = Route.UI  # the direct attempt fell back to the menu
+            return out_file
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr("gflow_cli.mcp.tools._resolve_and_validate_profile", lambda _p: "default")
+    monkeypatch.setattr("gflow_cli.mcp.tools._upscale_route", lambda *_: Route.DIRECT)
+    monkeypatch.setattr("gflow_cli.mcp.tools.FlowApiClient", _Client)
+    try:
+        res = await gflow_upscale_video(
+            media_id="7c9e6679-7425-40de-944b-e07fc1f90ae7", scale="1080p", project="proj-1"
+        )
+    finally:
+        reset_settings()
+
+    assert res["status"] == "ok"
+    assert res["route"] == "ui"

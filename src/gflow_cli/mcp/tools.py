@@ -2040,7 +2040,7 @@ async def _run_upscale_tool(
         "scale": scale_label,
         "path": str(target),
         "bytes": file_bytes,
-        "route": route.value,
+        "route": (client.upscale_route or route).value,  # the route taken, not the planned one
         "visibility": client.visibility.value,
     }
 

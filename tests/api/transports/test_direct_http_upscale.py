@@ -16,6 +16,7 @@ import pytest
 from gflow_cli.api import flow_wire
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import CreditsInfo
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.batchexecute import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.direct_http import DirectHttpTransport
@@ -471,3 +472,12 @@ async def test_not_sent_falls_back_to_menu_once(tmp_path: Path) -> None:
     assert flow.count("p0UkFb") == 0
     menu.assert_awaited_once()
     assert target.read_bytes() == b"menu-bytes"
+    assert client.upscale_route is Route.UI  # the route taken, not the one planned
+
+
+@pytest.mark.asyncio
+async def test_direct_upscale_records_the_direct_route(tmp_path: Path) -> None:
+    _catalog()
+    client, menu = _client(tmp_path, _happy())
+    await _upscale(client, menu, tmp_path)
+    assert client.upscale_route is Route.DIRECT

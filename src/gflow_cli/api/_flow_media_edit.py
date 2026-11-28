@@ -17,6 +17,7 @@ import structlog
 from gflow_cli.api import routes, video_extend
 from gflow_cli.api._flow_retry import run_with_retry
 from gflow_cli.api.credit_cap import enforce_credit_cap
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.image_upscale import (
     TargetResolution,
     UpsampleImageRequest,
@@ -131,6 +132,10 @@ def _is_png_or_jpeg(data: bytes) -> bool:
 
 class MediaEditSurface(GenerationSurface):
     """Media edit surface: upscale and extend an existing image or clip."""
+
+    #: The route the last ``upsample_video`` took (direct, or the download menu), which can
+    #: differ from the planned one when a direct attempt ends ``NotSent``.
+    upscale_route: Route | None = None
 
     async def capability_listing(self, project_id: str) -> JsonObject:
         """`projectInitialData` for *project_id*, fetched once per client session.
@@ -435,6 +440,7 @@ class MediaEditSurface(GenerationSurface):
         try:
             source = self._direct_upscale_source(media_id, scale)
             if source is None:
+                self.upscale_route = Route.UI
                 video_bytes = await self._upscale_via_menu(project_id, media_id, scale)
             else:
                 video_bytes = await self._upscale_through_retry(project_id, source, scale)
@@ -487,12 +493,17 @@ class MediaEditSurface(GenerationSurface):
         def transport() -> DirectHttpTransport:
             return cast("DirectHttpTransport", self.transport)  # re-read: a relaunch replaces it
 
+        async def menu() -> bytes:
+            self.upscale_route = Route.UI
+            return await self._upscale_via_menu(project_id, source.media_id, scale)
+
+        self.upscale_route = Route.DIRECT
         return await run_with_retry(
             cast("RetryHost", self),
             direct=lambda before: transport().upscale_video_direct(
                 project_id=project_id, source=source, on_before_submit=before
             ),
-            ui=lambda: self._upscale_via_menu(project_id, source.media_id, scale),
+            ui=menu,
             setting=VisibilitySetting(self.settings.browser_visibility),
         )
 
