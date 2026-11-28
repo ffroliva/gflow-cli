@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -19,17 +18,6 @@ import pytest
 )
 def test_domain_modules_import_no_playwright_patchright_or_httpx(module_name: str) -> None:
     """Task 3 domain rule: pure domain modules must not import Playwright, patchright or httpx."""
-    if module_name == "gflow_cli.api.generation_route":
-        route_path = (
-            Path(__file__).resolve().parents[1]
-            / "src"
-            / "gflow_cli"
-            / "api"
-            / "generation_route.py"
-        )
-        if not route_path.exists():
-            pytest.skip("generation_route.py does not exist yet (created in Task 4)")
-
     code = (
         f"import {module_name}; "
         "import sys; "
