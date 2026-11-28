@@ -145,6 +145,8 @@ async def test_empty_balance_refused_before_launch_for_a_direct_video(
         return type("Info", (), {"credits": 0})()
 
     monkeypatch.setattr(flow_wire, "read_credits", zero)
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")  # the balance read is a wire read
+    config.reset_settings()
     with pytest.raises(InsufficientCreditsError) as exc:
         await video_client_visibility(config.get_settings(), tmp_path, (Route.DIRECT,))
     assert exit_code_for(exc.value) == 37
@@ -541,6 +543,8 @@ def test_t2v_empty_balance_exits_37_before_client_construction(
         return type("Info", (), {"credits": 0})()
 
     monkeypatch.setattr(flow_wire, "read_credits", zero)
+    monkeypatch.setenv("GFLOW_CLI_WIRE_READS", "1")  # the balance read is a wire read
+    config.reset_settings()
     factory = _recording_client()
     with (
         patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
