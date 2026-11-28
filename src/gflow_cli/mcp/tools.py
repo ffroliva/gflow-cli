@@ -1112,9 +1112,11 @@ async def gflow_generate_image(
             (only in agentic mode).
         ui_mode: Required Flow UI arm — 'classic' (hard aspect controls),
             'agentic' (chat surface; forced automatically when instructions are
-            given), or 'auto' (bind whatever renders, the default). If the arm
-            can't be reached, generation aborts before submitting (no credits).
-            Overrides GFLOW_CLI_UI_MODE.
+            given), or 'auto' (bind whatever renders, the default). On the UI
+            path, if the arm can't be reached, generation aborts before
+            submitting (no credits); 'agentic' always takes the UI path, while
+            'classic' and 'auto' may run on the direct path, which has no editor
+            to verify. Overrides GFLOW_CLI_UI_MODE.
         thinking_level: Optional image thinking level in Flow's settings pane —
             'low', 'medium', or 'high' (mirrors CLI ``--thinking-level``; omit
             to leave Flow's current setting untouched).
