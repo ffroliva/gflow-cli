@@ -21,6 +21,7 @@ import pytest
 from click.testing import CliRunner
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from gflow_cli._cli_helpers import client_visibility
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.transports._mc_submit_observe import read_project_listing
 from gflow_cli.cli import main
@@ -99,7 +100,9 @@ async def _assert_media_listing_state(
     profile_dir: Path, project_id: str, media_id: str, *, archived: bool
 ) -> None:
     settings = get_settings()
-    async with FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client:
+    async with FlowApiClient(
+        profile_dir=profile_dir, visibility=client_visibility(settings)
+    ) as client:
         page = client._page
         assert page is not None
         listing = await read_project_listing(page, project_id, budget_s=30.0)

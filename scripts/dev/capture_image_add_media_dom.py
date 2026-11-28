@@ -31,6 +31,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent / "src"))
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 # Editor-level Add Media — svasakorn's snapshot shows aria-haspopup='dialog'
 # (Radix popover) with the same add_2 icon, distinct from the project-level
@@ -46,7 +47,7 @@ async def capture(profile_name: str, out_html: Path, out_json: Path) -> None:
     if not profile_dir.exists():
         sys.exit(f"Profile dir does not exist: {profile_dir}")
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         transport = client.transport
         if transport is None:
             sys.exit("FlowApiClient.transport is None")

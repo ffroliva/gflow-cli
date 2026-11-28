@@ -50,6 +50,7 @@ from gflow_cli.api.transports.ui_automation_video import (
     VideoGenerationMixin,
 )
 from gflow_cli.paths import default_home, profile_subdir
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 # The production `_send_prompt` clicks the FIRST button matching this selector
 # (logged in `ui_automation.prompt_submitted` as `via:`). Enumerating ALL matches
@@ -119,7 +120,7 @@ async def capture(profile_name: str, probe_image: Path, out_dir: Path) -> int:
 
     evidence: dict = {"profile": profile_name, "probe_image": str(probe_image)}
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         transport = client.transport
         if transport is None:
             sys.exit("FlowApiClient.transport is None")

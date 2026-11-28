@@ -33,6 +33,7 @@ from pytest_bdd import given, scenarios, then, when
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports import migrated_composer as mc
 from gflow_cli.errors import WafRejectionError
 
@@ -84,7 +85,9 @@ def _armed(world: dict[str, Any]) -> None:
 @when("gflow generates the image on the migrated host")
 def _generate(world: dict[str, Any]) -> None:
     async def run() -> None:
-        async with FlowApiClient(profile_dir=world["profile"], headless=False) as client:
+        async with FlowApiClient(
+            profile_dir=world["profile"], visibility=BrowserVisibility.HEADED
+        ) as client:
             assert client._context is not None  # noqa: SLF001
             await client._context.route("**/batchexecute*", world["route"])  # noqa: SLF001
             try:

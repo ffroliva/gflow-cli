@@ -988,7 +988,7 @@
  "methods": {
   "__aenter__": "async (self) -> 'Self'",
   "__aexit__": "async (self, *exc: 'object') -> 'None'",
-  "__init__": "sync (self, profile_dir: 'Path', *, visibility: 'BrowserVisibility' = <BrowserVisibility.HEADED: 'headed'>, headless: 'bool | None' = None, settings: 'Settings | None' = None, transport: 'FlowTransportStrategy | str | None' = None, out_dir: 'Path | None' = None) -> 'None'",
+  "__init__": "sync (self, profile_dir: 'Path', *, visibility: 'BrowserVisibility | None' = None, settings: 'Settings | None' = None, transport: 'FlowTransportStrategy | str | None' = None, out_dir: 'Path | None' = None) -> 'None'",
   "_checkin_page": "sync (self, page: 'Page') -> 'None'",
   "_checkout_page": "async (self) -> 'Page'",
   "_fetch_access_token": "async (self) -> 'tuple[str, float]'",

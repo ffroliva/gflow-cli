@@ -40,6 +40,7 @@ from gflow_cli.api.transports.migrated_composer import (  # noqa: E402
     url_rpcid,
 )
 from gflow_cli.paths import default_home, profile_subdir  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 
 async def dump_chips(page, tag: str) -> dict:
@@ -65,7 +66,7 @@ async def capture(profile_name: str, project_id: str, out_dir: Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Profile: {profile_name} ({profile_dir})")
 
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         page = await client._checkout_page()
         try:
             return await _capture_on_page(client, page, profile_name, project_id, out_dir)
@@ -169,7 +170,7 @@ async def submit_probe(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     captured: list[dict] = []
-    async with FlowApiClient(profile_dir=profile_dir, headless=False) as client:
+    async with FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADED) as client:
         page = await client._checkout_page()
         try:
             composer = MigratedComposer()

@@ -732,6 +732,20 @@ def upscale_route(scale: str, catalog_row: object | None, *, transport: str | No
     )
 
 
+def upscale_visibility(
+    profile_dir: Path, media_id: str, scale: str, kind: str = "video"
+) -> BrowserVisibility:
+    """An upscale's launch visibility: a video upscale routes on its local catalog row (no
+    network read); an image upscale drives the Flow UI."""
+    settings = get_settings()
+    if kind != "video":
+        return client_visibility(settings)
+    from gflow_cli.api._flow_media_edit import upscale_catalog_row  # noqa: PLC0415
+
+    row = upscale_catalog_row(settings, profile_dir, media_id)
+    return client_visibility(settings, (upscale_route(scale, row),))
+
+
 def client_visibility(
     settings: Settings, routes: Iterable[Route] = (Route.UI,)
 ) -> BrowserVisibility:

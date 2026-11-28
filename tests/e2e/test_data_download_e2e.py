@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from gflow_cli._cli_helpers import client_visibility
 from gflow_cli.config import get_settings
 from gflow_cli.data.queries import VideoRow, list_videos
 from gflow_cli.data.repository import DataRepository
@@ -183,7 +184,9 @@ async def test_a_lost_status_poll_settles_the_run_from_the_live_listing_1484(
     assert row.project_id is not None
     monkeypatch.setattr(observe, "RESULT_URL_GRACE_S", 0.5)
     settings = get_settings()
-    async with FlowApiClient(profile_dir=e2e_profile_dir, headless=settings.headless) as client:
+    async with FlowApiClient(
+        profile_dir=e2e_profile_dir, visibility=client_visibility(settings)
+    ) as client:
         page = client._page  # noqa: SLF001 - the e2e drives the transport on the real page
         assert page is not None
         setup = await observe.read_project_listing(page, row.project_id, budget_s=60.0)

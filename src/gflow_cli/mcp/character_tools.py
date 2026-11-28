@@ -103,7 +103,7 @@ async def gflow_character_create(
     profile_dir = settings.profile_subdir(resolved)
     async with (
         common._profile_lock(resolved),  # pyright: ignore[reportPrivateUsage]
-        FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client,
+        FlowApiClient(profile_dir=profile_dir) as client,
     ):
         recorder = OperationRecorder.open(settings)
         try:

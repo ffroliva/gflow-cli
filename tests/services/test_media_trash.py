@@ -18,6 +18,7 @@ import pytest
 from gflow_cli.api import flow_wire
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.flow_wire import WireFallbackReason, WireReadUnavailable
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports._media_trash_wire import (
     RESTORE_FIELD_MASKS,
     TRASH_FIELD_MASK,
@@ -322,7 +323,7 @@ async def test_direct_trash_media_fallback_on_stale_cookie(
 async def test_client_trash_media_page_evaluation(
     profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client = FlowApiClient(profile_dir=profile_dir, headless=True)
+    client = FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS)
     fake_page = MagicMock()
     fake_page.url = "https://flow.google.com"
     fake_page.goto = AsyncMock()
@@ -347,7 +348,7 @@ async def test_client_trash_media_page_evaluation(
 async def test_client_restore_media_page_evaluation(
     profile_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    client = FlowApiClient(profile_dir=profile_dir, headless=True)
+    client = FlowApiClient(profile_dir=profile_dir, visibility=BrowserVisibility.HEADLESS)
     fake_page = MagicMock()
     fake_page.url = "https://flow.google.com"
     fake_page.goto = AsyncMock()

@@ -19,6 +19,7 @@ from gflow_cli.api._flow_media_edit import MediaEditSurface
 from gflow_cli.api._flow_session import FlowSession
 from gflow_cli.api._flow_workspace import WorkspaceSurface
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.config import Settings
 
 # Every class between the facade and FlowSession, read from the MRO so a new surface is covered.
@@ -42,7 +43,7 @@ def test_a_surface_built_on_its_own_has_the_session_core(
     for name in [k for k in os.environ if k.startswith("GFLOW_CLI_")]:
         monkeypatch.delenv(name)  # a stray developer setting must not decide this test
     settings = Settings(_env_file=None)  # pyright: ignore[reportCallIssue]
-    obj = surface(tmp_path / "profile", headless=True, settings=settings)
+    obj = surface(tmp_path / "profile", visibility=BrowserVisibility.HEADLESS, settings=settings)
     assert obj.profile_dir == tmp_path / "profile"
     assert obj.headless is True
     assert obj.settings is settings

@@ -37,7 +37,7 @@ from pydantic import Field, ValidationError
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import telemetry, telemetry_upload
-from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project  # pyright: ignore[reportPrivateUsage]
+from gflow_cli._cli_helpers import _FLOW_ID_RE, default_project, upscale_visibility
 from gflow_cli.api import flow_wire, routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import AgentInstruction
@@ -1722,7 +1722,6 @@ async def gflow_character_list(
         _profile_lock(resolved),
         FlowApiClient(
             profile_dir=settings.profile_subdir(resolved),
-            headless=settings.headless,
         ) as client,
     ):
         chars = await client.list_characters(project)
@@ -1808,7 +1807,6 @@ async def gflow_character_show(
         _profile_lock(resolved),
         FlowApiClient(
             profile_dir=settings.profile_subdir(resolved),
-            headless=settings.headless,
         ) as client,
     ):
         char = await client.get_character(project, entity_id=entity_id, name=name)
@@ -2051,7 +2049,7 @@ async def _run_upscale_tool(
         _profile_lock(profile),
         FlowApiClient(
             profile_dir=profile_dir,
-            headless=settings.headless,
+            visibility=upscale_visibility(profile_dir, media_id, scale_label, kind),
             out_dir=output_root,
         ) as client,
     ):
@@ -2376,7 +2374,7 @@ async def _run_instructions_op(
     try:
         async with (
             _profile_lock(resolved),
-            FlowApiClient(profile_dir=profile_dir, headless=settings.headless) as client,
+            FlowApiClient(profile_dir=profile_dir) as client,
         ):
             # ValueError is scoped to op() ONLY — brief.find (not-found /
             # ambiguous) and AgentInstruction invariants raise it with

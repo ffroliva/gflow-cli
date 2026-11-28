@@ -343,7 +343,6 @@ class TestRunManifestImageBatch:
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=_make_items(2),
             output_dir=tmp_path / "out",
@@ -365,7 +364,6 @@ class TestRunManifestImageBatch:
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=_make_items(3),
             output_dir=tmp_path / "out",
@@ -387,7 +385,6 @@ class TestRunManifestImageBatch:
 
         (outcome,) = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=(item,),
             output_dir=tmp_path / "out",
@@ -419,7 +416,6 @@ class TestRunManifestImageBatch:
         with pytest.raises(BatchIntegrityError, match="expected 2 files, got 1"):
             await run_manifest_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=(item,),
                 output_dir=tmp_path / "out",
@@ -449,7 +445,6 @@ class TestRunManifestImageBatch:
         with pytest.raises(RuntimeError, match="ui_automation"):
             await run_manifest_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=_make_items(1),
                 output_dir=tmp_path / "out",
@@ -577,7 +572,6 @@ class TestRunManifestImageBatchRecorder:
 
         await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=items,
             output_dir=tmp_path / "out",
@@ -669,7 +663,6 @@ class TestRunManifestImageBatchRecorder:
         with pytest.raises(BatchPartialError):
             await run_manifest_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=items,
                 output_dir=tmp_path / "out",
@@ -710,7 +703,6 @@ class TestRunManifestImageBatchAttributionGuard:
         with pytest.raises(MediaAttributionError, match="m1"):
             await run_manifest_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=items,
                 output_dir=out_dir,
@@ -741,7 +733,6 @@ class TestRunManifestImageBatchAttributionGuard:
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=items,
             output_dir=out_dir,
@@ -768,7 +759,6 @@ class TestRunManifestImageBatchAttributionGuard:
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=items,
             output_dir=tmp_path / "out",
@@ -808,7 +798,6 @@ class TestRunManifestImageBatchAttributionGuard:
         with pytest.raises(MediaAttributionError, match="m1"):
             await run_manifest_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=items,
                 output_dir=out_dir,
@@ -844,7 +833,6 @@ class TestRunManifestImageBatchAttributionGuard:
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=items,
             output_dir=out_dir,
@@ -935,7 +923,6 @@ class TestRunManifestImageBatchContinueOnErrorMultiRow:
 
         outcomes = await run_manifest_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=items,
             output_dir=tmp_path / "out",
@@ -972,7 +959,6 @@ class TestRunManifestImageBatchContinueOnErrorMultiRow:
         with pytest.raises(MediaAttributionError, match="m1"):
             await run_manifest_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=items,
                 output_dir=tmp_path / "out",

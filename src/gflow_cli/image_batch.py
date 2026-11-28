@@ -19,10 +19,13 @@ from rich.markup import escape
 from rich.table import Table
 
 from gflow_cli._cli_helpers import (
+    client_visibility,
+    image_route,
     safe_path_text,
 )
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import BatchSubmissionResult, ProjectInfo
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.image import Aspect, GenerateImageRequest, ImageRef, Model
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import get_settings, parse_jitter_range
@@ -52,6 +55,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
     from gflow_cli.api.dto import GeneratedImage
+    from gflow_cli.api.submit_policy import BrowserVisibility
     from gflow_cli.tools.invocation import AppliedTool
 
 console = Console()
@@ -527,6 +531,22 @@ def prompt_items_from_texts(
     return tuple(items)
 
 
+def planned_row_route(item: BatchPromptItem, transport: str | None) -> Route:
+    """The route a row takes, decided before launch.
+
+    A row referencing an image or a character routes to the UI: whether its reference can
+    be sent direct is known only once the referenced image exists in the project.
+    """
+    if item.ref is not None or item.reference_entity is not None:
+        return Route.UI
+    request = GenerateImageRequest(
+        prompt=item.text,
+        aspect=Aspect.from_cli(item.aspect_ratio),
+        model=Model.from_cli(item.model),
+    )
+    return image_route(request, transport=transport)
+
+
 async def run_one_image_prompt(
     *,
     client: Any,
@@ -719,7 +739,6 @@ def _record_row_success(
 async def run_image_batch(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
@@ -831,7 +850,10 @@ async def run_image_batch(
 
     outcomes = await run_sequential_batch(
         profile_dir=profile_dir,
-        headless=headless,
+        # A run with any UI row launches headed for the whole run (SCENARIO.md row 34).
+        visibility=client_visibility(
+            get_settings(), [planned_row_route(item, transport) for item in prompts]
+        ),
         transport=transport,
         items=tuple(order_batch_rows(list(prompts))),
         continue_on_error=continue_on_error,
@@ -848,7 +870,7 @@ async def run_image_batch(
 async def run_sequential_batch(
     *,
     profile_dir: Path,
-    headless: bool,
+    visibility: BrowserVisibility,
     transport: str | None,
     items: tuple[Any, ...],
     continue_on_error: bool,
@@ -875,7 +897,9 @@ async def run_sequential_batch(
 
     outcomes: list[BatchOutcome] = []
     factory = client_factory or FlowApiClient
-    async with factory(profile_dir=profile_dir, headless=headless, transport=transport) as client:
+    async with factory(
+        profile_dir=profile_dir, visibility=visibility, transport=transport
+    ) as client:
         run_project_id = (
             project_id
             if project_id is not None
@@ -1377,7 +1401,6 @@ async def _download_results(
 async def run_manifest_image_batch(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
@@ -1417,9 +1440,9 @@ async def run_manifest_image_batch(
         jitter_range = resolve_jitter_range(None)
     output_dir.mkdir(parents=True, exist_ok=True)
     factory = client_factory or FlowApiClient
+    # The stay-mounted batch drives the Flow UI for every row: the UI-path visibility.
     async with factory(
         profile_dir=profile_dir,
-        headless=headless,
         transport=transport,
         out_dir=output_dir,
     ) as client:

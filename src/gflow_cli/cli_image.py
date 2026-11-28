@@ -36,7 +36,9 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    client_visibility,
     default_project,
+    image_route,
     out_file_option,
     output_format_option,
     run_with_handlers,
@@ -50,6 +52,7 @@ from gflow_cli._cli_helpers import (
 from gflow_cli.api import routes
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.dto import ProjectInfo
+from gflow_cli.api.generation_route import Route
 from gflow_cli.api.image import (
     IMAGES_MISSING_HINT,
     AgentInstruction,
@@ -441,12 +444,10 @@ def upload(path: Path, profile: str | None, transport: str | None) -> None:
     """Upload PATH and print the asset UUID."""
     profile_name = _resolve_profile(profile)
     provider_dir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_upload(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            headless=settings.headless,
             image_path=path,
             transport=transport,
         ),
@@ -458,7 +459,6 @@ async def _run_upload(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     image_path: Path,
     transport: str | None = None,
 ) -> None:
@@ -467,7 +467,6 @@ async def _run_upload(
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
             transport=transport,
             out_dir=settings.output_dir,
         ) as client:
@@ -586,11 +585,9 @@ def upscale(
         raise click.BadParameter(str(exc)) from exc
 
     provider_dir = _make_provider_dir(profile_name)
-    settings = get_settings()
     run_with_handlers(
         lambda: _run_upscale(
             profile_dir=provider_dir,
-            headless=settings.headless,
             media_id=media_id,
             project_id=resolved_project,
             resolution=resolution,
@@ -659,7 +656,6 @@ def resolve_upscale_project_id(*, media_id: str, explicit: str | None, profile_n
 async def _run_upscale(
     *,
     profile_dir: Path,
-    headless: bool,
     media_id: str,
     project_id: str,
     resolution: TargetResolution,
@@ -672,7 +668,6 @@ async def _run_upscale(
     out_path = output_root / "images" / date.today().isoformat() / f"{media_id}_{scale_label}.png"
     async with FlowApiClient(
         profile_dir=profile_dir,
-        headless=headless,
         transport=transport,
         out_dir=output_root,
     ) as client:
@@ -886,7 +881,6 @@ def t2i(  # NOSONAR
             lambda: _run_t2i(
                 profile_name=profile_name,
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 req=GenerateImageRequest(
                     prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
@@ -1047,7 +1041,6 @@ def _execute_t2i_batch(
         outcomes = asyncio.run(
             run_image_batch(
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 transport=transport,
                 prompts=batch_prompts,
                 output_dir=output_dir,
@@ -1288,7 +1281,6 @@ async def _run_t2i(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     req: GenerateImageRequest,
     count: int,
     out: Path | None,
@@ -1310,7 +1302,7 @@ async def _run_t2i(
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
+            visibility=client_visibility(settings, (image_route(req, transport=transport),)),
             transport=transport,
             out_dir=out if out is not None else output_root,
         ) as client:
@@ -1567,7 +1559,6 @@ def batch(
         outcomes = asyncio.run(
             run_manifest_image_batch(
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 transport=transport,
                 prompts=prompts,
                 output_dir=output_dir,
@@ -1777,7 +1768,6 @@ def i2i(  # NOSONAR
         lambda: _run_i2i(
             profile_name=profile_name,
             profile_dir=provider_dir,
-            headless=settings.headless,
             params=i2i_params,
             count=count,
             out=out,
@@ -1796,11 +1786,41 @@ def i2i(  # NOSONAR
     )
 
 
+def _i2i_request(params: _I2IParams, uuid_refs: list[ImageRef]) -> GenerateImageRequest:
+    return GenerateImageRequest(
+        prompt=params.prompt,
+        aspect=params.aspect,
+        model=params.model,
+        refs=tuple(uuid_refs),
+        ref_paths=tuple(r for r in params.classified_refs if isinstance(r, Path)),
+        reference_entities=params.reference_entities,
+        reference_entity_names=params.reference_entity_names,
+        original_prompt=params.original_prompt,
+        tool=params.tool,
+        instructions=params.instructions,
+        ui_mode=params.ui_mode,
+        thinking_level=params.thinking_level,
+    )
+
+
+def _planned_i2i_route(
+    params: _I2IParams, profile_name: str, project_id: str | None, transport: str | None
+) -> Route:
+    """The route an i2i request takes, decided before launch on the request the client sends.
+
+    A new project holds none of the references, so a run without ``--project`` routes UI.
+    """
+    if project_id is None:
+        return Route.UI
+    refs = [r for r in params.classified_refs if isinstance(r, ImageRef)]
+    uuid_refs = _enrich_uuid_refs(refs, profile_name, project_id=project_id)
+    return image_route(_i2i_request(params, uuid_refs), transport=transport)
+
+
 async def _run_i2i(
     *,
     profile_name: str,
     profile_dir: Path,
-    headless: bool,
     params: _I2IParams,
     count: int,
     out: Path | None,
@@ -1823,7 +1843,10 @@ async def _run_i2i(
     try:
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
+            visibility=client_visibility(
+                settings,
+                (_planned_i2i_route(params, profile_name, project_id, transport),),
+            ),
             transport=transport,
             out_dir=out if out is not None else output_root,
         ) as client:
@@ -1849,21 +1872,7 @@ async def _run_i2i(
                 profile_name,
                 project_id=project.project_id,
             )
-            local_ref_paths = tuple(r for r in params.classified_refs if isinstance(r, Path))
-            req = GenerateImageRequest(
-                prompt=params.prompt,
-                aspect=params.aspect,
-                model=params.model,
-                refs=tuple(uuid_refs_initial),
-                ref_paths=local_ref_paths,
-                reference_entities=params.reference_entities,
-                reference_entity_names=params.reference_entity_names,
-                original_prompt=params.original_prompt,
-                tool=params.tool,
-                instructions=params.instructions,
-                ui_mode=params.ui_mode,
-                thinking_level=params.thinking_level,
-            )
+            req = _i2i_request(params, uuid_refs_initial)
 
             # Resolve @-mentions (entities → reference_entities, media → refs) and
             # expand --tool specs (shared helper).
