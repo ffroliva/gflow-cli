@@ -36,6 +36,7 @@ from gflow_cli._cli_helpers import (
     _resolve_profile,
     _validate_project_id,
     apply_tool_option,
+    browser_visibility_option,
     client_visibility,
     default_project,
     image_route,
@@ -745,6 +746,7 @@ _ui_mode_option = click.option(
         "--reference-entity; use --ref for a one-off image). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompts", nargs=-1, required=False)
 @click.option(
     "--prompts-file",
@@ -1440,6 +1442,7 @@ _BATCH_TITLE = "gflow-cli image batch"
         "  gflow image batch prompts.tsv -n 4 --aspect 16:9 --out ./output\n"
     ),
 )
+@browser_visibility_option()
 @click.argument(
     "manifest",
     type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
@@ -1627,6 +1630,7 @@ class _I2IParams:
         "--reference-entity; --ref is for one-off images). See docs/REFERENCE_STRATEGIES.md."
     ),
 )
+@browser_visibility_option()
 @click.argument("prompt")
 @click.option(
     "--ref",

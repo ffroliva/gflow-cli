@@ -30,6 +30,7 @@ from gflow_cli._cli_helpers import (
     _make_provider_dir,
     _resolve_profile,
     _validate_project_id,
+    browser_visibility_option,
     default_project,
     spends_credits,
 )
@@ -353,6 +354,7 @@ async def _run_batch(
 
 @spends_credits(True)
 @click.command("run")
+@browser_visibility_option()
 @click.option(
     "--config",
     "config_path",
