@@ -448,30 +448,39 @@ Since [#1229](https://github.com/ffroliva/gflow-cli/issues/1229), one read, the 
 
 **No port yet.** `flow_wire` is plain functions with one caller. A `FlowReader` port (a `Protocol`, per [Ports & adapters](#ports-adapters)) is introduced together with its second consumer, the job-status reads of [#1194](https://github.com/ffroliva/gflow-cli/issues/1194), not before.
 
-## Headed-browser dependency — current limitation
+## Browser use — current architecture
 
-This is the project's defining trade-off and the most valuable place an external contributor could move the needle.
+gflow-cli exists for automation: agents and harnesses generate on a user's own Flow account,
+predictably, and spend the user's credits along an accountable path. The browser is therefore
+used only where it is strictly necessary.
 
-### Why headed
-
-Google's auth + reCAPTCHA stack on `aisandbox-pa.googleapis.com` rejects:
-
-1. **Browsers that advertise automation** — `navigator.webdriver = true` is what Google's bot detection flags, not the bundled binary itself; every launch path passes `--disable-blink-features=AutomationControlled` to keep it `false`. A sign-in that still lands on Google's rejection page raises `AuthBrowserRejectedError` (exit code 14) from the `internal` strategy; the `chrome` strategy retries on its no-automation subprocess path instead.
-2. **Headless browsers** — same fingerprinting trips during the OAuth-consent flow.
-3. **Bare HTTP clients** without the cookies + tokens minted by a real Chrome session — most endpoints return HTTP 401 or a reCAPTCHA challenge that can only be solved interactively.
-
-We attempted three pure-HTTP transport strategies before settling on `ui_automation`:
-
-- **`evaluate_fetch`** — call `fetch()` from inside the Page context to inherit cookies. Worked for some endpoints, failed on video upload (HTTP 401 with no actionable message).
-- **`bearer`** — extract bearer tokens from the live page and replay them via `httpx`. Tokens rotate too aggressively; rate-limited within minutes.
-- **`sapisidhash`** — compute Google's SAPISIDHASH header from session cookies and replay. Works for read endpoints; rejected for any mutation endpoint (including all generation calls).
-
-All three now live as standalone modules under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch.py` / `bearer.py` / `sapisidhash.py`), preserved for reference and future iteration. None survives Google's anti-bot stack for mutation/generation endpoints, so the production path is `ui_automation`.
+- **Direct HTTP with a headless mint (v0.108.0, #1371).** For the measured request shapes
+  (text-to-image, image-to-image with one in-project reference or one `@Character`, the image
+  rows of `image batch` and `gflow run`, text-to-video at measured settings, image-to-video from a
+  start frame, the 1080p upscale), Chrome starts headless on the profile only to mint the
+  reCAPTCHA Enterprise token, and the request goes to Flow over direct HTTP. A refusal Flow
+  reports as `PUBLIC_ERROR_UNUSUAL_ACTIVITY`, which is not billed, is retried once from a new
+  headless browser process ([KNOWN_ISSUES](KNOWN_ISSUES.md)). The evidence is
+  [the direct video and headless mint spike](superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md):
+  30/30 cold headless mints accepted on two accounts, and headless and headed video submits
+  accepted 6/6 each on fresh browsers.
+- **The UI transport (`ui_automation`) for the other surfaces.** Reference-to-video, extend,
+  edit, end-frame image-to-video, the 4K/720p/GIF upscales, scene and character create,
+  instructions, the agent-only composer, media trash/restore, local `--ref` image-to-image and
+  credit-capped video still drive Flow's page in a headed browser. Headless operation of these
+  surfaces is tracked in [#1554](https://github.com/ffroliva/gflow-cli/issues/1554).
+- **`auth login`** is interactive and needs a display once.
+- **Selecting the mode.** `GFLOW_CLI_BROWSER_VISIBILITY=auto|headless|headed` (default `auto`);
+  `GFLOW_CLI_HEADLESS` is a deprecated alias that `gflow doctor` flags. The per-command list is
+  [BROWSER_MODES](BROWSER_MODES.md).
+- **Limits.** The headless browser announces itself as `HeadlessChrome`; it is not a stealth
+  technique. macOS, Linux and accounts Flow serves on labs.google are unmeasured. Mints share
+  one page per profile, so per-account concurrency is bounded by that page.
 
 **The migrated `flow.google.com` host (#639, v0.67.0).** Google is moving accounts off `labs.google` onto `flow.google.com`, a rewritten frontend with a different widget toolkit and a `batchexecute` wire instead of `aisandbox-pa` REST. `src/gflow_cli/api/transports/migrated_composer.py` drives that editor for text-to-video, local-file image-to-video/reference-to-video, text-to-image, and local-file image-to-image — still through the same real-Chrome Playwright session — by operating the composer UI and then *observing* the app's own replies. Video uses `YhhmEf`/`eb1hJf`/`MZZa6b` submit plus `jwpduf`/`as29s` status/result; image uses synchronous `ogiZ0b` replies carrying signed JPEG URLs. **Both mechanisms are measured, and neither is a push channel**: `ogiZ0b` is one response held open ~19.7 s, while `jwpduf` is a fixed 5.00 s timer owned by *Flow's page* — gflow observes it and adds no traffic, so the interval is a floor we read rather than a latency knob we hold, and "subscribe instead of polling" is refuted on both paths (`docs/superpowers/spikes/2026-09-14-generation-wire-no-push-channel.md`, `docs/superpowers/spikes/2026-09-14-video-poll-is-a-fixed-client-timer.md`). Local files go through the editor's own `maseQ` upload and the resulting media ids are asserted in the outgoing submit body before the run is trusted (`WireFormatError` otherwise). The migrated page owns image reCAPTCHA minting; the client skips the labs token path so moved accounts no longer fail with `RecaptchaError` on the root grid. `GFLOW_CLI_FLOW_HOST` routes between the two (`auto` keeps migrated images on moved accounts and uses labs for them on unmoved accounts; `--project` is required on the migrated path); unsupported UUID/entity/instruction/Imagen-4 image forms still fail before submit. Recon: `docs/superpowers/spikes/2026-09-08-migrated-image-submit-wire.md`.
 
-**Observing without a page (measured 2026-11-09, #1192).** Submitting stays on the page
-(reCAPTCHA Enterprise). Reading need not, but not over the old `aisandbox-pa` Bearer route:
+**Observing without a page (measured 2026-11-09, #1192).** Submitting needs a reCAPTCHA
+Enterprise token, which is minted on a page. Reading need not, but not over the old `aisandbox-pa` Bearer route:
 on the host Flow served, `labs.google/fx/api/auth/session` answers 410 and the
 `flow.google.com` app sends no Bearer anywhere, so there is no token to replay. The read side
 of `flow.google.com` itself works from plain `httpx` with the profile's Google cookies plus
@@ -485,20 +494,37 @@ shell carries no `at`. Caveats and controls:
 
 **Standalone-only transports.** `bearer` and `sapisidhash` discard any caller-supplied Playwright page and launch their own browser under a fresh `ProfileLease`, so they are **standalone-only** — they cannot run inside a `FlowApiClient` that already holds the profile lease (the second acquire would self-lock with `ProfileLockedError`). Selecting either via `GFLOW_CLI_TRANSPORT` (or the Python API) while the client owns the profile now fails fast with a clear `ConfigurationError` naming the transport, rather than the opaque lock error. `evaluate_fetch` is exempt: it reuses the client's shared page and takes no second lease. The standalone-only set lives in `STANDALONE_ONLY_TRANSPORTS` (`api/transports/__init__.py`); to drive `bearer`/`sapisidhash`, run them outside an owning client.
 
-### What this costs users
+<!-- history -->
+## Before v0.108.0: a headed browser for generation
+
+Until v0.108.0 every generation drove Flow's page in a headed Chrome window: reCAPTCHA
+Enterprise rejected the earlier headless approaches, and the UI transport was the only path that
+produced a video. v0.108.0 measured a headless mint as accepted and moved the measured request
+shapes to direct HTTP ([spike](superpowers/spikes/2026-11-27-direct-video-and-headless-mint.md),
+[#1371](https://github.com/ffroliva/gflow-cli/issues/1371)). This section records the earlier
+design and why it was chosen; it does not describe the current product.
+
+### Why generation was headed
+
+Google's auth + reCAPTCHA stack on `aisandbox-pa.googleapis.com` rejects:
+
+1. **Browsers that advertise automation** — `navigator.webdriver = true` is what Google's bot detection flags, not the bundled binary itself; every launch path passes `--disable-blink-features=AutomationControlled` to keep it `false`. A sign-in that still lands on Google's rejection page raises `AuthBrowserRejectedError` (exit code 14) from the `internal` strategy; the `chrome` strategy retries on its no-automation subprocess path instead.
+2. **Headless browsers** — same fingerprinting trips during the OAuth-consent flow.
+3. **Bare HTTP clients** without the cookies + tokens minted by a real Chrome session — most endpoints return HTTP 401 or a reCAPTCHA challenge that can only be solved interactively.
+
+We attempted three pure-HTTP transport strategies before settling on `ui_automation`:
+
+- **`evaluate_fetch`** — call `fetch()` from inside the Page context to inherit cookies. Worked for some endpoints, failed on video upload (HTTP 401 with no actionable message).
+- **`bearer`** — extract bearer tokens from the live page and replay them via `httpx`. Tokens rotate too aggressively; rate-limited within minutes.
+- **`sapisidhash`** — compute Google's SAPISIDHASH header from session cookies and replay. Works for read endpoints; rejected for any mutation endpoint (including all generation calls).
+
+All three now live as standalone modules under `src/gflow_cli/api/transports/experimental/` (`evaluate_fetch.py` / `bearer.py` / `sapisidhash.py`), preserved for reference and future iteration. None survived Google's anti-bot stack for mutation/generation endpoints, so the production path became `ui_automation`.
+
+### What it cost users
 
 - A **persistent Chrome profile** on disk (~150 MB after `playwright install chromium`).
 - A **display server** for the one-time `gflow auth login --browser chrome` (Linux/WSL need X or Wayland; profile transplants freely between machines after).
 - **Per-account horizontal concurrency** is capped by what one warm Page pool can drive — `GFLOW_CLI_CONCURRENCY=N` fans out N Playwright Pages on the same profile, but cannot scale infinitely.
 - **No native serverless deployment.** Running on Lambda / Cloud Run / Fly requires a transplanted profile + a desktop-like environment.
 
-### How contributors can help
-
-The biggest single improvement to gflow-cli's scalability would be a **working pure-HTTP transport for video generation** that survives Google's anti-bot stack. Specific contributions we welcome:
-
-- Network traffic captures from a successful headed video generation (with personally-identifying data scrubbed) — the [Keysight HAR analysis](https://www.keysight.com/blogs/en/tech/nwvs/2025/08/04/google-flow-ai-har-analysis) is the public reference; we want our own.
-- A working pure-HTTP transport (extend the existing `api/transports/experimental/` subpackage) that produces a video against the live API without a browser.
-- Insight into Google's reCAPTCHA-mint flow for `aisandbox-pa.googleapis.com` (especially how `Authorization: SAPISIDHASH ...` interacts with `X-Goog-Visitor-Id`).
-- An adapter to the **official** Veo API (`googleapis/python-genai`) as a parallel provider — that bypasses the headed-browser dependency entirely for users who have direct API access.
-
-If you ship any of the above, open an issue or a PR — this is the most strategic contribution any new collaborator can make to the project.
+<!-- /history -->
