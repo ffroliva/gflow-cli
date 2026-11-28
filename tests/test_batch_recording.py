@@ -32,7 +32,6 @@ def _run(
     return asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=(BatchPromptItem(text="a", index=0), BatchPromptItem(text="b", index=1)),
             output_dir=tmp_path / "out",

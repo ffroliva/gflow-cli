@@ -313,7 +313,6 @@ def _check_transport_gated(transport: str | None) -> None:
 async def _run_batch(
     *,
     profile_dir: Path,
-    headless: bool,
     transport: str | None,
     prompts: tuple[BatchPromptItem, ...],
     output_dir: Path,
@@ -332,7 +331,6 @@ async def _run_batch(
     """
     outcomes = await run_image_batch(
         profile_dir=profile_dir,
-        headless=headless,
         transport=transport,
         prompts=prompts,
         output_dir=output_dir,
@@ -455,7 +453,6 @@ def run(
         outcomes = asyncio.run(
             _run_batch(
                 profile_dir=provider_dir,
-                headless=settings.headless,
                 transport=cfg.transport,
                 prompts=cfg.prompts,
                 output_dir=output_dir,

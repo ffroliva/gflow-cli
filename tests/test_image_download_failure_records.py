@@ -343,7 +343,6 @@ def test_batch_download_failure_keeps_the_generation(tmp_path: Path) -> None:
         outcomes = asyncio.run(
             run_image_batch(
                 profile_dir=tmp_path,
-                headless=True,
                 transport=None,
                 prompts=(BatchPromptItem(text="a", index=0),),
                 output_dir=tmp_path / "out",

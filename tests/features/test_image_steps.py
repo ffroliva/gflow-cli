@@ -77,7 +77,6 @@ def _make_fake_t2i(file_count: int):
         *,
         profile_name: str,
         profile_dir: Path,
-        headless: bool,
         req: Any,
         count: int,
         out: Path | None,

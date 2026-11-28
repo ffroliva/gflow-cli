@@ -94,6 +94,7 @@ from gflow_cli.api.image import Aspect as ImageAspect
 from gflow_cli.api.image import GenerateImageRequest, Model
 from gflow_cli.api.video import Aspect as VideoAspect
 from gflow_cli.api.video import GenerateVideoRequest, Mode, VideoModel
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 # Default subject — a minimalist stickman waking at dawn. The motion
 # prompt explicitly anchors the 2D ink line-art style so Veo's
@@ -155,7 +156,7 @@ async def _run_chain(
     # avoiding cross-drive shutil.move on completion.
     async with FlowApiClient(
         profile_dir=profile_dir,
-        headless=False,
+        visibility=BrowserVisibility.HEADED,
         transport="ui_automation",
         out_dir=output_dir,
     ) as client:

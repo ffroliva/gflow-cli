@@ -1,8 +1,8 @@
 """Offline BDD step definitions for direct routing and refusal retry.
 
 Bound to tests/features/direct_routing.feature. Covers the 8 scenarios planned in
-Task 20. Scenarios 1-5 run against the refusal retry loop (Task 13); scenarios 6-8 stay
-strict-xfail until Task 12 (route-aware client construction and the direct default).
+Task 20. Scenarios 1-5 run against the refusal retry loop; scenarios 6-8 run against the
+route-aware client construction (``client_visibility``).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from gflow_cli.api.submit_policy import (
 )
 
 # ---------------------------------------------------------------------------
-# Scenarios (8); 6-8 marked strict-xfail
+# Scenarios (8)
 # ---------------------------------------------------------------------------
 
 
@@ -65,9 +65,6 @@ def test_explicit_headed_without_display_fails_before_launch() -> None:
     pass
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Task 12: Route-aware client construction and the direct default"
-)
 @scenario(
     "direct_routing.feature",
     "A credit-capped video takes the UI path",
@@ -76,9 +73,6 @@ def test_credit_capped_video_takes_ui_path() -> None:
     pass
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Task 12: Route-aware client construction and the direct default"
-)
 @scenario(
     "direct_routing.feature",
     "An unmeasured shape takes the UI path headed",
@@ -87,9 +81,6 @@ def test_unmeasured_shape_takes_ui_path_headed() -> None:
     pass
 
 
-@pytest.mark.xfail(
-    strict=True, reason="Task 12: Route-aware client construction and the direct default"
-)
 @scenario(
     "direct_routing.feature",
     "GFLOW_CLI_HEADLESS=false pins headed",
@@ -317,7 +308,6 @@ def _step_fails_naming_display(world: dict[str, Any]) -> None:
 @given("a video request at a measured key with a credit cap")
 def _step_video_capped(world: dict[str, Any]) -> None:
     world["request_type"] = "video"
-    world["measured_key"] = "veo_3_1_t2v_fast"
     world["max_credits"] = 10
 
 
@@ -338,43 +328,46 @@ def _step_env_headless_false(
 
 
 # ---------------------------------------------------------------------------
-# When steps (Scenarios 6-8: Routing via future client_visibility)
+# When steps (Scenarios 6-8: Routing via client_visibility)
 # ---------------------------------------------------------------------------
 
 
 @when("the route is chosen")
-def _step_route_chosen(world: dict[str, Any]) -> None:
-    # Must go through Task 12's future client_visibility entry point:
-    from gflow_cli._cli_helpers import client_visibility  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType]
-    from gflow_cli.api.generation_route import (  # pyright: ignore[reportMissingImports]
-        Route,
-        choose_video_route,
-    )
+def _step_route_chosen(world: dict[str, Any], tmp_path: Path) -> None:
+    from gflow_cli._cli_helpers import client_visibility, video_route
+    from gflow_cli.api.generation_route import Route
+    from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
     from gflow_cli.config import get_settings
 
     settings = get_settings()
 
     if world.get("request_type") == "video":
-        route = choose_video_route(  # pyright: ignore[reportUnknownVariableType]
-            model_key=world.get("measured_key"),
-            max_credits=world.get("max_credits"),
+        # The measured Omni Flash text-to-video key, with a cap.
+        route = video_route(
+            GenerateVideoRequest(
+                prompt="a lighthouse at dusk",
+                mode=Mode.T2V,
+                model=VideoModel.OMNI_1_2_FLASH,
+                duration=4,
+                resolution="360p",
+                aspect=Aspect.LANDSCAPE,
+                max_credits=world["max_credits"],
+            )
         )
-        visibility = client_visibility(settings, routes=(route,))
-        world["route"] = route
-        world["visibility"] = visibility
     elif world.get("request_type") == "i2v":
-        route = choose_video_route(  # pyright: ignore[reportUnknownVariableType]
-            model_key="i2v_unmeasured",
-            has_end_frame=world.get("has_end_frame", False),
+        route = video_route(
+            GenerateVideoRequest(
+                prompt="a lighthouse at dusk",
+                mode=Mode.I2V,
+                aspect=Aspect.PORTRAIT,
+                start_image=tmp_path / "start.png",
+                end_image=tmp_path / "end.png" if world.get("has_end_frame") else None,
+            )
         )
-        visibility = client_visibility(settings, routes=(route,))
-        world["route"] = route
-        world["visibility"] = visibility
     else:
         route = Route.DIRECT
-        visibility = client_visibility(settings, routes=(route,))
-        world["route"] = route
-        world["visibility"] = visibility
+    world["route"] = route
+    world["visibility"] = client_visibility(settings, routes=(route,))
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +377,7 @@ def _step_route_chosen(world: dict[str, Any]) -> None:
 
 @then("the UI path is chosen and launched headed")
 def _step_ui_path_headed(world: dict[str, Any]) -> None:
-    from gflow_cli.api.generation_route import Route  # pyright: ignore[reportMissingImports]
+    from gflow_cli.api.generation_route import Route
 
     assert world["route"] == Route.UI
     assert world["visibility"] == BrowserVisibility.HEADED

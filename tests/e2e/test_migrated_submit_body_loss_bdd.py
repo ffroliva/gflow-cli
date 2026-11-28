@@ -41,6 +41,7 @@ from pytest_bdd import given, scenarios, then, when
 
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import GenerateImageRequest
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports import migrated_composer as mc
 
 scenarios("../features/migrated_submit_body_loss.feature")
@@ -80,7 +81,9 @@ def _run_counting(world: dict[str, Any], rpcids: tuple[str, ...], generate: Any)
             world["submits"] += 1
 
     async def run() -> None:
-        async with FlowApiClient(profile_dir=world["profile"], headless=False) as client:
+        async with FlowApiClient(
+            profile_dir=world["profile"], visibility=BrowserVisibility.HEADED
+        ) as client:
             assert client._context is not None  # noqa: SLF001
             client._context.on("request", count)  # noqa: SLF001
             try:

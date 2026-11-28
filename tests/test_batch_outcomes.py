@@ -82,7 +82,6 @@ def _run(
     outcomes = asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=tuple(rows),
             output_dir=tmp_path / "out",
@@ -171,7 +170,6 @@ def test_a_mint_failure_fails_its_row_and_the_run_continues(tmp_path: Path) -> N
     outcomes = asyncio.run(
         run_image_batch(
             profile_dir=tmp_path,
-            headless=True,
             transport=None,
             prompts=(_row(0, "a"), _row(1, "b"), _row(2, "c")),
             output_dir=tmp_path / "out",

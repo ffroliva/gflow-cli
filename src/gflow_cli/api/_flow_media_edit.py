@@ -10,7 +10,7 @@ import base64
 import functools
 import time
 import uuid
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -51,10 +51,32 @@ if TYPE_CHECKING:
     from gflow_cli.api.transports.direct_http import DirectHttpTransport
     from gflow_cli.api.transports.direct_http._upscale import UpscaleSource
     from gflow_cli.api.transports.migrated_extend import ExtendOutcome, ExtendStartedCallback
+    from gflow_cli.config import Settings
 from gflow_cli.api._flow_generation import GenerationSurface, _dc_replace  # pyright: ignore[reportPrivateUsage]
 from gflow_cli.api._flow_session import JsonObject, _make_instance  # pyright: ignore[reportPrivateUsage]
 
 logger = structlog.get_logger(__name__)
+
+
+def upscale_catalog_row(
+    settings: Settings, profile_dir: Path, media_id: str
+) -> dict[str, Any] | None:
+    """The local catalog row a direct upscale routes on, or ``None`` (no catalog, no row, or
+    an unreadable catalog). Read before any browser work, by the client and by the caller
+    that plans the launch visibility."""
+    from gflow_cli.data.queries import get_video_source
+
+    db_path = settings.resolved_db_path()
+    if not db_path.exists():
+        return None
+    # paths.profile_subdir names a profile's directory ``profile_<name>``.
+    profile_name = profile_dir.name.removeprefix("profile_")
+    try:
+        return get_video_source(db_path=db_path, profile_name=profile_name, media_id=media_id)
+    except (DataStoreError, OSError) as exc:
+        logger.info("video.upscale_catalog_unread", cause=type(exc).__name__)
+        return None
+
 
 # upsampleImage returns the upscaled image inline as base64 in `encodedImage`
 # (~3.8–5.1 MB observed for 2K). Cap before b64decode to avoid OOM on a
@@ -453,18 +475,8 @@ class MediaEditSurface(GenerationSurface):
         if scale != "1080p" or not hasattr(type(self.transport), "upscale_video_direct"):
             return None
         from gflow_cli.api.transports.direct_http._upscale import upscale_source
-        from gflow_cli.data.queries import get_video_source
 
-        db_path = self.settings.resolved_db_path()
-        if not db_path.exists():
-            return None
-        # paths.profile_subdir names a profile's directory ``profile_<name>``.
-        profile_name = self.profile_dir.name.removeprefix("profile_")
-        try:
-            row = get_video_source(db_path=db_path, profile_name=profile_name, media_id=media_id)
-        except (DataStoreError, OSError) as exc:
-            logger.info("video.upscale_catalog_unread", cause=type(exc).__name__)
-            return None
+        row = upscale_catalog_row(self.settings, self.profile_dir, media_id)
         return upscale_source(media_id, scale, row)
 
     async def _upscale_through_retry(

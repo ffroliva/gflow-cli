@@ -19,6 +19,7 @@ from playwright.async_api import BrowserContext, Page, Playwright
 
 from gflow_cli.api._engine import retryable_engine_errors
 from gflow_cli.api._retry import MAX_ATTEMPTS, parse_retry_after, post_with_retry
+from gflow_cli.api.generation_route import Route, plan_visibility
 from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.base import (
     FlowTransportStrategy,
@@ -420,18 +421,12 @@ class FlowSession:
         self,
         profile_dir: Path,
         *,
-        visibility: BrowserVisibility = BrowserVisibility.HEADED,
-        headless: bool | None = None,
+        visibility: BrowserVisibility | None = None,
         settings: Settings | None = None,
         transport: FlowTransportStrategy | str | None = None,
         out_dir: Path | None = None,
     ) -> None:
         self.profile_dir = profile_dir
-        if headless is not None:
-            self.visibility = BrowserVisibility.HEADLESS if headless else BrowserVisibility.HEADED
-        else:
-            self.visibility = visibility
-        self.headless = self.visibility == BrowserVisibility.HEADLESS
         self._unusable: bool = False
         # Serialises relaunch(); the gate is cleared while one runs so _checkout_page
         # waits for the new pool instead of blocking on the old, drained queue.
@@ -447,6 +442,14 @@ class FlowSession:
         # construction time, which is fine for production but lets tests
         # opt out by supplying a fully built settings object.
         self.settings = settings if settings is not None else Settings()
+        # None is the UI path: headed under ``auto``, an explicit setting wins. Generation
+        # callers pass the visibility their planned routes need (``client_visibility``).
+        self.visibility = (
+            visibility
+            if visibility is not None
+            else plan_visibility(self.settings.browser_visibility, (Route.UI,))
+        )
+        self.headless = self.visibility == BrowserVisibility.HEADLESS
         # Transport lifecycle ownership (spec § 4.3):
         # - pre-initialized instance → caller owns (no setup/teardown invoked)
         # - str/None → client owns (resolves via make_transport, calls setup/teardown)

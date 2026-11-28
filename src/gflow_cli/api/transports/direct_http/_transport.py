@@ -14,7 +14,6 @@ import httpx
 import structlog
 
 from gflow_cli.api import flow_wire
-from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.generation_route import (
     Route,
     VideoWireTarget,
@@ -51,22 +50,22 @@ _T = TypeVar("_T")
 def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
     """The measured wire key and aspect slot for ``request``, or ``None`` (the UI path).
 
-    ``choose_video_route`` decides; a credit cap (the request's or the configured one)
-    routes to the UI, where Flow's quote is read; :func:`video_target` reads the shape.
+    ``choose_video_route`` decides; the request's credit cap (its callers resolve
+    ``GFLOW_CLI_MAX_CREDITS`` into it, as the pre-launch route does) routes to the UI, where
+    Flow's quote is read; :func:`video_target` reads the shape.
     """
-    settings = get_settings()
     route = choose_video_route(
         request,
-        flow_host=settings.flow_host,
+        flow_host=get_settings().flow_host,
         proxy_configured=_proxy_configured(),
-        effective_max_credits=resolve_max_credits(request.max_credits, settings.max_credits),
+        effective_max_credits=request.max_credits,
     )
     if route is not Route.DIRECT or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
         return None
     return video_target(request)
 
 
-async def _refuse_empty_balance(profile_dir: Path) -> None:
+async def refuse_empty_balance(profile_dir: Path) -> None:
     """Exit 37 before any send when Flow reports no credits; a failed read skips the check.
 
     The read is browser-free (``nzlxg``, the ``gflow credits`` read). Only an empty balance
@@ -255,7 +254,7 @@ class DirectHttpTransport(UiAutomationTransport):
             reason = "no_project"
         if reason or target is None or project_id is None or profile_dir is None:
             raise not_sent(reason or "no_profile_dir")
-        await _refuse_empty_balance(profile_dir)
+        await refuse_empty_balance(profile_dir)
         tokens = self._source_for(page).for_project(project_id)
         start: StartFrame | None = None
         if request.mode is Mode.I2V:

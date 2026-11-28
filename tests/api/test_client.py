@@ -21,6 +21,7 @@ from gflow_cli.api.client import (
 )
 from gflow_cli.api.dto import GeneratedImage
 from gflow_cli.api.image import AgentInstruction, Aspect, GenerateImageRequest, Model
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.base import SupportsTransportSetup, TransportSetup
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
 from gflow_cli.config import Settings
@@ -30,7 +31,7 @@ from gflow_cli.profile_lease import ProfileLease
 
 class TestConstruction:
     def test_holds_profile_dir_and_headless_flag(self, tmp_path: Path) -> None:
-        c = FlowApiClient(profile_dir=tmp_path / "prof", headless=False)
+        c = FlowApiClient(profile_dir=tmp_path / "prof", visibility=BrowserVisibility.HEADED)
         assert c.profile_dir == tmp_path / "prof"
         assert c.headless is False
 

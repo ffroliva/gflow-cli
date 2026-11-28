@@ -61,6 +61,7 @@ from pathlib import Path
 from gflow_cli import profile_store
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.image import Aspect, GenerateImageRequest, Model
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 _DEFAULT_PROMPT = "a quiet mountain lake at dawn, cinematic photography"
 
@@ -71,7 +72,7 @@ async def _run(profile_dir: Path, prompt_text: str, output_dir: Path) -> Path:
     # advanced caller-owned-lifecycle path; for a polished example,
     # the string path is what users should mirror.
     async with FlowApiClient(
-        profile_dir=profile_dir, headless=False, transport="ui_automation"
+        profile_dir=profile_dir, visibility=BrowserVisibility.HEADED, transport="ui_automation"
     ) as client:
         project = await client.create_project(title="gflow-cli example")
         req = GenerateImageRequest(

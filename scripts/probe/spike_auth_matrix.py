@@ -33,6 +33,7 @@ from gflow_cli.api.client import FlowApiClient  # noqa: E402
 from gflow_cli.api.transports.mode_control import AGENT_TOGGLE_SELECTOR  # noqa: E402
 from gflow_cli.api.transports.ui_automation import PROMPT_INPUT_SELECTORS  # noqa: E402
 from gflow_cli.auth import profile_dir as resolve  # noqa: E402
+from gflow_cli.api.submit_policy import BrowserVisibility
 
 # Set at runtime from a FRESH project. A stale/deleted id renders an error shell
 # that looks exactly like an auth wall (~441KB, 3 buttons, 0 icons) — which is
@@ -68,7 +69,7 @@ async def control_and_harvest() -> list[dict]:
     subpath-scoped cookies (issue #222/#230).
     """
     global URL
-    async with FlowApiClient(profile_dir=resolve("denon82"), headless=True) as c:
+    async with FlowApiClient(profile_dir=resolve("denon82"), visibility=BrowserVisibility.HEADLESS) as c:
         proj = await c.create_project(title="ci-matrix control")  # $0, and guarantees it EXISTS
         URL = routes.project_editor_url("en", proj.project_id)
         print(f"  (fresh project {proj.project_id})")

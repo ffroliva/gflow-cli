@@ -26,6 +26,8 @@ from pathlib import Path
 import pytest
 from structlog.testing import LogCapture
 
+from gflow_cli.api.submit_policy import BrowserVisibility
+
 pytestmark = pytest.mark.smoke
 
 _E2E_PROFILE_ENV = "GFLOW_CLI_E2E_PROFILE"
@@ -82,7 +84,9 @@ async def test_ui_automation_ships_one_image(
     )
 
     async with FlowApiClient(
-        profile_dir=smoke_profile_dir, headless=False, transport="ui_automation"
+        profile_dir=smoke_profile_dir,
+        visibility=BrowserVisibility.HEADED,
+        transport="ui_automation",
     ) as client:
         project = await client.create_project(title="gflow-cli smoke")
         image = await client.generate_image(project_id=project.project_id, req=req)

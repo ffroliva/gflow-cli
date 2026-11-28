@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from gflow_cli.api.client import FlowApiClient
+from gflow_cli.api.submit_policy import BrowserVisibility
 from gflow_cli.api.transports.migrated_composer import MigratedComposer
 from gflow_cli.config import UiMode
 from gflow_cli.flow_selectors import registry
@@ -34,7 +35,9 @@ async def test_every_migrated_editor_selector_resolves(e2e_profile_dir: Path) ->
     ).strip()
     if not project:
         pytest.skip("set GFLOW_CLI_E2E_PROJECT to a project this profile owns")
-    async with FlowApiClient(profile_dir=e2e_profile_dir, headless=False) as client:
+    async with FlowApiClient(
+        profile_dir=e2e_profile_dir, visibility=BrowserVisibility.HEADED
+    ) as client:
         page = client._page  # noqa: SLF001 - the probe reads the live page, like run_probe
         assert page is not None
         kind = await MigratedComposer().ensure_editor(page, project)

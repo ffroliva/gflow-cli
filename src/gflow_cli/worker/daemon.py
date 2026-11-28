@@ -12,7 +12,13 @@ from typing import Any, cast
 import structlog
 
 from gflow_cli import telemetry
-from gflow_cli._cli_helpers import slugify_project_name
+from gflow_cli._cli_helpers import (
+    client_visibility,
+    image_route,
+    slugify_project_name,
+    video_client_visibility,
+    video_route,
+)
 from gflow_cli.api.client import FlowApiClient
 from gflow_cli.api.credit_cap import resolve_max_credits
 from gflow_cli.api.dto import GeneratedImage, GenerationCheckpoint, ProjectInfo
@@ -293,7 +299,6 @@ class FlowWorker:
 
         settings = get_settings()
         profile_dir = settings.profile_subdir(task.profile_name)
-        headless = task.payload.get("headless", settings.headless)
         transport = task.payload.get("transport", settings.transport)
         out_dir = (
             Path(task.payload["out_dir"]) if "out_dir" in task.payload else settings.output_dir
@@ -329,7 +334,9 @@ class FlowWorker:
                 try:
                     async with FlowApiClient(
                         profile_dir=profile_dir,
-                        headless=headless,
+                        visibility=client_visibility(
+                            settings, (image_route(req, transport=transport),)
+                        ),
                         transport=transport,
                         out_dir=out_dir,
                         # Reuse the cached settings: a bare Settings() in the client
@@ -485,10 +492,13 @@ class FlowWorker:
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
-                req = (
+                # The configured cap is resolved once, before the route: a capped job
+                # never launches headless (SCENARIO.md rows 11, 33).
+                req = _apply_configured_video_cap(
                     cast("GenerateVideoRequest", task.decoded.request)
                     if task.decoded is not None
-                    else self._build_video_request(task.payload)
+                    else self._build_video_request(task.payload),
+                    settings,
                 )
                 project_id = task.payload.get("project_id")
 
@@ -498,10 +508,13 @@ class FlowWorker:
                 # Non-optional alias for the closure below (`recorder` is
                 # declared Optional at method scope for the #341 failure funnel).
                 video_recorder = recorder
+                visibility = await video_client_visibility(
+                    settings, profile_dir, (video_route(req, transport=transport),)
+                )
                 try:
                     async with FlowApiClient(
                         profile_dir=profile_dir,
-                        headless=headless,
+                        visibility=visibility,
                         transport=transport,
                         out_dir=out_dir,
                         settings=settings,  # same rationale as the image path above
@@ -515,16 +528,13 @@ class FlowWorker:
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 
-                        req = _apply_configured_video_cap(
-                            await resolve_and_apply(
-                                client,
-                                req,
-                                path="video",
-                                project_id=project_id,
-                                tool_specs=tuple(task.payload.get("tool_specs", ())),
-                                quiet=True,
-                            ),
-                            settings,
+                        req = await resolve_and_apply(
+                            client,
+                            req,
+                            path="video",
+                            project_id=project_id,
+                            tool_specs=tuple(task.payload.get("tool_specs", ())),
+                            quiet=True,
                         )
 
                         def on_started(started: VideoStarted) -> None:
@@ -598,7 +608,6 @@ class FlowWorker:
                     task=task,
                     recorder=recorder,
                     profile_dir=profile_dir,
-                    headless=headless,
                     transport=transport,
                     out_dir=out_dir,
                     settings=settings,
@@ -786,7 +795,6 @@ class FlowWorker:
         task: QueueTask,
         recorder: OperationRecorder,
         profile_dir: Path,
-        headless: bool,
         transport: str,
         out_dir: Path,
         settings: Any,
@@ -827,7 +835,6 @@ class FlowWorker:
 
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
             transport=transport,
             out_dir=out_dir,
             settings=settings,
@@ -897,7 +904,6 @@ class FlowWorker:
         task: QueueTask,
         recorder: OperationRecorder,
         profile_dir: Path,
-        headless: bool,
         transport: str,
         out_dir: Path,
         settings: Any,
@@ -951,7 +957,6 @@ class FlowWorker:
         project_id = task.payload.get("project_id")
         async with FlowApiClient(
             profile_dir=profile_dir,
-            headless=headless,
             transport=transport,
             out_dir=out_dir,
             settings=settings,

@@ -55,7 +55,17 @@ from rich.markup import escape
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
-from gflow_cli.config import get_settings
+from gflow_cli.api.generation_route import (
+    Route,
+    choose_image_route,
+    choose_upscale_route,
+    choose_video_route,
+    plan_visibility,
+)
+from gflow_cli.api.transports.direct_http._session import (
+    _proxy_configured,  # pyright: ignore[reportPrivateUsage]
+)
+from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import (
     GFlowError,
     exit_code_for,
@@ -64,8 +74,12 @@ from gflow_cli.observability import emit_error_event, emit_unhandled_event
 from gflow_cli.tools.runtime import apply_tool
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Iterator
+    from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
 
+    from gflow_cli.api.image import GenerateImageRequest
+    from gflow_cli.api.submit_policy import BrowserVisibility
+    from gflow_cli.api.video import GenerateVideoRequest
+    from gflow_cli.config import Settings
     from gflow_cli.tools.invocation import AppliedTool
 
 _logger = structlog.get_logger(__name__)
@@ -659,6 +673,101 @@ def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | 
     if ctx is not None and ctx.meta.get("no_max_credits"):
         configured = None
     return _resolve(cli_value, configured)
+
+
+# --- route-aware client construction ----------------------------------------
+# Every FlowApiClient construction decides its routes before launch with the same rules the
+# direct transport applies at run time, so a UI-bound request never runs on a headless page.
+
+
+def _direct_transport(transport: str | None) -> bool:
+    """Only ``direct_http`` has a direct route; the kill switch (``ui_automation``) has none."""
+    from gflow_cli.api.transports import resolve_transport_name  # noqa: PLC0415
+
+    return resolve_transport_name(transport) == "direct_http"
+
+
+def image_route(request: GenerateImageRequest, *, transport: str | None = None) -> Route:
+    """The route the direct transport takes for ``request``; agentic UI mode is the UI."""
+    if not _direct_transport(transport) or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
+        return Route.UI
+    return choose_image_route(
+        request, flow_host=get_settings().flow_host, proxy_configured=_proxy_configured()
+    )
+
+
+def video_route(request: GenerateVideoRequest, *, transport: str | None = None) -> Route:
+    """The route the direct transport takes for ``request``.
+
+    The request carries its effective cap (callers resolve ``GFLOW_CLI_MAX_CREDITS`` and
+    ``--no-max-credits`` into it), so a capped video routes to the UI, where the quote is
+    read, and an explicitly uncapped one routes on its shape. An ``@`` mention can resolve to
+    a reference after launch, so it routes to the UI too.
+    """
+    settings = get_settings()
+    if (
+        not _direct_transport(transport)
+        or "@" in request.prompt
+        or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC
+    ):
+        return Route.UI
+    return choose_video_route(
+        request,
+        flow_host=settings.flow_host,
+        proxy_configured=_proxy_configured(),
+        effective_max_credits=request.max_credits,
+    )
+
+
+def upscale_route(scale: str, catalog_row: object | None, *, transport: str | None = None) -> Route:
+    """The route a video upscale takes, from the local catalog row alone."""
+    if not _direct_transport(transport):
+        return Route.UI
+    return choose_upscale_route(
+        scale, catalog_row, flow_host=get_settings().flow_host, proxy_configured=_proxy_configured()
+    )
+
+
+def upscale_visibility(
+    profile_dir: Path, media_id: str, scale: str, kind: str = "video"
+) -> BrowserVisibility:
+    """An upscale's launch visibility: a video upscale routes on its local catalog row (no
+    network read); an image upscale drives the Flow UI."""
+    settings = get_settings()
+    if kind != "video":
+        return client_visibility(settings)
+    from gflow_cli.api._flow_media_edit import upscale_catalog_row  # noqa: PLC0415
+
+    row = upscale_catalog_row(settings, profile_dir, media_id)
+    return client_visibility(settings, (upscale_route(scale, row),))
+
+
+def client_visibility(
+    settings: Settings, routes: Iterable[Route] = (Route.UI,)
+) -> BrowserVisibility:
+    """The launch visibility for a client that runs ``routes``.
+
+    UI-only commands pass nothing and launch headed under ``auto``; a run with any UI item
+    launches headed for the whole run; an explicit setting wins.
+    """
+    return plan_visibility(settings.browser_visibility, routes)
+
+
+async def video_client_visibility(
+    settings: Settings, profile_dir: Path, routes: Sequence[Route]
+) -> BrowserVisibility:
+    """:func:`client_visibility` for video, after the browser-free zero-balance check.
+
+    A planned direct clip meeting a balance of 0 ends with exit 37 before any browser
+    launches; an unreadable balance skips the check (the transport repeats it per submit).
+    """
+    if Route.DIRECT in routes:
+        from gflow_cli.api.transports.direct_http._transport import (  # noqa: PLC0415
+            refuse_empty_balance,
+        )
+
+        await refuse_empty_balance(profile_dir)
+    return client_visibility(settings, routes)
 
 
 def safe_path_text(path: Path) -> str:
