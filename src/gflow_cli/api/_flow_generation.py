@@ -589,6 +589,7 @@ class GenerationSurface(WorkspaceSurface):
                     request=req_with_token,
                     **resolver_kw,
                 )
+                images = [self._observed(i, retried=False) for i in images]
         except (NetworkError, TransportTimeoutError, *retryable_engine_errors()) as exc:
             if page_owned:
                 raise
@@ -875,7 +876,7 @@ class GenerationSurface(WorkspaceSurface):
                     on_checkpoint=on_checkpoint,
                     resolver_kw=resolver_kw,
                 )
-            return await self.transport.generate_video(
+            video = await self.transport.generate_video(
                 request=req,
                 project_id=project_id,
                 out_dir=out_dir,
@@ -884,16 +885,17 @@ class GenerationSurface(WorkspaceSurface):
                 on_started=wrapped_on_started,
                 **resolver_kw,
             )
+            return self._observed(video, retried=False)
 
         except Exception as e:
             await self._raise_with_incident(e, phase="video_generation")
 
     def _observed(self, result: _ObservedT, retried: bool) -> _ObservedT:
-        """Stamp the path a retry-loop result took (visibility, retried) and log it.
+        """Stamp the path a result took (visibility, retried) and log it.
 
-        Only results from the refusal retry loop are stamped: a transport without a direct
-        path never reaches it, so its results keep ``visibility=None``. Objects a
-        caller-owned transport returns pass unchanged.
+        A transport without a direct path never enters the retry loop, so its results are
+        stamped with the launch visibility and ``retried=False``. Objects a caller-owned
+        transport returns that are not image or video results pass unchanged.
         """
         if not isinstance(result, (GeneratedImage, VideoResult)):
             return result
