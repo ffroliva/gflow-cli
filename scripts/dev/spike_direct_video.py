@@ -202,7 +202,7 @@ class Wire:
 
     async def mint(self, project_id: str, action: str) -> tuple[str, int]:
         t0 = time.perf_counter()
-        token = await dh._mint(self.page, project_id, action)  # noqa: SLF001
+        token = await dh._mint._mint(self.page, project_id, action)  # noqa: SLF001
         return token, round((time.perf_counter() - t0) * 1000)
 
     async def rpc(

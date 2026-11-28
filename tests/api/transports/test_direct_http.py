@@ -147,7 +147,7 @@ def mock_mint_and_body(monkeypatch: pytest.MonkeyPatch) -> None:
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        "gflow_cli.api.transports.direct_http._images.build_ogiz0b_body",
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
 
@@ -227,6 +227,45 @@ async def test_direct_http_unsupported_shape_falls_back_to_ui(
     assert calls == []
 
 
+def test_direct_can_serve_is_the_generation_route_predicate() -> None:
+    """One predicate: the transport and the router cannot disagree about a shape."""
+    from gflow_cli.api import generation_route
+
+    assert direct_can_serve is generation_route.direct_can_serve
+
+
+@pytest.mark.asyncio
+async def test_direct_http_agentic_ui_mode_setting_falls_back_to_ui(
+    transport: DirectHttpTransport, mock_mint_and_body: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``GFLOW_CLI_UI_MODE=agentic`` with no ``--ui-mode`` flag would send a classic frame."""
+    from gflow_cli.config import UiMode
+
+    monkeypatch.setattr(get_settings(), "ui_mode", UiMode.AGENTIC)
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.method)
+        raise AssertionError(f"unexpected {request.method} {request.url}")
+
+    transport._http_transport = httpx.MockTransport(handler)
+    ui_called = False
+
+    async def mock_ui_locked(*args: Any, **kwargs: Any) -> list[GeneratedImage]:
+        nonlocal ui_called
+        ui_called = True
+        return []
+
+    transport._generate_images_locked = mock_ui_locked  # type: ignore[method-assign]
+
+    await transport.generate_images(
+        project_id="proj-123", request=GenerateImageRequest(prompt="a blue cup")
+    )
+
+    assert ui_called
+    assert calls == []
+
+
 @pytest.mark.asyncio
 async def test_direct_http_pre_send_cookie_failure_falls_back(
     transport: DirectHttpTransport, mock_mint_and_body: None
@@ -295,7 +334,7 @@ async def test_direct_http_pre_send_mint_failure_falls_back(
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        "gflow_cli.api.transports.direct_http._images.build_ogiz0b_body",
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
 
@@ -707,7 +746,7 @@ async def test_direct_http_sends_the_migrated_wire_model(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -744,7 +783,7 @@ async def test_direct_http_sends_one_seed_per_image_and_the_aspect(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -793,11 +832,11 @@ async def test_a_mint_on_a_page_still_loading_recaptcha_is_retried_not_dropped(
     grecaptcha.enterprise is not loaded yet, and the run fell back to the UI."""
     from gflow_cli.errors import RecaptchaError
 
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http._MINT_RETRY_S", 0.0)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._mint._MINT_RETRY_S", 0.0)
     mint = AsyncMock(side_effect=[RecaptchaError("grecaptcha.enterprise not loaded"), "tok"])
     monkeypatch.setattr("gflow_cli.api.recaptcha.TokenMinter.mint", mint)
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.build_ogiz0b_body",
+        "gflow_cli.api.transports.direct_http._images.build_ogiz0b_body",
         MagicMock(return_value="f.req=mock_body&at=at-x&"),
     )
 
@@ -864,7 +903,7 @@ async def test_direct_http_sends_reference_with_multiple_seeds(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
     post_count = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -896,9 +935,9 @@ async def test_direct_http_sends_character_with_multiple_seeds(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with("Mate", "Skipper")),
     )
     post_count = 0
@@ -932,7 +971,7 @@ async def test_direct_http_sends_the_character_pair(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
@@ -943,7 +982,7 @@ async def test_direct_http_sends_the_character_pair(
 
     transport._http_transport = httpx.MockTransport(handler)
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with("Mate", "Skipper")),
     )
     req = GenerateImageRequest(prompt="x", **_SKIPPER)  # type: ignore[arg-type]
@@ -1087,7 +1126,7 @@ async def test_a_mint_that_never_settles_is_bounded(
     transport: DirectHttpTransport, mock_mint_and_body: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """CR-K: one evaluate whose promise never settles hung while holding the lock."""
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http._MINT_BUDGET_S", 0.2)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._mint._MINT_BUDGET_S", 0.2)
 
     async def never(*_: Any, **__: Any) -> str:
         await asyncio.sleep(3600)
@@ -1175,9 +1214,9 @@ async def test_a_bare_mention_is_resolved_to_the_project_character_id(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with("Mate", "Skipper")),
     )
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
@@ -1196,7 +1235,7 @@ async def test_a_mention_with_no_or_several_matches_falls_back_before_any_post(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with(*names)),
     )
     posts: list[bool] = []
@@ -1225,9 +1264,9 @@ async def test_a_mention_matches_the_picker_rule_trimmed_and_case_insensitive(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
     read = AsyncMock(return_value=_project_with("Mate", "Kael "))
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.read_project", read)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.read_project", read)
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     req = GenerateImageRequest(prompt="kael on a pier", reference_entity_names=("kael",))
     await transport.generate_images(project_id="proj-123", request=req)
@@ -1244,7 +1283,7 @@ async def test_names_differing_only_in_case_are_ambiguous(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with("Kael", "KAEL")),
     )
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
@@ -1264,7 +1303,7 @@ async def test_an_entity_id_the_project_does_not_hold_falls_back_before_any_post
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with("Mate")),  # entity-0 only; entity-1 is gone
     )
     posts: list[bool] = []
@@ -1293,9 +1332,9 @@ async def test_an_entity_id_uses_the_name_flow_holds_for_it(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=mock_body&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_ogiz0b_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_ogiz0b_body", builder)
     monkeypatch.setattr(
-        "gflow_cli.api.transports.direct_http.read_project",
+        "gflow_cli.api.transports.direct_http._images.read_project",
         AsyncMock(return_value=_project_with("Mate", "Skipper")),
     )
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
@@ -1400,12 +1439,12 @@ async def test_the_character_read_has_one_outer_deadline(
     transport: DirectHttpTransport, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """CodeRabbit: read_project's per-attempt budget plus its retry could stack past 15 s."""
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http._CHARACTER_READ_S", 0.2)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images._CHARACTER_READ_S", 0.2)
 
     async def slow(*_: Any, **__: Any) -> Any:
         await asyncio.sleep(3600)
 
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.read_project", slow)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.read_project", slow)
     monkeypatch.setattr(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
@@ -1425,7 +1464,7 @@ async def test_the_upload_mime_type_comes_from_the_bytes_not_the_name(
         "gflow_cli.api.recaptcha.TokenMinter.mint", AsyncMock(return_value="mock_token")
     )
     builder = MagicMock(return_value="f.req=x&at=at-x&")
-    monkeypatch.setattr("gflow_cli.api.transports.direct_http.build_maseq_body", builder)
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._images.build_maseq_body", builder)
     transport._http_transport = _shell_and(httpx.Response(200, text=_maseq_reply()))
     portrait = tmp_path / "portrait"  # no extension
     portrait.write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 32)
