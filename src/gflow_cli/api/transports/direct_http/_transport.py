@@ -12,7 +12,8 @@ import structlog
 
 from gflow_cli.api.generation_route import direct_can_serve
 from gflow_cli.api.image import ImageRef
-from gflow_cli.api.transports.direct_http._gateway import _DirectFallbackError
+from gflow_cli.api.submit_policy import NotSent
+from gflow_cli.api.transports.direct_http._gateway import DirectAttemptEnded
 from gflow_cli.api.transports.direct_http._images import run_direct_images, run_direct_upload
 from gflow_cli.api.transports.direct_http._session import _proxy_configured
 from gflow_cli.api.transports.ui_automation import UiAutomationTransport
@@ -25,6 +26,15 @@ if TYPE_CHECKING:
     from gflow_cli.api.image import GenerateImageRequest
 
 log = structlog.get_logger(__name__)
+
+
+def _fallback_reason(ended: DirectAttemptEnded) -> str:
+    """The fallback reason when nothing reached Flow; past the send, the attempt's error."""
+    if isinstance(ended.outcome, NotSent):
+        return ended.outcome.reason
+    if ended.error is None:
+        raise ended
+    raise ended.error from ended
 
 
 class DirectHttpTransport(UiAutomationTransport):
@@ -49,7 +59,7 @@ class DirectHttpTransport(UiAutomationTransport):
         name_resolver: Callable[[str], str | None] | None = None,
     ) -> list[GeneratedImage]:
         """Generate via one direct POST when the request is measured; otherwise, or when
-        nothing was accepted, through the inherited UI path."""
+        nothing was sent, through the inherited UI path. Past the send, never the UI."""
         if not self._setup_done or self._page is None:
             msg = "DirectHttpTransport.setup() must be called before generate_images()"
             raise RuntimeError(msg)
@@ -67,8 +77,8 @@ class DirectHttpTransport(UiAutomationTransport):
                         request=request,
                         http_transport=self._http_transport,
                     )
-                except _DirectFallbackError as fb:
-                    reason = fb.reason
+                except DirectAttemptEnded as ended:
+                    reason = _fallback_reason(ended)
                 else:
                     self.last_image_route = "migrated"
                     return images
@@ -99,8 +109,8 @@ class DirectHttpTransport(UiAutomationTransport):
                         path=path,
                         http_transport=self._http_transport,
                     )
-                except _DirectFallbackError as fb:
-                    reason = fb.reason
+                except DirectAttemptEnded as ended:
+                    reason = _fallback_reason(ended)
                 finally:
                     await self._park_composer_page(page, event="direct.page_park_failed")
         log.info("direct.upload_fallback_to_ui", reason=reason)

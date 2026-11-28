@@ -216,7 +216,7 @@ class Wire:
                 "at": self.tokens.at,
             }
         )
-        req = dh._post_request(rpcid, project_id, self.tokens, self.headers, body)  # noqa: SLF001
+        req = dh._post_request(rpcid, f"/project/{project_id}", self.tokens, self.headers, body)  # noqa: SLF001
         if source_path:
             req.url = req.url.copy_set_param("source-path", source_path)
         t0 = time.perf_counter()
@@ -231,7 +231,7 @@ class Wire:
     async def send_body(
         self, rpcid: str, body: str, project_id: str
     ) -> tuple[int | None, str, int]:
-        req = dh._post_request(rpcid, project_id, self.tokens, self.headers, body)  # noqa: SLF001
+        req = dh._post_request(rpcid, f"/project/{project_id}", self.tokens, self.headers, body)  # noqa: SLF001
         t0 = time.perf_counter()
         try:
             resp = await self.hx.send(req)

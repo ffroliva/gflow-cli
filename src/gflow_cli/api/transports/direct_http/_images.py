@@ -19,10 +19,10 @@ from gflow_cli.api.image import ImageRef, Model
 from gflow_cli.api.transports._mc_common import _first_uuid
 from gflow_cli.api.transports._mc_submit_observe import ogiz0b_reply_images
 from gflow_cli.api.transports.direct_http._gateway import (
+    SubmitAttempt,
     _client,
-    _DirectFallbackError,
     _post_request,
-    _send_once,
+    not_sent,
 )
 from gflow_cli.api.transports.direct_http._mint import _mint
 from gflow_cli.api.transports.direct_http._session import _session_headers, _shell
@@ -67,6 +67,17 @@ _UPLOAD_MIME = {
 }
 
 
+class _PageTokenSource:
+    """The ``RecaptchaTokenSource`` that mints on the project page through ``_mint``."""
+
+    def __init__(self, page: Page, project_id: str) -> None:
+        self._page = page
+        self._project_id = project_id
+
+    async def mint(self, action: str) -> str:
+        return await _mint(self._page, self._project_id, action)
+
+
 async def _resolve_character(
     page: Page, project_id: str, request: GenerateImageRequest
 ) -> tuple[str, str]:
@@ -89,7 +100,7 @@ async def _resolve_character(
             read_project(page, project_id, timeout_s=_CHARACTER_READ_S), _CHARACTER_READ_S
         )
     except Exception as exc:
-        raise _DirectFallbackError(f"character_read:{type(exc).__name__}") from exc
+        raise not_sent(f"character_read:{type(exc).__name__}") from exc
     if request.reference_entities:
         wanted_id = request.reference_entities[0]
         matches = [c for c in project.characters if c.entity_id == wanted_id]
@@ -97,7 +108,7 @@ async def _resolve_character(
         wanted = names[0].strip().casefold()
         matches = [c for c in project.characters if c.display_name.strip().casefold() == wanted]
     if len(matches) != 1:
-        raise _DirectFallbackError(f"character_matches:{len(matches)}")
+        raise not_sent(f"character_matches:{len(matches)}")
     log.info("direct.character_resolved", source="project_read")
     return (matches[0].entity_id, matches[0].display_name)
 
@@ -110,18 +121,21 @@ async def run_direct_images(
     request: GenerateImageRequest,
     http_transport: httpx.AsyncBaseTransport | None = None,
 ) -> list[GeneratedImage]:
-    """One direct image generation: read the session, mint, build, send once, parse."""
+    """One direct image generation: read the session, mint, build, send once, parse.
+
+    The reply is parsed inside the attempt: a failure after the send is indeterminate.
+    """
     started = time.perf_counter()
-    headers = await _session_headers(page, profile_dir)
-    async with _client(http_transport) as client:
-        tokens = await _shell(client, profile_dir, headers)
+    attempt = SubmitAttempt(_SUBMIT, profile_dir, _PageTokenSource(page, project_id))
+    async with _client(http_transport) as client, attempt:
+        tokens = await _shell(client, page, profile_dir)
         characters = (
             (await _resolve_character(page, project_id, request),)
             if request.reference_entity_names
             else ()
         )
         mint_started = time.perf_counter()
-        token = await _mint(page, project_id, _SUBMIT[1])
+        token = await attempt.mint()
         mint_ms = int((time.perf_counter() - mint_started) * 1000)
         body = build_ogiz0b_body(
             prompt=request.prompt,
@@ -141,18 +155,19 @@ async def run_direct_images(
             prompt_length=len(request.prompt),
             count=request.count,
         )
+        headers = await _session_headers(page, profile_dir)
         post_started = time.perf_counter()
-        response = await _send_once(
-            client, _post_request("ogiZ0b", project_id, tokens, headers, body), profile_dir, _SUBMIT
+        response = await attempt.send(
+            client, _post_request("ogiZ0b", f"/project/{project_id}", tokens, headers, body)
         )
-    log.info(
-        "direct.image_post",
-        status=response.status_code,
-        mint_ms=mint_ms,
-        post_ms=int((time.perf_counter() - post_started) * 1000),
-        total_ms=int((time.perf_counter() - started) * 1000),
-    )
-    images = ogiz0b_reply_images(response.text, request)
+        log.info(
+            "direct.image_post",
+            status=response.status_code,
+            mint_ms=mint_ms,
+            post_ms=int((time.perf_counter() - post_started) * 1000),
+            total_ms=int((time.perf_counter() - started) * 1000),
+        )
+        images = ogiz0b_reply_images(response.text, request)
     return [replace(img, transport="direct_http") for img in images]
 
 
@@ -170,10 +185,10 @@ async def run_direct_upload(
     unique suffix, as the UI's own upload does, so a later chip names this image only.
     """
     started = time.perf_counter()
-    headers = await _session_headers(page, profile_dir)
-    async with _client(http_transport) as client:
-        tokens = await _shell(client, profile_dir, headers)
-        token = await _mint(page, project_id, _UPLOAD[1])
+    attempt = SubmitAttempt(_UPLOAD, profile_dir, _PageTokenSource(page, project_id))
+    async with _client(http_transport) as client, attempt:
+        tokens = await _shell(client, page, profile_dir)
+        token = await attempt.mint()
         image = await asyncio.to_thread(path.read_bytes)
         display_name = f"{path.stem}-{secrets.token_hex(4)}{path.suffix}"
         body = build_maseq_body(
@@ -185,13 +200,14 @@ async def run_direct_upload(
             display_name=display_name,
             request_ids=(str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()),
         )
-        response = await _send_once(
-            client, _post_request("maseQ", project_id, tokens, headers, body), profile_dir, _UPLOAD
+        headers = await _session_headers(page, profile_dir)
+        response = await attempt.send(
+            client, _post_request("maseQ", f"/project/{project_id}", tokens, headers, body)
         )
-    media_id = _first_uuid(response.text)
-    if media_id is None:
-        raise WireFormatError(
-            detail="direct maseQ upload returned no media id", route="batchexecute:maseQ"
-        )
+        media_id = _first_uuid(response.text)
+        if media_id is None:  # past the send: indeterminate, the upload may be stored
+            raise WireFormatError(
+                detail="direct maseQ upload returned no media id", route="batchexecute:maseQ"
+            )
     log.info("direct.upload", total_ms=int((time.perf_counter() - started) * 1000))
     return ImageRef(name=media_id, display_name=display_name, in_project=True)
