@@ -88,6 +88,18 @@ class WireFallbackReason(StrEnum):
     UNEXPECTED = "unexpected"
 
 
+_PRE_RESPONSE_REASONS = frozenset(
+    {
+        WireFallbackReason.STORE_UNREADABLE,
+        WireFallbackReason.NO_CHROME_VERSION,
+        WireFallbackReason.PROXY_CONFIGURED,
+        WireFallbackReason.NETWORK,
+        WireFallbackReason.DISABLED,
+        WireFallbackReason.UNEXPECTED,
+    }
+)
+
+
 # Named for what it signals (fall back to the browser), not as an error: hence N818.
 class WireReadUnavailable(Exception):  # noqa: N818
     """The direct read cannot answer; the reason is all it carries (no body, no str(exc))."""
@@ -160,11 +172,7 @@ def _proxy_configured(settings: Settings) -> bool:
     if _has_proxy_entry(proxies):
         return True
     # CPython's getproxies() skips the OS proxy lookup whenever env contains NO_PROXY alone.
-    return bool(
-        "no" in proxies
-        and getproxies is urllib.request.getproxies
-        and _has_proxy_entry(_native_os_proxies())
-    )
+    return bool("no" in proxies and _has_proxy_entry(_native_os_proxies()))
 
 
 def reset_state() -> None:
@@ -495,6 +503,7 @@ def session_recovered(profile_dir: Path) -> None:
     window is time-based."""
     _signed_out.pop(profile_dir, None)
     _tokens.pop(profile_dir, None)
+    _accepted_seq[profile_dir] = _accepted_seq.get(profile_dir, 0) + 1
 
 
 async def health(profile_dir: Path, settings: Settings | None = None) -> dict[str, Any]:
@@ -503,11 +512,11 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
     An explicit question, so it asks Flow afresh: one shell GET and one ``nzlxg`` POST, under
     every rule ``read_credits`` keeps, plus the kill switch / macOS default and the proxy rule
     from ``settings`` (the caller's, else the global ones). A profile already marked signed out
-    is asked again, while non-Flow failures (cookie store, proxy, network, throttle) preserve
-    any prior mark. Returns only ``status`` (``accepted``, ``throttled``, or a
-    :class:`WireFallbackReason` value), ``build`` (Flow's build label, when read) and, when
-    throttled, ``retry_after`` in seconds; never a cookie, token, id or URL. Raises only
-    ``SecurityError`` (a profile outside GFLOW_CLI_HOME).
+    is asked again, while pre-response failures (cookie store, Chrome version, proxy, network,
+    throttle, unexpected) preserve any prior mark unless lifted concurrently. Returns only
+    ``status`` (``accepted``, ``throttled``, or a :class:`WireFallbackReason` value), ``build``
+    (Flow's build label, when read) and, when throttled, ``retry_after`` in seconds; never a
+    cookie, token, id or URL. Raises only ``SecurityError`` (a profile outside GFLOW_CLI_HOME).
     """
     settings = settings or get_settings()
     if not settings.wire_reads:
@@ -516,25 +525,28 @@ async def health(profile_dir: Path, settings: Settings | None = None) -> dict[st
         return {"status": WireFallbackReason.PROXY_CONFIGURED.value, "build": None}
     require_in_home(profile_dir)
     previous = _active_signed_out(profile_dir)
+    session_recovered(profile_dir)  # re-ask with fresh tokens; pre-response failures restore below
     accepted_before = _accepted_seq.get(profile_dir, 0)
-    session_recovered(profile_dir)  # re-ask with fresh tokens; non-Flow failures restore below
-    succeeded = False
+    should_restore = False
     try:
         await read_credits(profile_dir, settings=settings)
-        succeeded = True
     except WireReadUnavailable as exc:
+        should_restore = exc.reason in _PRE_RESPONSE_REASONS
         return {"status": exc.reason.value, "build": None}
     except (RateLimitError, NetworkError):  # only ever the throttle window here
+        should_restore = True
         window = _throttled.get(profile_dir)
         retry = max(0, round(window[0] - _clock())) if window else None
         return {"status": "throttled", "build": None, "retry_after": retry}
     except SecurityError:
+        should_restore = True
         raise
     except Exception as exc:  # noqa: BLE001 - a health probe reports and never fails a caller
+        should_restore = True
         log.warning("wire.health_unexpected", error_type=type(exc).__name__)
         return {"status": WireFallbackReason.UNEXPECTED.value, "build": None}
     finally:
-        if not succeeded and _accepted_seq.get(profile_dir, 0) == accepted_before:
+        if should_restore and _accepted_seq.get(profile_dir, 0) == accepted_before:
             _restore_signed_out(profile_dir, previous)
     tokens = _tokens.get(profile_dir)
     bl = tokens.bl if tokens else None
