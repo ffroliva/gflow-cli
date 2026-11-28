@@ -307,16 +307,22 @@ async def test_gate_cancel_before_the_ui_fallback_propagates_and_skips_the_ui() 
 
 
 @pytest.mark.asyncio
-async def test_relaunch_failure_raises_final_refusal_not_charged() -> None:
-    """Row 8: a relaunch that fails ends in the final refusal; nothing is sent again."""
+async def test_relaunch_failure_after_a_refusal_raises_relaunch_failed_naming_it() -> None:
+    """Row 8: a relaunch that fails after a refusal is reported as itself (exit 15, not
+    charged), naming the refusal; it is not the final refusal's 30-60 minute cooldown."""
     host = FakeHost(fail=RelaunchFailed("Browser relaunch failed: boom"))
     script = Script(_REFUSED, "never")
 
-    with pytest.raises(WafRejectionError) as caught:
+    with pytest.raises(RelaunchFailed) as caught:
         await run_with_retry(host, direct=script.direct, ui=_no_ui, setting=VisibilitySetting.AUTO)
 
     assert script.sends == 1
-    assert (caught.value.charged, caught.value.retryable) == ("no", False)
+    assert caught.value.charged == "no"
+    assert exit_code_for(caught.value) == 15
+    assert caught.value.detail == (
+        "Browser relaunch failed: boom; "
+        f"Flow had refused the token before it ({UNUSUAL_ACTIVITY_REASON})"
+    )
     assert isinstance(caught.value.__cause__, RelaunchFailed)
 
 
@@ -1058,20 +1064,6 @@ async def test_the_refusal_notice_names_a_new_headless_process() -> None:
         )
     (notice,) = [e for e in logs if e.get("event") == "mint.retried"]
     assert (notice["new_process"], notice["visibility"]) == (True, "headless")
-
-
-@pytest.mark.asyncio
-async def test_a_relaunch_failure_after_one_refusal_counts_one_attempt() -> None:
-    """Only the first send reached Flow, so the final refusal names one attempt."""
-    host = FakeHost(fail=RelaunchFailed("Browser relaunch failed: boom"))
-    with pytest.raises(WafRejectionError) as caught:
-        await run_with_retry(
-            host, direct=Script(_REFUSED).direct, ui=_no_ui, setting=VisibilitySetting.AUTO
-        )
-    detail, hint = caught.value.detail, caught.value.remediation_hint or ""
-    assert detail == f"Flow refused 1 submit attempt: {UNUSUAL_ACTIVITY_REASON}"
-    assert hint.startswith("The attempt was refused, the browser relaunch for the retry failed")
-    assert "attempts" not in detail + hint
 
 
 @pytest.mark.asyncio

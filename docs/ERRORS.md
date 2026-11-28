@@ -153,13 +153,14 @@ place today:
   --out-file <path>`.
 - A direct submit Flow refuses as `PUBLIC_ERROR_UNUSUAL_ACTIVITY` (HTTP 200, an error frame and
   no generation record) is not billed, and is retried once from a new headless browser process.
-  A second refusal, or a relaunch that fails after the first, is final: `WafRejectionError`
+  A second refusal is final: `WafRejectionError`
   with `charged: no`, `retryable: false` and `next_action: none`; its hint names the cooldown in
   [ACCOUNT_SAFETY](ACCOUNT_SAFETY.md) and `--browser-visibility headed`
   ([BROWSER_MODES](BROWSER_MODES.md#the-retry-rule)). Any failure after a direct submit was sent,
   a redirect or HTTP 401/403 included, reads `maybe` / `reconcile` and is never resent.
-  `RelaunchFailed` (exit 15, `no` / `retry`) is raised when a request that reached no Flow
-  endpoint falls back to the UI path and its headed browser cannot start.
+  `RelaunchFailed` (exit 15, `no` / `retry`) is raised when the browser cannot start again,
+  either for the retry after a refusal (its detail names the refusal) or for a request that
+  reached no Flow endpoint and falls back to the UI path.
 - Sites that provably submitted nothing read `no`: the flow.google.com extend editor
   guard (`none`), the `/about` landing (`reauth`), and both balance-read failures.
 - On flow.google.com, a gflow error raised before the generation's submit click reads

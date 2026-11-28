@@ -188,8 +188,8 @@ async def _relaunch_after_refusal(
     )
     try:
         await host.relaunch(step.visibility, unless_since=generation)
-    except RelaunchFailed as failed:
-        raise waf_refusal_final(reason=_reason(ended), attempts=1) from failed
+    except RelaunchFailed as failed:  # only the first send reached Flow: not charged, exit 15
+        raise _naming_refusal(failed, _reason(ended)) from failed
 
 
 async def _prepare_ui_fallback(
@@ -216,8 +216,11 @@ async def _relaunch_for_ui(
     except RelaunchFailed as failed:
         if refused is None:
             raise
-        detail = f"{failed.detail}; Flow had refused the token before it ({refused})"
-        raise RelaunchFailed(detail) from failed
+        raise _naming_refusal(failed, refused) from failed
+
+
+def _naming_refusal(failed: RelaunchFailed, refused: str) -> RelaunchFailed:
+    return RelaunchFailed(f"{failed.detail}; Flow had refused the token before it ({refused})")
 
 
 def _reason(ended: DirectAttemptEnded) -> str:
@@ -234,7 +237,7 @@ def _stop_error(step: RetryStep, ended: DirectAttemptEnded, emit: _Checkpoints) 
     outcome = ended.outcome
     if step.kind == "waf_final":
         emit("submit_refused")
-        return waf_refusal_final(reason=_reason(ended), attempts=2)
+        return waf_refusal_final(reason=_reason(ended))
     if step.kind == "reauth":
         return AuthExpiredError(
             detail=(

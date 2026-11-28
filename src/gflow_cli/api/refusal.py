@@ -7,35 +7,21 @@ from gflow_cli.errors import WafRejectionError
 __all__ = ["waf_refusal_final"]
 
 
-def waf_refusal_final(
-    *,
-    reason: str = "UNUSUAL_ACTIVITY",
-    attempts: int = 2,
-) -> WafRejectionError:
-    """Terminal refusal error when all submit attempts are refused by Flow (#1545 / Task 8).
+def waf_refusal_final(*, reason: str = "UNUSUAL_ACTIVITY") -> WafRejectionError:
+    """Terminal refusal error when both submit attempts are refused by Flow (#1545 / Task 8).
 
     Tells callers and agents not to retry into a refusal window (charged="no",
     retryable=False, next_action="none"). The remediation notes that both attempts
     were refused and nothing was charged, names `--browser-visibility headed`, and
-    points to the 30-60 minute cooldown in docs/ACCOUNT_SAFETY.md. One attempt means the
-    browser relaunch for the retry failed, so only the first send reached Flow.
+    points to the 30-60 minute cooldown in docs/ACCOUNT_SAFETY.md. A relaunch that fails
+    between the attempts is ``RelaunchFailed``, not this error.
     """
-    if attempts == 1:
-        summary = (
-            "The attempt was refused, the browser relaunch for the retry failed, "
-            "and nothing was charged."
-        )
-    elif attempts == 2:
-        summary = "Both attempts were refused and nothing was charged."
-    else:
-        summary = f"All {attempts} attempts were refused and nothing was charged."
     remediation = (
-        f"{summary} "
+        "Both attempts were refused and nothing was charged. "
         "Wait for the 30-60 minute cooldown described in docs/ACCOUNT_SAFETY.md "
         "before trying again, or retry with --browser-visibility headed."
     )
-    noun = "attempt" if attempts == 1 else "attempts"
-    detail = f"Flow refused {attempts} submit {noun}" + (f": {reason}" if reason else "")
+    detail = "Flow refused 2 submit attempts" + (f": {reason}" if reason else "")
     return WafRejectionError(
         detail,
         remediation_hint=remediation,

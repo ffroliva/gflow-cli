@@ -954,7 +954,7 @@ def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
     )
     from gflow_cli.mcp.tools import _gflow_error_dict
 
-    err = waf_refusal_final(reason="UNUSUAL_ACTIVITY", attempts=2)
+    err = waf_refusal_final(reason="UNUSUAL_ACTIVITY")
 
     assert isinstance(err, WafRejectionError)
     assert exit_code_for(err) == 10
@@ -977,7 +977,7 @@ def test_waf_refusal_final_is_not_retryable_and_not_charged() -> None:
 def test_waf_refusal_final_remediation_names_headed_and_cooldown() -> None:
     from gflow_cli.api.refusal import waf_refusal_final
 
-    err = waf_refusal_final(reason="UNUSUAL_ACTIVITY", attempts=2)
+    err = waf_refusal_final(reason="UNUSUAL_ACTIVITY")
 
     assert "--browser-visibility headed" in err.remediation_hint
     assert "docs/ACCOUNT_SAFETY.md" in err.remediation_hint
