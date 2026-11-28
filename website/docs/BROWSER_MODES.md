@@ -100,7 +100,7 @@ and `next_action: "none"`. Wait out the cooldown in
 [ACCOUNT_SAFETY](ACCOUNT_SAFETY.md#when-google-does-push-back) before trying again, or run with
 `--browser-visibility headed`. A failure after the request was sent is never resent: it reports
 `charged: "maybe"` and `next_action: "reconcile"`. If the new browser process cannot start,
-the refusal is final in the same way. When a request that reached no Flow endpoint falls back
+the run ends with `RelaunchFailed` (exit 15, `charged: "no"`), whose detail names the refusal. When a request that reached no Flow endpoint falls back
 to the UI path and its headed browser cannot start, the run ends with `RelaunchFailed` (exit
 15, `charged: "no"`).
 

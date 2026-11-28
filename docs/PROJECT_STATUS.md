@@ -6,6 +6,24 @@
 
 ## Current release
 
+**v0.108.0 — beta.** Headless by default: for the request shapes measured against Flow, Chrome runs headless and only mints the reCAPTCHA token, and the request goes over direct HTTP. Every other surface keeps Flow's UI, headed.
+
+**Added.**
+- **Headless reCAPTCHA mint and direct HTTP as the default transport (#1371, #1545, #1546, #1547).** Text-to-image and image-to-image at the measured shapes, text-to-video at a measured key (a bare `video t2v` reads the account's selected model), image-to-video from a local start frame, and 1080p video upscale of a catalogued clip go direct. A refused submit is retried once from a new headless browser; nothing ambiguous after a send is ever resent; a zero balance is refused with exit 37 before any browser starts.
+- **`GFLOW_CLI_BROWSER_VISIBILITY` and `--browser-visibility` (`auto`, `headless`, `headed`)**, mirrored on the MCP generation tools as `browser_visibility`. `GFLOW_CLI_HEADLESS` remains a deprecated alias flagged by `gflow doctor`; `GFLOW_CLI_TRANSPORT=ui_automation` is the kill switch.
+- **`route`, `visibility` and `retried`** in logs, `--json`, the catalog and MCP results.
+- **`docs/BROWSER_MODES.md`**: which command runs headless, headed or with no browser, and why.
+- **Nano Banana 2 Lite and Nano Banana Pro on the direct image path (#1549)** at the measured shape, and **a model-catalog drift check in `gflow doctor` (#1550)**.
+
+**Fixed.**
+- The bonus-credit promotion dialog no longer blocks project creation (#1557).
+
+Not measured: macOS, Linux and accounts served labs.google. Headless for the remaining UI surfaces is tracked in #1554.
+
+Full ledger: [LIVE_VERIFICATION_v0.108.0](LIVE_VERIFICATION_v0.108.0.md).
+
+<details><summary>v0.107.0 — OpenAI-compatible image route, video edit, local-source extend</summary>
+
 **v0.107.0 — beta.** An OpenAI-compatible image endpoint on `gflow serve`, video-to-video edit and a richer `video extend` on flow.google.com, caption styling, multi-image direct generation with a reference, and honest reporting of short image replies.
 
 **Added.**
@@ -26,6 +44,8 @@
 - **A folder or unresolvable `--ref`/frame path exits 2 (#1480)**, contributed by @rayw-lab; `clip_qa.py` scratch files and truncated clips (#1501, #1502); the uncalled `_check_logged_in` removed (#1289, contributed investigation by @deepslit, #1481).
 
 Full ledger: [LIVE_VERIFICATION_v0.107.0](LIVE_VERIFICATION_v0.107.0.md).
+
+</details>
 
 <details><summary>v0.106.0 — direct HTTP image transport, caption layout, typed batch errors</summary>
 
@@ -1122,6 +1142,7 @@ migrated accounts (#795), and the agent-only composer driver (#799, #824 open).
 
 | Milestone | Status |
 |---|---|
+| Headless reCAPTCHA mint and direct HTTP by default for the measured shapes (images, text-to-video incl. bare t2v, image-to-video, 1080p upscale), one headless retry and no resend after a send, route decided before launch, `--browser-visibility` with MCP twin, `docs/BROWSER_MODES.md`; promo-dialog fix (#1371 #1545 #1546 #1547 #1557) | ✅ done (v0.108.0) |
 | OpenAI-compatible `POST /v1/images/generations` on `gflow serve`; `video edit` and local-source `video extend` (duration, references, quote-checked cap) on flow.google.com with MCP twins; caption styling; `direct_http` counts 2-4 with a reference; short image replies reported; owner-only `gflow.db` (#1365 #1467 #1468 #1432 #1455 #1489 #1437) | ✅ done (v0.107.0) |
 | Experimental `direct_http` image transport on flow.google.com (one `ogiZ0b` request per run) and image transports in the usage report; caption layout fixes; typed errors for `image batch` and a new-project click timeout (#1442 #1431 #1446 #1452 #1434) | ✅ done (v0.106.0) |
 | Complete catalog rows and superseded local copies after `video extend` on flow.google.com; Flow's error text on a failed generation; the free recovery for a billed clip download; extend and image-batch charge guidance (#1299 #1111 #1159 #1416) | ✅ done (v0.105.1) |

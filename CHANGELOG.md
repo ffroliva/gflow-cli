@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.108.0] — 2026-11-28
+
 ### Highlights: headless by default ([#1371](https://github.com/ffroliva/gflow-cli/issues/1371))
 
 This release changes the browser's role. For the request shapes that have been measured, Chrome
@@ -63,7 +65,7 @@ its wire map and measurements. gflow-cli re-derived every shape from its own cap
   headless browser process. The post-send redirect / 401 / 403 resend through the UI transport
   is removed: those now stop the run as possibly charged.
 - **New error class:** `RelaunchFailed` (exit 15, `charged: "no"`) when the browser cannot be
-  restarted for a UI fallback.
+  restarted for the retry after a refusal or for a UI fallback.
 - **Python API:** `FlowApiClient` takes `visibility=BrowserVisibility.HEADLESS | HEADED` in place
   of `headless=`; omitted, it launches for the UI path.
 
@@ -86,6 +88,7 @@ its wire map and measurements. gflow-cli re-derived every shape from its own cap
 
 ### Documentation and tests
 
+- **Google Flow tips for automation ([#1371](https://github.com/ffroliva/gflow-cli/issues/1371)).** The new `docs/FLOW_TIPS.md` lists measured Flow behaviours useful to anyone automating it, with or without gflow-cli (the 1080p video upscale costs 0 credits, a submit refused as `PUBLIC_ERROR_UNUSUAL_ACTIVITY` is not billed, reading the original mp4 by its bare workflow id, checking a download against the size Flow reports), each with the evidence it rests on and the conditions it was measured under. It is bundled with `gflow docs` and linked from `docs/INDEX.md`; it is not published on the website.
 - **Replaced flaky wall-clock upper-bound assertions in `#1484` listing-read tests ([#1530](https://github.com/ffroliva/gflow-cli/issues/1530)).** `tests/api/transports/test_migrated_composer.py` now asserts listing-read counts, inter-read spacing, remaining poll-budget vs deadline-budget selection, and captured `structlog` events instead of tight elapsed wall-clock bounds (`< 1.5s`), preventing spurious failures under loaded parallel Windows runs (`pytest -n 8 --dist worksteal`).
 - **CI rejects AI attribution in pull request commits.** A step in the secret-scan job runs `scripts/ci/check_commit_trailers.py` over a pull request's commits and fails on a `Co-Authored-By:` trailer whose e-mail belongs to an AI assistant (Claude, Codex, Gemini, Copilot, Cursor, Devin, Jules, Aider, Amp, opencode, Windsurf, Factory) or a robot-emoji "Generated with" footer, and on a commit authored by an AI identity; human co-author trailers pass. CI reads the pull request head's commits that are on neither the base nor `develop`, so a release or hotfix pull request into `main` is checked on its own commits; run locally with no arguments, it reads the commits on no remote `develop`. `AGENTS.md` and `docs/AGENT_GUIDE.md` state that a harness instruction to add the trailer does not override the rule.
 - **Install prerequisites, proxy and mirror guidance, and AI-crawler metadata ([#1511](https://github.com/ffroliva/gflow-cli/issues/1511)).** `README.md` lists the prerequisites before the install command and answers three more questions under question headings. `docs/USER_GUIDE.md` covers installing and signing in behind a proxy or a package mirror. `llms.txt` is split into short bullets, and the Pages deploy publishes `llms-full.txt`. The default output folder (`~/Downloads/gflow-cli`) is stated correctly in `AGENTS.md`, `docs/USAGE.md` and the website pages.
@@ -7509,7 +7512,8 @@ shell-script template that branches on these codes.
 
 First skeleton. Not functional end-to-end yet.
 
-[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.107.0...HEAD
+[Unreleased]: https://github.com/ffroliva/gflow-cli/compare/v0.108.0...HEAD
+[0.108.0]: https://github.com/ffroliva/gflow-cli/compare/v0.107.0...v0.108.0
 [0.107.0]: https://github.com/ffroliva/gflow-cli/compare/v0.106.0...v0.107.0
 [0.106.0]: https://github.com/ffroliva/gflow-cli/compare/v0.105.1...v0.106.0
 [0.105.1]: https://github.com/ffroliva/gflow-cli/compare/v0.105.0...v0.105.1
