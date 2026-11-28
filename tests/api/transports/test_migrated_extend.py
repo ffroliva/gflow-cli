@@ -1584,6 +1584,25 @@ async def test_video_upload_waits_past_the_empty_first_reply(tmp_path: Any) -> N
 
 
 @pytest.mark.asyncio
+async def test_a_non_200_video_upload_is_exit_27_naming_the_status(tmp_path: Any) -> None:
+    from gflow_cli.api.transports import _mc_upload_video as uv
+    from gflow_cli.errors import MediaUploadRejectedError
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+
+    async def refused(page: _UploadPage) -> None:
+        await page.fire(sent=True, status=413)
+
+    with pytest.raises(MediaUploadRejectedError) as caught:
+        await uv.upload_video(_UploadPage(refused), PID, clip)  # type: ignore[arg-type]
+    assert caught.value.detail == "migrated host: Flow video upload answered HTTP 413"
+    assert caught.value.status == 413
+    assert caught.value.route == "flow:upload/video"
+    assert exit_code_for(caught.value) == 27
+
+
+@pytest.mark.asyncio
 async def test_a_submit_the_page_sends_during_preparation_is_aborted(
     driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1683,3 +1702,75 @@ async def test_a_folder_or_unreadable_path_is_exit_11(tmp_path: Any) -> None:
         await mx.validate_extend_inputs(
             media_id=None, source_video=folder, duration=None, reference_images=(), max_credits=None
         )
+
+
+@pytest.mark.asyncio
+async def test_a_video_reply_without_ids_is_exit_27_with_status_200(tmp_path: Any) -> None:
+    from gflow_cli.api.transports import _mc_upload_video as uv
+    from gflow_cli.errors import MediaUploadRejectedError
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42\x00\x00")
+
+    async def incomplete(page: _UploadPage) -> None:
+        await page.fire(sent=True, status=200, body="{}")
+
+    with pytest.raises(MediaUploadRejectedError) as caught:
+        await uv.upload_video(_UploadPage(incomplete), PID, clip)  # type: ignore[arg-type]
+    assert caught.value.detail == (
+        "migrated host: Flow video upload answered 200 without mediaId/workflowId"
+    )
+    assert caught.value.status == 200
+    assert caught.value.route == "flow:upload/video"
+
+
+@pytest.mark.asyncio
+async def test_every_expectation_field_reaches_both_submit_checks(
+    driver: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The observer's check and the route guard see the same, complete expectation."""
+
+    async def prepare(*_args: Any, **_kwargs: Any) -> tuple[str, str, tuple[str, ...], int]:
+        return UPLOADED_MEDIA, UPLOADED_WF, (REF1, REF2), 12
+
+    def submit_body(**changes: Any) -> str:
+        fields = {
+            "wf": UPLOADED_WF,
+            "aspect_idx": 2,
+            "key": "macaron_cookie_extend_6s",
+            "ref_ids": (REF1, REF2),
+        }
+        fields.update(changes)
+        return _fzytfe_with_refs(**fields)
+
+    async def observe(
+        _composer: Any, page: Any, *, request_check: Any, **_kw: Any
+    ) -> GenerationRecord:
+        cases = [
+            ("wrong clip", "rqZuUc", _rqzuuc(media=MEDIA), False),
+            ("uploaded clip", "rqZuUc", _rqzuuc(media=UPLOADED_MEDIA), True),
+            ("wrong workflow", "fZytfe", submit_body(wf=OTHER_WF), False),
+            ("wrong aspect", "fZytfe", submit_body(aspect_idx=1), False),
+            ("wrong seconds", "fZytfe", submit_body(key="macaron_cookie_extend_5s"), False),
+            ("missing references", "fZytfe", submit_body(ref_ids=()), False),
+            ("all fields match", "fZytfe", submit_body(), True),
+        ]
+        for name, rpcid, body, allowed in cases:
+            assert (request_check(rpcid, body) is None) == allowed, name
+            route = _Route()
+            await page.routes[0](route, _Request(rpcid, body))
+            assert route.calls == (["fallback"] if allowed else ["abort"]), name
+        return _done_record()
+
+    monkeypatch.setattr(mx, "_prepare_clip_extend", prepare)
+    monkeypatch.setattr(mx.MigratedComposer, "submit_and_observe", observe)
+    await mx.run_extend(
+        _Page(_zzl0ze()),  # type: ignore[arg-type]
+        project_id=PID,
+        source_video=tmp_path / "source.mp4",
+        reference_images=(tmp_path / "one.png", tmp_path / "two.png"),
+        prompt="keep going",
+        aspect="16:9",
+        duration=6,
+        poll_timeout_s=30.0,
+    )
