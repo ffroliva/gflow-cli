@@ -16,7 +16,6 @@ import structlog
 from gflow_cli.api import flow_wire
 from gflow_cli.api.generation_route import (
     Route,
-    VideoWireTarget,
     choose_video_route,
     direct_can_serve,
     video_target,
@@ -47,12 +46,12 @@ log = structlog.get_logger(__name__)
 _T = TypeVar("_T")
 
 
-def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
-    """The measured wire key and aspect slot for ``request``, or ``None`` (the UI path).
+def _routes_direct(request: GenerateVideoRequest) -> bool:
+    """Whether ``request`` takes the direct path; the agentic UI mode is the UI.
 
     ``choose_video_route`` decides; the request's credit cap (its callers resolve
     ``GFLOW_CLI_MAX_CREDITS`` into it, as the pre-launch route does) routes to the UI, where
-    Flow's quote is read; :func:`video_target` reads the shape.
+    Flow's quote is read.
     """
     route = choose_video_route(
         request,
@@ -60,9 +59,7 @@ def _video_target(request: GenerateVideoRequest) -> VideoWireTarget | None:
         proxy_configured=_proxy_configured(),
         effective_max_credits=request.max_credits,
     )
-    if route is not Route.DIRECT or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
-        return None
-    return video_target(request)
+    return route is Route.DIRECT and resolve_ui_mode(request.ui_mode) is not UiMode.AGENTIC
 
 
 async def refuse_empty_balance(profile_dir: Path) -> None:
@@ -235,6 +232,9 @@ class DirectHttpTransport(UiAutomationTransport):
     ) -> VideoResult:
         """Generate one clip over direct HTTP when its key tuple is measured.
 
+        A bare t2v (no model) is keyed from the account's selection, read on the armed page
+        after the mint; an unread or unmeasured selection ends ``NotSent("t2v_key_unresolved")``.
+
         As :meth:`generate_images`: every other outcome raises ``DirectAttemptEnded`` for
         the retry loop, which runs :meth:`generate_video_ui` on a fresh page when nothing
         was sent. An i2v start frame is uploaded with ``maseQ`` once per run:
@@ -247,19 +247,20 @@ class DirectHttpTransport(UiAutomationTransport):
             raise RuntimeError(msg)
         page, profile_dir = self._page, self._profile_dir
         reason = self._why_not_direct_upload()
-        target = None if reason else _video_target(request)
-        if target is None:
-            reason = reason or "unsupported_shape"
-        elif project_id is None:
+        if not reason and not _routes_direct(request):
+            reason = "unsupported_shape"
+        elif not reason and project_id is None:
             reason = "no_project"
-        if reason or target is None or project_id is None or profile_dir is None:
+        if reason or project_id is None or profile_dir is None:
             raise not_sent(reason or "no_profile_dir")
+        # None only for a bare t2v: keyed after the mint from the account's selection.
+        target = video_target(request)
         await refuse_empty_balance(profile_dir)
         tokens = self._source_for(page).for_project(project_id)
         start: StartFrame | None = None
-        if request.mode is Mode.I2V:
+        if target is not None and request.mode is Mode.I2V:
             start = await self._start_frame(project_id, request, target.aspect_slot, frame_uploads)
-        video_target, start_frame = target, start
+        wire_target, start_frame = target, start
         return await self._run_direct(
             tokens,
             lambda: run_direct_video(
@@ -268,7 +269,7 @@ class DirectHttpTransport(UiAutomationTransport):
                 profile_dir=profile_dir,
                 project_id=project_id,
                 request=request,
-                target=video_target,
+                target=wire_target,
                 start=start_frame,
                 save=partial(self._save_clip, out_dir=out_dir),
                 download=download,

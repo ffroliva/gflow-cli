@@ -654,6 +654,9 @@ class VideoResult:
     visibility: str | None = None
     #: True when Flow refused the first direct submit and the retry produced this clip.
     retried: bool = False
+    #: The model the direct path sent (for a bare t2v, the account's selection); ``None`` when
+    #: the UI path ran, where the request's model (or Flow's picker) is the answer.
+    model: str | None = None
 
     @property
     def route(self) -> str:

@@ -249,7 +249,8 @@ def video_result(
         command,
         result,
         {
-            "model": request.model.value if request.model is not None else None,
+            # A bare t2v names no model; the direct path reports the selection it sent.
+            "model": request.model.value if request.model is not None else result.model,
             "mode": request.mode.value,
             "aspect": request.aspect.value,
             "duration": request.duration,

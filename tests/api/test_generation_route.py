@@ -11,6 +11,7 @@ import pytest
 from gflow_cli.api.generation_route import (
     IMAGE_WIRE_MODELS,
     MEASURED_VIDEO_KEYS,
+    VIDEO_FAMILY_MODELS,
     Route,
     VideoWireTarget,
     choose_image_route,
@@ -18,6 +19,8 @@ from gflow_cli.api.generation_route import (
     choose_video_route,
     direct_can_serve,
     plan_visibility,
+    selected_video_request,
+    video_target,
 )
 from gflow_cli.api.image import (
     Aspect as ImageAspect,
@@ -477,7 +480,8 @@ def test_video_direct_only_for_exact_measured_tuple() -> None:
 
 
 def test_i2v_model_none_normalises_to_veo_3_1_i2v_lite_and_routes_direct() -> None:
-    """I2V with model=None normalises to VEO_3_1_LITE and routes DIRECT; T2V None routes UI."""
+    """I2V with model=None normalises to VEO_3_1_LITE and routes DIRECT; a bare T2V routes
+    DIRECT too (Task 29): its key is the account's selection, read on the armed page."""
     # I2V with model=None at 9:16
     i2v_req = GenerateVideoRequest(
         prompt="p",
@@ -493,7 +497,7 @@ def test_i2v_model_none_normalises_to_veo_3_1_i2v_lite_and_routes_direct() -> No
         == Route.DIRECT
     )
 
-    # T2V with model=None routes UI
+    # T2V with model=None routes DIRECT: the transport keys it from the account's selection
     t2v_req = GenerateVideoRequest(
         prompt="p",
         mode=Mode.T2V,
@@ -504,7 +508,7 @@ def test_i2v_model_none_normalises_to_veo_3_1_i2v_lite_and_routes_direct() -> No
         choose_video_route(
             t2v_req, flow_host="", proxy_configured=False, effective_max_credits=None
         )
-        == Route.UI
+        == Route.DIRECT
     )
 
 
@@ -1030,5 +1034,98 @@ def test_direct_can_serve_rules() -> None:
 def test_uncaptured_video_tuples_are_not_direct(request_: GenerateVideoRequest) -> None:
     route = choose_video_route(
         request_, flow_host="", proxy_configured=False, effective_max_credits=None
+    )
+    assert route is Route.UI
+
+
+# --- Task 29: a bare t2v keyed by the account's selected model ------------------------
+
+_OMNI_SELECTION = {"videoModelFamilyId": "macaron_cookie", "videoDuration": 4, "videoResolution": 4}
+
+
+def test_family_ids_map_to_video_models() -> None:
+    """The composer's ``videoModelFamilyId`` values (spike 2026-11-27) and nothing else."""
+    assert VIDEO_FAMILY_MODELS == {
+        "macaron_cookie": VideoModel.OMNI_1_2_FLASH,
+        "veo_3_1_lite": VideoModel.VEO_3_1_LITE,
+        "veo_3_1_fast": VideoModel.VEO_3_1_FAST,
+        "veo_3_1_quality": VideoModel.VEO_3_1_QUALITY,
+    }
+
+
+@pytest.mark.parametrize(
+    ("aspect", "slot"), [(VideoAspect.PORTRAIT, 1), (VideoAspect.LANDSCAPE, 2)]
+)
+def test_selection_maps_to_measured_key_routes_direct(aspect: VideoAspect, slot: int) -> None:
+    """Row 9: a bare t2v routes direct, and Omni 1.2 Flash 4 s 360p keys the measured tuple."""
+    bare = GenerateVideoRequest(prompt="p", aspect=aspect)
+    route = choose_video_route(
+        bare, flow_host="flow.google.com", proxy_configured=False, effective_max_credits=None
+    )
+    assert route is Route.DIRECT
+    resolved = selected_video_request(bare, _OMNI_SELECTION)
+    assert resolved is not None
+    assert (resolved.model, resolved.duration, resolved.resolution) == (
+        VideoModel.OMNI_1_2_FLASH,
+        4,
+        "360p",
+    )
+    assert video_target(resolved) == VideoWireTarget("macaron_cookie_t2v_4s_360p", slot)
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        # Veo 3.1 Lite t2v: mapped, but no app frame was measured for it
+        {"videoModelFamilyId": "veo_3_1_lite", "videoDuration": 4, "videoResolution": 4},
+        # Omni at a duration the allowlist does not carry
+        {"videoModelFamilyId": "macaron_cookie", "videoDuration": 8, "videoResolution": 4},
+        # a malformed duration is no duration, which no Omni key carries
+        {"videoModelFamilyId": "macaron_cookie", "videoDuration": True, "videoResolution": 4},
+    ],
+)
+def test_unmeasured_selection_routes_ui(selection: dict[str, object]) -> None:
+    """Row 9: a mapped selection whose tuple is unmeasured has no key: the UI path."""
+    resolved = selected_video_request(GenerateVideoRequest(prompt="p"), selection)
+    assert resolved is not None
+    assert video_target(resolved) is None
+
+
+@pytest.mark.parametrize(
+    "selection",
+    [
+        {"videoModelFamilyId": "abra", "videoDuration": 4, "videoResolution": 4},
+        {"videoModelFamilyId": "macaron_cookie", "videoDuration": 4, "videoResolution": 3},
+        {"videoModelFamilyId": "macaron_cookie", "videoDuration": 4},
+        {"videoDuration": 4, "videoResolution": 4},
+        {"videoModelFamilyId": 7, "videoDuration": 4, "videoResolution": 4},
+    ],
+)
+def test_unmapped_selection_resolves_to_nothing(selection: dict[str, object]) -> None:
+    """An unknown family or resolution enum, or a malformed field, resolves to no request."""
+    assert selected_video_request(GenerateVideoRequest(prompt="p"), selection) is None
+
+
+def test_explicit_request_fields_win_over_the_selection() -> None:
+    """``--duration`` / ``--resolution`` on a bare t2v are what Flow's UI would apply."""
+    bare = GenerateVideoRequest(prompt="p", duration=8, resolution="720p")
+    resolved = selected_video_request(bare, _OMNI_SELECTION)
+    assert resolved is not None
+    assert (resolved.duration, resolved.resolution) == (8, "720p")
+    assert video_target(resolved) is None
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [
+        GenerateVideoRequest(prompt="p", count=2),
+        GenerateVideoRequest(prompt="p", reference_entities=("e1",)),
+        GenerateVideoRequest(prompt="p", max_credits=50),
+    ],
+)
+def test_bare_t2v_with_an_unmeasured_shape_routes_ui(request_: GenerateVideoRequest) -> None:
+    """The selection keys the model only: the count, references and a cap still route."""
+    route = choose_video_route(
+        request_, flow_host="flow.google.com", proxy_configured=False, effective_max_credits=None
     )
     assert route is Route.UI

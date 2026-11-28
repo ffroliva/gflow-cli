@@ -5,7 +5,11 @@ Two billed runs on one profile, headless, over ``GFLOW_CLI_TRANSPORT=direct_http
 * t2v at an explicit measured key (Omni 1.2 Flash, 4 s, 360p, 9:16: ``YhhmEf``), a
   360x640 mp4, 4 credits measured;
 * the default ``gflow video i2v`` shape (no ``--model``: Veo 3.1 Lite, 9:16; ``maseQ`` then
-  ``eb1hJf``), a 720x1280 mp4, 10 credits measured.
+  ``eb1hJf``), a 720x1280 mp4, 10 credits measured;
+* a bare ``gflow video t2v`` (no ``--model``, Task 29), keyed from the account's selected model
+  in the composer. It needs the profile's selection to be Omni 1.2 Flash, 4 s, 360p (the
+  measured key), set once in Flow's settings pane, and
+  ``GFLOW_CLI_E2E_SELECTED_VIDEO_MODEL=omni_1_2_flash`` naming it; it is skipped otherwise.
 
 Each asserts exit 0, route ``direct`` and visibility ``headless`` in the ``--json`` result,
 the mp4's dimensions, and a balance drop equal to the key's measured cost (spike 2026-11-27,
@@ -38,6 +42,8 @@ pytestmark = [pytest.mark.e2e, pytest.mark.e2e_video]
 
 _T2V_KEY = ("--model", "omni-1.2-flash", "--duration", "4", "--resolution", "360p")
 _T2V_COST, _I2V_COST = 4, 10  # macaron_cookie_t2v_4s_360p, veo_3_1_i2v_lite (one account)
+#: The model the profile's composer has selected; gflow reads it from the browser profile only.
+_SELECTED_MODEL_ENV = "GFLOW_CLI_E2E_SELECTED_VIDEO_MODEL"
 
 
 @pytest.fixture(autouse=True)
@@ -98,6 +104,26 @@ def test_t2v_at_a_measured_key_goes_direct_headless(e2e_env: RedactedEnv, tmp_pa
         *("--aspect", "9:16", "--out-file", str(out), "--json"),
     )
     _assert_direct_clip(proc, out, (360, 640))
+    assert before - _balance(e2e_env) == _T2V_COST
+
+
+def test_bare_t2v_uses_account_selection(e2e_env: RedactedEnv, tmp_path: Path) -> None:
+    """Row 9: no ``--model``; the key that ran is the account's selection, sent direct."""
+    selected = os.environ.get(_SELECTED_MODEL_ENV, "")
+    if selected != "omni_1_2_flash":
+        pytest.skip(
+            f"set {_SELECTED_MODEL_ENV}=omni_1_2_flash after selecting Omni 1.2 Flash, 4 s, "
+            "360p in the profile's Flow composer (the measured bare-t2v key)"
+        )
+    before = _balance(e2e_env)
+    out = tmp_path / "bare-t2v.mp4"
+    proc = _gflow(
+        e2e_env,
+        *("video", "t2v", "a paper boat drifting on a pond"),
+        *("--aspect", "9:16", "--out-file", str(out), "--json"),
+    )
+    _assert_direct_clip(proc, out, (360, 640))
+    assert json.loads(proc.stdout)["request"]["model"] == selected
     assert before - _balance(e2e_env) == _T2V_COST
 
 

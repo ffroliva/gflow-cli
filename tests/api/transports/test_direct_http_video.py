@@ -35,7 +35,14 @@ from gflow_cli.api.transports.frame_builder import (
     build_t2v_body,
     centred_crop,
 )
-from gflow_cli.api.video import Aspect, GenerateVideoRequest, Mode, VideoModel
+from gflow_cli.api.video import (
+    Aspect,
+    GenerateVideoRequest,
+    Mode,
+    VideoModel,
+    VideoResult,
+    VideoStatus,
+)
 from gflow_cli.errors import (
     InsufficientCreditsError,
     MediaDownloadError,
@@ -450,8 +457,7 @@ async def test_i2v_retry_reuses_uploaded_media_id(tmp_path: Path) -> None:
         GenerateVideoRequest(
             prompt="x", mode=Mode.I2V, start_image=Path("a.png"), end_image=Path("b.png")
         ),
-        # a bare t2v carries no model to key on
-        GenerateVideoRequest(prompt="x"),
+        # a bare t2v is keyed from the account's selection: see the Task 29 tests below
     ],
 )
 async def test_unmeasured_video_shape_raises_not_sent_route(
@@ -677,3 +683,102 @@ async def test_logs_never_carry_token_or_signed_url(tmp_path: Path) -> None:
     text = repr(logs)
     for secret in ("mock_token", "sid-1", _OMNI_T2V.prompt, _VIDEO_URL, "Signature="):
         assert secret not in text, secret
+
+
+# --- Task 29: a bare t2v keyed by the account's selected model ------------------------
+
+_BARE_T2V = GenerateVideoRequest(prompt="a paper boat", aspect=Aspect.PORTRAIT)
+_SELECTION_KEY = "flow-prompt-box-settings"
+
+
+def _with_selection(transport: DirectHttpTransport, value: object) -> AsyncMock:
+    """The armed page's ``localStorage`` read answers ``value`` (an exception is raised)."""
+    evaluate = (
+        AsyncMock(side_effect=value)
+        if isinstance(value, Exception)
+        else AsyncMock(return_value=value)
+    )
+    transport._page.evaluate = evaluate  # type: ignore[union-attr]
+    return evaluate
+
+
+def _selection(family: str, duration: int = 4, resolution: int = 4) -> str:
+    return json.dumps(
+        {
+            "aspectRatio": "PORTRAIT",
+            "videoModelFamilyId": family,
+            "videoDuration": duration,
+            "videoResolution": resolution,
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_bare_t2v_sends_the_key_of_the_account_selection(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Row 9: one ``localStorage`` read on the armed page keys the submit; no navigation."""
+    flow = _happy()
+    transport = _transport(tmp_path, flow)
+    evaluate = _with_selection(transport, _selection("macaron_cookie"))
+
+    result = await transport.generate_video(
+        request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path
+    )
+
+    evaluate.assert_awaited_once()
+    assert _SELECTION_KEY in evaluate.await_args.args
+    transport._page.goto.assert_not_awaited()  # type: ignore[union-attr]
+    sent = json.dumps(flow.bodies["YhhmEf"][0])
+    assert "macaron_cookie_t2v_4s_360p" in sent
+    assert flow.count("YhhmEf") == 1
+    assert result.status.succeeded
+    assert result.model == VideoModel.OMNI_1_2_FLASH.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "selection",
+    [
+        RuntimeError("Execution context was destroyed"),  # the read itself failed
+        None,  # Flow never wrote the key on this profile
+        "{not json",
+        json.dumps(["not", "an", "object"]),
+        _selection("abra"),  # a family with no mapped model
+        _selection("veo_3_1_lite"),  # mapped, but its t2v tuple is unmeasured
+    ],
+)
+async def test_selection_read_failure_falls_back_to_ui_not_sent(
+    tmp_path: Path, selection: object
+) -> None:
+    """Rows 7, 9: an unread or unmeasured selection sends nothing; the loop relaunches headed
+    and runs the UI path, which applies the account's selection itself."""
+    flow = _happy()
+    transport = _transport(tmp_path, flow)
+    _with_selection(transport, selection)
+    with pytest.raises(DirectAttemptEnded) as ended:
+        await transport.generate_video(request=_BARE_T2V, project_id=_PROJECT, out_dir=tmp_path)
+    assert ended.value.outcome == NotSent("t2v_key_unresolved")
+    assert flow.events == []
+
+    flow = _happy()
+    client, checkpoints = _client(tmp_path, flow)
+    _with_selection(client.transport, selection)  # type: ignore[arg-type]
+    ui_result = VideoResult(
+        status=VideoStatus(media_id=_MEDIA, status="MEDIA_GENERATION_STATUS_SUCCESSFUL"),
+        local_path=None,
+    )
+    ui = AsyncMock(return_value=ui_result)
+    client.transport.generate_video_ui = ui  # type: ignore[method-assign]
+
+    result = await client.generate_video(
+        req=_BARE_T2V,
+        project_id=_PROJECT,
+        out_dir=tmp_path,
+        on_checkpoint=lambda c: checkpoints.append(c.phase),
+    )
+
+    assert flow.events == ["relaunch:headed"]
+    ui.assert_awaited_once()
+    assert ui.await_args.kwargs["request"] == _BARE_T2V  # the UI path gets the bare request
+    assert result.status.succeeded
