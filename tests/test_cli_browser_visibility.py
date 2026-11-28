@@ -18,8 +18,11 @@ from gflow_cli.cli import main
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GFLOW_CLI_HEADLESS", raising=False)
-    monkeypatch.delenv("GFLOW_CLI_BROWSER_VISIBILITY", raising=False)
+    # setenv first so monkeypatch records the variable and restores it at teardown: the
+    # option under test writes os.environ, and a bare delenv on an unset name records nothing.
+    for name in ("GFLOW_CLI_HEADLESS", "GFLOW_CLI_BROWSER_VISIBILITY"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     config.reset_settings()
     yield
     config.reset_settings()
