@@ -45,7 +45,8 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 log = structlog.get_logger(__name__)
 
-_DEFAULT_TIMEOUT_S = 120.0
+#: Default MP4 export budget; slower 720p/1080p upscales on longer clips can exceed 120s.
+_DEFAULT_TIMEOUT_S = 240.0
 #: 4K video upscale on Flow Ultra measured ~97 s for a 4 s clip; longer 10-15 s clips need headroom.
 _4K_TIMEOUT_S = 360.0
 #: Flow renders the 270p GIF client-side, and the delay varies: measured 2026-10-07 the blob

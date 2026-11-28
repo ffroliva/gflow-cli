@@ -342,6 +342,7 @@ def test_a_gif_export_gets_a_longer_budget_than_an_mp4() -> None:
     from gflow_cli.api.transports.migrated_video_upscale import export_timeout_s
 
     assert export_timeout_s("270p") >= 300.0
+    assert export_timeout_s("720p") >= 240.0
     assert export_timeout_s("1080p") == export_timeout_s("720p") < export_timeout_s("270p")
 
 
