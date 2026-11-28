@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from gflow_cli.api.credit_cap import enforce_credit_cap, parse_credit_quote, resolve_max_credits
+from gflow_cli.api.transports._mc_common import UNUSUAL_ACTIVITY_REASON
 from gflow_cli.api.transports.batchexecute import rpc_errors
 from gflow_cli.api.transports.migrated_recover import MIGRATED_CLIP_URL
 from gflow_cli.api.transports.migrated_upscale import (
@@ -34,6 +35,7 @@ from gflow_cli.config import get_settings
 from gflow_cli.errors import (
     TransportTimeoutError,
     UpscaleUnavailableError,
+    WafRejectionError,
     WireFormatError,
     nothing_submitted,
 )
@@ -211,6 +213,24 @@ def _export_refusal_listener(
             return
         for err in rpc_errors(text):
             if err.rpcid in _EXPORT_RPCIDS:
+                if UNUSUAL_ACTIVITY_REASON in err.reasons:
+                    settle_exception(
+                        failed,
+                        WafRejectionError(
+                            detail=(
+                                f"Flow refused video export RPC {err.rpcid}: "
+                                f"{UNUSUAL_ACTIVITY_REASON} (gRPC {err.code})"
+                            ),
+                            route=f"batchexecute:{err.rpcid}",
+                            remediation_hint=(
+                                "Flow's bot check scored this browser profile as unusual "
+                                "activity; nothing was charged. Wait a few hours before "
+                                "retrying on this profile, or use another profile. "
+                                "See KNOWN_ISSUES: PUBLIC_ERROR_UNUSUAL_ACTIVITY."
+                            ),
+                        ),
+                    )
+                    return
                 settle_exception(
                     failed,
                     WireFormatError(
