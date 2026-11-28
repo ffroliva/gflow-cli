@@ -25,6 +25,71 @@
 
 <!-- browser-modes-table -->
 
+Which commands open a browser, with the default `GFLOW_CLI_BROWSER_VISIBILITY=auto` (copied from [BROWSER_MODES](docs/BROWSER_MODES.md), the single source):
+
+**Headless** (direct HTTP; the browser only mints the reCAPTCHA token)
+
+| Command | Browser mode in v0.108.0 | Why |
+|---|---|---|
+| `image t2i` | headless | Text-to-image with `nano2` (any aspect, count 1-4), or `nano2-lite` / `nano-pro` at 9:16, count 1, no reference: the measured image shapes |
+| `image generate` | headless | Resolves to `t2i` or `i2i`; the same rules apply to the resolved command |
+| `image i2i` | headless | With `nano2` and exactly one in-project reference, or one saved character passed as `--reference-entity` with its `--reference-entity-name` (count 1-4) |
+| `run` | per row | Each image row routes on its own shape; a row with a `"ref"` or a character takes the UI path, and a run with any UI row launches headed for the whole run |
+| `video t2v` | headless | `--model omni-1.2-flash --duration 4 --resolution 360p`, 9:16 or 16:9, count 1: the measured text-to-video key. With no `--model`, the key is built from the model selected in the account's Flow settings, and the command goes direct when that selection forms a measured key |
+| `video i2v` | headless | A **local** start frame, 9:16, the default model (Veo 3.1 Lite) or `--model veo-lite`, no `--duration` / `--resolution`: the measured image-to-video key. A JPEG whose EXIF orientation is a quarter turn (a phone photo taken upright) takes the UI path |
+| `video generate` | headless | Resolves to `t2v` / `i2v` / `r2v`; the rules of the resolved command apply |
+| `video upscale --scale 1080p` | headless | Only for a clip in the local catalog that is Omni 1.2 Flash, 4 s, 16:9: the measured upscale source |
+| `video chain` | per clip | Direct when every clip is a measured shape; a chain with any UI clip launches headed for the whole chain |
+| `serve` | same rules | The MCP tools and the HTTP endpoint route each request exactly as the CLI does; `browser_visibility` is the per-call twin of `--browser-visibility` |
+| `mcp run` | same rules | As `serve` |
+
+**Headed** (Flow's UI)
+
+| Command | Browser mode in v0.108.0 | Why |
+|---|---|---|
+| `auth login` | headed | Interactive sign-in; needs a display once |
+| `image batch` | headed | The stay-mounted UI batch drives the composer |
+| `image i2i --ref` | headed | A local `--ref` file is uploaded through the UI |
+| `image upload` | headed | Uploads through the project's UI |
+| `image upscale` | headed | Drives the image's download menu |
+| `movie run` | headed | Scene requests carry no resolution, so no scene forms a measured key; characters and instruction cards are UI surfaces too |
+| `video r2v` | headed | Reference-to-video is not measured over direct HTTP |
+| `video extend` | headed | Not measured over direct HTTP |
+| `video edit` | headed | Not measured over direct HTTP |
+| `video i2v --end-frame` | headed | An end frame, or a start frame that is already in the project, is not a measured shape |
+| `video upscale --scale 4k` | headed | 4K, 720p and the 270p GIF, and 1080p of a clip the local catalog does not hold, drive the download menu |
+| `scene create` | headed | Scenes are built in the UI |
+| `scene show` | headed | Reads the scene in the UI |
+| `character create` | headed | Character creation is a UI surface |
+| `character list` | headed | Reads the project's characters in the UI (also `character show` and `character rm`) |
+| `instructions add` | headed | Agent-mode instruction cards are a UI surface (every `instructions` subcommand) |
+| `media trash` | headed | Trash and restore are UI actions (also `media restore`) |
+| `project create` | headed | Creates the project in the UI (also `project rename`) |
+| `data sync` | headed | Reads the project in the profile's browser |
+| `video t2v --max-credits` | headed | Any credit-capped video (`--max-credits`, `GFLOW_CLI_MAX_CREDITS`, MCP `max_credits`) reads Flow's quote in the UI; direct video has no wire quote |
+
+**No browser**
+
+| Command | Browser mode in v0.108.0 | Why |
+|---|---|---|
+| `video assemble` | none | Local ffmpeg processing |
+| `video captions` | none | Local ffmpeg processing |
+| `video transcribe` | none | Calls the configured transcription endpoint |
+| `audio narrate` | none | Calls the configured text-to-speech service |
+| `docs` | none | Bundled documentation |
+| `data list` | none | Local catalog (every `data` subcommand except `data sync`) |
+| `telemetry status` | none | Local settings and one weekly upload (every `telemetry` subcommand) |
+| `update` | none | Runs the installer |
+| `models list` | none | Static model catalog (also `models show`) |
+| `capabilities` | none | Static capability report |
+| `cancel` | none | Local job queue |
+| `auth renew` | none or headless | Refreshes saved sessions headlessly, with no sign-in |
+| `credits user` | none or headless | Read directly when the saved session is accepted; otherwise in the profile's browser (also `credits list`) |
+
+A direct submit that Flow refuses as unusual activity is retried **once** from a new headless browser; a second refusal is final, and a headed window opens only when `--browser-visibility headed` (or `GFLOW_CLI_BROWSER_VISIBILITY=headed`) is set. Measured on Windows; macOS and Linux are unmeasured. The route rule and the conditions that force the UI path: [BROWSER_MODES](docs/BROWSER_MODES.md).
+
+<!-- /browser-modes-table -->
+
 An independent project, not affiliated with Google. It works on your own signed-in Flow session, so Google's terms apply to your account: read the [DISCLAIMER](DISCLAIMER.md) and [ACCOUNT_SAFETY](docs/ACCOUNT_SAFETY.md).
 
 ## gflow-cli at a glance
