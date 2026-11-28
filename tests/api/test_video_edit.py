@@ -229,9 +229,9 @@ async def test_upload_video_for_mention_returns_both_ids_and_the_picker_query(
     clip.write_bytes(_MP4_BYTES)
     sent: list[str] = []
 
-    async def fake_toolbar_upload(_page: Any, files: Any, **_kw: Any) -> tuple[int, str]:
+    async def fake_toolbar_upload(_page: Any, files: Any, **_kw: Any) -> str:
         sent.append(str(files))
-        return 200, json.dumps({"mediaId": _WF, "media": {"workflowId": _MID}})
+        return json.dumps({"mediaId": _WF, "media": {"workflowId": _MID}})
 
     monkeypatch.setattr(upload_mod, "toolbar_upload", fake_toolbar_upload)
     uploaded = await upload_mod.upload_video_for_mention(MagicMock(), _PID, clip)
