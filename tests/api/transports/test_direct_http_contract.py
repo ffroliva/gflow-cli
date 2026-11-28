@@ -33,14 +33,16 @@ EXPECTED_SIGNATURES: dict[str, str] = {
         "(*, http_transport: 'httpx.AsyncBaseTransport | None' = None) -> 'None'"
     ),
     "direct_can_serve": "(request: 'GenerateImageRequest') -> 'bool'",
+    # Task 10 (headless direct transport): the token source is injected, not minted here.
     "run_direct_images": (
-        "(*, page: 'Page', profile_dir: 'Path', project_id: 'str', "
-        "request: 'GenerateImageRequest', "
-        "http_transport: 'httpx.AsyncBaseTransport | None' = None) "
-        "-> 'list[GeneratedImage]'"
+        "(*, tokens: 'RecaptchaTokenSource', page: 'Page', profile_dir: 'Path', "
+        "project_id: 'str', request: 'GenerateImageRequest', "
+        "http_transport: 'httpx.AsyncBaseTransport | None' = None, "
+        "page_lock: 'asyncio.Lock | None' = None) -> 'list[GeneratedImage]'"
     ),
     "run_direct_upload": (
-        "(*, page: 'Page', profile_dir: 'Path', project_id: 'str', "
+        "(*, tokens: 'RecaptchaTokenSource', page: 'Page', profile_dir: 'Path', "
+        "project_id: 'str', "
         "path: 'Path', http_transport: 'httpx.AsyncBaseTransport | None' = None) -> 'ImageRef'"
     ),
     "build_ogiz0b_body": (

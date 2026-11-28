@@ -593,7 +593,7 @@ async def test_direct_http_page_navigates_to_project_when_needed(
     transport._http_transport = httpx.MockTransport(handler)
     req = GenerateImageRequest(prompt="a blue cup")
     await transport.generate_images(project_id="proj-123", request=req)
-    # The first navigation is the mint's; the park after the run is the second.
+    # The first navigation is the mint's.
     assert (
         transport._page.goto.await_args_list[0].args[0]
         == "https://flow.google.com/project/proj-123"
@@ -1078,15 +1078,17 @@ async def test_a_redirect_or_401_after_send_is_reconcile_not_a_fallback(
 
 
 @pytest.mark.asyncio
-async def test_the_page_is_parked_after_a_direct_run(
+async def test_no_about_blank_park_after_direct_call(
     transport: DirectHttpTransport, mock_mint_and_body: None
 ) -> None:
-    """CR-E / PR-3: a mounted composer must not leak into the next request."""
+    """The armed page stays armed: parking it on about:blank after every direct call forced a
+    second navigation per command (the plan's decision log, 2026-11-27). Parking stays on the
+    UI path, which mounts a composer; the direct path mounts none."""
     transport._http_transport = _shell_and(httpx.Response(200, text=_valid_ogiz0b_text()))
     park = AsyncMock()
     transport._park_composer_page = park  # type: ignore[method-assign]
     await transport.generate_images(project_id="proj-123", request=GenerateImageRequest(prompt="x"))
-    park.assert_awaited_once()
+    park.assert_not_awaited()
 
 
 @pytest.mark.asyncio

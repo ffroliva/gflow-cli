@@ -9,7 +9,12 @@ moment on, every failure (a reply, a parse, a later cookie read, a poll, a downl
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import secrets
+import time
+from collections import deque
+from collections.abc import AsyncGenerator, Callable
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import TYPE_CHECKING
 
@@ -18,6 +23,7 @@ import structlog
 
 from gflow_cli.api import flow_wire
 from gflow_cli.api.submit_policy import (
+    MAX_IN_FLIGHT,
     Accepted,
     DirectAttemptEnded,
     Indeterminate,
@@ -25,6 +31,7 @@ from gflow_cli.api.submit_policy import (
     RefusedNotBilled,
     classify_reply,
     not_sent,
+    starts_exceed,
 )
 from gflow_cli.api.transports._mc_common import _submit_refusal
 from gflow_cli.errors import ContentPolicyError, GFlowError, NetworkError
@@ -47,6 +54,7 @@ WRITE_RPCIDS = frozenset({"ogiZ0b", "maseQ", "YhhmEf", "eb1hJf", "p0UkFb"})
 READ_RPCIDS = frozenset({"jwpduf", "as29s"})
 # Raised while the connection opens, before any byte of the request is written.
 _CONNECT_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+_START_WINDOW_S = 120.0  # the start-rate warning's window (more than 8 starts in it)
 
 
 def _first_line(exc: BaseException) -> str:
@@ -183,6 +191,62 @@ def _post_request(
             "sec-fetch-dest": "empty",
         },
     )
+
+
+class InFlightGate:
+    """Admission for one transport's direct attempts, used as ``async with gate.slot():``.
+
+    At most ``MAX_IN_FLIGHT`` attempts run at once (``GFLOW_CLI_CONCURRENCY`` sizes the UI
+    page pool only and never raises it). ``quiesce()`` blocks new starts and waits for the
+    in-flight ones, for a browser relaunch; entering it from inside a slot deadlocks.
+    Every start is recorded, and a start rate above the measured limit is logged once per
+    window; nothing waits or refuses on it. ``clock`` is wall time, like the re-arm check.
+    """
+
+    def __init__(self, *, clock: Callable[[], float] = time.time) -> None:
+        self._slots = asyncio.Semaphore(MAX_IN_FLIGHT)
+        self._open = asyncio.Event()
+        self._open.set()
+        self._idle = asyncio.Event()
+        self._idle.set()
+        self._in_flight = 0
+        self._clock = clock
+        self._starts: deque[float] = deque()
+        self._warned_at: float | None = None
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> AsyncGenerator[None]:
+        while not self._open.is_set():  # re-checked: a quiesce may begin before we resume
+            await self._open.wait()
+        self._in_flight += 1
+        self._idle.clear()
+        try:
+            async with self._slots:
+                self._record_start()
+                yield
+        finally:
+            self._in_flight -= 1
+            if self._in_flight == 0:
+                self._idle.set()
+
+    @contextlib.asynccontextmanager
+    async def quiesce(self) -> AsyncGenerator[None]:
+        self._open.clear()
+        try:
+            await self._idle.wait()
+            yield
+        finally:
+            self._open.set()
+
+    def _record_start(self) -> None:
+        now = self._clock()
+        self._starts.append(now)
+        while self._starts and now - self._starts[0] > _START_WINDOW_S:
+            self._starts.popleft()
+        recent = self._warned_at is not None and now - self._warned_at <= _START_WINDOW_S
+        if not recent and starts_exceed(self._starts, now, window_s=_START_WINDOW_S):
+            self._warned_at = now
+            log.warning("direct.start_rate_high", count=len(self._starts), window_s=_START_WINDOW_S)
 
 
 def _client(http_transport: httpx.AsyncBaseTransport | None) -> httpx.AsyncClient:
