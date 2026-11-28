@@ -74,16 +74,20 @@ def transport_choices() -> list[str]:
 
 def resolve_transport_name(name: str | None = None) -> str:
     """Resolve the effective strategy key: explicit ``name`` arg >
-    ``GFLOW_CLI_TRANSPORT`` env > built-in default.
+    ``GFLOW_CLI_TRANSPORT`` env > the settings (a ``.env`` line) > built-in default.
 
     Exposed so callers that must decide *before* instantiating (e.g. FlowApiClient's
     standalone-only guard) resolve the key identically to :func:`make_transport`.
     """
-    return name or os.getenv("GFLOW_CLI_TRANSPORT") or _DEFAULT_TRANSPORT
+    from gflow_cli.config import get_settings  # noqa: PLC0415
+
+    return (
+        name or os.getenv("GFLOW_CLI_TRANSPORT") or get_settings().transport or _DEFAULT_TRANSPORT
+    )
 
 
 def make_transport(name: str | None = None) -> FlowTransportStrategy:
-    """Resolve strategy: explicit `name` arg > GFLOW_CLI_TRANSPORT env > built-in default.
+    """Resolve strategy as :func:`resolve_transport_name` does.
 
     Raises ConfigurationError listing all registered strategies if name is unknown.
     Note: the factory accepts experimental keys regardless of the

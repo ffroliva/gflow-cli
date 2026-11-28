@@ -885,15 +885,12 @@ def t2i(  # NOSONAR
                     prompt=prompt,
                     aspect=Aspect.from_cli(aspect),
                     model=Model.from_cli(model),
+                    count=count,
                     reference_entities=tuple(reference_entities),
                     reference_entity_names=tuple(reference_entity_names),
                     original_prompt=None,
                     tool=None,
-                    instructions=(
-                        tuple(AgentInstruction(text=i) for i in instructions)
-                        if instructions
-                        else None
-                    ),
+                    instructions=tuple(AgentInstruction(text=i) for i in instructions) or None,
                     ui_mode=UiMode(ui_mode) if ui_mode else None,
                     thinking_level=ThinkingLevel.from_cli(thinking_level),
                 ),

@@ -492,10 +492,13 @@ class FlowWorker:
                 )
 
             elif task.task_type in ("t2v", "i2v", "r2v"):
-                req = (
+                # The configured cap is resolved once, before the route: a capped job
+                # never launches headless (SCENARIO.md rows 11, 33).
+                req = _apply_configured_video_cap(
                     cast("GenerateVideoRequest", task.decoded.request)
                     if task.decoded is not None
-                    else self._build_video_request(task.payload)
+                    else self._build_video_request(task.payload),
+                    settings,
                 )
                 project_id = task.payload.get("project_id")
 
@@ -505,12 +508,8 @@ class FlowWorker:
                 # Non-optional alias for the closure below (`recorder` is
                 # declared Optional at method scope for the #341 failure funnel).
                 video_recorder = recorder
-                # Routed after the effective cap is resolved: a capped job never launches
-                # headless (SCENARIO.md rows 11, 33).
                 visibility = await video_client_visibility(
-                    settings,
-                    profile_dir,
-                    (video_route(_apply_configured_video_cap(req, settings), transport=transport),),
+                    settings, profile_dir, (video_route(req, transport=transport),)
                 )
                 try:
                     async with FlowApiClient(
@@ -529,16 +528,13 @@ class FlowWorker:
                         # Resolve @-mentions and expand --tool specs (shared helper).
                         from gflow_cli.services.mentions import resolve_and_apply
 
-                        req = _apply_configured_video_cap(
-                            await resolve_and_apply(
-                                client,
-                                req,
-                                path="video",
-                                project_id=project_id,
-                                tool_specs=tuple(task.payload.get("tool_specs", ())),
-                                quiet=True,
-                            ),
-                            settings,
+                        req = await resolve_and_apply(
+                            client,
+                            req,
+                            path="video",
+                            project_id=project_id,
+                            tool_specs=tuple(task.payload.get("tool_specs", ())),
+                            quiet=True,
                         )
 
                         def on_started(started: VideoStarted) -> None:

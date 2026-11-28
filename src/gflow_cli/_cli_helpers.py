@@ -55,13 +55,15 @@ from rich.markup import escape
 
 from gflow_cli import auth as auth_mod
 from gflow_cli import json_output, profile_store
-from gflow_cli.api.credit_cap import resolve_max_credits as _effective_cap
 from gflow_cli.api.generation_route import (
     Route,
     choose_image_route,
     choose_upscale_route,
     choose_video_route,
     plan_visibility,
+)
+from gflow_cli.api.transports.direct_http._session import (
+    _proxy_configured,  # pyright: ignore[reportPrivateUsage]
 )
 from gflow_cli.config import UiMode, get_settings, resolve_ui_mode
 from gflow_cli.errors import (
@@ -678,13 +680,6 @@ def resolve_max_credits(cli_value: int | None, configured: int | None) -> int | 
 # direct transport applies at run time, so a UI-bound request never runs on a headless page.
 
 
-def proxy_configured() -> bool:
-    """A proxy anywhere keeps every request on the UI path (the direct transport's rule)."""
-    from gflow_cli.api import flow_wire  # noqa: PLC0415
-
-    return bool(get_settings().browser_proxy) or any(k != "no" for k in flow_wire.getproxies())
-
-
 def _direct_transport(transport: str | None) -> bool:
     """Only ``direct_http`` has a direct route; the kill switch (``ui_automation``) has none."""
     from gflow_cli.api.transports import resolve_transport_name  # noqa: PLC0415
@@ -697,16 +692,17 @@ def image_route(request: GenerateImageRequest, *, transport: str | None = None) 
     if not _direct_transport(transport) or resolve_ui_mode(request.ui_mode) is UiMode.AGENTIC:
         return Route.UI
     return choose_image_route(
-        request, flow_host=get_settings().flow_host, proxy_configured=proxy_configured()
+        request, flow_host=get_settings().flow_host, proxy_configured=_proxy_configured()
     )
 
 
 def video_route(request: GenerateVideoRequest, *, transport: str | None = None) -> Route:
     """The route the direct transport takes for ``request``.
 
-    The effective cap is resolved as the transport resolves it (the request's cap, else
-    ``GFLOW_CLI_MAX_CREDITS``), so a capped video routes to the UI, where the quote is read.
-    An ``@`` mention can resolve to a reference after launch, so it routes to the UI too.
+    The request carries its effective cap (callers resolve ``GFLOW_CLI_MAX_CREDITS`` and
+    ``--no-max-credits`` into it), so a capped video routes to the UI, where the quote is
+    read, and an explicitly uncapped one routes on its shape. An ``@`` mention can resolve to
+    a reference after launch, so it routes to the UI too.
     """
     settings = get_settings()
     if (
@@ -718,8 +714,8 @@ def video_route(request: GenerateVideoRequest, *, transport: str | None = None) 
     return choose_video_route(
         request,
         flow_host=settings.flow_host,
-        proxy_configured=proxy_configured(),
-        effective_max_credits=_effective_cap(request.max_credits, settings.max_credits),
+        proxy_configured=_proxy_configured(),
+        effective_max_credits=request.max_credits,
     )
 
 
@@ -728,7 +724,7 @@ def upscale_route(scale: str, catalog_row: object | None, *, transport: str | No
     if not _direct_transport(transport):
         return Route.UI
     return choose_upscale_route(
-        scale, catalog_row, flow_host=get_settings().flow_host, proxy_configured=proxy_configured()
+        scale, catalog_row, flow_host=get_settings().flow_host, proxy_configured=_proxy_configured()
     )
 
 

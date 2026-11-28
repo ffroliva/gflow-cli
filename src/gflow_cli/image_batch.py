@@ -539,12 +539,7 @@ def planned_row_route(item: BatchPromptItem, transport: str | None) -> Route:
     """
     if item.ref is not None or item.reference_entity is not None:
         return Route.UI
-    request = GenerateImageRequest(
-        prompt=item.text,
-        aspect=Aspect.from_cli(item.aspect_ratio),
-        model=Model.from_cli(item.model),
-    )
-    return image_route(request, transport=transport)
+    return image_route(_to_request(item), transport=transport)
 
 
 async def run_one_image_prompt(

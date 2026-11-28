@@ -90,13 +90,10 @@ def test_unmeasured_video_shape_routes_ui() -> None:
     assert video_route(measured_t2v(model=VideoModel.VEO_3_1_FAST, duration=8)) is Route.UI
 
 
-def test_capped_video_routes_ui_from_the_request_or_the_setting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_capped_video_routes_ui() -> None:
+    """The request carries its effective cap; callers resolve ``GFLOW_CLI_MAX_CREDITS`` into
+    it (``test_no_max_credits_route_ignores_configured_cap``, the worker tests below)."""
     assert video_route(measured_t2v(max_credits=50)) is Route.UI
-    monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "50")
-    config.reset_settings()
-    assert video_route(measured_t2v()) is Route.UI
 
 
 def test_mention_in_a_video_prompt_routes_ui() -> None:
@@ -342,7 +339,7 @@ async def test_movie_run_with_a_ui_clip_launches_headed(tmp_path: Path) -> None:
             out_dir=tmp_path,
             continue_on_error=False,
         )
-    assert _launched(factory, tmp_path) is BrowserVisibility.HEADED
+    assert factory.call_args.kwargs["visibility"] is BrowserVisibility.HEADED
 
 
 async def _run_rows(tmp_path: Path, rows: tuple[Any, ...], *, manifest: bool = False) -> object:
@@ -446,3 +443,133 @@ async def test_mcp_capped_video_constructs_headed_client(tmp_path: Path) -> None
     builds the client headed for it."""
     payload = {**_MEASURED_T2V_PAYLOAD, "max_credits": 50}
     assert await _worker_video_visibility(tmp_path, payload) is BrowserVisibility.HEADED
+
+
+# --- council FIX items ---------------------------------------------------------------------
+
+
+def test_dotenv_kill_switch_forces_ui_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``.env`` line reaches the settings, never ``os.environ``: the CLI honours it as the
+    worker does."""
+    import os
+
+    from gflow_cli.api.transports import make_transport
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("GFLOW_CLI_TRANSPORT=ui_automation\n", encoding="utf-8")
+    config.reset_settings()
+    assert "GFLOW_CLI_TRANSPORT" not in os.environ
+    assert image_route(measured_t2i()) is Route.UI
+    assert make_transport().name == "ui_automation"
+
+
+def test_t2i_harbor_seal_count4_plans_headed(tmp_path: Path) -> None:
+    """HARBOR_SEAL was measured with count 1 only: ``-n 4`` plans the UI, launched headed."""
+    from gflow_cli.cli import main
+
+    factory = _recording_client()
+    with (
+        patch("gflow_cli.cli_image._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_image._make_provider_dir", return_value=tmp_path / "prof"),
+        patch("gflow_cli.cli_image.FlowApiClient", factory),
+        patch("gflow_cli.cli_image.OperationRecorder"),
+    ):
+        CliRunner().invoke(
+            main,
+            [
+                *("image", "t2i", "a lighthouse"),
+                *("--model", "nano2-lite", "--aspect", "9:16", "-n", "4"),
+            ],
+        )
+    factory.assert_called_once()
+    assert factory.call_args.kwargs["visibility"] is BrowserVisibility.HEADED
+
+
+def test_batch_row_count4_harbor_seal_plans_ui() -> None:
+    """The planned row is the request the batch sends, count included."""
+    from gflow_cli.image_batch import BatchPromptItem, planned_row_route
+
+    one = BatchPromptItem(text="a lighthouse", aspect_ratio="9:16", model="nano2-lite")
+    assert planned_row_route(one, None) is Route.DIRECT
+    four = BatchPromptItem(text="a lighthouse", aspect_ratio="9:16", model="nano2-lite", count=4)
+    assert planned_row_route(four, None) is Route.UI
+
+
+@pytest.mark.usefixtures("positive_balance")
+async def test_movie_run_all_direct_clips_launches_headless(tmp_path: Path) -> None:
+    """No movie scene reaches a measured key today (a scene carries no resolution), so the
+    planner is pinned to direct: the run must launch headless from the planned routes."""
+    from gflow_cli import cli_movie
+    from gflow_cli.composition import Scene, StyleSpec
+    from gflow_cli.movie_manifest import MovieManifest, MovieState
+
+    manifest = MovieManifest(
+        title="T",
+        project="p",
+        style=StyleSpec(),
+        characters={},
+        scenes=(Scene(id="a", action="a wide shot", duration=4, model="omni-1.2-flash"),),
+    )
+    factory = _recording_client()
+    with (
+        patch.object(cli_movie, "FlowApiClient", factory),
+        patch.object(cli_movie, "OperationRecorder"),
+        patch.object(cli_movie, "_planned_scene_route", return_value=Route.DIRECT),
+        pytest.raises(_StopError),
+    ):
+        await cli_movie._run_movie(  # pyright: ignore[reportPrivateUsage]
+            manifest=manifest,
+            state=MovieState(title="T", project="p"),
+            state_path=tmp_path / "state.json",
+            profile_name="default",
+            profile_dir=tmp_path,
+            out_dir=tmp_path,
+            continue_on_error=False,
+        )
+    assert factory.call_args.kwargs["visibility"] is BrowserVisibility.HEADLESS
+
+
+def test_t2v_empty_balance_exits_37_before_client_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gflow_cli.api import flow_wire
+    from gflow_cli.cli import main
+
+    async def zero(_profile_dir: Path) -> object:
+        return type("Info", (), {"credits": 0})()
+
+    monkeypatch.setattr(flow_wire, "read_credits", zero)
+    factory = _recording_client()
+    with (
+        patch("gflow_cli.cli_video._resolve_profile", return_value="default"),
+        patch("gflow_cli.cli_video._make_provider_dir", return_value=tmp_path / "prof"),
+        patch("gflow_cli.cli_video.FlowApiClient", factory),
+        patch("gflow_cli.cli_video.OperationRecorder"),
+    ):
+        result = CliRunner().invoke(
+            main,
+            [
+                *("video", "t2v", "a lighthouse at dusk", "--model", "omni-1.2-flash"),
+                *("--duration", "4", "--resolution", "360p", "--aspect", "16:9"),
+            ],
+        )
+    assert result.exit_code == 37
+    factory.assert_not_called()
+
+
+@pytest.mark.usefixtures("positive_balance")
+def test_no_max_credits_route_ignores_configured_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--no-max-credits`` sends an uncapped request: it routes on its own shape, while the
+    same command without the flag still takes the configured cap to the UI."""
+    monkeypatch.setenv("GFLOW_CLI_MAX_CREDITS", "50")
+    config.reset_settings()
+    measured = ("--model", "omni-1.2-flash", "--duration", "4", "--resolution", "360p")
+    capped = _invoke_t2v(tmp_path, *measured, "--aspect", "16:9")
+    assert _launched(capped, tmp_path) is BrowserVisibility.HEADED
+    uncapped = _invoke_t2v(tmp_path, *measured, "--aspect", "16:9", "--no-max-credits")
+    assert _launched(uncapped, tmp_path) is BrowserVisibility.HEADLESS
+    assert video_route(measured_t2v()) is Route.DIRECT

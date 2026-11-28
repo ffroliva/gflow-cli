@@ -2089,9 +2089,7 @@ async def _extend_migrated_session(  # noqa: PLR0913
         OutputFormat.JSON.value,
         OutputFormat.ID.value,
     )
-    async with FlowApiClient(
-        profile_dir=profile_dir,
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         resolved_project = project_id
         if resolved_project is None:
             created = await client.create_project(
@@ -2161,9 +2159,7 @@ async def _extend_session(  # noqa: PLR0913
 ) -> None:
     """The browser-bound half of `_run_extend`, split out so the caller can own
     the DataStore lifetime with a plain try/finally."""
-    async with FlowApiClient(
-        profile_dir=profile_dir,
-    ) as client:
+    async with FlowApiClient(profile_dir=profile_dir) as client:
         # `auto` sent an unported form here before any page existed; if Flow served
         # flow.google.com, the labs read below is retired there (exit 7) -- say exit 36.
         refusal = migrated_extend.unported_refusal(segments=segments, scene_id=scene_id, seed=seed)
