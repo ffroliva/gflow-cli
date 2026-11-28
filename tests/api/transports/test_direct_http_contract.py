@@ -34,11 +34,13 @@ EXPECTED_SIGNATURES: dict[str, str] = {
     ),
     "direct_can_serve": "(request: 'GenerateImageRequest') -> 'bool'",
     # Task 10 (headless direct transport): the token source is injected, not minted here.
+    # Task 13: ``on_before_submit`` runs immediately before the billed POST.
     "run_direct_images": (
         "(*, tokens: 'RecaptchaTokenSource', page: 'Page', profile_dir: 'Path', "
         "project_id: 'str', request: 'GenerateImageRequest', page_lock: 'asyncio.Lock', "
         "armed_page: 'Callable[[], Page]', "
-        "http_transport: 'httpx.AsyncBaseTransport | None' = None) -> 'list[GeneratedImage]'"
+        "http_transport: 'httpx.AsyncBaseTransport | None' = None, "
+        "on_before_submit: 'Callable[[], None] | None' = None) -> 'list[GeneratedImage]'"
     ),
     "run_direct_upload": (
         "(*, tokens: 'RecaptchaTokenSource', page: 'Page', profile_dir: 'Path', "

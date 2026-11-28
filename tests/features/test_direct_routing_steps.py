@@ -1,14 +1,16 @@
 """Offline BDD step definitions for direct routing and refusal retry.
 
 Bound to tests/features/direct_routing.feature. Covers the 8 scenarios planned in
-Task 20. Each scenario is marked strict-xfail until its owning task removes the marker:
-- Scenarios 1-5: Task 13 (The refusal retry loop)
-- Scenarios 6-8: Task 12 (Route-aware client construction and the direct default)
+Task 20. Scenarios 1-5 run against the refusal retry loop (Task 13); scenarios 6-8 stay
+strict-xfail until Task 12 (route-aware client construction and the direct default).
 """
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from pytest_bdd import given, parsers, scenario, then, when
@@ -19,11 +21,10 @@ from gflow_cli.api.submit_policy import (
 )
 
 # ---------------------------------------------------------------------------
-# Scenarios (8) marked strict-xfail
+# Scenarios (8); 6-8 marked strict-xfail
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
 @scenario(
     "direct_routing.feature",
     "A refused direct submit is retried once from a fresh headless browser",
@@ -32,7 +33,6 @@ def test_refused_direct_submit_retried_once() -> None:
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
 @scenario(
     "direct_routing.feature",
     "A refusal on both attempts stops without a third submit",
@@ -41,7 +41,6 @@ def test_refusal_on_both_attempts_stops() -> None:
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
 @scenario(
     "direct_routing.feature",
     "A timeout after send is never resent",
@@ -50,7 +49,6 @@ def test_timeout_after_send_never_resent() -> None:
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
 @scenario(
     "direct_routing.feature",
     "A signed-out profile reports the UI path's auth error with no retry",
@@ -59,7 +57,6 @@ def test_signed_out_profile_reports_auth_error_no_retry() -> None:
     pass
 
 
-@pytest.mark.xfail(strict=True, reason="Task 13: The refusal retry loop (images)")
 @scenario(
     "direct_routing.feature",
     "An explicit headed setting with no display fails before launch, naming the display",
@@ -160,24 +157,77 @@ def _step_explicit_headed_no_display(
 # ---------------------------------------------------------------------------
 
 
+class _Host:
+    """The client the loop relaunches: records each relaunch's visibility."""
+
+    def __init__(self, world: dict[str, Any]) -> None:
+        self.visibility = BrowserVisibility.HEADLESS
+        self._world = world
+
+    async def relaunch(self, visibility: BrowserVisibility) -> None:
+        self._world["relaunches"].append(visibility)
+        self.visibility = visibility
+
+
 @when("the generation runs")
 def _step_generation_runs(world: dict[str, Any]) -> None:
-    # Lazy import of Task 13 retry loop runner
-    from gflow_cli.api._flow_retry import run_with_retry  # pyright: ignore[reportMissingImports]
+    from gflow_cli.api._flow_retry import run_with_retry
+    from gflow_cli.api.submit_policy import (
+        DirectAttemptEnded,
+        Indeterminate,
+        NotSent,
+        RefusedNotBilled,
+    )
 
-    world["result"] = run_with_retry(world)
+    answers = list(world.get("submit_responses", ["ACCEPTED"]))
+
+    async def direct(before: Any) -> str:
+        if world.get("signed_out"):
+            raise DirectAttemptEnded(NotSent("signed_out_shell", auth=True))
+        world["submits"].append(len(world["relaunches"]))
+        answer = answers.pop(0)
+        if answer == "UNUSUAL_ACTIVITY":
+            raise DirectAttemptEnded(RefusedNotBilled("ogiZ0b", "UNUSUAL_ACTIVITY"))
+        if answer == "TIMEOUT_AFTER_SEND":
+            raise DirectAttemptEnded(Indeterminate("ogiZ0b", "timeout after send"))
+        return "image"
+
+    async def ui() -> str:
+        raise AssertionError("the UI path must not run")
+
+    async def run() -> None:
+        try:
+            world["result"] = await run_with_retry(
+                _Host(world),
+                direct=direct,
+                ui=ui,
+                setting=world.get("setting", VisibilitySetting.AUTO),
+            )
+        except Exception as exc:  # noqa: BLE001 - the Then steps assert on it
+            world["error"] = exc
+
+    asyncio.run(run())
 
 
 @when("the client launches")
-def _step_client_launches(world: dict[str, Any]) -> None:
-    # Lazy import of Task 11 / Task 13 client construction with display validation
+def _step_client_launches(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from gflow_cli.api.client import FlowApiClient
 
+    monkeypatch.setattr("gflow_cli.api.client._on_linux", lambda: True)
+    monkeypatch.setattr(
+        "gflow_cli.api.client.async_playwright",
+        MagicMock(side_effect=AssertionError("Playwright must not start")),
+    )
+
+    async def launch() -> None:
+        async with FlowApiClient(tmp_path, visibility=BrowserVisibility.HEADED):
+            pass
+
     try:
-        # Task 11 adds visibility keyword and pre-flight display check before headed launch
-        client = FlowApiClient(visibility=BrowserVisibility.HEADED)  # type: ignore[call-arg]
-        world["client"] = client
-    except Exception as exc:  # noqa: BLE001
+        asyncio.run(launch())
+    except Exception as exc:  # noqa: BLE001 - the Then step asserts on it
         world["error"] = exc
 
 
@@ -233,21 +283,21 @@ def _step_no_submits(world: dict[str, Any]) -> None:
 
 @then("the UI auth error is reported with no retry")
 def _step_ui_auth_error(world: dict[str, Any]) -> None:
-    from gflow_cli.errors import AuthenticationError
+    from gflow_cli.errors import AuthExpiredError  # the class the UI path raises signed out
 
     err = world.get("error")
-    assert isinstance(err, AuthenticationError)
+    assert isinstance(err, AuthExpiredError)
     assert len(world.get("submits", [])) == 0
 
 
 @then("the launch fails before launch naming the missing display")
 def _step_fails_naming_display(world: dict[str, Any]) -> None:
-    from gflow_cli.errors import UiModeUnavailableError
+    from gflow_cli.errors import UiModeUnavailableError, exit_code_for
 
     err = world.get("error")
     assert isinstance(err, UiModeUnavailableError)
     assert "display" in err.detail.lower()
-    assert err.exit_code == 28
+    assert exit_code_for(err) == 28
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +336,11 @@ def _step_env_headless_false(
 @when("the route is chosen")
 def _step_route_chosen(world: dict[str, Any]) -> None:
     # Must go through Task 12's future client_visibility entry point:
+    from gflow_cli._cli_helpers import client_visibility  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType]
     from gflow_cli.api.generation_route import (  # pyright: ignore[reportMissingImports]
         Route,
         choose_video_route,
     )
-
-    from gflow_cli._cli_helpers import client_visibility  # pyright: ignore[reportAttributeAccessIssue, reportUnknownVariableType]
     from gflow_cli.config import get_settings
 
     settings = get_settings()

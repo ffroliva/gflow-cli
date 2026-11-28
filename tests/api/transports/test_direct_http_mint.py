@@ -23,6 +23,7 @@ from gflow_cli.api.transports.direct_http._gateway import InFlightGate
 from gflow_cli.api.transports.direct_http._mint import PageTokenSource
 from gflow_cli.config import reset_settings
 from gflow_cli.errors import ContentPolicyError, WafRejectionError
+from tests.api.transports._direct_client import generate_like_the_client
 from tests.api.transports.test_migrated_images import image_payload
 
 _SHELL_HTML = '<html>"SNlM0e":"at-x","FdrFJe":"sid","cfb2h":"boq_x"</html>'
@@ -115,7 +116,7 @@ def _transport(tmp_path: Path, posts: _Posts, page: MagicMock | None = None) -> 
 
 def _generate(t: DirectHttpTransport, project_id: str = "proj-123") -> Any:
     return asyncio.create_task(
-        t.generate_images(project_id=project_id, request=GenerateImageRequest(prompt="x"))
+        generate_like_the_client(t, project_id=project_id, request=GenerateImageRequest(prompt="x"))
     )
 
 
@@ -403,7 +404,7 @@ async def test_character_read_uses_rearmed_page(
     request = GenerateImageRequest(
         prompt="x", reference_entities=("entity-0",), reference_entity_names=("Skipper",)
     )
-    await t.generate_images(project_id="proj-123", request=request)
+    await generate_like_the_client(t, project_id="proj-123", request=request)
     assert read.await_args is not None
     assert read.await_args.args[0] is fresh
 

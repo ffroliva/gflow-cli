@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
     from _typeshed import DataclassInstance
 
+    from gflow_cli.api._flow_retry import DirectImages, RetryHost
     from gflow_cli.api.image import GenerateImageRequest
     from gflow_cli.api.video import (
         EditVideoRequest,
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
         VideoStarted,
         VideoStartedCallback,
     )
+from gflow_cli.api._flow_retry import run_with_retry
 from gflow_cli.api._flow_session import (
     JsonObject,
     _make_instance,  # pyright: ignore[reportPrivateUsage]
@@ -74,6 +76,7 @@ from gflow_cli.api._flow_session import (
     _storage_key_from_path,  # pyright: ignore[reportPrivateUsage]
 )
 from gflow_cli.api._flow_workspace import _MIGRATED_FLOW_HOST, WorkspaceSurface  # pyright: ignore[reportPrivateUsage]
+from gflow_cli.api.submit_policy import VisibilitySetting
 
 logger = structlog.get_logger(__name__)
 
@@ -533,8 +536,6 @@ class GenerationSurface(WorkspaceSurface):
         else:
             token = await self._mint_recaptcha_token(recaptcha_action)
             req_with_token = _dc_replace(req, recaptcha_token=token)
-        if on_checkpoint is not None:
-            on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
         # Kwarg passed only when set: keeps duck-typed fakes/transports that
         # predate #546 working, while the Protocol documents the seam.
         resolver_kw: dict[str, Any] = (
@@ -543,13 +544,25 @@ class GenerationSurface(WorkspaceSurface):
         # Sent once on every transport. #1010: a page-owned call IS the billed click, and
         # an error after it does not mean nothing was made (one retry left 2 images).
         # #1275: an HTTP transport sends a single-use token, so a resend is refused or
-        # spends the image quota twice.
+        # spends the image quota twice. The one exception is a direct submit Flow refused
+        # as not billed: the retry loop sends it once more from a fresh browser.
         try:
-            images = await self.transport.generate_images(
-                project_id=project_id,
-                request=req_with_token,
-                **resolver_kw,
-            )
+            # A class-level lookup: a mock transport answers every instance attribute.
+            if hasattr(type(self.transport), "generate_images_ui"):
+                images = await self._images_through_retry(
+                    project_id=project_id,
+                    request=req_with_token,
+                    on_checkpoint=on_checkpoint,
+                    name_resolver=name_resolver,
+                )
+            else:
+                if on_checkpoint is not None:
+                    on_checkpoint(GenerationCheckpoint(phase="submit_attempted"))
+                images = await self.transport.generate_images(
+                    project_id=project_id,
+                    request=req_with_token,
+                    **resolver_kw,
+                )
         except (NetworkError, TransportTimeoutError, *retryable_engine_errors()) as exc:
             if page_owned:
                 raise
@@ -593,6 +606,34 @@ class GenerationSurface(WorkspaceSurface):
                 ),
             )
         return images
+
+    async def _images_through_retry(
+        self,
+        *,
+        project_id: str,
+        request: GenerateImageRequest,
+        on_checkpoint: GenerationCheckpointObserver | None,
+        name_resolver: Callable[[str], str | None] | None,
+    ) -> list[GeneratedImage]:
+        """A direct-capable transport, through the refusal retry loop (Task 13)."""
+
+        def transport() -> DirectImages:
+            return cast("DirectImages", self.transport)  # re-read: a relaunch replaces it
+
+        return await run_with_retry(
+            cast("RetryHost", self),
+            direct=lambda before: transport().generate_images(
+                project_id=project_id,
+                request=request,
+                name_resolver=name_resolver,
+                on_before_submit=before,
+            ),
+            ui=lambda: transport().generate_images_ui(
+                project_id=project_id, request=request, name_resolver=name_resolver
+            ),
+            setting=VisibilitySetting(self.settings.browser_visibility),
+            on_checkpoint=on_checkpoint,
+        )
 
     async def _drive_image_generation(
         self,

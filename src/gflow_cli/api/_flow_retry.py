@@ -1,0 +1,205 @@
+"""The refusal retry loop: one direct attempt, at most one retry, and the typed error.
+
+The generation surfaces call it once, so the CLI, MCP and the worker carry no retry code of
+their own. A direct attempt that does not end ``Accepted`` raises ``DirectAttemptEnded``;
+``next_step`` decides what follows:
+
+* ``RetryDirect`` (Flow refused the token, not billed): write ``submit_refused``, relaunch
+  the browser process at the setting's launch visibility, and send once more.
+* ``FallbackUi`` (nothing reached Flow): relaunch when the page's visibility differs, write
+  ``submit_attempted`` through the submit gate, then run the UI path. The UI transport never
+  receives ``on_before_submit``, so this is the one place its checkpoint is written.
+* ``Stop``: a second refusal is final and not charged; past the send the error says
+  reconcile; a signed-out session raises the UI path's auth error.
+
+The relaunch runs only after the attempt has left its in-flight slot, so the transport's
+``quiesce()`` can drain other jobs without waiting on this one.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol, TypeVar
+
+import structlog
+
+from gflow_cli.api._flow_session import RelaunchFailed
+from gflow_cli.api.dto import GenerationCheckpoint, GenerationPhase
+from gflow_cli.api.refusal import waf_refusal_final
+from gflow_cli.api.submit_policy import (
+    DirectAttemptEnded,
+    FallbackUi,
+    Indeterminate,
+    RetryDirect,
+    RetryStep,
+    Stop,
+    next_step,
+)
+from gflow_cli.errors import AuthExpiredError, GFlowError, NetworkError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from gflow_cli.api.dto import GeneratedImage, GenerationCheckpointObserver
+    from gflow_cli.api.image import GenerateImageRequest, ImageRef
+    from gflow_cli.api.submit_policy import BrowserVisibility, VisibilitySetting
+
+__all__ = [
+    "REFUSAL_RETRY_NOTICE",
+    "BeforeSubmit",
+    "DirectImages",
+    "DirectUploads",
+    "RetryHost",
+    "run_with_retry",
+]
+
+log = structlog.get_logger(__name__)
+_T = TypeVar("_T")
+
+#: Called by the transport immediately before the billed POST.
+BeforeSubmit = Callable[[], None]
+
+#: The one line a person sees before the relaunch (structlog writes it to stderr).
+REFUSAL_RETRY_NOTICE = "Flow refused the token; retrying once from a fresh browser"
+
+
+class RetryHost(Protocol):
+    """The client the loop relaunches: its current visibility and ``relaunch``."""
+
+    visibility: BrowserVisibility
+
+    async def relaunch(self, visibility: BrowserVisibility) -> None: ...
+
+
+class DirectImages(Protocol):
+    """A transport whose image path can end ``NotSent`` and fall back to its UI path."""
+
+    async def generate_images(
+        self,
+        *,
+        project_id: str | None,
+        request: GenerateImageRequest,
+        name_resolver: Callable[[str], str | None] | None = None,
+        on_before_submit: BeforeSubmit | None = None,
+    ) -> list[GeneratedImage]: ...
+
+    async def generate_images_ui(
+        self,
+        *,
+        project_id: str | None,
+        request: GenerateImageRequest,
+        name_resolver: Callable[[str], str | None] | None = None,
+    ) -> list[GeneratedImage]: ...
+
+
+class DirectUploads(Protocol):
+    """A transport whose upload can end ``NotSent`` and fall back to its UI upload."""
+
+    async def upload_reference(self, *, project_id: str, path: Path) -> ImageRef | None: ...
+
+    async def upload_reference_ui(self, *, project_id: str, path: Path) -> ImageRef | None: ...
+
+
+async def run_with_retry(
+    host: RetryHost,
+    *,
+    direct: Callable[[BeforeSubmit | None], Awaitable[_T]],
+    ui: Callable[[], Awaitable[_T]],
+    setting: VisibilitySetting,
+    on_checkpoint: GenerationCheckpointObserver | None = None,
+) -> _T:
+    """Run ``direct`` and apply ``next_step`` until it is done, falls back, or stops.
+
+    ``direct`` receives the ``on_before_submit`` hook (``None`` with no observer) and must
+    read the client's transport when called: a relaunch replaces it. An exception the hook
+    raises (a cancel from the submit gate) propagates unchanged.
+    """
+
+    emit = _Checkpoints(on_checkpoint)
+    hook = None if on_checkpoint is None else emit.submit_attempted
+    retried = False
+    while True:
+        try:
+            return await direct(hook)
+        except DirectAttemptEnded as exc:
+            ended = exc
+        step = next_step(ended.outcome, setting=setting, retried=retried)
+        if isinstance(step, RetryDirect):
+            await _relaunch_after_refusal(host, step, ended, emit)
+            retried = True
+        elif isinstance(step, FallbackUi):
+            if host.visibility != step.visibility:
+                await host.relaunch(step.visibility)
+            log.info("direct.fallback_to_ui", reason=_reason(ended))
+            emit.submit_attempted()
+            return await ui()
+        else:
+            if isinstance(step, Stop) and step.kind == "waf_final":
+                emit("submit_refused")
+            raise _stop_error(step, ended) from ended
+
+
+class _Checkpoints:
+    """Writes a checkpoint phase to the observer, when there is one."""
+
+    def __init__(self, observer: GenerationCheckpointObserver | None) -> None:
+        self._observer = observer
+
+    def __call__(self, phase: GenerationPhase) -> None:
+        if self._observer is not None:
+            self._observer(GenerationCheckpoint(phase=phase))
+
+    def submit_attempted(self) -> None:
+        self("submit_attempted")
+
+
+async def _relaunch_after_refusal(
+    host: RetryHost, step: RetryDirect, ended: DirectAttemptEnded, emit: _Checkpoints
+) -> None:
+    """Reset the job to not charged, tell the person, and start a fresh browser process."""
+    emit("submit_refused")
+    log.warning(
+        "direct.refusal_retry", detail=REFUSAL_RETRY_NOTICE, visibility=step.visibility.value
+    )
+    try:
+        await host.relaunch(step.visibility)
+    except RelaunchFailed as failed:
+        raise waf_refusal_final(reason=_reason(ended), attempts=1) from failed
+
+
+def _reason(ended: DirectAttemptEnded) -> str:
+    outcome = ended.outcome
+    if isinstance(outcome, Indeterminate):
+        return outcome.cause
+    return outcome.reason
+
+
+def _stop_error(step: RetryStep, ended: DirectAttemptEnded) -> GFlowError:
+    if not isinstance(step, Stop):  # pragma: no cover - Done never follows an ended attempt
+        raise AssertionError(f"unexpected step {step!r} for an ended attempt")
+    outcome = ended.outcome
+    if step.kind == "waf_final":
+        return waf_refusal_final(reason=_reason(ended), attempts=2)
+    if step.kind == "reauth":
+        return AuthExpiredError(
+            detail=(
+                f"Flow's saved session for this profile is signed out ({_reason(ended)}); "
+                "nothing was sent."
+            ),
+            route="direct_http.shell",
+        )
+    if ended.error is not None:
+        ended.error.retryable = False  # past the send it is never a retry
+        return ended.error
+    rpcid = outcome.rpcid if isinstance(outcome, Indeterminate) else ""
+    return NetworkError(
+        detail=f"{_reason(ended)} on a direct submit; not resent",
+        route=f"batchexecute:{rpcid}",
+        next_action="reconcile",
+        retryable=False,
+        charged="maybe",
+        remediation_hint=(
+            "Flow may have accepted this request before the error, so gflow did not resend "
+            "it. Check the project in Flow before running the command again."
+        ),
+    )

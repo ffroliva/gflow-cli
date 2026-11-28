@@ -115,7 +115,7 @@ def _check_display_server(visibility: BrowserVisibility) -> None:
     """Refuse a headed launch on Linux if no display server is available."""
     if visibility == BrowserVisibility.HEADED and _on_linux():
         if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-            raise UiModeUnavailableError(
+            error = UiModeUnavailableError(
                 BrowserVisibility.HEADED,
                 remediation_hint=(
                     "A headed browser launch requires a display server on Linux, but neither "
@@ -123,6 +123,8 @@ def _check_display_server(visibility: BrowserVisibility) -> None:
                     "'xvfb-run -a gflow ...') or use --browser-visibility headless."
                 ),
             )
+            error.detail = "A headed browser cannot start: no display server (DISPLAY is unset)."
+            raise error
 
 
 def _is_profile_access_denied(exc: BaseException) -> bool:
