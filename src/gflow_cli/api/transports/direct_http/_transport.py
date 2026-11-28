@@ -255,7 +255,7 @@ class DirectHttpTransport(UiAutomationTransport):
         if reason or project_id is None or profile_dir is None:
             raise not_sent(reason or "no_profile_dir")
         source = self._source_for(page)
-        request, target = await self._armed_target(source.page, project_id, request)
+        request, target = await self._armed_target(source, project_id, request)
         if target is None:  # unreachable: _routes_direct keyed it
             raise not_sent("unsupported_shape")
         tokens = source.for_project(project_id)
@@ -391,10 +391,11 @@ class DirectHttpTransport(UiAutomationTransport):
         return "no_project" if project_id is None else None
 
     async def _armed_target(
-        self, page: Page, project_id: str, request: GenerateVideoRequest
+        self, source: PageTokenSource, project_id: str, request: GenerateVideoRequest
     ) -> tuple[GenerateVideoRequest, VideoWireTarget | None]:
         """Arm the page, then key the request: a bare t2v from the account's selection."""
         async with self._generate_lock:  # the page lock, as the mint holds it
+            page = source.page  # read under the lock: a re-arm replaces and closes it
             await _arm_page(page, project_id)
             if is_bare_t2v(request):
                 return await selected_target(page, request)

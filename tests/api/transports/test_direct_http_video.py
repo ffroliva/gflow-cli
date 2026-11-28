@@ -893,3 +893,33 @@ async def test_zero_balance_refused_before_launch_when_wire_reads_on(
     reset_settings()
     with pytest.raises(InsufficientCreditsError):
         await refuse_empty_balance(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_armed_page_is_read_under_the_page_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent attempt can re-arm (replace and close) the page while this one waits for
+    the page lock, so the page to arm is read only once the lock is held."""
+    import asyncio
+
+    armed: list[object] = []
+
+    async def arm(page: object, _project_id: str) -> None:
+        armed.append(page)
+        raise asyncio.CancelledError  # stop after arming: only the page matters here
+
+    monkeypatch.setattr("gflow_cli.api.transports.direct_http._transport._arm_page", arm)
+    transport = _transport(tmp_path, _happy())
+    source = transport._source_for(transport._page)  # type: ignore[arg-type]
+    replacement = _page()
+
+    async with transport._generate_lock:
+        task = asyncio.create_task(
+            transport.generate_video(request=_OMNI_T2V, project_id=_PROJECT, out_dir=tmp_path)
+        )
+        await asyncio.sleep(0)  # the attempt is now waiting for the page lock
+        source._page = replacement  # another attempt re-armed while this one waited
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert armed == [replacement]
